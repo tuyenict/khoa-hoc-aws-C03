@@ -1,0 +1,857 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 44 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Cost-Explorer.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="44" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Nắm <b>5 design principles</b> và <b>5 practice areas</b> của trụ cột <b>Cost Optimization</b>, và biết mỗi công cụ quản lý chi phí của AWS nằm ở bước nào.</li>
+          <li>Dùng <b>cost allocation tags</b> (user-defined, AWS-generated) và <b>AWS Cost Categories</b> để phân bổ chi phí theo team, dự án, môi trường – và biết những “bẫy” như phải <b>activate</b>, không áp dụng ngược thời gian.</li>
+          <li>Phân biệt <b>AWS Cost Explorer</b> (phân tích, dự báo), <b>AWS Budgets</b> (ngưỡng, cảnh báo, budget actions), <b>AWS Cost Anomaly Detection</b> (ML phát hiện chi bất thường) và <b>AWS Cost and Usage Report / Data Exports</b> (dữ liệu chi tiết nhất vào S3 + Athena).</li>
+          <li>Hiểu <b>AWS Compute Optimizer</b>: tài nguyên hỗ trợ, lookback 14 ngày / 93 ngày, finding Under/Over-provisioned/Optimized, yêu cầu CloudWatch agent cho memory; và <b>Cost Optimization Hub</b>.</li>
+          <li>Biết các check <b>cost optimization</b> của <b>AWS Trusted Advisor</b> (EC2 low utilization, EIP không gắn, EBS không dùng, NAT gateway nhàn rỗi…).</li>
+          <li>Nắm quy tắc <b>data transfer cost</b> (inbound, cùng AZ, khác AZ, khác Region, Internet, NAT gateway, VPC endpoint, CloudFront, Direct Connect) để chọn kiến trúc <b>cost-effective</b>.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong khóa học</span>
+        <p><b>Bài 2</b> đã giới thiệu trụ cột Cost Optimization ở mức tổng quan và phân biệt <b>Well-Architected Tool</b> với <b>Trusted Advisor</b>; <b>Bài 3</b> dạy các <b>Support plan</b> và mức Trusted Advisor đi kèm; <b>Bài 6</b> dạy <b>consolidated billing</b> trong AWS Organizations; <b>Bài 9</b> dạy chi tiết <b>On-Demand, Reserved Instances, Savings Plans, Spot</b>. Bài này <b>không lặp lại</b> các phần đó, mà tập trung vào <b>bộ công cụ quản lý chi phí</b> (nhìn thấy – kiểm soát – tối ưu) và <b>chi phí truyền dữ liệu</b>. Bài 45 sẽ ôn tổng các mẫu kiến trúc.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/AWS-Cost-Management.svg" alt="">Trụ cột Cost Optimization và bộ công cụ AWS Cost Management</h2>
+      <p class="lead">Theo whitepaper <b>Cost Optimization Pillar</b>, một workload <span class="t" data-vi="Tối ưu chi phí">cost-optimized</span> là workload <b>sử dụng hết tài nguyên</b>, đạt kết quả ở <b>mức giá thấp nhất có thể</b> và vẫn đáp ứng yêu cầu chức năng. Đề SAA-C03 thuộc <b>Domain 4 – Design Cost-Optimized Architectures</b> (20% điểm) hỏi bạn hai loại câu: <b>chọn kiến trúc/dịch vụ rẻ hơn</b> (đã học rải rác ở các bài trước), và <b>chọn đúng công cụ</b> để theo dõi, phân bổ, cảnh báo, tối ưu chi phí – trọng tâm của bài này.</p>
+
+      <h3>Năm design principles</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Design principle</th><th>Ý nghĩa (theo tài liệu)</th><th>Công cụ / ví dụ liên quan</th></tr></thead>
+        <tbody>
+          <tr><td><b>Implement cloud financial management</b></td><td>Đầu tư thời gian, con người, quy trình để xây năng lực quản lý tài chính cloud – giống như năng lực Security hay Operations</td><td>Đội FinOps, Cost Explorer, Budgets</td></tr>
+          <tr><td><b>Adopt a consumption model</b></td><td>Chỉ trả cho tài nguyên dùng, tăng/giảm theo nhu cầu. Ví dụ tài liệu: môi trường dev/test chỉ dùng <b>8 giờ/ngày, 5 ngày/tuần</b> ⇒ tắt ngoài giờ tiết kiệm được khoảng <b>75%</b> (40 giờ so với 168 giờ)</td><td>Instance Scheduler, Auto Scaling, serverless</td></tr>
+          <tr><td><b>Measure overall efficiency</b></td><td>Đo đầu ra kinh doanh của workload và chi phí để tạo ra nó</td><td>Chi phí trên mỗi đơn hàng / mỗi user</td></tr>
+          <tr><td><b>Stop spending money on undifferentiated heavy lifting</b></td><td>Để AWS lo data center, OS, phần mềm qua managed services</td><td>RDS, Fargate, Lambda thay cho tự quản EC2</td></tr>
+          <tr><td><b>Analyze and attribute expenditure</b></td><td>Xác định chính xác chi phí và usage, phân bổ minh bạch cho từng nguồn doanh thu, chủ workload để đo ROI</td><td><b>Cost allocation tags</b>, Cost Categories, CUR</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Năm practice areas</h3>
+      <p>Whitepaper chia best practice thành 5 nhóm: <b>Practice Cloud Financial Management</b> → <b>Expenditure and usage awareness</b> (nhìn thấy chi phí) → <b>Cost-effective resources</b> (chọn đúng loại, kích cỡ, mô hình giá) → <b>Manage demand and supply resources</b> (co giãn theo nhu cầu) → <b>Optimize over time</b> (rà soát liên tục, áp dụng dịch vụ mới). Câu hỏi <b>COST08</b> “<i>Plan for data transfer</i>” thuộc nhóm cost-effective resources và được học ở cuối bài.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">
+          <div><h4>AWS Cost Explorer</h4><span class="vi">Phân tích &amp; dự báo chi phí</span><p>Biểu đồ chi phí/usage <b>13 tháng</b> qua (bật thêm lên <b>38 tháng</b>), dự báo <b>18 tháng</b> tới, filter/group by theo service, account, tag… Giao diện miễn phí; API <b>$0.01</b>/request.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Budgets.svg" alt="">
+          <div><h4>AWS Budgets</h4><span class="vi">Ngân sách, cảnh báo, hành động</span><p>Đặt ngưỡng cost, usage, RI/Savings Plans utilization &amp; coverage; cảnh báo <b>actual</b> hoặc <b>forecasted</b> qua email/SNS; <b>budget actions</b> áp IAM policy, SCP, dừng EC2/RDS.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">
+          <div><h4>AWS Cost Anomaly Detection</h4><span class="vi">Phát hiện chi tiêu bất thường</span><p>Dùng <b>machine learning</b>, học tính mùa vụ và tăng trưởng tự nhiên, chạy ~<b>3 lần/ngày</b>, chỉ ra <b>root cause</b> theo service, account, Region, usage type.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Cost-and-Usage-Report.svg" alt="">
+          <div><h4>AWS Cost and Usage Report (CUR) / Data Exports</h4><span class="vi">Dữ liệu chi phí chi tiết nhất</span><p>Giao file vào <b>S3 bucket của bạn</b>, chi tiết tới giờ, resource ID, tag; truy vấn bằng <b>Athena</b>, nạp <b>Redshift</b>, dashboard <b>QuickSight</b>. <b>CUR 2.0</b> qua Data Exports là cách khuyến nghị.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Compute-Optimizer.svg" alt="">
+          <div><h4>AWS Compute Optimizer</h4><span class="vi">Đề xuất right-sizing bằng ML</span><p>Phân tích cấu hình và CloudWatch metrics <b>14 ngày</b> (hoặc <b>93 ngày</b> với enhanced infrastructure metrics) của EC2, ASG, EBS, Lambda, ECS on Fargate, RDS/Aurora, NAT Gateway… để phát hiện tài nguyên thừa/thiếu/nhàn rỗi.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Trusted-Advisor.svg" alt="">
+          <div><h4>AWS Trusted Advisor</h4><span class="vi">Kiểm tra best practice tự động</span><p>Nhóm <b>cost optimization</b> chỉ ra EC2 dùng thấp, Elastic IP không gắn, EBS không dùng, load balancer nhàn rỗi, RI sắp hết hạn… (đầy đủ check cần Business Support+ trở lên – Bài 3).</p></div></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/AWS-Organizations_Management-Account.svg" alt="">1. Tổ chức &amp; gắn nhãn<small>Organizations, cost allocation tags, Cost Categories</small></div>
+          <span class="arrow">dữ liệu billing</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">2. Nhìn thấy<small>Cost Explorer, CUR / Data Exports, Athena, QuickSight</small></div>
+          <span class="arrow">ngưỡng &amp; ML</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Budgets.svg" alt="">3. Kiểm soát<small>Budgets + budget actions, Cost Anomaly Detection</small></div>
+          <span class="arrow">khuyến nghị</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Compute-Optimizer.svg" alt="">4. Tối ưu<small>Compute Optimizer, Cost Optimization Hub, Trusted Advisor, Savings Plans</small></div>
+          <span class="arrow dashed">lặp lại</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Trusted-Advisor.svg" alt="">5. Optimize over time<small>rà soát định kỳ, dùng dịch vụ mới</small></div>
+        </div>
+        <figcaption><b>Hình 1.</b> Vòng quản lý chi phí trên AWS và vị trí của từng công cụ. Không có <b>tag</b> và <b>cấu trúc account</b> tốt thì Cost Explorer, Budgets, CUR không thể chia chi phí theo team/dự án – vì vậy bước 1 luôn đi trước.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Quản lý chi phí AWS giống quản lý chi tiêu gia đình. <b>Tag</b> là việc ghi chú mỗi hóa đơn thuộc “ăn uống”, “học hành”, “đi lại”. <b>Cost Explorer</b> là cuốn sổ thống kê theo tháng, có dự đoán cuối tháng tiêu hết bao nhiêu. <b>Budgets</b> là đặt hạn mức cho từng khoản và nhờ ngân hàng nhắn tin khi sắp chạm – thậm chí <b>khóa thẻ</b> (budget action). <b>Cost Anomaly Detection</b> là ngân hàng tự phát hiện “giao dịch lạ”. <b>CUR</b> là sao kê chi tiết từng dòng. <b>Compute Optimizer</b> và <b>Trusted Advisor</b> là chuyên gia tài chính khuyên “gói cước điện thoại này to quá, đổi gói nhỏ hơn đi”.</p></div>
+
+      <!-- ===================== PHẦN 2: TAGS & COST CATEGORIES ===================== -->
+      <h2 id="tags"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Phân bổ chi phí: cost allocation tags &amp; AWS Cost Categories</h2>
+      <p class="lead">Mỗi <span class="t" data-vi="Thẻ (nhãn)">tag</span> gồm một <b>key</b> và một <b>value</b>; mỗi resource chỉ có một value cho mỗi key. Bạn dùng tag để tổ chức tài nguyên, và dùng <span class="t" data-vi="Thẻ phân bổ chi phí">cost allocation tags</span> để <b>theo dõi chi phí chi tiết</b>. Sau khi <b>activate</b>, AWS dùng các tag này để nhóm chi phí trong <b>cost allocation report</b>, Cost Explorer, Budgets, CUR.</p>
+
+      <h3>Hai loại cost allocation tag</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt=""><span class="t" data-vi="Tag do người dùng định nghĩa">User-defined tags</span></h4>
+          <ul>
+            <li>Bạn tự đặt và gắn lên resource, vd <code>CostCenter</code>, <code>Project</code>, <code>Environment</code>, <code>Owner</code>.</li>
+            <li>Trong cost allocation report, key có tiền tố <b><code>user:</code></b>.</li>
+            <li>Nên gắn bằng <b>AWS Tag Editor</b> (quản lý tập trung) hoặc API/console của từng dịch vụ; chuẩn hóa bằng <b>tag policy</b> (Bài 6).</li>
+            <li>Tag chỉ có hiệu lực cho chi phí <b>từ sau khi gắn/activate</b> – không áp ngược cho dữ liệu cũ (trừ khi dùng tính năng <b>backfill</b>).</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/AWS-Cost-and-Usage-Report.svg" alt=""><span class="t" data-vi="Tag do AWS tạo">AWS-generated tags</span></h4>
+          <ul>
+            <li>AWS tự định nghĩa và gắn, tiền tố <b><code>aws:</code></b> (bạn không được dùng tiền tố này).</li>
+            <li>Ví dụ chính: <b><code>aws:createdBy</code></b> – ghi lại <b>ai tạo resource</b> (Root, IAMUser, AssumedRole, FederatedUser) dựa trên CloudTrail; chỉ gắn cho resource tạo <b>sau khi</b> activate.</li>
+            <li>Chỉ <b>management account</b> activate được; activate một lần áp dụng cho mọi member account. Không sửa/xóa được.</li>
+            <li>Chỉ xuất hiện trong Billing and Cost Management console và báo cáo, <b>không</b> hiện trong Tag Editor; không tính vào quota 50 tag/resource.</li>
+          </ul></div>
+      </div>
+
+      <h3>Quy trình để tag “ra tiền”</h3>
+      <ol class="steps">
+        <li><b>Thiết kế bộ tag key</b> thống nhất (vd <code>CostCenter</code>, <code>Application</code>, <code>Environment</code>) – báo cáo hiển thị mỗi key thành một cột, nên key nhất quán thì dễ theo dõi.</li>
+        <li><b>Gắn tag</b> lên resource (Tag Editor, CloudFormation, API). Nhiều dịch vụ cho tag ngay khi tạo; dùng <b>tag policy</b> + SCP để ép tag bắt buộc.</li>
+        <li><b>Activate</b> tag key trong <b>Billing and Cost Management console → Cost allocation tags</b>. Chỉ <b>management account</b> của organization (hoặc account đứng riêng) truy cập được trình quản lý này.</li>
+        <li>Chờ – tài liệu ghi mọi tag có thể mất <b>tới 24 giờ</b> để xuất hiện trong Billing console. Sau đó dùng tag để <b>filter / group by</b> trong Cost Explorer, lọc Budgets, và tag thành cột <code>resourceTags/user:…</code> trong CUR.</li>
+      </ol>
+
+      <div class="stats">
+        <div class="stat"><b>24 giờ</b><span>tối đa để tag xuất hiện trong Billing console</span></div>
+        <div class="stat"><b>500</b><span>active tag key tối đa cho báo cáo Billing and Cost Management</span></div>
+        <div class="stat"><b>50</b><span>quota tag user-defined mỗi resource (aws:createdBy không tính)</span></div>
+        <div class="stat"><b>user: / aws:</b><span>tiền tố của tag user-defined / AWS-generated</span></div>
+      </div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp với tag</span>
+        <ul>
+          <li><b>Gắn tag chưa đủ</b> – phải <b>activate</b> trong Billing console thì tag mới xuất hiện trong Cost Explorer/CUR. Đề hay mô tả “<i>tags were applied but do not appear in Cost Explorer</i>” ⇒ chưa activate (hoặc chưa đủ 24 giờ).</li>
+          <li><b>Member account không tự activate được</b> cost allocation tag – việc này làm ở <b>management account</b>.</li>
+          <li>Khi một account <b>chuyển sang organization khác</b>, các tag đã activate mất trạng thái active, management account mới phải activate lại.</li>
+          <li>Không đưa <b>thông tin nhạy cảm</b> vào tag (best practice của tài liệu).</li>
+          <li>Tag của chính <b>budget</b> (để phân quyền truy cập budget) <b>không phải</b> cost allocation tag và không xuất hiện trong dữ liệu chi phí.</li>
+        </ul></div>
+
+      <h3>AWS Cost Categories – ánh xạ chi phí vào cơ cấu tổ chức</h3>
+      <p><span class="t" data-vi="Danh mục chi phí">AWS Cost Categories</span> là dịch vụ phân bổ chi phí giúp <b>ánh xạ chi phí AWS vào cơ cấu kinh doanh</b> của bạn bằng <b>rule</b>. Giống tag, một cost category là cặp key–value, nhưng được gắn vào <b>từng dòng chi phí</b> (cost line item) chứ không gắn lên resource.</p>
+      <ul>
+        <li><b>Dimension dùng trong rule</b>: Account, Charge type, Cost category khác, Region, Service, <b>Tag key</b>, Usage type, Billing entity. Toán tử: Is, Is not, Is absent, Contains, Starts with, Ends with.</li>
+        <li><b>Rule type</b>: <i>Regular</i> (giá trị tĩnh, vd account 1–3 ⇒ <code>Team1</code>) và <i>Inherited value</i> (lấy giá trị động từ một tag key, vd tag <code>teams</code> = alpha/beta/gamma ⇒ ba giá trị category).</li>
+        <li><b>Default value</b> cho chi phí không khớp rule nào; tạo được <b>phân cấp nhiều tầng</b> (vd <code>BusinessUnit</code> gom nhiều <code>Team</code>).</li>
+        <li><b>Split charges</b>: chia chi phí dùng chung (vd account mạng dùng chung, Transit Gateway) cho các giá trị category khác.</li>
+        <li>Xuất hiện trong <b>Cost Explorer, Budgets</b> (như một billing dimension để filter/group), <b>CUR</b> (cột <code>costCategory/…</code>), <b>Cost Anomaly Detection</b> (loại monitor).</li>
+        <li>Có hiệu lực <b>từ đầu tháng hiện tại</b>: sửa rule ngày 15/10 thì chi phí từ 1/10 được phân loại lại. Có thể mất <b>tới 24 giờ</b> để trạng thái chuyển từ <i>Processing</i> sang <i>Applied</i>.</li>
+        <li>Chỉ <b>management account</b> (hoặc account đứng riêng) tạo và quản lý được.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Track/allocate costs by department, project, or cost center</i>” ⇒ <b>cost allocation tags</b> (gắn tag + <b>activate</b> ở management account) rồi xem trong <b>Cost Explorer</b> hoặc <b>CUR</b>.</li>
+          <li>“<i>Identify who created a resource for cost purposes</i>” ⇒ AWS-generated tag <b><code>aws:createdBy</code></b>.</li>
+          <li>“<i>Enforce that all resources have a CostCenter tag</i>” ⇒ <b>tag policy</b> trong Organizations (chuẩn hóa) + SCP với điều kiện <code>aws:RequestTag</code> (chặn tạo nếu thiếu) – Bài 6.</li>
+          <li>“<i>Group costs of multiple accounts and tags into business units, split shared costs</i>” ⇒ <b>AWS Cost Categories</b> (+ split charges).</li>
+          <li>Cách phân bổ chi phí <b>đơn giản và chắc chắn nhất</b> là tách <b>account riêng</b> cho mỗi team/môi trường trong Organizations – chi phí theo linked account luôn có sẵn, không phụ thuộc tag.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: COST EXPLORER ===================== -->
+      <h2 id="cost-explorer"><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">AWS Cost Explorer: phân tích và dự báo chi phí</h2>
+      <p class="lead"><span class="t" data-vi="Công cụ khám phá chi phí">AWS Cost Explorer</span> là công cụ để <b>xem và phân tích chi phí, usage</b> qua biểu đồ chính, các báo cáo cost &amp; usage, báo cáo RI/Savings Plans. Bạn xem được dữ liệu <b>tối đa 13 tháng</b> trước, <b>dự báo 18 tháng</b> tới và nhận khuyến nghị nên mua Reserved Instances nào. Cost Explorer dùng <b>cùng bộ dữ liệu</b> sinh ra Cost and Usage Reports, và cho tải về CSV.</p>
+
+      <div class="stats">
+        <div class="stat"><b>13 tháng</b><span>dữ liệu lịch sử mặc định (+ tháng hiện tại)</span></div>
+        <div class="stat"><b>38 tháng</b><span>khi bật multi-year data (granularity tháng)</span></div>
+        <div class="stat"><b>18 tháng</b><span>dự báo chi phí tương lai</span></div>
+        <div class="stat"><b>14 ngày</b><span>dữ liệu hourly &amp; resource-level (phải bật)</span></div>
+        <div class="stat"><b>≥ 1 lần/24 giờ</b><span>tần suất làm mới dữ liệu chi phí</span></div>
+        <div class="stat"><b>$0.01</b><span>mỗi request API (có phân trang); giao diện miễn phí</span></div>
+      </div>
+
+      <h3>Những điều cần biết</h3>
+      <ul>
+        <li><b>Bật lần đầu</b>: AWS chuẩn bị dữ liệu tháng hiện tại và 13 tháng trước, tính dự báo 18 tháng. Dữ liệu tháng hiện tại có sau khoảng <b>24 giờ</b>, phần còn lại vài ngày. <b>Không tắt được</b> Cost Explorer sau khi đã bật.</li>
+        <li><b>Dashboard</b>: chi phí <b>month-to-date</b>, <b>forecasted month-end</b> (so với tháng trước), biểu đồ chi phí theo ngày, <b>5 xu hướng chi phí</b> nổi bật, các báo cáo xem gần đây. Số liệu tính tới <b>ngày hôm trước</b> và chỉ hiển thị bằng <b>USD</b>.</li>
+        <li><b>Filter và Group by</b> theo service, linked account, Region, usage type, instance type, purchase option, charge type, <b>tag</b>, <b>cost category</b>… Lưu cấu hình thành <b>saved report</b>.</li>
+        <li><b>Granularity</b>: mặc định <b>daily</b> và <b>monthly</b>. Dùng <b>management account</b> vào <i>Cost Management preferences</i> để bật: <b>multi-year data</b> (tới 38 tháng, theo tháng), <b>hourly</b> cho mọi service, <b>resource-level</b> theo ngày, <b>EC2 resource-level theo giờ</b> – dữ liệu hourly/resource-level chỉ cho <b>14 ngày</b> gần nhất; thay đổi mất tới <b>48 giờ</b>.</li>
+        <li><b>Các “kiểu chi phí”</b>: <i>unblended</i> (chi phí tính lúc phát sinh), <i>net unblended</i> (sau mọi chiết khấu), <i>amortized</i> (phân bổ phí upfront/recurring của RI, Savings Plans đều theo thời gian), <i>net amortized</i>. Muốn biết “chi phí thật mỗi ngày” khi có RI/SP trả trước ⇒ xem <b>amortized</b>.</li>
+        <li><b>Báo cáo reservation &amp; Savings Plans</b>: <b>utilization</b> (đã dùng bao nhiêu phần cam kết) và <b>coverage</b> (bao nhiêu % usage được cam kết che phủ), cùng <b>purchase recommendations</b> dựa trên usage lịch sử (Bài 9).</li>
+        <li><b>Rightsizing recommendations</b>: chỉ ra EC2 <b>nên downsize hoặc terminate</b>, xem được trên mọi member account trong một view. Tài liệu hiện khuyến nghị dùng <b>Cost Optimization Hub</b> cho trải nghiệm hợp nhất.</li>
+        <li>Có thể <b>hỏi bằng ngôn ngữ tự nhiên</b> (Amazon Q Developer) ngay trong Cost Explorer để giải thích xu hướng, nguyên nhân tăng chi phí.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Câu hỏi thường gặp</th><th>Làm gì trong Cost Explorer</th></tr></thead>
+        <tbody>
+          <tr><td>Dịch vụ nào tốn nhiều tiền nhất tháng trước?</td><td>Group by <b>Service</b>, granularity Monthly</td></tr>
+          <tr><td>Team A tiêu bao nhiêu?</td><td>Group by <b>Tag</b> <code>Team</code> (đã activate) hoặc <b>Cost category</b>, hoặc filter <b>Linked account</b></td></tr>
+          <tr><td>Vì sao chi phí EC2 tăng vọt hôm qua? Instance nào?</td><td>Bật <b>resource-level / hourly</b> data, group by <b>Resource</b> (14 ngày gần nhất)</td></tr>
+          <tr><td>Cuối tháng/cuối năm sẽ tiêu bao nhiêu?</td><td><b>Forecast</b> (tới 18 tháng)</td></tr>
+          <tr><td>Chi phí data transfer giữa các AZ là bao nhiêu?</td><td>Filter theo <b>usage type</b> chứa <code>DataTransfer-Regional</code> (kiến thức phổ biến)</td></tr>
+          <tr><td>Nên mua Savings Plans bao nhiêu $/giờ?</td><td><b>Savings Plans recommendations</b>; theo dõi bằng utilization/coverage report</td></tr>
+        </tbody>
+      </table></div>
+
+      <!-- ===================== PHẦN 4: BUDGETS & ANOMALY ===================== -->
+      <h2 id="budgets"><img src="../assets/icons/svc/AWS-Budgets.svg" alt="">AWS Budgets và AWS Cost Anomaly Detection: kiểm soát chủ động</h2>
+      <p class="lead">Cost Explorer giúp <b>nhìn</b> chi phí, còn <span class="t" data-vi="Ngân sách AWS">AWS Budgets</span> giúp <b>theo dõi và hành động</b> khi chi phí/usage vượt ngưỡng. Budgets cũng theo dõi <b>utilization</b> và <b>coverage</b> của Reserved Instances và Savings Plans.</p>
+
+      <h3>Sáu loại budget</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại</th><th>Cảnh báo khi</th><th>Ví dụ dùng</th></tr></thead>
+        <tbody>
+          <tr><td><b>Cost budget</b></td><td>Chi phí <b>tiến gần/vượt</b> ngưỡng (actual hoặc forecasted)</td><td>Budget tháng $1.000 cho account dev</td></tr>
+          <tr><td><b>Usage budget</b></td><td>Usage (giờ, GB…) tiến gần/vượt ngưỡng</td><td>Giữ usage một dịch vụ trong giới hạn (service limits)</td></tr>
+          <tr><td><b>RI utilization budget</b></td><td>Utilization RI <b>giảm dưới</b> ngưỡng</td><td>Phát hiện RI mua thừa, không dùng</td></tr>
+          <tr><td><b>RI coverage budget</b></td><td>% giờ instance được RI che phủ <b>giảm dưới</b> ngưỡng</td><td>Biết khi nào cần mua thêm RI</td></tr>
+          <tr><td><b>Savings Plans utilization budget</b></td><td>Utilization SP giảm dưới ngưỡng</td><td>Cảnh báo khi utilization &lt; 80% trong một ngày (ví dụ trong tài liệu)</td></tr>
+          <tr><td><b>Savings Plans coverage budget</b></td><td>% usage đủ điều kiện được SP che phủ giảm dưới ngưỡng</td><td>Theo dõi độ phủ cam kết</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Cấu hình và cảnh báo</h3>
+      <ul>
+        <li><b>Chu kỳ</b>: daily, monthly, quarterly, annually, hoặc <b>custom period</b> (vd 15/4–15/7 theo dự án; ngày kết thúc trong vòng <b>3 năm</b>, không tự gia hạn). Có thể đặt mức <b>cố định</b> hoặc <b>biến đổi</b> (vd tăng 5% mỗi tháng – ví dụ trong tài liệu). Tài liệu khuyến nghị đặt budget <b>lặp lại (recurring)</b> để không bị mất cảnh báo.</li>
+        <li><b>Phạm vi</b>: filter theo service, linked account, tag, cost category, Region…; chọn tính theo <i>blended, unblended, net unblended, amortized, net amortized</i> và có tính/không tính refund, credit, tax, support fee.</li>
+        <li><b>Actual alert</b> (sau khi đã phát sinh) chỉ gửi <b>một lần mỗi budget mỗi kỳ</b> khi lần đầu chạm ngưỡng. <b>Forecasted alert</b> (trước khi phát sinh) có thể gửi nhiều lần nếu dự báo vượt – xuống – vượt lại; cần khoảng <b>5 tuần</b> dữ liệu usage để dự báo.</li>
+        <li>Mỗi alert gửi tới <b>tối đa 10 email</b> và <b>1 SNS topic</b>. Qua SNS có thể nhận SMS, hoặc chuyển vào <b>Slack/Chime</b> bằng Amazon Q Developer in chat applications (trước đây là AWS Chatbot).</li>
+        <li><b>Tần suất cập nhật</b>: tới <b>3 lần/ngày</b> (thường cách nhau 8–12 giờ). Luôn có <b>độ trễ</b> giữa lúc phát sinh và lúc nhận cảnh báo ⇒ Budgets <b>không phải</b> hàng rào chặn chi tiêu tức thời.</li>
+        <li><b>Organizations</b>: management account tạo được budget theo dõi chi phí của một member account; member account mặc định tự tạo budget cho chính mình. <b>Không hỗ trợ cross-account</b>.</li>
+        <li><b>Giá</b>: theo dõi và thông báo của budget <b>miễn phí</b>; <b>2 action-enabled budget đầu tiên mỗi tháng miễn phí</b>, mỗi budget có action tiếp theo <b>$0.10/ngày</b>; Budget Reports <b>$0.01</b> mỗi báo cáo gửi email.</li>
+      </ul>
+
+      <h3>Budget actions – tự động “phanh” chi tiêu</h3>
+      <p>Khi budget vượt một ngưỡng, <span class="t" data-vi="Hành động ngân sách">budget action</span> có thể chạy <b>tự động</b> hoặc <b>sau khi bạn phê duyệt thủ công</b>. Ba loại hành động:</p>
+      <ol class="steps">
+        <li><b>Áp IAM policy</b> lên user, group hoặc role – vd một policy <code>Deny</code> chặn tạo thêm EC2.</li>
+        <li><b>Áp SCP</b> lên account/OU (chạy từ management account) – để không provision thêm tài nguyên nào trong kỳ budget.</li>
+        <li><b>Target EC2 hoặc RDS instance cụ thể</b> để <b>stop</b> – chỉ trong <b>chính account đó</b> (management account không target được instance ở account khác).</li>
+      </ol>
+      <p>Cần một <b>IAM role</b> cho AWS Budgets (có managed policy hỗ trợ) để Budgets thực thi action. Có thể gắn <b>nhiều action</b> cùng một ngưỡng, vd ở <b>90% forecasted</b>: vừa áp Deny IAM policy, vừa stop một số EC2 ở us-east-1.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 340" width="800" role="img" aria-label="Luồng AWS Budgets alert và budget action">
+          <defs><marker id="a44b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <rect x="10" y="20" width="200" height="300" rx="10" fill="#E7157B" fill-opacity="0.06" stroke="#E7157B" stroke-dasharray="6 4"/>
+          <text x="110" y="42" font-size="13" font-weight="700" text-anchor="middle" fill="#E7157B">Management account</text>
+          <image href="../assets/icons/svc/AWS-Budgets.svg" x="82" y="58" width="56" height="56"/>
+          <text x="110" y="132" font-size="13" font-weight="700" text-anchor="middle">AWS Budgets</text>
+          <text x="110" y="150" font-size="11" text-anchor="middle">Cost budget $5.000/tháng</text>
+          <text x="110" y="166" font-size="11" text-anchor="middle">filter: account Dev</text>
+          <text x="110" y="196" font-size="11" text-anchor="middle">Ngưỡng 1: 80% actual</text>
+          <text x="110" y="212" font-size="11" text-anchor="middle">⇒ chỉ cảnh báo</text>
+          <text x="110" y="240" font-size="11" text-anchor="middle">Ngưỡng 2: 100% forecasted</text>
+          <text x="110" y="256" font-size="11" text-anchor="middle">⇒ cảnh báo + action</text>
+          <text x="110" y="290" font-size="10.5" text-anchor="middle">Cập nhật tới 3 lần/ngày</text>
+          <text x="110" y="306" font-size="10.5" text-anchor="middle">(có độ trễ billing)</text>
+          <line x1="212" y1="90" x2="300" y2="70" stroke="#545B64" stroke-width="2" marker-end="url(#a44b)"/>
+          <line x1="212" y1="200" x2="300" y2="190" stroke="#545B64" stroke-width="2" marker-end="url(#a44b)"/>
+          <line x1="212" y1="250" x2="300" y2="280" stroke="#545B64" stroke-width="2" marker-end="url(#a44b)"/>
+          <image href="../assets/icons/res/Amazon-Simple-Notification-Service_Email-Notification.svg" x="305" y="40" width="44" height="44"/>
+          <text x="360" y="58" font-size="12" font-weight="700">Email (≤ 10 địa chỉ)</text>
+          <text x="360" y="76" font-size="11">+ 1 SNS topic mỗi alert</text>
+          <image href="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" x="305" y="104" width="44" height="44"/>
+          <text x="360" y="122" font-size="12" font-weight="700">Amazon SNS</text>
+          <text x="360" y="140" font-size="11">→ SMS, Lambda, Slack (Amazon Q Developer)</text>
+          <rect x="300" y="168" width="480" height="150" rx="10" fill="#7AA116" fill-opacity="0.08" stroke="#7AA116"/>
+          <text x="540" y="188" font-size="12.5" font-weight="700" text-anchor="middle">Budget action (tự động hoặc chờ phê duyệt) – dùng IAM role của Budgets</text>
+          <image href="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" x="320" y="202" width="44" height="44"/>
+          <text x="342" y="266" font-size="11.5" font-weight="700" text-anchor="middle">IAM policy</text>
+          <text x="342" y="282" font-size="10.5" text-anchor="middle">Deny ec2:RunInstances</text>
+          <text x="342" y="298" font-size="10.5" text-anchor="middle">cho user/group/role</text>
+          <image href="../assets/icons/svc/AWS-Organizations.svg" x="490" y="202" width="44" height="44"/>
+          <text x="512" y="266" font-size="11.5" font-weight="700" text-anchor="middle">SCP</text>
+          <text x="512" y="282" font-size="10.5" text-anchor="middle">gắn vào account/OU Dev</text>
+          <text x="512" y="298" font-size="10.5" text-anchor="middle">(từ management account)</text>
+          <image href="../assets/icons/svc/Amazon-EC2.svg" x="660" y="202" width="44" height="44"/>
+          <text x="682" y="266" font-size="11.5" font-weight="700" text-anchor="middle">Stop EC2 / RDS</text>
+          <text x="682" y="282" font-size="10.5" text-anchor="middle">instance cụ thể</text>
+          <text x="682" y="298" font-size="10.5" text-anchor="middle">chỉ cùng account</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> AWS Budgets với hai ngưỡng: 80% actual chỉ gửi cảnh báo; 100% forecasted vừa cảnh báo vừa chạy <b>budget action</b> (IAM policy, SCP, hoặc stop EC2/RDS). Lưu ý: stop một instance thuộc <b>Auto Scaling group</b> thì ASG sẽ khởi động lại/thay thế – tài liệu khuyên kết hợp thêm action <b>gỡ quyền</b> của role mà ASG dùng.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp với Budgets</span>
+        <ul>
+          <li>Budgets <b>không chặn chi tiêu ngay lập tức</b>: dữ liệu billing có độ trễ, chi phí có thể vượt ngưỡng trước khi bạn nhận cảnh báo. Đề hỏi “<i>prevent</i> launching resources” ⇒ cần <b>budget action</b> (IAM/SCP) hoặc <b>SCP</b> chủ động, không chỉ “alert”.</li>
+          <li>Muốn được báo <b>trước khi</b> vượt ⇒ dùng <b>forecasted</b> threshold, không phải actual.</li>
+          <li>Theo dõi “<i>RI / Savings Plans đang bị lãng phí</i>” ⇒ <b>utilization budget</b>; “<i>bao nhiêu usage chưa được cam kết che phủ</i>” ⇒ <b>coverage budget</b>.</li>
+          <li><b>Billing alarm</b> trên CloudWatch (metric <code>EstimatedCharges</code>, nằm ở <b>us-east-1</b>) là cách cũ hơn, chỉ cảnh báo theo tổng chi phí ước tính (kiến thức phổ biến) – Budgets linh hoạt hơn (filter, forecast, action).</li>
+        </ul></div>
+
+      <h3>AWS Cost Anomaly Detection – “phát hiện giao dịch lạ”</h3>
+      <p><span class="t" data-vi="Phát hiện chi phí bất thường">AWS Cost Anomaly Detection</span> dùng <b>machine learning</b> để phát hiện và cảnh báo các mẫu chi tiêu bất thường. Khác Budgets (bạn phải tự đặt ngưỡng), Cost Anomaly Detection <b>tự học</b> tính mùa vụ theo tuần/tháng và tăng trưởng tự nhiên để giảm false positive.</p>
+      <ul>
+        <li><b>Monitor</b>: theo dõi mọi <b>AWS service</b> độc lập, hoặc theo <b>member account</b>, <b>cost allocation tag</b>, <b>cost category</b>.</li>
+        <li><b>Alert subscription</b>: nhận cảnh báo <b>riêng lẻ</b> hoặc <b>báo cáo tổng hợp</b> qua <b>email</b> hoặc <b>SNS topic</b> (→ Slack/Chime); tích hợp <b>EventBridge</b>.</li>
+        <li><b>Root cause analysis</b>: xếp hạng nguyên nhân theo tác động $ trên bốn chiều: <b>service, account, Region, usage type</b>.</li>
+        <li>Chạy khoảng <b>3 lần/ngày</b> trên chi phí <i>net unblended</i>; dữ liệu từ Cost Explorer trễ tới <b>24 giờ</b> ⇒ có thể mất tới 24 giờ để phát hiện; monitor mới mất 24 giờ để bắt đầu; dịch vụ mới dùng cần <b>10 ngày</b> dữ liệu lịch sử.</li>
+        <li><b>Không theo dõi</b> chi phí AWS Marketplace của bên thứ ba (trừ foundation model bên thứ ba trên Bedrock) – dùng <b>Budgets</b> cho các khoản đó.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Notify when monthly costs are forecasted to exceed $X</i>” ⇒ <b>AWS Budgets</b> cost budget + <b>forecasted</b> alert + SNS/email.</li>
+          <li>“<i>Automatically prevent developers from launching new resources when the budget is exceeded</i>” ⇒ <b>Budgets action</b> áp <b>IAM policy</b> hoặc <b>SCP</b> (least operational overhead – không cần tự viết Lambda).</li>
+          <li>“<i>Detect unusual spikes in spending without setting static thresholds / using machine learning, identify root cause</i>” ⇒ <b>AWS Cost Anomaly Detection</b>.</li>
+          <li>“<i>Alert when Savings Plans utilization drops below 80%</i>” ⇒ <b>Savings Plans utilization budget</b>.</li>
+          <li>“<i>Visualize and analyze cost trends, forecast spending, filter by tag</i>” ⇒ <b>Cost Explorer</b> (không phải Budgets).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: CUR ===================== -->
+      <h2 id="cur"><img src="../assets/icons/svc/AWS-Cost-and-Usage-Report.svg" alt="">AWS Cost and Usage Report (CUR) và AWS Data Exports</h2>
+      <p class="lead"><span class="t" data-vi="Báo cáo chi phí và mức sử dụng">AWS Cost and Usage Report (CUR)</span> chứa <b>bộ dữ liệu chi phí và usage đầy đủ, chi tiết nhất</b> mà AWS cung cấp. Báo cáo được giao vào <b>Amazon S3 bucket của bạn</b>, chia chi phí theo <b>giờ, ngày hoặc tháng</b>, theo sản phẩm hoặc <b>từng resource</b>, và theo <b>tag</b> bạn định nghĩa.</p>
+
+      <h3>CUR hoạt động thế nào</h3>
+      <ul>
+        <li>Mỗi dòng (line item) là một tổ hợp duy nhất của <b>sản phẩm, usage type, operation</b>. Cột luôn có: tiền tố <code>identity/</code>, <code>bill/</code>, <code>lineItem/</code>; các cột khác (vd <code>savingsPlan/</code>, <code>resourceTags/</code>, <code>costCategory/</code>) chỉ xuất hiện khi có dữ liệu.</li>
+        <li>Lần giao đầu mất <b>tới 24 giờ</b>; sau đó cập nhật <b>ít nhất 1 lần/ngày</b> (tới <b>3 lần/ngày</b>). Mỗi lần cập nhật trong tháng là <b>cộng dồn</b> (month-to-date) và là <b>ước tính</b>; sau khi xuất hóa đơn cuối tháng thì <b>finalize</b> (vẫn có thể cập nhật nếu có refund, credit, phí Support – phí Support phản ánh vào ngày 6–7 tháng sau).</li>
+        <li>Định dạng CSV kèm <b>manifest</b>; báo cáo lớn (&gt; ~1 triệu dòng) được chia nhiều file. Có thể chọn <b>tạo version mới</b> hoặc <b>ghi đè</b> mỗi lần cập nhật.</li>
+        <li>Tích hợp sẵn với <b>Amazon Athena</b> (truy vấn SQL trực tiếp trên S3), <b>Amazon Redshift</b>, <b>Amazon QuickSight</b> (dashboard).</li>
+      </ul>
+
+      <h3>AWS Data Exports và CUR 2.0</h3>
+      <p><b>AWS Data Exports</b> là cách mới để tạo export dữ liệu billing bằng <b>SQL cơ bản</b> (chọn cột, lọc dòng, đổi tên cột) và giao định kỳ vào S3. Các loại export:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại export</th><th>Nội dung</th></tr></thead>
+        <tbody>
+          <tr><td><b>Standard data export – CUR 2.0</b></td><td>Cách <b>mới và được khuyến nghị</b> để nhận dữ liệu chi phí chi tiết; schema nhất quán, chỉ chứa cột bạn chọn</td></tr>
+          <tr><td>Standard – Cost optimization recommendations</td><td>Khuyến nghị từ <b>Cost Optimization Hub</b></td></tr>
+          <tr><td>Standard – FOCUS 1.0 / 1.2 with AWS columns</td><td>Định dạng chuẩn mở <b>FOCUS</b> (FinOps Open Cost and Usage Specification) – tiện khi gộp với dữ liệu cloud khác</td></tr>
+          <tr><td>Standard – Carbon emissions</td><td>Dữ liệu phát thải carbon</td></tr>
+          <tr><td><b>Cost and usage dashboard</b></td><td>Export + tích hợp QuickSight, triển khai <b>dashboard dựng sẵn</b></td></tr>
+          <tr><td>Legacy data export</td><td>CUR cũ (legacy), dùng bộ API riêng</td></tr>
+        </tbody>
+      </table></div>
+      <p>Lợi ích: export đều đặn dữ liệu <b>chi tiết nhất</b>, bỏ cột nhạy cảm hoặc chi phí của một số linked account, <b>giảm kích thước</b> bằng cách chỉ lấy cột/dòng cần thiết, tự động hóa phân tích downstream.</p>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/AWS-Cost-Management.svg" alt="">AWS Billing and Cost Management (management account)</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Mọi member account<small>usage + tag + cost category</small></div>
+              <span class="arrow">≥ 1 lần/ngày</span>
+              <div class="node"><img src="../assets/icons/svc/AWS-Cost-and-Usage-Report.svg" alt="">Data Exports<small>CUR 2.0 / FOCUS</small></div>
+            </div>
+          </div>
+          <div class="grp region"><span class="lbl">AWS Region</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">S3 bucket của bạn<small>bucket policy cho phép billing ghi</small></div>
+              <span class="arrow">SQL</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">Amazon Athena<small>truy vấn theo resource, tag, giờ</small></div>
+              <span class="arrow">dataset</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-QuickSight.svg" alt="">Amazon QuickSight<small>dashboard chi phí</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Kiến trúc phân tích chi phí chi tiết: Data Exports (CUR 2.0) giao dữ liệu cấp resource vào S3, Athena truy vấn SQL trực tiếp, QuickSight dựng dashboard cho tài chính và các team. Đây là đáp án điển hình khi đề cần “<i>most granular</i>”, “<i>custom queries</i>” hoặc “<i>chargeback</i>”.</figcaption>
+      </figure>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">Cost Explorer</h4>
+          <ul>
+            <li>Giao diện biểu đồ có sẵn, dự báo, khuyến nghị RI/SP.</li>
+            <li>13 tháng (38 tháng nếu bật), chi tiết resource/giờ chỉ 14 ngày.</li>
+            <li>Hợp với: phân tích nhanh, xem xu hướng, không cần code.</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/svc/AWS-Cost-and-Usage-Report.svg" alt="">CUR / Data Exports</h4>
+          <ul>
+            <li>File thô <b>chi tiết nhất</b> (giờ, resource ID, tag, cost category, phí RI/SP).</li>
+            <li>Lưu trong <b>S3 của bạn</b> – giữ bao lâu tùy ý, kết hợp với dữ liệu khác.</li>
+            <li>Hợp với: chargeback, BI, truy vấn SQL tùy biến (Athena, Redshift, QuickSight).</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Most detailed / granular billing data, hourly, per resource, to be queried with SQL</i>” ⇒ <b>CUR (Data Exports) → S3 → Athena</b>.</li>
+          <li>“<i>Build custom cost dashboards for finance with least effort</i>” ⇒ <b>Data Exports cost and usage dashboard</b> (QuickSight) hoặc CUR + Athena + QuickSight.</li>
+          <li>“<i>Chargeback to business units across 50 accounts</i>” ⇒ Organizations (consolidated billing) + cost allocation tags / Cost Categories + <b>CUR</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: COMPUTE OPTIMIZER ===================== -->
+      <h2 id="compute-optimizer"><img src="../assets/icons/svc/AWS-Compute-Optimizer.svg" alt="">AWS Compute Optimizer và Cost Optimization Hub: right-sizing</h2>
+      <p class="lead"><span class="t" data-vi="Bộ tối ưu tài nguyên tính toán">AWS Compute Optimizer</span> phân tích <b>cấu hình và metrics sử dụng</b> của tài nguyên để đưa ra khuyến nghị <span class="t" data-vi="Chọn đúng kích cỡ">rightsizing</span> và phát hiện <b>tài nguyên nhàn rỗi (idle)</b>. Nó cho biết tài nguyên có tối ưu không, khuyến nghị cách <b>giảm chi phí</b> và <b>cải thiện hiệu năng</b>, kèm biểu đồ utilization lịch sử và utilization dự kiến nếu áp dụng khuyến nghị.</p>
+
+      <h3>Tài nguyên được hỗ trợ</h3>
+      <p>Amazon <b>EC2 instances</b>, <b>EC2 Auto Scaling groups</b>, <b>EBS volumes</b>, <b>Lambda functions</b>, <b>ECS services on Fargate</b>, <b>commercial software licenses</b> (SQL Server trên EC2), <b>Aurora và RDS</b>, <b>NAT Gateway</b>, DynamoDB, ElastiCache, MemoryDB, DocumentDB, WorkSpaces, SageMaker.</p>
+
+      <div class="stats">
+        <div class="stat"><b>14 ngày</b><span>lookback mặc định (CloudWatch metrics)</span></div>
+        <div class="stat"><b>93 ngày</b><span>với enhanced infrastructure metrics (trả phí)</span></div>
+        <div class="stat"><b>30 giờ</b><span>metric tối thiểu cho EC2/ASG/RDS trong lookback</span></div>
+        <div class="stat"><b>≤ 1.792 MB &amp; ≥ 50 lần</b><span>Lambda: memory cấu hình / số lần invoke trong 14 ngày</span></div>
+        <div class="stat"><b>24 giờ</b><span>tối đa để có khuyến nghị sau khi opt in</span></div>
+        <div class="stat"><b>Top 3</b><span>khuyến nghị cho mỗi resource ở trang chi tiết</span></div>
+      </div>
+
+      <h3>Cách hoạt động</h3>
+      <ul>
+        <li><b>Opt in</b> là bắt buộc. Hỗ trợ account đứng riêng, member account, và <b>management account</b> – chọn <i>All accounts within this organization</i> để opt in mọi member (account mới thêm vào sau cũng tự opt in); có thể <b>delegate administrator</b> cho một member account. Kết quả xem được <b>nhiều Region, nhiều account</b>, và cũng hiện trong console của dịch vụ (vd EC2 console).</li>
+        <li>Phân tích metrics CloudWatch <b>14 ngày</b>: vCPU, memory, storage, CPU utilization, network in/out, disk read/write, EBS IOPS/throughput… Biểu đồ dùng <b>điểm utilization tối đa trong mỗi khoảng 5 phút</b>.</li>
+        <li><b>Memory (và GPU) chỉ được phân tích khi cài unified CloudWatch agent</b> – EC2 không có metric memory mặc định. Compute Optimizer cũng ingest được metric memory từ Datadog, Dynatrace.</li>
+        <li><b>Enhanced infrastructure metrics</b> (trả phí) kéo lookback lên <b>93 ngày</b> – hữu ích cho workload có chu kỳ theo tháng/quý. Có thể tùy chỉnh <b>rightsizing preferences</b>: headroom và ngưỡng CPU/memory, lookback, instance family ưu tiên.</li>
+        <li><b>Graviton</b>: chọn CPU architecture preference <i>Graviton (aws-arm64)</i> để xem giá/hiệu năng khi chuyển sang Arm; cột <b>migration effort</b> (Very low → High) và <b>platform differences</b> (architecture, hypervisor, instance store, network/storage interface).</li>
+        <li><b>Savings</b>: nếu bật <b>Cost Optimization Hub</b>, ước tính tiết kiệm tính theo giá thật của bạn (RI, Savings Plans); nếu không, dùng giá On-Demand. Phải <b>bật Cost Explorer</b> để Compute Optimizer có dữ liệu giá.</li>
+        <li>Khuyến nghị làm mới <b>hằng ngày</b>; <b>export</b> được ra S3 để lưu lịch sử và chia sẻ.</li>
+      </ul>
+
+      <h3>Finding classifications (EC2)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Finding</th><th>Ý nghĩa</th><th>Hệ quả</th></tr></thead>
+        <tbody>
+          <tr><td><b>Under-provisioned</b></td><td>Ít nhất một thông số (CPU, memory, network…) <b>không đáp ứng</b> yêu cầu hiệu năng</td><td>Hiệu năng kém ⇒ nên tăng size</td></tr>
+          <tr><td><b>Over-provisioned</b></td><td>Ít nhất một thông số <b>giảm được</b> mà vẫn đáp ứng, và không thông số nào thiếu</td><td>Lãng phí chi phí ⇒ nên giảm size</td></tr>
+          <tr><td><b>Optimized</b></td><td>Mọi thông số đáp ứng và không thừa</td><td>Có thể vẫn gợi ý <b>thế hệ instance mới hơn</b></td></tr>
+        </tbody>
+      </table></div>
+      <p><b>Finding reasons</b> chỉ rõ thông số nào thừa/thiếu: CPU, Memory, GPU, EBS throughput, EBS IOPS, Network bandwidth, Network PPS, Disk IOPS, Disk throughput. <b>Performance risk</b> (very low → very high, API 0–4) cho biết khả năng loại instance khuyến nghị không đáp ứng workload. Với Lambda, hàm không đủ điều kiện nhận finding <b>Unavailable</b> (lý do <i>Inconclusive</i> nếu memory &gt; 1.792 MB, <i>Insufficient data</i> nếu &lt; 50 lần invoke). RDS over-provisioned cần bật <b>Performance Insights</b>.</p>
+
+      <h3>Cost Optimization Hub</h3>
+      <p><span class="t" data-vi="Trung tâm tối ưu chi phí">Cost Optimization Hub</span> là tính năng của Billing and Cost Management, <b>gom và ưu tiên hóa</b> khuyến nghị tối ưu chi phí trên <b>nhiều account và Region</b> vào một dashboard: <b>rightsizing</b>, <b>xóa tài nguyên idle</b>, <b>Savings Plans</b>, <b>Reserved Instances</b>. Điểm mạnh:</p>
+      <ul>
+        <li>Ước tính tiết kiệm <b>theo giá và chiết khấu thực tế</b> của bạn (RI, SP, thỏa thuận thương mại).</li>
+        <li><b>Gộp và khử trùng lặp</b> (deduplicate) tiết kiệm giữa các khuyến nghị liên quan – tránh cộng hai lần “rightsize” và “mua SP” cho cùng một instance.</li>
+        <li>Lọc, sắp xếp, nhóm để ưu tiên; đo <b>cost efficiency</b> theo thời gian. Dữ liệu rightsizing/idle lấy từ <b>Compute Optimizer</b>.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Right-size EC2 instances / Lambda memory / EBS volumes based on historical utilization using machine learning</i>” ⇒ <b>AWS Compute Optimizer</b>.</li>
+          <li>“<i>Recommendations do not consider memory utilization</i>” ⇒ cài <b>CloudWatch agent</b> để đẩy metric memory.</li>
+          <li>“<i>Workload has monthly/quarterly peaks; recommendations must consider 3 months of data</i>” ⇒ bật <b>enhanced infrastructure metrics</b> (93 ngày).</li>
+          <li>“<i>Recommendations for all accounts in the organization</i>” ⇒ opt in ở <b>management account</b> cho <i>all accounts</i> (hoặc delegated administrator).</li>
+          <li>“<i>Single place to prioritize all cost-saving opportunities across accounts and Regions with deduplicated savings</i>” ⇒ <b>Cost Optimization Hub</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: TRUSTED ADVISOR ===================== -->
+      <h2 id="trusted-advisor"><img src="../assets/icons/svc/AWS-Trusted-Advisor.svg" alt="">AWS Trusted Advisor: các check Cost Optimization</h2>
+      <p class="lead">Bài 2 và Bài 3 đã giới thiệu <span class="t" data-vi="Cố vấn tin cậy">AWS Trusted Advisor</span> và mức truy cập theo Support plan (Basic chỉ có service limits và một số check security/fault tolerance; đầy đủ check cần <b>Business Support+</b> trở lên). Ở đây ta tập trung vào nhóm <b>cost optimization</b> – rất hay xuất hiện dưới dạng “tìm tài nguyên lãng phí”.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Check (ví dụ)</th><th>Tiêu chí theo tài liệu</th><th>Hành động gợi ý</th></tr></thead>
+        <tbody>
+          <tr><td><b>Low utilization Amazon EC2 instances</b></td><td>CPU trung bình ngày <b>≤ 10%</b> và network I/O <b>≤ 5 MB</b> trong <b>ít nhất 4 trên 14 ngày</b> gần nhất</td><td>Stop/terminate, downsize, dùng Auto Scaling</td></tr>
+          <tr><td><b>Underutilized Amazon EBS volumes</b></td><td>Volume <b>không gắn</b>, hoặc &lt; 1 IOPS/ngày trong 7 ngày</td><td>Snapshot rồi xóa volume</td></tr>
+          <tr><td><b>Unassociated Elastic IP addresses</b></td><td>EIP không gắn với instance đang chạy</td><td>Release EIP</td></tr>
+          <tr><td><b>Idle load balancers</b></td><td>(Classic LB) không có back-end khỏe, hoặc &lt; 100 request/ngày trong 7 ngày</td><td>Xóa load balancer</td></tr>
+          <tr><td><b>Amazon RDS idle DB instances</b></td><td>Không có kết nối trong <b>7 ngày</b></td><td>Snapshot rồi xóa / stop</td></tr>
+          <tr><td><b>Inactive NAT gateways / VPC interface endpoints</b></td><td>0 byte xử lý trong <b>30 ngày</b></td><td>Xóa</td></tr>
+          <tr><td><b>S3 incomplete multipart uploads</b></td><td>Bucket không có lifecycle rule hủy upload dang dở sau 7 ngày</td><td>Thêm lifecycle rule <i>AbortIncompleteMultipartUpload</i></td></tr>
+          <tr><td><b>S3 bucket / versioned bucket without lifecycle policy</b></td><td>Không có lifecycle policy (AWS Config managed rule)</td><td>Thêm lifecycle chuyển lớp/xóa version cũ</td></tr>
+          <tr><td><b>EC2 Reserved Instance lease expiration</b></td><td>RI hết hạn trong 30 ngày tới hoặc đã hết trong 30 ngày qua</td><td>Gia hạn / mua SP</td></tr>
+          <tr><td><b>EC2 Reserved Instance optimization</b></td><td>Phân tích 30 ngày On-Demand usage (chỉ payer account)</td><td>Mua RI/SP</td></tr>
+          <tr><td><b>Lambda over-provisioned memory, EBS over-provisioned volumes</b></td><td>Dữ liệu từ <b>Compute Optimizer</b></td><td>Giảm memory / đổi loại volume</td></tr>
+          <tr><td>Các check dựa trên <b>Cost Optimization Hub</b> (EC2, ASG, EBS, RDS, Lambda, Fargate, idle NAT gateway, Savings Plans, reserved capacity…)</td><td>Cần opt in Cost Optimization Hub (đa phần cần cả Compute Optimizer)</td><td>Xem khuyến nghị hàng đầu cho mỗi resource</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Trusted Advisor hay Compute Optimizer?</span>
+        <ul>
+          <li><b>Trusted Advisor</b> = kiểm tra <b>rộng</b> theo best practice ở 5 nhóm (cost, performance, security, fault tolerance, service limits); với cost, nó giỏi tìm tài nguyên <b>bỏ quên/nhàn rỗi</b> (EIP không gắn, EBS không gắn, LB idle, RDS không kết nối) và RI sắp hết hạn.</li>
+          <li><b>Compute Optimizer</b> = phân tích <b>sâu</b> bằng ML trên metrics để khuyến nghị <b>loại/kích cỡ cụ thể</b> (m5.2xlarge → m6g.xlarge, Lambda 1024 MB → 512 MB, gp2 → gp3).</li>
+          <li>Đề hỏi “<i>which instance type should we use</i>” ⇒ Compute Optimizer; “<i>identify unused resources and check against best practices</i>” ⇒ Trusted Advisor.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: DATA TRANSFER ===================== -->
+      <h2 id="data-transfer"><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">Chi phí truyền dữ liệu (data transfer cost)</h2>
+      <p class="lead">Whitepaper nhắc: tài nguyên mạng trên cloud được <b>trả tiền theo mức dùng</b> giống CPU và storage, và câu hỏi <b>COST08 – Plan for data transfer</b> yêu cầu <b>mô hình hóa</b> luồng dữ liệu, <b>chọn thành phần</b> giảm data transfer, và <b>dùng dịch vụ</b> giúp giảm chi phí truyền. Đây là nguồn “chi phí ẩn” mà đề SAA-C03 rất hay khai thác.</p>
+
+      <h3>Quy tắc tính phí cơ bản</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Luồng dữ liệu</th><th>Tính phí?</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td>Internet → AWS (<b>inbound</b>)</td><td class="yes">Miễn phí</td><td>Mọi dịch vụ, mọi Region</td></tr>
+          <tr><td>Trong <b>cùng một AZ</b></td><td class="yes">Miễn phí</td><td>Vd EC2 ↔ EC2 cùng AZ (dùng private IP – kiến thức phổ biến)</td></tr>
+          <tr><td><b>Giữa các AZ</b> trong cùng Region</td><td class="no">Có phí</td><td>EC2 ↔ EC2, EC2 ↔ RDS khác AZ; thường tính <b>cả hai chiều</b> (~$0.01/GB mỗi chiều ở nhiều Region – giá tham khảo, kiến thức phổ biến)</td></tr>
+          <tr><td>RDS <b>Multi-AZ</b> replication primary ↔ standby</td><td class="yes">Miễn phí</td><td>Nhưng client ở AZ khác primary vẫn bị tính cross-AZ</td></tr>
+          <tr><td><b>Giữa các Region</b></td><td class="no">Có phí</td><td>Theo Region nguồn/đích; cross-Region replication, inter-Region peering</td></tr>
+          <tr><td>AWS → <b>Internet</b> (outbound)</td><td class="no">Có phí</td><td>Theo dịch vụ và Region nguồn – thường là khoản lớn nhất</td></tr>
+          <tr><td>Qua <b>NAT gateway</b></td><td class="no">Có phí</td><td>Phí giờ + <b>phí xử lý mỗi GB</b>, kể cả khi đi tới S3/DynamoDB cùng Region</td></tr>
+          <tr><td><b>Gateway VPC endpoint</b> (S3, DynamoDB)</td><td class="yes">Miễn phí</td><td>Không phí giờ, không phí data transfer trong cùng Region</td></tr>
+          <tr><td><b>Interface VPC endpoint</b> (PrivateLink)</td><td class="no">Có phí</td><td>Phí giờ mỗi endpoint/AZ + phí mỗi GB</td></tr>
+          <tr><td><b>VPC peering</b></td><td>Cùng AZ miễn phí</td><td>Khác AZ/khác Region tính phí như thường; không có phí giờ</td></tr>
+          <tr><td><b>Transit Gateway</b></td><td class="no">Có phí</td><td>Phí giờ mỗi attachment + phí xử lý mỗi GB gửi vào TGW</td></tr>
+          <tr><td><b>Direct Connect</b></td><td>Inbound $0.00/GB</td><td>Phí giờ port + data out rẻ hơn Internet, ổn định hơn</td></tr>
+          <tr><td>Origin AWS → <b>CloudFront</b></td><td class="yes">Miễn phí</td><td>Chỉ trả phí CloudFront → user (thường rẻ hơn data out trực tiếp) – Bài 25</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 400" width="800" role="img" aria-label="Sơ đồ chi phí data transfer trong VPC">
+          <defs><marker id="a44d" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <rect x="10" y="10" width="560" height="380" rx="10" fill="none" stroke="#147EBA" stroke-dasharray="6 4"/>
+          <text x="22" y="30" font-size="13" font-weight="700" fill="#147EBA">Region us-east-1 – VPC</text>
+          <rect x="25" y="42" width="255" height="335" rx="8" fill="#147EBA" fill-opacity="0.05" stroke="#147EBA"/>
+          <text x="152" y="60" font-size="12" font-weight="700" text-anchor="middle" fill="#147EBA">AZ a</text>
+          <rect x="300" y="42" width="255" height="335" rx="8" fill="#147EBA" fill-opacity="0.05" stroke="#147EBA"/>
+          <text x="427" y="60" font-size="12" font-weight="700" text-anchor="middle" fill="#147EBA">AZ b</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="45" y="80" width="40" height="40"/>
+          <text x="65" y="135" font-size="11" text-anchor="middle">App A1</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="190" y="80" width="40" height="40"/>
+          <text x="210" y="135" font-size="11" text-anchor="middle">App A2</text>
+          <line x1="88" y1="100" x2="186" y2="100" stroke="#7AA116" stroke-width="2.5" marker-end="url(#a44d)"/>
+          <text x="137" y="92" font-size="11" font-weight="700" text-anchor="middle" fill="#7AA116">$0 cùng AZ</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="405" y="80" width="40" height="40"/>
+          <text x="425" y="135" font-size="11" text-anchor="middle">App B1</text>
+          <line x1="232" y1="100" x2="401" y2="100" stroke="#DD344C" stroke-width="2.5" marker-end="url(#a44d)"/>
+          <text x="316" y="92" font-size="11" font-weight="700" text-anchor="middle" fill="#DD344C">$ cross-AZ (2 chiều)</text>
+          <image href="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" x="45" y="190" width="40" height="40"/>
+          <text x="65" y="245" font-size="11" text-anchor="middle">NAT GW (AZ a)</text>
+          <line x1="405" y1="118" x2="90" y2="205" stroke="#DD344C" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a44d)"/>
+          <text x="250" y="178" font-size="10.5" text-anchor="middle" fill="#DD344C">B1 → NAT ở AZ khác: cross-AZ + phí xử lý NAT</text>
+          <image href="../assets/icons/res/Amazon-VPC_Endpoints.svg" x="190" y="290" width="40" height="40"/>
+          <text x="210" y="345" font-size="11" text-anchor="middle">Gateway endpoint S3</text>
+          <line x1="72" y1="140" x2="195" y2="292" stroke="#7AA116" stroke-width="2.5" marker-end="url(#a44d)"/>
+          <text x="105" y="275" font-size="10.5" font-weight="700" fill="#7AA116">$0 (route table)</text>
+          <image href="../assets/icons/svc/Amazon-RDS.svg" x="70" y="300" width="40" height="40"/>
+          <text x="90" y="355" font-size="11" text-anchor="middle">RDS primary</text>
+          <image href="../assets/icons/svc/Amazon-RDS.svg" x="405" y="300" width="40" height="40"/>
+          <text x="425" y="355" font-size="11" text-anchor="middle">RDS standby</text>
+          <line x1="114" y1="320" x2="401" y2="320" stroke="#7AA116" stroke-width="2" marker-end="url(#a44d)"/>
+          <text x="300" y="312" font-size="10.5" font-weight="700" text-anchor="middle" fill="#7AA116">$0 Multi-AZ replication</text>
+          <image href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" x="640" y="270" width="48" height="48"/>
+          <text x="664" y="335" font-size="12" font-weight="700" text-anchor="middle">Amazon S3</text>
+          <line x1="232" y1="310" x2="636" y2="294" stroke="#7AA116" stroke-width="2" marker-end="url(#a44d)"/>
+          <image href="../assets/icons/res/Internet.svg" x="640" y="30" width="48" height="48"/>
+          <text x="664" y="95" font-size="12" font-weight="700" text-anchor="middle">Internet</text>
+          <line x1="88" y1="205" x2="636" y2="60" stroke="#DD344C" stroke-width="2" marker-end="url(#a44d)"/>
+          <text x="470" y="130" font-size="10.5" font-weight="700" fill="#DD344C">$ data out + $ NAT/GB</text>
+          <line x1="636" y1="70" x2="580" y2="70" stroke="#7AA116" stroke-width="2"/>
+          <text x="690" y="125" font-size="10.5" text-anchor="middle" fill="#7AA116">Inbound: $0</text>
+          <image href="../assets/icons/svc/Amazon-CloudFront.svg" x="640" y="160" width="48" height="48"/>
+          <text x="664" y="225" font-size="11.5" font-weight="700" text-anchor="middle">CloudFront</text>
+          <text x="664" y="242" font-size="10" text-anchor="middle">origin fetch $0, cache</text>
+          <text x="664" y="256" font-size="10" text-anchor="middle">giảm data out từ origin</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> “Bản đồ hóa đơn” data transfer trong một VPC. Xanh = miễn phí (cùng AZ, gateway endpoint S3/DynamoDB, RDS Multi-AZ replication, inbound, origin → CloudFront). Đỏ = có phí (cross-AZ hai chiều, NAT gateway xử lý mỗi GB, data out ra Internet). Cách giảm: đặt <b>NAT gateway trong mỗi AZ</b>, dùng <b>gateway endpoint</b> cho S3/DynamoDB, phục vụ nội dung qua <b>CloudFront</b>.</figcaption>
+      </figure>
+
+      <h3>Các kỹ thuật giảm data transfer cost (theo COST08)</h3>
+      <ul>
+        <li><b>VPC endpoints</b>: gateway endpoint cho S3/DynamoDB <b>không phí giờ</b>, loại bỏ phí NAT gateway cho luồng này; interface endpoint có phí giờ + GB nhưng tránh đi qua Internet.</li>
+        <li><b>NAT gateway cùng AZ</b>: kiểm tra resource gửi nhiều traffic nhất có cùng AZ với NAT gateway không; nếu không, tạo NAT gateway mới trong AZ đó để tránh phí cross-AZ.</li>
+        <li><b>Amazon CloudFront</b>: cache tại edge, giảm tải origin và data out; <b>CloudFront security savings bundle</b> tiết kiệm tới <b>30%</b> nếu cam kết dùng tăng dần.</li>
+        <li><b>AWS Direct Connect</b>: kết nối riêng, có thể <b>rẻ hơn và ổn định hơn</b> Internet khi truyền khối lượng lớn; <b>Site-to-Site VPN</b> hợp cho văn phòng nhỏ, đối tác.</li>
+        <li><b>Tránh vượt biên Region</b>: multi-Region phải là quyết định có cân nhắc vì inter-Region transfer luôn tốn tiền.</li>
+        <li><b>Caching</b> (ElastiCache, DAX, API Gateway cache) và <b>nén dữ liệu</b> để giảm lượng truyền; <b>Snow Family</b> để chuyển petabyte offline.</li>
+        <li><b>Đo lường</b>: VPC Flow Logs + CloudWatch để biết luồng lớn nhất; Cost Explorer / CUR (usage type data transfer) để biết tiền đi đâu.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>EC2 in private subnets download large amounts of data from S3; NAT gateway charges are high</i>” ⇒ <b>S3 gateway VPC endpoint</b> (miễn phí).</li>
+          <li>“<i>High cross-AZ data transfer charges between application tier and NAT gateway</i>” ⇒ <b>một NAT gateway mỗi AZ</b> và route table theo AZ.</li>
+          <li>“<i>Reduce data transfer out cost for global users downloading static content</i>” ⇒ <b>CloudFront</b> trước S3/ALB.</li>
+          <li>“<i>Batch jobs exchange lots of data between instances; minimize cost</i>” ⇒ đặt chúng <b>cùng AZ</b> (vd cluster placement group) – chấp nhận đánh đổi availability.</li>
+          <li>“<i>Large, consistent data transfer from on-premises; reduce network cost</i>” ⇒ <b>Direct Connect</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: CHỌN CÔNG CỤ ===================== -->
+      <h2 id="chon-cong-cu"><img src="../assets/icons/svc/Savings-Plans.svg" alt="">Chọn đúng công cụ: bảng tra nhanh</h2>
+      <p class="lead">Nhiều câu hỏi chỉ khác nhau vài chữ (“<i>visualize</i>” vs “<i>alert</i>” vs “<i>most granular</i>” vs “<i>recommend instance type</i>”). Bảng dưới gom các tình huống thường gặp.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhu cầu trong đề</th><th>Công cụ</th><th>Không phải</th></tr></thead>
+        <tbody>
+          <tr><td>Xem xu hướng, group by service/tag, dự báo 18 tháng</td><td><b>Cost Explorer</b></td><td>Budgets (không phân tích sâu), CUR (không có UI)</td></tr>
+          <tr><td>Cảnh báo khi vượt / dự báo vượt ngưỡng, kể cả RI/SP utilization</td><td><b>AWS Budgets</b></td><td>Cost Explorer (không gửi cảnh báo ngưỡng)</td></tr>
+          <tr><td>Tự động áp IAM/SCP hoặc stop EC2/RDS khi vượt</td><td><b>Budget actions</b></td><td>Lambda tự viết (nhiều công vận hành hơn)</td></tr>
+          <tr><td>Phát hiện chi tiêu bất thường bằng ML, không đặt ngưỡng</td><td><b>Cost Anomaly Detection</b></td><td>Budgets (ngưỡng tĩnh)</td></tr>
+          <tr><td>Dữ liệu chi tiết nhất, theo giờ/resource, truy vấn SQL, BI</td><td><b>CUR 2.0 / Data Exports</b> + Athena/QuickSight</td><td>Cost Explorer (giới hạn 14 ngày resource-level)</td></tr>
+          <tr><td>Phân bổ chi phí theo team/dự án</td><td><b>Cost allocation tags</b> (activate) + <b>Cost Categories</b></td><td>Resource Groups (không phải công cụ billing)</td></tr>
+          <tr><td>Khuyến nghị loại/kích cỡ EC2, Lambda memory, EBS type</td><td><b>Compute Optimizer</b></td><td>Trusted Advisor (rộng nhưng nông)</td></tr>
+          <tr><td>Gom mọi khuyến nghị tiết kiệm, khử trùng lặp, đa account/Region</td><td><b>Cost Optimization Hub</b></td><td>—</td></tr>
+          <tr><td>Tìm EIP không gắn, EBS không gắn, LB/RDS idle, RI sắp hết hạn</td><td><b>Trusted Advisor</b> (cost checks)</td><td>—</td></tr>
+          <tr><td>Nên cam kết bao nhiêu Savings Plans/RI</td><td><b>Cost Explorer recommendations</b> (Bài 9)</td><td>Compute Optimizer (rightsizing, không phải mua cam kết)</td></tr>
+          <tr><td>Ước tính chi phí kiến trúc <b>trước khi</b> triển khai</td><td><b>AWS Pricing Calculator</b> (kiến thức phổ biến)</td><td>Cost Explorer (chỉ dữ liệu đã/đang phát sinh)</td></tr>
+        </tbody>
+      </table></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điểm phải nhớ</span>
+        <ul>
+          <li><b>Cost Optimization pillar</b>: 5 design principles (cloud financial management, consumption model – dev/test tắt ngoài giờ tiết kiệm ~75%, measure efficiency, stop undifferentiated heavy lifting, analyze &amp; attribute expenditure); 5 practice areas.</li>
+          <li><b>Cost allocation tags</b>: user-defined (<code>user:</code>) và AWS-generated (<code>aws:createdBy</code>); phải <b>activate</b> ở <b>management account</b>; tới 24 giờ để hiện; không áp ngược; tối đa 500 active key. <b>Cost Categories</b>: rule theo account/tag/service…, inherited value, split charges, hiệu lực từ đầu tháng.</li>
+          <li><b>Cost Explorer</b>: 13 tháng lịch sử (38 tháng nếu bật), dự báo 18 tháng, refresh ≥ 1 lần/24 giờ, hourly/resource-level 14 ngày, UI miễn phí, API $0.01/request, không tắt được; báo cáo RI/SP utilization &amp; coverage + recommendations.</li>
+          <li><b>Budgets</b>: cost, usage, RI/SP utilization &amp; coverage; actual vs forecasted (cần ~5 tuần dữ liệu); 10 email + 1 SNS/alert; cập nhật tới 3 lần/ngày; <b>actions</b>: IAM policy, SCP, stop EC2/RDS (cùng account), tự động hoặc duyệt tay; 2 action-enabled budget miễn phí, sau đó $0.10/ngày.</li>
+          <li><b>Cost Anomaly Detection</b>: ML, monitor theo service/account/tag/cost category, root cause theo service/account/Region/usage type, ~3 lần/ngày, dịch vụ mới cần 10 ngày dữ liệu.</li>
+          <li><b>CUR / Data Exports (CUR 2.0, FOCUS)</b>: dữ liệu chi tiết nhất vào S3, cập nhật ≥ 1 lần/ngày, cộng dồn trong tháng; Athena, Redshift, QuickSight.</li>
+          <li><b>Compute Optimizer</b>: opt in (có thể cả organization), 14 ngày (93 ngày với enhanced infrastructure metrics), ≥ 30 giờ metric, memory cần CloudWatch agent; Under/Over-provisioned/Optimized; Graviton; Lambda ≤ 1.792 MB &amp; ≥ 50 invoke. <b>Cost Optimization Hub</b> gom và khử trùng lặp khuyến nghị.</li>
+          <li><b>Trusted Advisor cost checks</b>: EC2 CPU ≤ 10% &amp; network ≤ 5 MB trong 4/14 ngày, EBS không gắn, EIP không gắn, LB idle, RDS không kết nối 7 ngày, NAT/endpoint 0 byte 30 ngày, RI hết hạn.</li>
+          <li><b>Data transfer</b>: inbound và cùng AZ miễn phí; cross-AZ, cross-Region, Internet out, NAT/GB có phí; gateway endpoint S3/DynamoDB miễn phí; NAT gateway mỗi AZ; CloudFront giảm data out; Direct Connect inbound $0.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Cloud Financial Management (CFM)</dt><dd><b>Quản lý tài chính đám mây</b> – năng lực tổ chức để chi tiêu cloud hiệu quả (FinOps).</dd></div>
+        <div><dt>Consumption model</dt><dd><b>Mô hình trả theo mức dùng</b> – chỉ trả cho tài nguyên thực sự dùng.</dd></div>
+        <div><dt>Cost allocation tag</dt><dd><b>Thẻ phân bổ chi phí</b> – tag đã activate để nhóm chi phí trong báo cáo billing.</dd></div>
+        <div><dt>User-defined tag / AWS-generated tag</dt><dd><b>Tag do người dùng định nghĩa</b> (<code>user:</code>) / <b>tag do AWS tạo</b> (<code>aws:</code>, vd <code>aws:createdBy</code>).</dd></div>
+        <div><dt>Tag activation</dt><dd><b>Kích hoạt tag</b> trong Billing console (management account) để tag xuất hiện trong dữ liệu chi phí.</dd></div>
+        <div><dt>AWS Cost Categories</dt><dd><b>Danh mục chi phí</b> – rule ánh xạ chi phí vào cơ cấu tổ chức.</dd></div>
+        <div><dt>Split charges</dt><dd><b>Chia chi phí dùng chung</b> cho các giá trị cost category.</dd></div>
+        <div><dt>Chargeback / Showback</dt><dd><b>Tính lại chi phí cho bộ phận</b> / <b>hiển thị chi phí cho bộ phận</b> (kiến thức FinOps phổ biến).</dd></div>
+        <div><dt>AWS Cost Explorer</dt><dd><b>Công cụ khám phá chi phí</b> – phân tích, dự báo, khuyến nghị RI/SP.</dd></div>
+        <div><dt>Unblended / Amortized cost</dt><dd><b>Chi phí chưa phân bổ</b> (tính lúc phát sinh) / <b>chi phí phân bổ đều</b> phí trả trước của RI, SP theo thời gian.</dd></div>
+        <div><dt>Utilization / Coverage (RI, SP)</dt><dd><b>Mức sử dụng cam kết</b> / <b>độ phủ của cam kết</b> trên usage đủ điều kiện.</dd></div>
+        <div><dt>AWS Budgets</dt><dd><b>Ngân sách AWS</b> – ngưỡng chi phí/usage/RI/SP với cảnh báo và hành động.</dd></div>
+        <div><dt>Actual / Forecasted alert</dt><dd><b>Cảnh báo theo chi phí thực tế / theo dự báo</b>.</dd></div>
+        <div><dt>Budget action</dt><dd><b>Hành động ngân sách</b> – áp IAM policy, SCP, hoặc stop EC2/RDS khi vượt ngưỡng.</dd></div>
+        <div><dt>AWS Cost Anomaly Detection</dt><dd><b>Phát hiện chi phí bất thường</b> bằng machine learning, có root cause analysis.</dd></div>
+        <div><dt>AWS Cost and Usage Report (CUR)</dt><dd><b>Báo cáo chi phí và mức sử dụng</b> – dữ liệu billing chi tiết nhất giao vào S3.</dd></div>
+        <div><dt>AWS Data Exports / CUR 2.0 / FOCUS</dt><dd><b>Xuất dữ liệu billing</b> bằng SQL / <b>CUR thế hệ 2</b> / <b>chuẩn mở dữ liệu chi phí FinOps</b>.</dd></div>
+        <div><dt>AWS Compute Optimizer</dt><dd><b>Bộ tối ưu tài nguyên tính toán</b> – khuyến nghị rightsizing bằng ML.</dd></div>
+        <div><dt>Under-provisioned / Over-provisioned / Optimized</dt><dd><b>Thiếu tài nguyên / Thừa tài nguyên / Đã tối ưu</b> – phân loại finding.</dd></div>
+        <div><dt>Enhanced infrastructure metrics</dt><dd><b>Metrics hạ tầng nâng cao</b> – kéo lookback lên 93 ngày (trả phí).</dd></div>
+        <div><dt>Lookback period</dt><dd><b>Khoảng thời gian nhìn lại</b> để phân tích metrics.</dd></div>
+        <div><dt>Performance risk / Migration effort</dt><dd><b>Rủi ro hiệu năng</b> của khuyến nghị / <b>công sức chuyển đổi</b> (vd sang Graviton).</dd></div>
+        <div><dt>Cost Optimization Hub</dt><dd><b>Trung tâm tối ưu chi phí</b> – gom, khử trùng lặp, ưu tiên khuyến nghị đa account/Region.</dd></div>
+        <div><dt>Idle resource</dt><dd><b>Tài nguyên nhàn rỗi</b> – đang tính tiền nhưng gần như không dùng.</dd></div>
+        <div><dt>Data transfer cost</dt><dd><b>Chi phí truyền dữ liệu</b> – inbound, cross-AZ, cross-Region, Internet out.</dd></div>
+        <div><dt>Data transfer modeling</dt><dd><b>Mô hình hóa luồng truyền dữ liệu</b> để ước tính và giảm chi phí.</dd></div>
+        <div><dt>NAT gateway data processing charge</dt><dd><b>Phí xử lý dữ liệu của NAT gateway</b> – tính theo mỗi GB đi qua.</dd></div>
+        <div><dt>AWS Pricing Calculator</dt><dd><b>Công cụ ước tính giá</b> trước khi triển khai.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="cau-hoi">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company uses AWS Organizations with consolidated billing. The development teams applied a <code>CostCenter</code> tag to all of their Amazon EC2 instances and Amazon RDS databases two days ago. The finance team reports that the <code>CostCenter</code> tag does not appear as an option when they try to group costs in AWS Cost Explorer. What should a solutions architect do to resolve this issue?</div>
+          <ol class="opts">
+            <li data-k="A">Enable AWS Config in all member accounts to record the tags on the resources.</li>
+            <li data-k="B">Ask each member account administrator to activate the tag in the Cost Explorer console of the member account.</li>
+            <li data-k="C">Activate the <code>CostCenter</code> tag as a user-defined cost allocation tag in the Billing and Cost Management console of the management account.</li>
+            <li data-k="D">Create an AWS Budgets cost budget that filters on the <code>CostCenter</code> tag.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Gắn tag lên resource chưa đủ: tag phải được <b>activate</b> làm <b>cost allocation tag</b> trong Billing and Cost Management console, và chỉ <b>management account</b> (hoặc account đứng riêng) truy cập được trình quản lý cost allocation tags. Sau khi activate, có thể mất tới 24 giờ để tag xuất hiện. <b>A sai</b>: AWS Config ghi lại cấu hình, không đưa tag vào dữ liệu billing. <b>B sai</b>: member account không activate được cost allocation tag. <b>D sai</b>: budget chỉ lọc được theo tag đã activate; tạo budget không làm tag xuất hiện trong Cost Explorer.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng AWS Organizations với consolidated billing. Các đội phát triển đã gắn tag <code>CostCenter</code> lên tất cả Amazon EC2 instance và cơ sở dữ liệu Amazon RDS của họ từ hai ngày trước. Đội tài chính báo rằng tag <code>CostCenter</code> không xuất hiện như một lựa chọn khi họ cố nhóm chi phí trong AWS Cost Explorer. Solutions architect nên làm gì để giải quyết vấn đề này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật AWS Config ở tất cả member account để ghi lại tag trên các tài nguyên.</span><span class="why">Sai: AWS Config ghi lại cấu hình tài nguyên, không đưa tag vào dữ liệu billing nên Cost Explorer vẫn không thấy tag.</span></li>
+              <li data-k="B"><span class="tv">Yêu cầu quản trị viên của từng member account activate tag trong console Cost Explorer của member account.</span><span class="why">Sai: Trong Organizations, member account không thể activate cost allocation tag – chỉ management account làm được.</span></li>
+              <li data-k="C"><span class="tv">Activate tag <code>CostCenter</code> làm user-defined cost allocation tag trong Billing and Cost Management console của management account.</span><span class="why">Đúng: Tag phải được activate làm cost allocation tag từ management account thì mới xuất hiện trong dữ liệu chi phí (có thể mất tới 24 giờ sau khi activate).</span></li>
+              <li data-k="D"><span class="tv">Tạo một AWS Budgets cost budget lọc theo tag <code>CostCenter</code>.</span><span class="why">Sai: Budget chỉ lọc được theo tag đã activate; tạo budget không làm tag xuất hiện trong Cost Explorer.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company gives its developers a sandbox AWS account in AWS Organizations. The company wants to automatically prevent the developers from launching any additional Amazon EC2 instances when the forecasted monthly spend of the sandbox account exceeds $2,000. The solution must require the LEAST operational overhead. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create an AWS Budgets cost budget for the sandbox account with a forecasted threshold and configure a budget action that automatically applies an SCP that denies <code>ec2:RunInstances</code> to the account.</li>
+            <li data-k="B">Create an Amazon CloudWatch billing alarm and an AWS Lambda function that deletes the developers' IAM users when the alarm fires.</li>
+            <li data-k="C">Use AWS Cost Explorer to review the forecast every day and manually remove permissions when needed.</li>
+            <li data-k="D">Enable AWS Cost Anomaly Detection for the sandbox account and subscribe the developers to the alerts.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Budget action</b> có thể chạy tự động khi chạm ngưỡng (kể cả ngưỡng <b>forecasted</b>) và áp <b>SCP</b> lên account từ management account – không cần viết code. <b>B sai</b>: cần tự viết Lambda (nhiều công vận hành), billing alarm không có dự báo, và xóa IAM user là quá tay. <b>C sai</b>: thủ công. <b>D sai</b>: Anomaly Detection chỉ cảnh báo chi tiêu bất thường, không chặn và không dựa trên ngưỡng $2,000.</div>
+          <div class="trans">
+            <div class="tq">Một công ty cấp cho các developer một AWS account sandbox trong AWS Organizations. Công ty muốn tự động ngăn developer khởi chạy thêm bất kỳ Amazon EC2 instance nào khi chi tiêu hằng tháng dự báo (forecasted) của account sandbox vượt quá $2,000. Giải pháp phải có LEAST operational overhead (ít gánh nặng vận hành nhất). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một AWS Budgets cost budget cho account sandbox với ngưỡng forecasted và cấu hình budget action tự động áp một SCP từ chối <code>ec2:RunInstances</code> cho account đó.</span><span class="why">Đúng: Budget action chạy tự động khi chạm ngưỡng forecasted và áp SCP lên account từ management account, không cần viết code – ít vận hành nhất.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Amazon CloudWatch billing alarm và một AWS Lambda function xóa các IAM user của developer khi alarm kích hoạt.</span><span class="why">Sai: Phải tự viết và bảo trì Lambda, billing alarm không dựa trên dự báo, và xóa IAM user là biện pháp quá tay.</span></li>
+              <li data-k="C"><span class="tv">Dùng AWS Cost Explorer để xem dự báo mỗi ngày và gỡ quyền thủ công khi cần.</span><span class="why">Sai: Làm thủ công hằng ngày, không tự động và tốn công vận hành.</span></li>
+              <li data-k="D"><span class="tv">Bật AWS Cost Anomaly Detection cho account sandbox và đăng ký cho developer nhận cảnh báo.</span><span class="why">Sai: Anomaly Detection chỉ cảnh báo chi tiêu bất thường, không chặn việc khởi chạy instance và không dựa trên ngưỡng $2,000.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A finance team needs to analyze AWS costs at the most granular level, including hourly line items for each resource ID, tags, and Savings Plans charges for all accounts in an organization. Analysts want to run custom SQL queries on the data and keep it for several years. Which solution meets these requirements MOST cost-effectively?</div>
+          <ol class="opts">
+            <li data-k="A">Enable hourly and resource-level data in AWS Cost Explorer and download CSV files each month.</li>
+            <li data-k="B">Use AWS Trusted Advisor reports and export them to Amazon S3.</li>
+            <li data-k="C">Create an AWS Budgets report that is emailed to the finance team every day.</li>
+            <li data-k="D">Create a CUR 2.0 export in AWS Data Exports that delivers to an Amazon S3 bucket, and query the data with Amazon Athena.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>CUR / Data Exports</b> chứa dữ liệu chi phí <b>chi tiết nhất</b> (giờ, resource ID, tag, cột Savings Plans), giao vào <b>S3 của bạn</b> nên giữ bao lâu cũng được, và <b>Athena</b> truy vấn SQL trực tiếp trên S3 theo mức dùng. <b>A sai</b>: dữ liệu hourly/resource-level của Cost Explorer chỉ cho <b>14 ngày</b> gần nhất, tải CSV thủ công. <b>B sai</b>: Trusted Advisor đưa khuyến nghị, không phải dữ liệu billing. <b>C sai</b>: Budget report chỉ tóm tắt tình trạng budget.</div>
+          <div class="trans">
+            <div class="tq">Một đội tài chính cần phân tích chi phí AWS ở mức chi tiết nhất, bao gồm các line item theo giờ cho từng resource ID, tag, và các khoản phí Savings Plans cho tất cả account trong một organization. Các nhà phân tích muốn chạy truy vấn SQL tùy chỉnh trên dữ liệu và lưu giữ trong vài năm. Giải pháp nào đáp ứng các yêu cầu này MOST cost-effectively (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật dữ liệu hourly và resource-level trong AWS Cost Explorer và tải file CSV về mỗi tháng.</span><span class="why">Sai: Dữ liệu hourly/resource-level của Cost Explorer chỉ có cho 14 ngày gần nhất, không hỗ trợ SQL và phải tải CSV thủ công.</span></li>
+              <li data-k="B"><span class="tv">Dùng báo cáo AWS Trusted Advisor và export sang Amazon S3.</span><span class="why">Sai: Trusted Advisor đưa ra khuyến nghị tối ưu, không chứa dữ liệu billing chi tiết theo giờ/resource.</span></li>
+              <li data-k="C"><span class="tv">Tạo một AWS Budgets report được gửi email cho đội tài chính mỗi ngày.</span><span class="why">Sai: Budget report chỉ tóm tắt tình trạng budget, không có line item chi tiết và không truy vấn SQL được.</span></li>
+              <li data-k="D"><span class="tv">Tạo một CUR 2.0 export trong AWS Data Exports giao dữ liệu vào một Amazon S3 bucket, và truy vấn dữ liệu bằng Amazon Athena.</span><span class="why">Đúng: CUR là dữ liệu chi phí chi tiết nhất (giờ, resource ID, tag, Savings Plans), lưu trong S3 của bạn bao lâu cũng được, và Athena truy vấn SQL trực tiếp, trả tiền theo mức dùng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company opted in to AWS Compute Optimizer. The operations team notices that the EC2 recommendations are based only on CPU and network metrics, and several memory-intensive instances were recommended for downsizing. The team wants the recommendations to account for memory utilization. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Enable detailed monitoring on the EC2 instances.</li>
+            <li data-k="B">Install and configure the unified Amazon CloudWatch agent on the instances to publish memory utilization metrics.</li>
+            <li data-k="C">Activate enhanced infrastructure metrics in Compute Optimizer.</li>
+            <li data-k="D">Enable AWS Trusted Advisor low utilization EC2 instance checks.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> EC2 không gửi metric memory mặc định; tài liệu Compute Optimizer ghi rõ memory utilization <b>chỉ được phân tích khi cài unified CloudWatch agent</b>. <b>A sai</b>: detailed monitoring chỉ tăng tần suất metric (1 phút), không thêm metric memory. <b>C sai</b>: enhanced infrastructure metrics kéo dài lookback lên 93 ngày, không tạo ra metric memory. <b>D sai</b>: Trusted Advisor dựa trên CPU và network, không giải quyết vấn đề.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đã opt in AWS Compute Optimizer. Đội vận hành nhận thấy các khuyến nghị EC2 chỉ dựa trên metric CPU và mạng, và một số instance dùng nhiều bộ nhớ bị khuyến nghị giảm kích thước. Đội muốn khuyến nghị có tính đến mức sử dụng bộ nhớ. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật detailed monitoring trên các EC2 instance.</span><span class="why">Sai: Detailed monitoring chỉ tăng tần suất metric lên 1 phút, không thêm metric bộ nhớ.</span></li>
+              <li data-k="B"><span class="tv">Cài đặt và cấu hình unified Amazon CloudWatch agent trên các instance để gửi metric mức sử dụng bộ nhớ.</span><span class="why">Đúng: EC2 không gửi metric memory mặc định; Compute Optimizer chỉ phân tích memory utilization khi có unified CloudWatch agent gửi metric này.</span></li>
+              <li data-k="C"><span class="tv">Kích hoạt enhanced infrastructure metrics trong Compute Optimizer.</span><span class="why">Sai: Enhanced infrastructure metrics chỉ kéo dài lookback lên 93 ngày, không tạo ra metric bộ nhớ.</span></li>
+              <li data-k="D"><span class="tv">Bật các check low utilization EC2 instance của AWS Trusted Advisor.</span><span class="why">Sai: Trusted Advisor cũng dựa trên CPU và mạng, không bổ sung dữ liệu bộ nhớ cho khuyến nghị.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company runs a fleet of Amazon EC2 instances in private subnets across two Availability Zones. The instances download several terabytes of data from Amazon S3 in the same Region every day and also call third-party APIs on the internet. All outbound traffic goes through a single NAT gateway in the first Availability Zone. The NAT gateway and data transfer charges are high. Which TWO actions will reduce costs the MOST? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Create a gateway VPC endpoint for Amazon S3 and add it to the private subnets' route tables.</li>
+            <li data-k="B">Create an interface VPC endpoint for each third-party API.</li>
+            <li data-k="C">Replace the NAT gateway with an internet gateway attached to the private subnets' route tables.</li>
+            <li data-k="D">Deploy a NAT gateway in the second Availability Zone and route each private subnet to the NAT gateway in its own Availability Zone.</li>
+            <li data-k="E">Enable S3 Transfer Acceleration on the bucket.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> <b>Gateway endpoint cho S3</b> không có phí giờ và không phí data transfer trong cùng Region ⇒ luồng S3 hàng TB không còn đi qua NAT (bỏ phí xử lý mỗi GB). <b>NAT gateway mỗi AZ</b> loại bỏ phí <b>cross-AZ</b> từ instance ở AZ thứ hai tới NAT ở AZ đầu (đúng khuyến nghị COST08). <b>B sai</b>: API bên thứ ba trên Internet không phải dịch vụ PrivateLink; interface endpoint còn có phí giờ. <b>C sai</b>: subnet có route tới internet gateway thành public subnet, instance không có public IP thì không ra Internet được và vi phạm thiết kế bảo mật. <b>E sai</b>: Transfer Acceleration tăng tốc upload đường dài qua edge và có <b>thêm phí</b>.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một nhóm Amazon EC2 instance trong các private subnet trải trên hai Availability Zone. Mỗi ngày các instance tải vài terabyte dữ liệu từ Amazon S3 trong cùng Region và cũng gọi các API của bên thứ ba trên Internet. Toàn bộ traffic đi ra đều qua một NAT gateway duy nhất ở Availability Zone thứ nhất. Chi phí NAT gateway và data transfer đang cao. HAI hành động nào sẽ giảm chi phí NHIỀU NHẤT (MOST)? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một gateway VPC endpoint cho Amazon S3 và thêm vào route table của các private subnet.</span><span class="why">Đúng: Gateway endpoint cho S3 không có phí giờ hay phí data transfer trong cùng Region, nên luồng S3 hàng TB không còn chịu phí xử lý mỗi GB của NAT gateway.</span></li>
+              <li data-k="B"><span class="tv">Tạo một interface VPC endpoint cho mỗi API của bên thứ ba.</span><span class="why">Sai: API bên thứ ba trên Internet không phải dịch vụ PrivateLink, và interface endpoint còn có phí theo giờ.</span></li>
+              <li data-k="C"><span class="tv">Thay NAT gateway bằng một internet gateway gắn vào route table của các private subnet.</span><span class="why">Sai: Subnet route tới internet gateway sẽ thành public subnet; instance không có public IP thì không ra Internet được, lại vi phạm thiết kế bảo mật.</span></li>
+              <li data-k="D"><span class="tv">Triển khai một NAT gateway ở Availability Zone thứ hai và định tuyến mỗi private subnet tới NAT gateway trong chính Availability Zone của nó.</span><span class="why">Đúng: NAT gateway mỗi AZ loại bỏ phí data transfer cross-AZ từ instance ở AZ thứ hai sang NAT ở AZ thứ nhất (đồng thời tăng tính sẵn sàng).</span></li>
+              <li data-k="E"><span class="tv">Bật S3 Transfer Acceleration trên bucket.</span><span class="why">Sai: Transfer Acceleration tăng tốc truyền đường dài qua edge location và tính thêm phí, không giảm chi phí NAT.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company's AWS spending varies by day of the week and grows steadily each month. Last month, a misconfigured AWS Glue job ran continuously and the cost was only noticed when the invoice arrived. The company wants to be alerted about unusual spending patterns as soon as possible and wants to see the root cause by service, account, Region, and usage type. The company does not want to maintain static thresholds. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create an AWS Budgets cost budget for each service with actual-cost alerts.</li>
+            <li data-k="B">Create a CloudWatch billing alarm on the EstimatedCharges metric.</li>
+            <li data-k="C">Configure AWS Cost Anomaly Detection with an AWS services monitor and an alert subscription that sends notifications to an Amazon SNS topic.</li>
+            <li data-k="D">Run a daily Amazon Athena query on the Cost and Usage Report and compare it with the previous day.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Cost Anomaly Detection</b> dùng <b>machine learning</b>, tính đến mùa vụ theo tuần/tháng và tăng trưởng tự nhiên (không cần ngưỡng tĩnh), chạy khoảng 3 lần/ngày và cung cấp <b>root cause</b> theo service, account, Region, usage type; gửi cảnh báo qua email/SNS. <b>A sai</b> và <b>B sai</b>: đều là ngưỡng tĩnh, không có root cause analysis. <b>D sai</b>: phải tự xây logic so sánh, nhiều công vận hành và không có ML.</div>
+          <div class="trans">
+            <div class="tq">Chi tiêu AWS của một công ty thay đổi theo ngày trong tuần và tăng đều mỗi tháng. Tháng trước, một AWS Glue job bị cấu hình sai đã chạy liên tục và chi phí chỉ bị phát hiện khi hóa đơn đến. Công ty muốn được cảnh báo về các mẫu chi tiêu bất thường càng sớm càng tốt và muốn xem nguyên nhân gốc theo service, account, Region và usage type. Công ty không muốn duy trì các ngưỡng tĩnh. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một AWS Budgets cost budget cho mỗi service với cảnh báo theo chi phí thực tế.</span><span class="why">Sai: Budget dùng ngưỡng tĩnh (trái yêu cầu) và không cung cấp phân tích nguyên nhân gốc.</span></li>
+              <li data-k="B"><span class="tv">Tạo một CloudWatch billing alarm trên metric EstimatedCharges.</span><span class="why">Sai: Billing alarm cũng là ngưỡng tĩnh, không tính đến mùa vụ và không có root cause theo service/account/Region.</span></li>
+              <li data-k="C"><span class="tv">Cấu hình AWS Cost Anomaly Detection với một AWS services monitor và một alert subscription gửi thông báo tới Amazon SNS topic.</span><span class="why">Đúng: Cost Anomaly Detection dùng machine learning, tự tính đến mùa vụ và tăng trưởng (không cần ngưỡng tĩnh), cung cấp root cause theo service, account, Region, usage type và cảnh báo qua SNS.</span></li>
+              <li data-k="D"><span class="tv">Chạy một truy vấn Amazon Athena hằng ngày trên Cost and Usage Report và so sánh với ngày hôm trước.</span><span class="why">Sai: Phải tự xây và duy trì logic so sánh, tốn công vận hành và không có ML để xử lý biến động theo tuần.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company with an AWS Business Support+ plan wants a quick way to find wasted spend in its account, such as Elastic IP addresses that are not associated with running instances, unattached Amazon EBS volumes, idle load balancers, and Reserved Instances that are about to expire. Which AWS service provides these checks with the LEAST effort?</div>
+          <ol class="opts">
+            <li data-k="A">AWS Compute Optimizer</li>
+            <li data-k="B">AWS Trusted Advisor</li>
+            <li data-k="C">AWS Cost Explorer</li>
+            <li data-k="D">AWS Config with custom rules written in AWS Lambda</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Nhóm <b>cost optimization</b> của <b>Trusted Advisor</b> có sẵn các check: <i>Unassociated Elastic IP addresses</i>, <i>Underutilized EBS volumes</i> (không gắn hoặc &lt; 1 IOPS/ngày trong 7 ngày), <i>Idle load balancers</i>, <i>EC2 Reserved Instance lease expiration</i>. Business Support+ có quyền truy cập đầy đủ check. <b>A sai</b>: Compute Optimizer tập trung rightsizing/idle dựa trên metrics, không kiểm EIP hay RI hết hạn. <b>C sai</b>: Cost Explorer phân tích chi phí, không quét tài nguyên bỏ quên. <b>D sai</b>: phải tự viết rule – nhiều công.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có gói AWS Business Support+ muốn một cách nhanh để tìm chi tiêu lãng phí trong account, chẳng hạn các địa chỉ Elastic IP không gắn với instance đang chạy, các Amazon EBS volume không được gắn, các load balancer nhàn rỗi, và các Reserved Instance sắp hết hạn. Dịch vụ AWS nào cung cấp các kiểm tra này với LEAST effort (ít công sức nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">AWS Compute Optimizer</span><span class="why">Sai: Compute Optimizer tập trung vào rightsizing/tài nguyên idle dựa trên metric, không kiểm tra Elastic IP chưa gắn hay RI sắp hết hạn.</span></li>
+              <li data-k="B"><span class="tv">AWS Trusted Advisor</span><span class="why">Đúng: Nhóm cost optimization của Trusted Advisor có sẵn các check Unassociated Elastic IP, Underutilized EBS volumes, Idle load balancers và RI lease expiration; Business Support+ có đầy đủ check.</span></li>
+              <li data-k="C"><span class="tv">AWS Cost Explorer</span><span class="why">Sai: Cost Explorer phân tích và trực quan hóa chi phí, không quét tìm tài nguyên bị bỏ quên.</span></li>
+              <li data-k="D"><span class="tv">AWS Config với các custom rule viết bằng AWS Lambda</span><span class="why">Sai: Phải tự viết và bảo trì rule cho từng loại kiểm tra – nhiều công sức hơn hẳn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company runs an analytics workload on Amazon EC2 instances that has a heavy processing peak only at the end of each quarter. The company wants rightsizing recommendations that take these quarterly peaks into account so that instances are not downsized incorrectly. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Use the default AWS Compute Optimizer recommendations, which analyze the last 14 days of metrics.</li>
+            <li data-k="B">Use AWS Trusted Advisor low utilization EC2 instance checks.</li>
+            <li data-k="C">Use AWS Cost Explorer Savings Plans purchase recommendations.</li>
+            <li data-k="D">Activate the enhanced infrastructure metrics feature in AWS Compute Optimizer to extend the lookback period to 93 days.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Enhanced infrastructure metrics</b> (tính năng trả phí) kéo lookback từ 14 ngày lên <b>93 ngày</b> – đủ bao trùm một quý nên đỉnh cuối quý được tính đến. <b>A sai</b>: 14 ngày có thể bỏ lỡ đỉnh cuối quý ⇒ khuyến nghị downsize sai. <b>B sai</b>: Trusted Advisor chỉ nhìn 14 ngày và chỉ đánh dấu instance dùng thấp. <b>C sai</b>: Savings Plans recommendations là về mức cam kết, không phải chọn kích cỡ instance.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy workload phân tích trên các Amazon EC2 instance, chỉ có đỉnh xử lý nặng vào cuối mỗi quý. Công ty muốn khuyến nghị rightsizing có tính đến các đỉnh hằng quý này để instance không bị giảm kích thước sai. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng khuyến nghị mặc định của AWS Compute Optimizer, vốn phân tích metric của 14 ngày gần nhất.</span><span class="why">Sai: 14 ngày có thể không bao gồm đỉnh cuối quý, dẫn tới khuyến nghị downsize sai.</span></li>
+              <li data-k="B"><span class="tv">Dùng các check low utilization EC2 instance của AWS Trusted Advisor.</span><span class="why">Sai: Trusted Advisor cũng chỉ nhìn 14 ngày và chỉ đánh dấu instance dùng thấp, không tính đỉnh theo quý.</span></li>
+              <li data-k="C"><span class="tv">Dùng khuyến nghị mua Savings Plans của AWS Cost Explorer.</span><span class="why">Sai: Khuyến nghị Savings Plans là về mức cam kết chi tiêu, không phải chọn kích cỡ instance.</span></li>
+              <li data-k="D"><span class="tv">Kích hoạt tính năng enhanced infrastructure metrics trong AWS Compute Optimizer để kéo dài khoảng thời gian phân tích (lookback) lên 93 ngày.</span><span class="why">Đúng: Lookback 93 ngày bao trùm cả một quý nên đỉnh cuối quý được tính vào khuyến nghị rightsizing.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company has 40 AWS accounts in AWS Organizations, including a shared networking account that hosts a Transit Gateway and NAT gateways used by all business units. Resources in the workload accounts are tagged with a <code>BusinessUnit</code> tag. The CFO wants monthly cost reports grouped by business unit, with the shared networking costs distributed proportionally to each business unit. Which TWO actions should the solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Create an AWS Budgets usage budget for each business unit.</li>
+            <li data-k="B">Create an AWS Cost Categories definition for business units that uses rules based on accounts and the <code>BusinessUnit</code> tag, and configure split charges for the shared networking account.</li>
+            <li data-k="C">Enable AWS Trusted Advisor in each account and export the cost optimization checks.</li>
+            <li data-k="D">Use AWS CloudTrail to log all API calls and calculate costs from the logs.</li>
+            <li data-k="E">Activate <code>BusinessUnit</code> as a cost allocation tag in the management account.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Tag phải được <b>activate</b> ở management account mới dùng được trong dữ liệu chi phí (E). <b>Cost Categories</b> nhóm chi phí theo account và tag thành các giá trị business unit, và <b>split charges</b> chia chi phí dùng chung (account mạng) cho các business unit theo tỉ lệ (B); kết quả hiện trong Cost Explorer và CUR. <b>A sai</b>: Budgets dùng để cảnh báo ngưỡng, không phân bổ chi phí. <b>C sai</b>: Trusted Advisor không phân bổ chi phí. <b>D sai</b>: CloudTrail ghi API, không chứa dữ liệu chi phí.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 40 AWS account trong AWS Organizations, bao gồm một account mạng dùng chung chứa Transit Gateway và các NAT gateway mà mọi đơn vị kinh doanh đều dùng. Tài nguyên trong các account workload được gắn tag <code>BusinessUnit</code>. CFO muốn báo cáo chi phí hằng tháng nhóm theo đơn vị kinh doanh, với chi phí mạng dùng chung được phân bổ theo tỉ lệ cho từng đơn vị. Solutions architect nên thực hiện HAI hành động nào? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một AWS Budgets usage budget cho mỗi đơn vị kinh doanh.</span><span class="why">Sai: Budgets dùng để cảnh báo khi chạm ngưỡng, không phân bổ chi phí dùng chung.</span></li>
+              <li data-k="B"><span class="tv">Tạo một định nghĩa AWS Cost Categories cho các đơn vị kinh doanh dùng rule dựa trên account và tag <code>BusinessUnit</code>, và cấu hình split charges cho account mạng dùng chung.</span><span class="why">Đúng: Cost Categories nhóm chi phí theo account và tag thành từng đơn vị kinh doanh, còn split charges chia chi phí account mạng cho các đơn vị theo tỉ lệ.</span></li>
+              <li data-k="C"><span class="tv">Bật AWS Trusted Advisor ở mỗi account và export các check cost optimization.</span><span class="why">Sai: Trusted Advisor đưa khuyến nghị tối ưu, không phân bổ chi phí theo đơn vị kinh doanh.</span></li>
+              <li data-k="D"><span class="tv">Dùng AWS CloudTrail để ghi log mọi API call và tính chi phí từ log.</span><span class="why">Sai: CloudTrail ghi lại API call, không chứa dữ liệu chi phí.</span></li>
+              <li data-k="E"><span class="tv">Activate <code>BusinessUnit</code> làm cost allocation tag trong management account.</span><span class="why">Đúng: Tag phải được activate ở management account thì mới dùng được trong dữ liệu chi phí và rule của Cost Categories.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A media company stores large video files in an Amazon S3 bucket in us-east-1. Millions of users around the world download the same popular files directly from the bucket. Data transfer out charges have become the largest item on the bill. The company wants to reduce data transfer costs and improve download performance. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create an Amazon CloudFront distribution with the S3 bucket as the origin and serve downloads through CloudFront.</li>
+            <li data-k="B">Enable S3 Transfer Acceleration on the bucket.</li>
+            <li data-k="C">Use S3 Cross-Region Replication to copy the files to buckets in five other Regions.</li>
+            <li data-k="D">Move the objects to the S3 Standard-Infrequent Access storage class.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>CloudFront</b> cache file phổ biến tại edge gần người dùng; truyền dữ liệu từ origin AWS (S3) tới CloudFront <b>miễn phí</b>, và CloudFront giảm lượng data out trực tiếp từ bucket, đồng thời tăng tốc tải – đúng khuyến nghị COST08-BP03. <b>B sai</b>: Transfer Acceleration tối ưu upload/download đường dài nhưng <b>tính thêm phí</b>, không cache. <b>C sai</b>: CRR thêm phí replication inter-Region và storage gấp nhiều lần. <b>D sai</b>: Standard-IA có <b>phí truy xuất</b> mỗi GB – càng tốn hơn với file được tải nhiều.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền thông lưu các file video lớn trong một Amazon S3 bucket ở us-east-1. Hàng triệu người dùng trên khắp thế giới tải cùng những file phổ biến trực tiếp từ bucket. Phí data transfer out đã trở thành khoản lớn nhất trên hóa đơn. Công ty muốn giảm chi phí truyền dữ liệu và cải thiện hiệu năng tải xuống. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Amazon CloudFront distribution với S3 bucket làm origin và phục vụ việc tải xuống qua CloudFront.</span><span class="why">Đúng: CloudFront cache file phổ biến tại edge gần người dùng; truyền từ S3 tới CloudFront miễn phí và giá data out của CloudFront thấp hơn, đồng thời tải nhanh hơn.</span></li>
+              <li data-k="B"><span class="tv">Bật S3 Transfer Acceleration trên bucket.</span><span class="why">Sai: Transfer Acceleration tối ưu truyền đường dài nhưng tính thêm phí và không cache, nên chi phí tăng chứ không giảm.</span></li>
+              <li data-k="C"><span class="tv">Dùng S3 Cross-Region Replication để copy file sang bucket ở năm Region khác.</span><span class="why">Sai: CRR thêm phí replication inter-Region và nhân storage lên nhiều lần, vẫn không có cache tại edge.</span></li>
+              <li data-k="D"><span class="tv">Chuyển các object sang storage class S3 Standard-Infrequent Access.</span><span class="why">Sai: Standard-IA tính phí truy xuất mỗi GB – càng tốn hơn với file được tải nhiều, và không giảm phí data out.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/cost-optimization-pillar/design-principles.html" target="_blank" rel="noopener">Cost Optimization Pillar – Design principles</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/cost-optimization-pillar/plan-for-data-transfer.html" target="_blank" rel="noopener">Cost Optimization Pillar – Plan for data transfer (COST08)</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/cost-optimization-pillar/cost_data_transfer_optimized_components.html" target="_blank" rel="noopener">COST08-BP02 Select components to optimize data transfer cost</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/cost-optimization-pillar/cost_data_transfer_implement_services.html" target="_blank" rel="noopener">COST08-BP03 Implement services to reduce data transfer costs</a></li>
+        <li><a href="https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/cost-alloc-tags.html" target="_blank" rel="noopener">Organizing and tracking costs using AWS cost allocation tags</a></li>
+        <li><a href="https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/custom-tags.html" target="_blank" rel="noopener">Using user-defined cost allocation tags</a></li>
+        <li><a href="https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/aws-tags.html" target="_blank" rel="noopener">Using AWS-generated tags (aws:createdBy)</a></li>
+        <li><a href="https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/manage-cost-categories.html" target="_blank" rel="noopener">Organizing costs using AWS Cost Categories</a></li>
+        <li><a href="https://docs.aws.amazon.com/cost-management/latest/userguide/ce-exploring-data.html" target="_blank" rel="noopener">Exploring your data using Cost Explorer</a></li>
+        <li><a href="https://docs.aws.amazon.com/cost-management/latest/userguide/ce-configuring-data.html" target="_blank" rel="noopener">Cost Explorer – Configuring multi-year and granular data</a></li>
+        <li><a href="https://docs.aws.amazon.com/cost-management/latest/userguide/ce-rightsizing.html" target="_blank" rel="noopener">Cost Explorer – Rightsizing recommendations</a></li>
+        <li><a href="https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-best-practices.html" target="_blank" rel="noopener">Best practices for AWS Budgets</a></li>
+        <li><a href="https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-controls.html" target="_blank" rel="noopener">Configuring budget actions</a></li>
+        <li><a href="https://aws.amazon.com/aws-cost-management/aws-budgets/pricing/" target="_blank" rel="noopener">AWS Budgets pricing</a></li>
+        <li><a href="https://docs.aws.amazon.com/cost-management/latest/userguide/manage-ad.html" target="_blank" rel="noopener">Detecting unusual spend with AWS Cost Anomaly Detection</a></li>
+        <li><a href="https://docs.aws.amazon.com/cur/latest/userguide/what-is-cur.html" target="_blank" rel="noopener">What are AWS Cost and Usage Reports?</a></li>
+        <li><a href="https://docs.aws.amazon.com/cur/latest/userguide/what-is-data-exports.html" target="_blank" rel="noopener">What is AWS Data Exports?</a></li>
+        <li><a href="https://docs.aws.amazon.com/compute-optimizer/latest/ug/view-ec2-recommendations.html" target="_blank" rel="noopener">Compute Optimizer – Viewing EC2 instance recommendations</a></li>
+        <li><a href="https://docs.aws.amazon.com/compute-optimizer/latest/ug/requirements.html" target="_blank" rel="noopener">Compute Optimizer – Resource requirements</a></li>
+        <li><a href="https://docs.aws.amazon.com/compute-optimizer/latest/ug/account-opt-in.html" target="_blank" rel="noopener">Opting in to AWS Compute Optimizer</a></li>
+        <li><a href="https://docs.aws.amazon.com/cost-management/latest/userguide/cost-optimization-hub.html" target="_blank" rel="noopener">Identifying opportunities with Cost Optimization Hub</a></li>
+        <li><a href="https://docs.aws.amazon.com/awssupport/latest/user/cost-optimization-checks.html" target="_blank" rel="noopener">AWS Trusted Advisor – Cost optimization checks</a></li>
+        <li><a href="https://aws.amazon.com/blogs/architecture/overview-of-data-transfer-costs-for-common-architectures/" target="_blank" rel="noopener">Overview of Data Transfer Costs for Common Architectures (AWS Architecture Blog)</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

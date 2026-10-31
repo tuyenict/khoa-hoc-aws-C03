@@ -1,0 +1,935 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 37 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-SageMaker.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="37" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <b>3 tầng</b> của AI/ML trên AWS: <b>AI services</b> dựng sẵn (gọi API, không cần chuyên môn ML) → nền tảng ML <b>Amazon SageMaker AI</b> (tự build/train/deploy model) → <b>Generative AI</b> với <b>Amazon Bedrock</b> (foundation model qua API).</li>
+          <li>Ghép đúng bài toán với dịch vụ: ảnh/video ⇒ <b>Rekognition</b>; tài liệu scan, form, bảng ⇒ <b>Textract</b>; phân tích văn bản, PII ⇒ <b>Comprehend</b>; dịch ⇒ <b>Translate</b>; giọng nói → chữ ⇒ <b>Transcribe</b>; chữ → giọng nói ⇒ <b>Polly</b>; chatbot ⇒ <b>Lex</b>; tìm kiếm doanh nghiệp ⇒ <b>Kendra</b>; dự báo chuỗi thời gian ⇒ <b>Forecast</b>.</li>
+          <li>Nắm các thành phần chính của <b>SageMaker AI</b> (Studio, Ground Truth, Data Wrangler, Feature Store, Autopilot, Canvas, JumpStart, Clarify, Pipelines, Model Monitor) và chọn đúng <b>kiểu inference</b>: real-time, serverless, asynchronous, batch transform.</li>
+          <li>Hiểu <b>Amazon Bedrock</b>: foundation model serverless, <b>Knowledge Bases (RAG)</b>, <b>Guardrails</b>, Agents/AgentCore, tùy biến model; phân biệt <b>Bedrock vs SageMaker AI</b>.</li>
+          <li>Kết hợp các dịch vụ AI thành kiến trúc <b>serverless, event-driven</b> (S3 → Lambda → AI API → DynamoDB/SNS) – dạng câu hỏi SAA-C03 hay gặp.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 7 – Data, Analytics &amp; ML</span>
+        <p>Đề SAA-C03 <b>không</b> hỏi thuật toán hay toán học ML. Đề hỏi kiểu: “công ty muốn <i>phát hiện nội dung không phù hợp trong ảnh người dùng tải lên</i> với <i>least operational overhead</i>, chọn dịch vụ nào?”. Vì vậy bài này tập trung vào <b>chức năng – từ khóa – cách tích hợp</b> của từng dịch vụ. Kiến thức nền: <b>S3 event notification</b>, <b>Lambda</b>, <b>SNS/SQS/Step Functions</b> (Bài 14–16, 30–33), <b>Kinesis</b> (Bài 35), <b>Athena / Glue / OpenSearch</b> (Bài 36 – đã học, ở đây chỉ nhắc khi tích hợp). <b>KMS</b> học kỹ ở Bài 38, <b>Macie</b> (phát hiện PII trong S3) ở Bài 39, <b>CloudWatch</b> ở Bài 40.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Machine-Learning.svg" alt="">Bức tranh AI/ML trên AWS: ba tầng dịch vụ</h2>
+      <p class="lead">Theo whitepaper <i>Overview of Amazon Web Services</i>, AWS hỗ trợ mọi giai đoạn của hành trình áp dụng ML bằng bộ dịch vụ ML toàn diện và hạ tầng chuyên dụng; các <span class="t" data-vi="Dịch vụ AI được huấn luyện sẵn">pretrained AI services</span> cung cấp “trí thông minh làm sẵn” cho ứng dụng và quy trình. Với kỳ thi, hãy chia chúng thành <b>ba tầng</b> theo mức độ bạn phải tự làm.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tầng</th><th>Dịch vụ tiêu biểu</th><th>Bạn phải làm gì</th><th>Khi nào chọn</th></tr></thead>
+        <tbody>
+          <tr><td><b>1. AI services</b> (pretrained)</td><td>Rekognition, Textract, Comprehend, Translate, Transcribe, Polly, Lex, Kendra, Forecast, Personalize, Fraud Detector…</td><td>Chỉ <b>gọi API</b>; không cần dữ liệu huấn luyện, không cần chuyên môn ML. Một số có tùy biến nhẹ (Custom Labels, custom classifier, custom vocabulary…).</td><td>Bài toán <b>phổ biến</b> (nhận diện ảnh, OCR, dịch…), muốn <b>least operational overhead</b>, đội ngũ không có data scientist.</td></tr>
+          <tr><td><b>2. ML platform</b></td><td><b>Amazon SageMaker AI</b> (Studio, Training, Inference, Canvas, Autopilot, JumpStart…)</td><td>Chuẩn bị dữ liệu, chọn thuật toán, <b>train – tune – deploy – monitor</b> model của chính bạn; SageMaker quản lý hạ tầng.</td><td>Bài toán <b>đặc thù</b> trên dữ liệu riêng (dự đoán churn, chấm điểm tín dụng…), cần <b>toàn quyền kiểm soát</b> model.</td></tr>
+          <tr><td><b>3. Generative AI</b></td><td><b>Amazon Bedrock</b>, Amazon Q</td><td>Gọi <span class="t" data-vi="Mô hình nền tảng – mô hình lớn huấn luyện sẵn trên dữ liệu khổng lồ">foundation model (FM)</span> qua API; bổ sung dữ liệu riêng bằng RAG, tùy biến bằng fine-tuning; serverless.</td><td>Sinh văn bản/ảnh, tóm tắt, chatbot hỏi-đáp trên tài liệu nội bộ, agent tự động hóa tác vụ.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Các dịch vụ trong bài</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Rekognition.svg" alt="">
+          <div><h4>Amazon Rekognition</h4><span class="vi">Phân tích ảnh &amp; video (computer vision)</span><p>Nhận diện vật thể, cảnh, chữ, khuôn mặt, người nổi tiếng, nội dung không an toàn, thiết bị bảo hộ (PPE); Custom Labels; Face Liveness.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Textract.svg" alt="">
+          <div><h4>Amazon Textract</h4><span class="vi">Trích xuất chữ &amp; dữ liệu từ tài liệu</span><p>Vượt xa OCR: lấy được <b>form (key-value)</b>, <b>bảng</b>, chữ viết tay, Queries; API riêng cho hóa đơn, giấy tờ tùy thân, hồ sơ vay.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Comprehend.svg" alt="">
+          <div><h4>Amazon Comprehend</h4><span class="vi">Xử lý ngôn ngữ tự nhiên (NLP)</span><p>Thực thể, cụm từ khóa, <b>PII</b>, ngôn ngữ, <b>cảm xúc (sentiment)</b>, cú pháp, topic modeling; custom classifier/entity. Bản Medical cho văn bản y tế.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Translate.svg" alt="">
+          <div><h4>Amazon Translate</h4><span class="vi">Dịch máy nơ-ron</span><p>Dịch real-time hoặc batch; <b>custom terminology</b> giữ đúng tên thương hiệu/sản phẩm.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Transcribe.svg" alt="">
+          <div><h4>Amazon Transcribe</h4><span class="vi">Nhận dạng giọng nói (speech-to-text)</span><p>Batch (file trên S3) hoặc streaming; timestamp từng từ, tách người nói, <b>che PII</b>, custom vocabulary; Call Analytics, Medical.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Polly.svg" alt="">
+          <div><h4>Amazon Polly</h4><span class="vi">Chuyển văn bản thành giọng nói (text-to-speech)</span><p>Giọng standard / neural / long-form / generative; <b>SSML</b> điều khiển cách đọc; được cache và phát lại audio không tốn thêm.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Lex.svg" alt="">
+          <div><h4>Amazon Lex</h4><span class="vi">Chatbot giọng nói &amp; văn bản</span><p>ASR + NLU (cùng công nghệ Alexa); intent, slot, gọi <b>Lambda</b> để xử lý; tích hợp Amazon Connect.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Kendra.svg" alt="">
+          <div><h4>Amazon Kendra</h4><span class="vi">Tìm kiếm doanh nghiệp thông minh</span><p>Tìm kiếm ngữ nghĩa trên nhiều kho tài liệu (S3, SharePoint…), hỏi bằng ngôn ngữ tự nhiên, lọc theo quyền user/group.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Forecast.svg" alt="">
+          <div><h4>Amazon Forecast</h4><span class="vi">Dự báo chuỗi thời gian</span><p>Dự báo nhu cầu, tồn kho, nhân sự, lưu lượng web từ dữ liệu lịch sử. <i>Không còn mở cho khách hàng mới</i> – thay bằng SageMaker Canvas.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-SageMaker.svg" alt="">
+          <div><h4>Amazon SageMaker AI</h4><span class="vi">Nền tảng ML được quản lý toàn phần</span><p>Build, train, deploy model ML trên hạ tầng do AWS quản lý; tên cũ <b>Amazon SageMaker</b> (đổi tên ngày 03/12/2024).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Machine-Learning.svg" alt="">
+          <div><h4>Amazon Bedrock</h4><span class="vi">Nền tảng Generative AI serverless</span><p>Truy cập <b>foundation model</b> của Amazon và nhiều hãng AI qua một API; Knowledge Bases (RAG), Guardrails, Agents, tùy biến model.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Personalize.svg" alt="">
+          <div><h4>Amazon Personalize</h4><span class="vi">Gợi ý cá nhân hóa</span><p>Gợi ý sản phẩm/nội dung theo hành vi người dùng, công nghệ từ Amazon.com; không cần kinh nghiệm ML.</p></div></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Machine-Learning.svg" alt="">AWS AI/ML stack – càng lên cao càng ít việc phải tự làm</span>
+          <div class="grp plain"><span class="lbl">Tầng 3 – Generative AI (foundation model qua API)</span>
+            <div class="row">
+              <div class="node"><img src="../assets/icons/cat/Machine-Learning.svg" alt="">Amazon Bedrock<small>FM, RAG, Guardrails, Agents</small></div>
+              <div class="node"><img src="../assets/icons/cat/Machine-Learning.svg" alt="">Amazon Q<small>trợ lý GenAI: Business / Developer</small></div>
+            </div>
+          </div>
+          <div class="grp region"><span class="lbl">Tầng 1 – AI services dựng sẵn (chỉ gọi API)</span>
+            <div class="row">
+              <div class="node"><img src="../assets/icons/svc/Amazon-Rekognition.svg" alt="">Rekognition<small>ảnh, video</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Textract.svg" alt="">Textract<small>tài liệu</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Comprehend.svg" alt="">Comprehend<small>văn bản</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Translate.svg" alt="">Translate<small>dịch</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Transcribe.svg" alt="">Transcribe<small>nói → chữ</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Polly.svg" alt="">Polly<small>chữ → nói</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Lex.svg" alt="">Lex<small>chatbot</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Kendra.svg" alt="">Kendra<small>tìm kiếm</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Forecast.svg" alt="">Forecast<small>dự báo</small></div>
+            </div>
+          </div>
+          <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-SageMaker.svg" alt="">Tầng 2 – ML platform: Amazon SageMaker AI (model của riêng bạn)</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/svc/Amazon-SageMaker-Ground-Truth.svg" alt="">Gán nhãn / chuẩn bị<small>Ground Truth, Data Wrangler</small></div>
+              <span class="arrow">build</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-SageMaker_Notebook.svg" alt="">Studio / Notebook<small>JupyterLab, Canvas</small></div>
+              <span class="arrow">train</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-SageMaker_Train.svg" alt="">Training job<small>CPU, GPU, Trainium</small></div>
+              <span class="arrow">deploy</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-SageMaker_Model.svg" alt="">Endpoint / Batch<small>Model Monitor</small></div>
+            </div>
+          </div>
+          <div class="grp plain"><span class="lbl">Hạ tầng: EC2 GPU, AWS Trainium, AWS Inferentia, Deep Learning AMI / Containers</span></div>
+        </div>
+        <figcaption><b>Hình 1.</b> Ba tầng AI/ML trên AWS. Tầng <b>AI services</b> giải quyết bài toán phổ biến chỉ bằng một lời gọi API; tầng <b>SageMaker AI</b> dành cho đội ngũ tự xây model trên dữ liệu riêng; tầng <b>Generative AI</b> (Bedrock) cho phép dùng foundation model mà không phải quản lý hạ tầng. Bên dưới là hạ tầng tính toán chuyên dụng (GPU, Trainium cho train, Inferentia cho inference).</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – ăn tối</span>
+        <p><b>AI services</b> giống <b>gọi món ở nhà hàng</b>: chọn món trong thực đơn (API), có đồ ăn ngay, không cần biết nấu. <b>SageMaker AI</b> giống <b>thuê bếp công nghiệp đầy đủ dụng cụ</b>: bạn tự chọn nguyên liệu (dữ liệu), công thức (thuật toán), tự nấu (train) – nhà bếp lo điện nước, bếp ga (hạ tầng). <b>Bedrock</b> giống <b>thuê đầu bếp nổi tiếng</b> đã được đào tạo bài bản (foundation model): bạn đưa thêm sổ công thức gia đình (RAG/fine-tuning) để món ăn hợp khẩu vị nhà mình.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Đề có cụm “<i>no machine learning expertise</i>”, “<i>least operational overhead</i>”, “<i>pre-trained</i>” ⇒ chọn <b>AI service</b> chuyên dụng (Rekognition, Textract, Comprehend…), <b>không</b> chọn SageMaker hay tự dựng model trên EC2.</li>
+          <li>“<i>Data scientists build, train and deploy custom models</i>”, “<i>bring your own algorithm/framework</i>” ⇒ <b>SageMaker AI</b>.</li>
+          <li>“<i>Generative AI</i>”, “<i>foundation models</i>”, “<i>LLM</i>”, “<i>summarize / generate text</i>”, “<i>without managing infrastructure</i>” ⇒ <b>Amazon Bedrock</b>.</li>
+          <li>Đáp án “tự cài thư viện OCR / NLP mã nguồn mở trên EC2” gần như luôn sai khi đã có dịch vụ managed tương ứng.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: REKOGNITION & TEXTRACT ===================== -->
+      <h2 id="vision"><img src="../assets/icons/svc/Amazon-Rekognition.svg" alt="">Thị giác máy tính &amp; tài liệu: Rekognition, Textract</h2>
+
+      <h3>Amazon Rekognition</h3>
+      <p class="lead"><b>Amazon Rekognition</b> là dịch vụ phân tích ảnh và video trên cloud, giúp thêm khả năng <span class="t" data-vi="Thị giác máy tính – máy “nhìn” và hiểu ảnh/video">computer vision</span> vào ứng dụng. Dịch vụ dùng công nghệ deep learning đã được kiểm chứng (phân tích hàng tỷ ảnh và video mỗi ngày), <b>không cần chuyên môn ML</b>, có API đơn giản phân tích ảnh/video lưu trên <b>Amazon S3</b>. Rekognition là dịch vụ <b>HIPAA eligible</b>, tính tiền <b>pay-as-you-go</b>, không phí tối thiểu, có free tier.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khả năng (theo tài liệu)</th><th>Ảnh</th><th>Video</th><th>Ví dụ ứng dụng</th></tr></thead>
+        <tbody>
+          <tr><td><b>Object, scene, concept detection</b> (label)</td><td>✓</td><td>✓</td><td>Thư viện ảnh/video có thể tìm kiếm theo nội dung</td></tr>
+          <tr><td><b>Text detection</b> – chữ in và viết tay trong ảnh (biển báo, banner)</td><td>✓</td><td>✓</td><td>Đọc biển số, chữ trên áp phích, gắn metadata</td></tr>
+          <tr><td><span class="t" data-vi="Phát hiện nội dung không an toàn – kiểm duyệt nội dung">Content moderation</span> – nội dung khiêu dâm, bạo lực, không phù hợp; nhãn phân cấp + confidence score</td><td>✓</td><td>✓</td><td>Lọc ảnh/video người dùng tải lên (UGC)</td></tr>
+          <tr><td><b>Celebrity recognition</b> – hàng chục nghìn người nổi tiếng</td><td>✓</td><td>✓ (stored)</td><td>Gắn tag media, báo chí</td></tr>
+          <tr><td><b>Facial analysis</b> – phát hiện, phân tích (tuổi, cảm xúc…), so sánh khuôn mặt</td><td>✓</td><td>✓ (stored &amp; streaming)</td><td>Xác minh danh tính, đếm người</td></tr>
+          <tr><td><b>Face search</b> trong <span class="t" data-vi="Bộ sưu tập khuôn mặt – chỉ mục khuôn mặt do bạn sở hữu">face collection</span> (Index rồi Search)</td><td>✓</td><td>✓</td><td>Tìm “người cần chú ý” trong video camera</td></tr>
+          <tr><td><b>PPE detection</b> – thiết bị bảo hộ cá nhân</td><td>✓</td><td>–</td><td>Giám sát tuân thủ an toàn công trường, nhà máy</td></tr>
+          <tr><td><b>Custom Labels</b> – tự huấn luyện bộ phân loại đối tượng riêng</td><td>✓</td><td>–</td><td>Logo, linh kiện máy, cây bệnh</td></tr>
+          <tr><td><b>Face Liveness</b> – xác nhận người thật đang đứng trước camera</td><td colspan="2">phiên video ngắn</td><td>Chống giả mạo bằng ảnh in, video, mặt nạ 3D, deepfake</td></tr>
+          <tr><td><b>People pathing</b>, <b>video segmentation</b> (khung đen, end credits)</td><td>–</td><td>✓</td><td>Theo dõi chuyển động, cắt quảng cáo</td></tr>
+          <tr><td><b>Image properties</b> – chất lượng, màu, độ nét, tương phản</td><td>✓</td><td>–</td><td>Lọc ảnh kém chất lượng</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Ảnh đồng bộ, video bất đồng bộ</h3>
+      <ul>
+        <li><b>Rekognition Image</b>: thao tác <b>đồng bộ (synchronous)</b>, input/response JSON; ảnh <b>.jpg / .png</b> nằm trong <b>S3 bucket</b> hoặc truyền thẳng bytes (Base64).</li>
+        <li><b>Rekognition Video – stored video</b> (trên S3): thao tác <b>bất đồng bộ</b>. Gọi <code>Start…</code> (vd <code>StartFaceDetection</code>) ⇒ khi xong, trạng thái được <b>publish lên một SNS topic</b> ⇒ gọi <code>Get…</code> (vd <code>GetFaceDetection</code>) để lấy kết quả. Đây là mẫu “<i>job + SNS notification</i>” lặp lại ở Textract, Transcribe.</li>
+        <li><b>Rekognition Video – streaming</b>: video đi vào qua <b>Amazon Kinesis Video Streams</b>, xử lý bằng một <b>stream processor</b> (<code>CreateStreamProcessor</code>). Kết quả <b>face search</b> xuất ra <b>Kinesis data stream</b>; kết quả <b>label</b> (người, thú cưng, gói hàng) gửi qua <b>SNS</b> và <b>S3</b>.</li>
+        <li><span class="t" data-vi="Thao tác không lưu trữ">Non-storage API</span>: Rekognition không lưu gì, chỉ trả kết quả. <span class="t" data-vi="Thao tác có lưu trữ">Storage-based API</span>: lưu thông tin khuôn mặt (vector đặc trưng, không phải ảnh gốc – <i>chi tiết này: kiến thức phổ biến</i>) vào <b>collection</b> để tìm kiếm về sau.</li>
+        <li>Tùy biến độ chính xác bằng <b>adapter</b> (vd Custom Moderation) – cung cấp ảnh mẫu để train adapter, không cần chuyên môn ML.</li>
+      </ul>
+
+      <h3>Amazon Textract</h3>
+      <p><b>Amazon Textract</b> tự động trích xuất <b>chữ và dữ liệu</b> từ tài liệu scan. Điểm mấu chốt: Textract <b>vượt xa</b> <span class="t" data-vi="Nhận dạng ký tự quang học">OCR</span> đơn thuần – nó còn nhận diện <b>nội dung các trường trong form</b> và <b>thông tin trong bảng</b>, giữ nguyên ngữ cảnh. Không cần chuyên môn ML, phân tích file <b>ảnh và PDF</b>.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>API / tính năng</th><th>Làm gì</th></tr></thead>
+        <tbody>
+          <tr><td><b>Detect Document Text</b></td><td>Phát hiện chữ in và <b>chữ viết tay</b> (báo cáo tài chính, hồ sơ y tế, tờ khai thuế), trả về theo từ và dòng.</td></tr>
+          <tr><td><b>Analyze Document</b> – Forms, Tables</td><td>Trích xuất cặp <b>key-value</b> trong form và <b>ô bảng</b> từ tài liệu có cấu trúc.</td></tr>
+          <tr><td><b>Queries</b> / <b>Custom Queries</b></td><td>Hỏi thẳng thông tin cần lấy (vd “Tên khách hàng là gì?”) thay vì dò cấu trúc; Custom Queries tùy biến bằng dữ liệu của bạn.</td></tr>
+          <tr><td><b>AnalyzeExpense</b></td><td>Xử lý <b>hóa đơn (invoice) và biên lai (receipt)</b>.</td></tr>
+          <tr><td><b>AnalyzeID</b></td><td>Giấy tờ tùy thân do chính phủ Mỹ cấp: bằng lái, hộ chiếu.</td></tr>
+          <tr><td><b>Analyze Lending</b></td><td>Hồ sơ vay thế chấp: tự <b>phân loại</b> trang rồi chuyển tới API phân tích phù hợp.</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li><b>Synchronous</b>: tài liệu <b>một trang</b>, khi độ trễ quan trọng. <b>Asynchronous</b>: tài liệu <b>nhiều trang</b> (PDF trên S3) – bắt đầu job, nhận thông báo hoàn tất qua <b>SNS</b> <i>(cơ chế SNS: kiến thức phổ biến)</i>.</li>
+        <li>Có thể thêm <b>human review</b> bằng <b>Amazon Augmented AI (A2I)</b> để con người kiểm tra kết quả có độ tin cậy thấp hoặc dữ liệu nhạy cảm.</li>
+        <li>Quota tốc độ gọi API (TPS) điều chỉnh được qua <b>Service Quotas</b>; quota kích thước file, ngôn ngữ thì không đổi được.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 330" width="760" role="img" aria-label="Pipeline xử lý ảnh và tài liệu serverless">
+          <defs><marker id="a37" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#01A88D"/></marker>
+          <marker id="b37" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#E7157B"/></marker></defs>
+          <image href="../assets/icons/res/Users.svg" x="20" y="60" width="44" height="44"/>
+          <text x="12" y="122" font-size="11">Người dùng tải</text>
+          <text x="12" y="136" font-size="11">ảnh / PDF</text>
+          <path d="M70 82 H125" stroke="#01A88D" stroke-width="2" marker-end="url(#a37)"/>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" x="130" y="58" width="48" height="48"/>
+          <text x="122" y="122" font-size="11" font-weight="700">S3 uploads/</text>
+          <path d="M182 82 H240" stroke="#01A88D" stroke-width="2" marker-end="url(#a37)"/>
+          <text x="184" y="74" font-size="10" class="muted">event</text>
+          <image href="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" x="245" y="58" width="48" height="48"/>
+          <text x="240" y="122" font-size="11" font-weight="700">Lambda</text>
+          <path d="M297 70 L380 40" stroke="#01A88D" stroke-width="2" marker-end="url(#a37)"/>
+          <path d="M297 95 L380 130" stroke="#01A88D" stroke-width="2" marker-end="url(#a37)"/>
+          <rect x="385" y="15" width="170" height="60" rx="8" fill="#01A88D" fill-opacity="0.10" stroke="#01A88D"/>
+          <image href="../assets/icons/svc/Amazon-Rekognition.svg" x="393" y="25" width="38" height="38"/>
+          <text x="437" y="40" font-size="12" font-weight="700">Rekognition</text>
+          <text x="437" y="56" font-size="10">DetectModerationLabels</text>
+          <text x="437" y="69" font-size="10">DetectLabels (sync)</text>
+          <rect x="385" y="105" width="170" height="60" rx="8" fill="#01A88D" fill-opacity="0.10" stroke="#01A88D"/>
+          <image href="../assets/icons/svc/Amazon-Textract.svg" x="393" y="115" width="38" height="38"/>
+          <text x="437" y="130" font-size="12" font-weight="700">Textract</text>
+          <text x="437" y="146" font-size="10">PDF nhiều trang ⇒ async</text>
+          <text x="437" y="159" font-size="10">forms, tables, queries</text>
+          <path d="M470 165 V205" stroke="#E7157B" stroke-width="2" marker-end="url(#b37)"/>
+          <image href="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" x="452" y="210" width="36" height="36"/>
+          <text x="495" y="226" font-size="10">SNS: job hoàn tất</text>
+          <text x="495" y="240" font-size="10">⇒ Lambda gọi Get…</text>
+          <path d="M558 45 H625" stroke="#01A88D" stroke-width="2" marker-end="url(#a37)"/>
+          <path d="M558 135 H625" stroke="#01A88D" stroke-width="2" marker-end="url(#a37)"/>
+          <image href="../assets/icons/svc/Amazon-DynamoDB.svg" x="630" y="22" width="40" height="40"/>
+          <text x="676" y="40" font-size="11">DynamoDB</text>
+          <text x="676" y="54" font-size="10">nhãn / metadata</text>
+          <image href="../assets/icons/svc/Amazon-Augmented-AI-A2I.svg" x="630" y="112" width="40" height="40"/>
+          <text x="676" y="130" font-size="11">A2I</text>
+          <text x="676" y="144" font-size="10">người duyệt lại</text>
+          <rect x="15" y="270" width="730" height="50" rx="8" fill="#E7157B" fill-opacity="0.07" stroke="#E7157B"/>
+          <text x="30" y="291" font-size="11">Mẫu chung: <tspan font-weight="700">ảnh</tspan> ⇒ gọi đồng bộ; <tspan font-weight="700">video / PDF nhiều trang / audio</tspan> ⇒ Start…Job → SNS báo xong → Get…; kết quả lưu DynamoDB/S3,</text>
+          <text x="30" y="308" font-size="11">confidence thấp ⇒ chuyển con người duyệt (A2I). Toàn bộ serverless, trả tiền theo lượng xử lý.</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Kiến trúc event-driven điển hình: object mới trong S3 kích hoạt <b>Lambda</b>; Lambda gọi <b>Rekognition</b> (kiểm duyệt/gắn nhãn ảnh – đồng bộ) hoặc <b>Textract</b> (tài liệu nhiều trang – bất đồng bộ, hoàn tất báo qua <b>SNS</b>); kết quả lưu <b>DynamoDB</b>, trường hợp không chắc chắn chuyển cho người duyệt qua <b>Amazon A2I</b>.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Detect inappropriate / explicit / violent content in user-uploaded images or videos</i>” ⇒ <b>Rekognition content moderation</b>.</li>
+          <li>“<i>Identify objects, people, scenes, text in images</i>”, “<i>facial comparison / identity verification</i>”, “<i>search faces in a collection</i>” ⇒ <b>Rekognition</b>. Thêm “<i>detect our own logos / machine parts</i>” ⇒ <b>Rekognition Custom Labels</b>.</li>
+          <li>“<i>Workers must wear helmets / safety equipment</i>” ⇒ <b>Rekognition PPE detection</b>.</li>
+          <li>“<i>Extract text, forms (key-value pairs), tables from scanned documents / PDFs</i>”, “<i>invoices, receipts</i>”, “<i>handwriting</i>” ⇒ <b>Textract</b>.</li>
+          <li>“<i>Human review of low-confidence predictions</i>” ⇒ <b>Amazon Augmented AI (A2I)</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>Rekognition text detection</b> đọc chữ <i>trong ảnh</i> (biển báo, áo thi đấu); còn <b>tài liệu</b> (form, bảng, hóa đơn, PDF nhiều trang) ⇒ <b>Textract</b>.</li>
+          <li><b>Textract</b> trích xuất chữ nhưng <b>không hiểu nghĩa</b> văn bản; muốn phân tích cảm xúc, thực thể, PII trong chữ vừa trích ⇒ nối tiếp <b>Comprehend</b>.</li>
+          <li>Phát hiện <b>PII trong object S3</b> trên quy mô toàn tài khoản ⇒ <b>Amazon Macie</b> (Bài 39), không phải Rekognition hay Textract.</li>
+          <li>Video stored dùng mô hình <b>bất đồng bộ + SNS</b>; đừng chọn đáp án “gọi API đồng bộ cho video 2 giờ”.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: NGÔN NGỮ ===================== -->
+      <h2 id="ngon-ngu"><img src="../assets/icons/svc/Amazon-Comprehend.svg" alt="">Ngôn ngữ &amp; tìm kiếm: Comprehend, Translate, Kendra, Lex</h2>
+
+      <h3>Amazon Comprehend – hiểu văn bản</h3>
+      <p class="lead"><b>Amazon Comprehend</b> dùng <span class="t" data-vi="Xử lý ngôn ngữ tự nhiên">natural language processing (NLP)</span> để rút ra thông tin chi tiết từ nội dung tài liệu: nhận diện thực thể, cụm từ khóa, ngôn ngữ, cảm xúc… Bạn có thể chạy <b>phân tích real-time</b> cho khối lượng nhỏ hoặc <b>job bất đồng bộ</b> cho tập tài liệu lớn; dùng model dựng sẵn hoặc tự huấn luyện model tùy biến cho phân loại và nhận diện thực thể. Mọi tính năng nhận input là văn bản <b>UTF-8</b>.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Insight (model dựng sẵn)</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><b>Entities</b></td><td>Tên người, địa điểm, sản phẩm, tổ chức… xuất hiện trong văn bản.</td></tr>
+          <tr><td><b>Key phrases</b></td><td>Cụm từ quan trọng (vd bài về trận bóng rổ ⇒ tên đội, sân, tỉ số).</td></tr>
+          <tr><td><span class="t" data-vi="Thông tin nhận dạng cá nhân">PII</span></td><td>Dữ liệu cá nhân nhận dạng được một người: địa chỉ, số tài khoản ngân hàng, số điện thoại… (phát hiện hoặc che/redact).</td></tr>
+          <tr><td><b>Language</b></td><td>Ngôn ngữ chủ đạo của tài liệu (Dominant language hỗ trợ rất nhiều ngôn ngữ).</td></tr>
+          <tr><td><span class="t" data-vi="Phân tích cảm xúc">Sentiment</span></td><td>Cảm xúc chủ đạo: <b>positive, neutral, negative, mixed</b>.</td></tr>
+          <tr><td><b>Targeted sentiment</b></td><td>Cảm xúc gắn với <b>từng thực thể</b> (vd khen pin nhưng chê camera).</td></tr>
+          <tr><td><b>Syntax</b></td><td>Từ loại (part of speech) của từng từ.</td></tr>
+          <tr><td><span class="t" data-vi="Mô hình hóa chủ đề – gom tài liệu theo chủ đề">Topic modeling</span></td><td>Gom một kho tài liệu thành các chủ đề/cụm dựa trên tần suất từ.</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li><b>Comprehend Custom</b> (AutoML): <b>custom classification</b> (xếp tài liệu vào nhóm của bạn – vd phân loại ticket hỗ trợ) và <b>custom entity recognition</b> (nhận diện thuật ngữ riêng – vd mã hợp đồng). Hai loại này nhận cả ảnh, PDF, Word. <b>Flywheel</b> giúp train và quản lý phiên bản model theo thời gian.</li>
+        <li>Tích hợp <b>S3</b> (lưu tài liệu), <b>Firehose</b> (phân tích dữ liệu real-time), <b>Lambda</b>, <b>KMS</b> (mã hóa kết quả job và volume xử lý bằng key của bạn), <b>IAM</b>.</li>
+        <li>Giá: trả theo lượng tài liệu phân tích và model custom đã train; endpoint real-time cho model custom tính tiền <b>từ lúc tạo tới lúc xóa</b>.</li>
+        <li><b>Amazon Comprehend Medical</b>: NLP <b>HIPAA-eligible</b>, đã train sẵn để trích xuất thông tin y tế (bệnh, thuốc, liều lượng, tần suất, xét nghiệm, thủ thuật) từ ghi chú bác sĩ, báo cáo thử nghiệm, hồ sơ bệnh án, và quan hệ giữa chúng.</li>
+      </ul>
+
+      <h3>Amazon Translate – dịch máy</h3>
+      <p><b>Amazon Translate</b> là dịch vụ <span class="t" data-vi="Dịch máy nơ-ron – dùng deep learning, tự nhiên hơn dịch thống kê/luật">neural machine translation</span> cho bản dịch nhanh, chất lượng, chi phí hợp lý. Dùng để bản địa hóa website/ứng dụng, dịch chat chăm sóc khách hàng, email, chat trong game, phân tích mạng xã hội đa ngôn ngữ, eDiscovery.</p>
+      <ul>
+        <li>Dịch <b>real-time</b> (gọi API cho từng đoạn) hoặc <b>batch</b> cho kho tài liệu lưu trong <b>S3</b> <i>(tên “batch translation”: theo tài liệu “How it works”)</i>.</li>
+        <li><span class="t" data-vi="Thuật ngữ tùy chỉnh">Custom terminology</span>: file thuật ngữ upload vào account để <b>tên thương hiệu, tên nhân vật, tên model sản phẩm</b> được dịch đúng ý. Ví dụ tài liệu: “Amazon Photos” dịch sang tiếng Pháp bị thành “Photos d'Amazon” – thêm terminology để giữ nguyên “Amazon Photos”. Lưu ý: Translate dùng ngữ cảnh để quyết định, <b>không đảm bảo</b> lúc nào cũng áp dụng.</li>
+        <li>Kết hợp: Comprehend (phân tích sau khi dịch), Transcribe (phụ đề nhiều ngôn ngữ), Polly (đọc nội dung đã dịch); dịch dữ liệu trong DynamoDB, Aurora, Redshift; điều phối bằng Lambda hoặc Glue.</li>
+      </ul>
+
+      <h3>Amazon Kendra – tìm kiếm doanh nghiệp</h3>
+      <div class="callout warn"><span class="ttl">Trạng thái dịch vụ</span>
+        <p>Theo tài liệu hiện tại, <b>Amazon Kendra không còn mở cho khách hàng mới</b>; AWS gợi ý dùng <b>Amazon Bedrock Knowledge Bases</b> cho khả năng tương tự. Tuy vậy Kendra vẫn có thể xuất hiện trong đề thi SAA-C03 với vai trò “<i>intelligent enterprise search</i>”.</p></div>
+      <ul>
+        <li><b>Kendra</b> là dịch vụ <span class="t" data-vi="Truy xuất thông tin">information retrieval</span> và tìm kiếm thông minh dùng NLP + deep learning: khác tìm kiếm theo từ khóa truyền thống, Kendra dùng <b>độ tương đồng ngữ nghĩa và ngữ cảnh</b> để xếp hạng đoạn văn/tài liệu liên quan.</li>
+        <li>Kết nối <b>nhiều kho dữ liệu</b> vào một <b>index</b> (S3, Microsoft SharePoint, …) bằng <b>data source connector</b>; trả lời câu hỏi kiểu <b>factoid</b> (“trung tâm bảo hành gần Seattle nhất ở đâu?”), <b>descriptive</b> (“làm sao kết nối Echo Plus với mạng?”) và từ khóa đa nghĩa.</li>
+        <li><b>Bảo mật</b>: kết quả tìm kiếm phản ánh mô hình bảo mật của tổ chức – <b>lọc theo quyền truy cập của user/group</b> trên tài liệu.</li>
+        <li>Edition: <b>GenAI Enterprise</b> (chính xác nhất, dùng được làm retriever cho RAG trong Amazon Q Business và Bedrock Knowledge Bases), <b>Basic Enterprise</b> (production, HA), <b>Basic Developer</b> (PoC, không cho production). Free trial tới <b>750 giờ trong 30 ngày đầu</b>; sau đó tính tiền cho mọi index đã provision, <b>kể cả index rỗng</b>.</li>
+      </ul>
+
+      <h3>Amazon Lex – chatbot giọng nói &amp; văn bản</h3>
+      <p><b>Amazon Lex (V2)</b> là dịch vụ xây <span class="t" data-vi="Giao diện hội thoại">conversational interface</span> bằng giọng nói và văn bản, kết hợp <span class="t" data-vi="Nhận dạng giọng nói tự động">ASR</span> (chuyển lời nói thành chữ) và <span class="t" data-vi="Hiểu ngôn ngữ tự nhiên">NLU</span> (hiểu ý định của câu) – cùng công nghệ deep learning với Amazon Alexa <i>(theo whitepaper)</i>.</p>
+      <ul>
+        <li>Khái niệm cốt lõi: <b>bot</b> gồm nhiều <span class="t" data-vi="Ý định – việc người dùng muốn làm">intent</span> (vd <i>BookHotel</i>); mỗi intent có <b>sample utterance</b> (câu mẫu) và các <span class="t" data-vi="Ô thông tin cần thu thập">slot</span> (vd ngày nhận phòng, thành phố) có <b>slot type</b> <i>(các khái niệm intent/slot/utterance: theo trang “core concepts”, kiến thức phổ biến)</i>.</li>
+        <li>Thực hiện yêu cầu (fulfillment) bằng <b>AWS Lambda</b> – qua đó kết nối tới hệ thống nghiệp vụ, Salesforce…; bot tạo sau 17/08/2022 có <b>conditional branching</b> để điều khiển hội thoại không cần viết Lambda.</li>
+        <li>Tích hợp <b>Amazon Connect</b> (contact center), Comprehend, Kendra; triển khai lên mobile, web, Facebook Messenger, Slack, Microsoft Teams, WhatsApp.</li>
+        <li><b>Assisted NLU</b> dùng LLM để phân loại intent và điền slot tốt hơn; <b>Multi-Region Replication</b> để tăng sẵn sàng/DR. Tự scale, trả tiền theo số request văn bản/giọng nói.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Sentiment of customer reviews / social media</i>”, “<i>extract entities / key phrases</i>”, “<i>detect and redact PII in text</i>”, “<i>classify support tickets</i>” ⇒ <b>Comprehend</b>. Văn bản y tế ⇒ <b>Comprehend Medical</b>.</li>
+          <li>“<i>Translate product descriptions / chat into multiple languages</i>” ⇒ <b>Translate</b>; “<i>brand names must not be translated</i>” ⇒ <b>custom terminology</b>.</li>
+          <li>“<i>Employees search across SharePoint, S3, wikis using natural language questions</i>”, “<i>results filtered by user permissions</i>” ⇒ <b>Kendra</b> (hoặc Bedrock Knowledge Bases / Amazon Q Business nếu đề nhắc GenAI).</li>
+          <li>“<i>Chatbot / voice bot</i>”, “<i>conversational interface</i>”, “<i>IVR in Amazon Connect</i>” ⇒ <b>Lex</b> (+ Lambda fulfillment).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: GIỌNG NÓI ===================== -->
+      <h2 id="giong-noi"><img src="../assets/icons/svc/Amazon-Transcribe.svg" alt="">Giọng nói: Transcribe (nói → chữ) &amp; Polly (chữ → nói)</h2>
+
+      <h3>Amazon Transcribe</h3>
+      <p class="lead"><b>Amazon Transcribe</b> là dịch vụ <span class="t" data-vi="Nhận dạng giọng nói tự động – chuyển âm thanh thành văn bản">automatic speech recognition (ASR)</span> dùng model ML để chuyển âm thanh thành văn bản; dùng độc lập hoặc nhúng speech-to-text vào bất kỳ ứng dụng nào. Transcript kèm <b>confidence score và timestamp cho từng từ</b> – nên có thể tìm theo chữ rồi nhảy tới đúng vị trí trong file audio.</p>
+      <div class="compare">
+        <div style="--accent:#01A88D"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Batch transcription</h4>
+          <ul>
+            <li>Chép lời file media <b>đã upload lên S3</b> (định dạng phổ biến như <b>WAV, MP3</b>…).</li>
+            <li>API: <code>StartTranscriptionJob</code> (job bất đồng bộ).</li>
+            <li>Hợp: ghi âm cuộc gọi, podcast, video bài giảng, tạo phụ đề.</li>
+          </ul></div>
+        <div style="--accent:#E7157B"><h4><img src="../assets/icons/svc/Amazon-Transcribe.svg" alt="">Streaming transcription</h4>
+          <ul>
+            <li>Gửi <b>luồng audio trực tiếp</b> và nhận transcript <b>real-time</b>.</li>
+            <li>Qua <b>HTTP/2</b> hoặc <b>WebSocket</b>: <code>StartStreamTranscription</code>.</li>
+            <li>Hợp: phụ đề trực tiếp, trợ lý tổng đài viên theo thời gian thực.</li>
+          </ul></div>
+      </div>
+      <ul>
+        <li><b>Tùy biến độ chính xác</b>: <span class="t" data-vi="Từ vựng tùy chỉnh – dạy cách nhận các từ chuyên ngành, tên riêng">custom vocabulary</span>, <b>custom language model</b>; <b>vocabulary filtering</b> lọc từ không phù hợp với khán giả.</li>
+        <li><b>Speaker partitioning (diarization)</b> tách lời từng người nói; phân tích <b>multi-channel audio</b> (kênh khách hàng / kênh tổng đài viên); nhận diện ngôn ngữ tự động <i>(language identification: kiến thức phổ biến)</i>.</li>
+        <li><b>PII redaction</b>: che thông tin nhận dạng cá nhân trong transcript – chọn chỉ xuất bản <b>đã che</b> hoặc <b>cả hai</b> (đã che + gốc). Streaming còn có thể chỉ <b>đánh dấu (identify)</b> PII mà không che. Tài liệu cảnh báo: ML không đảm bảo bắt hết PII, và tính năng redaction <b>không đáp ứng yêu cầu de-identification của HIPAA</b>.</li>
+        <li><b>Amazon Transcribe Medical</b>: chép lời giọng nói y khoa (ghi chép lâm sàng, telemedicine). <b>Transcribe Call Analytics</b>: transcript cuộc gọi + insight (NLP chuyên cho chăm sóc khách hàng/bán hàng) – thuộc giải pháp Contact Center Intelligence.</li>
+        <li>HIPAA eligible; giá theo <b>số giây audio</b>, tính theo bước 1 giây, không có thời lượng tối thiểu; PII redaction và custom language model tính thêm phí.</li>
+      </ul>
+
+      <h3>Amazon Polly</h3>
+      <p><b>Amazon Polly</b> chuyển <b>văn bản thành giọng nói</b> sống động như người thật (<span class="t" data-vi="Chuyển văn bản thành giọng nói">text-to-speech, TTS</span>), giúp ứng dụng tăng tương tác và khả năng tiếp cận (accessibility). Bạn gửi text tới API, Polly trả ngay <b>luồng audio</b> để phát trực tiếp hoặc lưu thành file chuẩn như <b>MP3</b>.</p>
+      <ul>
+        <li><b>Voice engine</b>: <b>generative</b>, <b>long-form</b>, <b>neural (NTTS)</b>, <b>standard</b>; NTTS có phong cách <b>Newscaster</b> cho đọc tin. <b>Brand Voice</b>: hợp tác với đội Polly để dựng giọng NTTS độc quyền cho tổ chức.</li>
+        <li><span class="t" data-vi="Ngôn ngữ đánh dấu tổng hợp giọng nói">SSML</span> (Speech Synthesis Markup Language, chuẩn W3C): bọc text trong <code>&lt;speak&gt;</code> để điều khiển <b>ngắt nghỉ, tốc độ, cao độ, âm lượng, nhấn mạnh, phát âm theo phiên âm, tiếng thở, thì thầm</b>.</li>
+        <li><span class="t" data-vi="Từ điển phát âm">Lexicon</span>: định nghĩa cách đọc từ riêng (vd viết tắt “W3C” ⇒ “World Wide Web Consortium”) <i>(ví dụ lexicon: kiến thức phổ biến)</i>.</li>
+        <li>Giá theo <b>số ký tự</b> được chuyển; <b>được cache, lưu và phát lại</b> audio sinh ra <b>không tốn thêm phí</b>, không giới hạn tái sử dụng ⇒ nội dung tĩnh chỉ cần tổng hợp một lần rồi lưu S3. Chứng nhận dùng cho workload HIPAA và PCI DSS.</li>
+        <li>Văn bản dài: dùng tác vụ bất đồng bộ <code>StartSpeechSynthesisTask</code> ghi file thẳng vào S3 <i>(kiến thức phổ biến)</i>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Machine-Learning.svg" alt="">Contact center thông minh – ghép các AI service</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/User.svg" alt="">Khách hàng gọi<small>tiếng Tây Ban Nha</small></div>
+            <span class="arrow">cuộc gọi</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Connect.svg" alt="">Amazon Connect<small>tổng đài cloud</small></div>
+            <span class="arrow">tự phục vụ</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Lex.svg" alt="">Lex bot<small>intent + slot → Lambda</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 bản ghi âm<small>WAV / MP3</small></div>
+            <span class="arrow">batch</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Transcribe.svg" alt="">Transcribe<small>tách người nói, che PII</small></div>
+            <span class="arrow">text</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Translate.svg" alt="">Translate<small>es → en</small></div>
+            <span class="arrow">text</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Comprehend.svg" alt="">Comprehend<small>sentiment, entity</small></div>
+            <span class="arrow">kết quả</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">S3 + Athena / QuickSight<small>báo cáo (Bài 36)</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Documents.svg" alt="">Thông báo / bài viết<small>văn bản</small></div>
+            <span class="arrow">SSML</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Polly.svg" alt="">Polly<small>neural voice</small></div>
+            <span class="arrow">MP3, cache</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">S3 audio<small>phát lại không tốn thêm</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Các AI service thường được <b>xâu chuỗi</b>: <b>Lex</b> làm bot tự phục vụ trong <b>Amazon Connect</b>; bản ghi cuộc gọi trên S3 được <b>Transcribe</b> chép lời (tách người nói, che PII), <b>Translate</b> dịch sang tiếng Anh, <b>Comprehend</b> phân tích cảm xúc/thực thể, kết quả ghi S3 để phân tích bằng Athena/QuickSight; <b>Polly</b> đọc thông báo thành audio lưu S3 để phát lại.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Convert call recordings / audio / video to text</i>”, “<i>generate subtitles</i>”, “<i>speech-to-text</i>” ⇒ <b>Transcribe</b>. Có “<i>remove credit card numbers / PII from transcripts</i>” ⇒ bật <b>PII redaction</b> của Transcribe.</li>
+          <li>“<i>Read text aloud</i>”, “<i>lifelike speech</i>”, “<i>text-to-speech</i>”, “<i>accessibility for visually impaired</i>” ⇒ <b>Polly</b>; “<i>control pronunciation, pauses, emphasis</i>” ⇒ <b>SSML</b> / lexicon.</li>
+          <li>“<i>Analyze sentiment of customer calls</i>” ⇒ <b>Transcribe → Comprehend</b> (hoặc <b>Transcribe Call Analytics</b>). Có ngôn ngữ khác ⇒ chèn <b>Translate</b> ở giữa.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Nhầm chiều: <b>Transcribe = nói → chữ</b>, <b>Polly = chữ → nói</b>. <b>Lex</b> = hiểu ý định để hội thoại (có ASR bên trong), không phải công cụ chép lời file audio dài.</li>
+          <li><b>Translate</b> chỉ dịch <b>văn bản</b>; dịch cuộc gọi cần Transcribe trước, (Polly sau nếu muốn đọc lại).</li>
+          <li><b>Comprehend</b> làm việc với <b>văn bản</b>; không nhận file audio hay ảnh thường (trừ custom classifier/entity nhận ảnh, PDF, Word).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: DỰ BÁO, CÁ NHÂN HÓA & KHÁC ===================== -->
+      <h2 id="khac"><img src="../assets/icons/svc/Amazon-Forecast.svg" alt="">Dự báo, cá nhân hóa và các AI service chuyên dụng khác</h2>
+      <h3>Amazon Forecast</h3>
+      <ul>
+        <li>Dịch vụ fully managed dùng thuật toán thống kê + ML để dự báo <span class="t" data-vi="Dữ liệu chuỗi thời gian">time-series</span> chính xác, cùng công nghệ dự báo của Amazon.com, không cần kinh nghiệm ML. Bạn cung cấp <b>dữ liệu lịch sử</b> + dữ liệu bổ sung có thể ảnh hưởng (mùa, cửa hàng, khuyến mãi…), Forecast tự chọn tổ hợp thuật toán tốt nhất (AutoML), xử lý giá trị thiếu, tự thêm dataset có sẵn.</li>
+        <li>Use case: <b>demand planning</b> bán lẻ, chuỗi cung ứng, nhân sự, năng lượng, <b>capacity server</b>, lưu lượng web.</li>
+        <li><b>Không còn mở cho khách hàng mới</b> (khách cũ vẫn dùng bình thường); AWS hướng dẫn chuyển sang <b>SageMaker Canvas</b>. Free tier (2 tháng đầu): 10.000 time series forecast, 10 GB lưu trữ, 10 giờ train mỗi tháng.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Dịch vụ</th><th>Bài toán</th><th>Từ khóa trong đề</th></tr></thead>
+        <tbody>
+          <tr><td><img src="../assets/icons/svc/Amazon-Personalize.svg" alt="" width="22"> <b>Amazon Personalize</b></td><td>Gợi ý cá nhân hóa từ luồng hoạt động (xem trang, mua hàng) + danh mục item; recommender tối ưu sẵn cho bán lẻ và media; phân khúc người dùng.</td><td>“<i>product recommendations</i>”, “<i>customers who bought… also bought</i>”, “<i>personalized ranking</i>”</td></tr>
+          <tr><td><img src="../assets/icons/svc/Amazon-Fraud-Detector.svg" alt="" width="22"> <b>Amazon Fraud Detector</b></td><td>Phát hiện gian lận trực tuyến (đăng ký tài khoản giả, thanh toán gian lận) – dựa trên 20+ năm kinh nghiệm của Amazon.</td><td>“<i>fraudulent online activity</i>”, “<i>fake accounts</i>”</td></tr>
+          <tr><td><img src="../assets/icons/svc/Amazon-Augmented-AI-A2I.svg" alt="" width="22"> <b>Amazon Augmented AI (A2I)</b></td><td>Xây quy trình <b>con người duyệt lại</b> dự đoán ML (Textract, Rekognition, model riêng).</td><td>“<i>human review</i>”, “<i>low confidence</i>”</td></tr>
+          <tr><td><img src="../assets/icons/svc/Amazon-Lookout-for-Vision.svg" alt="" width="22"> <b>Lookout for Vision / Equipment</b></td><td>Phát hiện lỗi sản phẩm qua ảnh dây chuyền / bất thường từ cảm biến thiết bị (bảo trì dự đoán). <i>Lookout for Metrics đã ngừng hỗ trợ từ 10/10/2025.</i></td><td>“<i>defects on production line</i>”, “<i>predictive maintenance</i>”</td></tr>
+          <tr><td><b>Amazon DevOps Guru</b></td><td>ML phát hiện hành vi vận hành bất thường (độ trễ, lỗi tăng), gợi ý nguyên nhân gốc và cách khắc phục.</td><td>“<i>operational anomalies</i>”, “<i>ML-powered ops insights</i>”</td></tr>
+          <tr><td><b>Amazon CodeGuru</b></td><td>Reviewer: phát hiện lỗi/lỗ hổng trong code; Profiler: tìm dòng code tốn tài nguyên nhất.</td><td>“<i>automated code review</i>”, “<i>most expensive lines of code</i>”</td></tr>
+          <tr><td><b>Amazon Q</b></td><td>Trợ lý GenAI: <b>Q Business</b> (hỏi đáp, tóm tắt trên dữ liệu doanh nghiệp), <b>Q Developer</b> (hỗ trợ lập trình, tên cũ CodeWhisperer).</td><td>“<i>generative AI assistant for employees / developers</i>”</td></tr>
+          <tr><td><b>Comprehend Medical / Transcribe Medical / HealthLake</b></td><td>Văn bản y tế / giọng nói y khoa / lưu-truy vấn dữ liệu sức khỏe quy mô lớn (HIPAA eligible).</td><td>“<i>medical / clinical / PHI</i>”</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Predict future demand / inventory / sales from historical time-series data</i>” ⇒ <b>Amazon Forecast</b> (đề cũ) – thực tế mới: <b>SageMaker Canvas</b>.</li>
+          <li>“<i>Real-time product recommendations on e-commerce site</i>” ⇒ <b>Personalize</b>, không phải Forecast hay Comprehend.</li>
+          <li>Thấy “<i>medical</i>” ⇒ ưu tiên biến thể <b>Medical</b> của Comprehend/Transcribe.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: SAGEMAKER AI ===================== -->
+      <h2 id="sagemaker"><img src="../assets/icons/svc/Amazon-SageMaker.svg" alt="">Amazon SageMaker AI: build – train – deploy model của riêng bạn</h2>
+      <p class="lead"><b>Amazon SageMaker AI</b> là dịch vụ ML <b>fully managed</b>: data scientist và developer nhanh chóng <b>build, train và deploy</b> model ML vào môi trường hosted sẵn sàng production. SageMaker AI cung cấp thuật toán ML được quản lý chạy hiệu quả trên dữ liệu rất lớn trong môi trường phân tán, hỗ trợ <b>bring-your-own algorithm/framework</b>, và deploy model vào môi trường an toàn, scale được chỉ với vài bước.</p>
+
+      <div class="callout note"><span class="ttl">Đổi tên – đừng bối rối khi đọc đề</span>
+        <p>Ngày <b>03/12/2024</b>, <b>Amazon SageMaker</b> được đổi tên thành <b>Amazon SageMaker AI</b>; namespace API <code>sagemaker</code>, CLI, managed policy <code>AmazonSageMaker…</code>, resource CloudFormation <code>AWS::SageMaker</code>, service-linked role vẫn giữ nguyên. Cùng ngày, AWS ra mắt “<b>Amazon SageMaker</b>” thế hệ mới – một <b>nền tảng hợp nhất cho data, analytics và AI</b> bao gồm SageMaker AI, SageMaker Lakehouse, SageMaker Catalog (dựa trên DataZone), SQL analytics (Redshift), Data Processing (Athena, EMR, Glue), <b>SageMaker Unified Studio</b> và Amazon Bedrock. Đề SAA-C03 thường vẫn viết “Amazon SageMaker” với nghĩa là nền tảng ML.</p></div>
+
+      <h3>Các thành phần theo vòng đời ML</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Giai đoạn</th><th>Tính năng SageMaker AI</th><th>Mô tả (theo whitepaper / tài liệu)</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="3"><b>Chuẩn bị dữ liệu</b></td><td><span class="t" data-vi="Gán nhãn dữ liệu – tạo dữ liệu huấn luyện có nhãn">Ground Truth</span> / Data labeling</td><td>Gán nhãn ảnh, văn bản, video (bằng người + tự động) để tạo <b>tập huấn luyện chất lượng cao</b>.</td></tr>
+          <tr><td>Data Wrangler</td><td>Rút ngắn chuẩn bị dữ liệu và feature engineering “từ tuần xuống phút” trong một giao diện trực quan: chọn, làm sạch, khám phá, trực quan hóa.</td></tr>
+          <tr><td><span class="t" data-vi="Kho đặc trưng dùng chung">Feature Store</span></td><td>Kho lưu <b>feature</b> để đặt tên, tổ chức, <b>dùng lại giữa các team</b>; giữ feature nhất quán giữa lúc train và inference real-time.</td></tr>
+          <tr><td rowspan="5"><b>Build &amp; train</b></td><td>Studio / Notebooks</td><td>IDE web cho ML: JupyterLab, RStudio, Code Editor; <b>Studio Lab</b> miễn phí (tới 15 GB lưu trữ) để học.</td></tr>
+          <tr><td>Built-in algorithms, JumpStart</td><td>Hơn <b>15</b> thuật toán dựng sẵn tối ưu cho SageMaker; <b>JumpStart</b> là model hub (deploy/fine-tune một click model mở, foundation model – gần 1.000 model theo decision guide).</td></tr>
+          <tr><td>Training jobs</td><td>Train &amp; tune ở quy mô lớn không quản lý hạ tầng; tự scale từ 1 tới hàng nghìn GPU; thư viện distributed training; dùng được <b>Spot</b> (managed spot training – <i>kiến thức phổ biến</i>).</td></tr>
+          <tr><td>Autopilot</td><td>AutoML: đưa <b>dataset dạng bảng</b> + chọn cột mục tiêu (regression/classification) ⇒ tự build, train, tune model tốt nhất mà vẫn minh bạch.</td></tr>
+          <tr><td><span class="t" data-vi="Giao diện ML trỏ-và-nhấp không cần code">Canvas</span></td><td>Cho <b>business analyst</b> tạo dự đoán ML <b>không cần viết code</b>, giao diện point-and-click (cũng là đích chuyển đổi cho Amazon Forecast).</td></tr>
+          <tr><td rowspan="2"><b>Đánh giá</b></td><td>Clarify</td><td>Phát hiện <b>bias</b> (khi chuẩn bị dữ liệu, sau train, khi đã deploy) và <b>giải thích</b> dự đoán (feature importance).</td></tr>
+          <tr><td>HyperPod</td><td>Hạ tầng train LLM/FM bền bỉ: tự chia tải qua hàng nghìn accelerator, <b>cluster tự chữa lành</b> và resume từ checkpoint.</td></tr>
+          <tr><td rowspan="3"><b>Deploy &amp; vận hành</b></td><td>Inference endpoints</td><td>Real-time, Serverless, Asynchronous, Batch transform (bảng dưới); auto scaling; <b>SageMaker Neo</b> tối ưu model cho phần cứng (vd Inferentia).</td></tr>
+          <tr><td>Pipelines</td><td>Dịch vụ <b>CI/CD cho ML</b> – tự động hóa workflow ML end-to-end (MLOps); Model Registry quản lý phiên bản model.</td></tr>
+          <tr><td>Model Monitor</td><td>Theo dõi chất lượng model đang chạy (data drift…) <i>(mô tả chi tiết: kiến thức phổ biến)</i>.</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 300" width="760" role="img" aria-label="Vòng đời ML trên SageMaker AI">
+          <defs><marker id="c37" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#01A88D"/></marker></defs>
+          <rect x="15" y="20" width="135" height="150" rx="8" fill="#7AA116" fill-opacity="0.08" stroke="#7AA116"/>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" x="60" y="30" width="44" height="44"/>
+          <text x="28" y="92" font-size="12" font-weight="700">1. Dữ liệu (S3)</text>
+          <text x="28" y="110" font-size="10">Ground Truth gán nhãn</text>
+          <text x="28" y="125" font-size="10">Data Wrangler làm sạch</text>
+          <text x="28" y="140" font-size="10">Feature Store</text>
+          <text x="28" y="160" font-size="10" class="muted">(Glue/Athena – Bài 36)</text>
+          <path d="M150 95 H185" stroke="#01A88D" stroke-width="2" marker-end="url(#c37)"/>
+          <rect x="190" y="20" width="135" height="150" rx="8" fill="#01A88D" fill-opacity="0.08" stroke="#01A88D"/>
+          <image href="../assets/icons/res/Amazon-SageMaker_Notebook.svg" x="235" y="30" width="44" height="44"/>
+          <text x="203" y="92" font-size="12" font-weight="700">2. Build</text>
+          <text x="203" y="110" font-size="10">Studio / JupyterLab</text>
+          <text x="203" y="125" font-size="10">Built-in algorithms</text>
+          <text x="203" y="140" font-size="10">JumpStart, Autopilot</text>
+          <text x="203" y="155" font-size="10">Canvas (no-code)</text>
+          <path d="M325 95 H360" stroke="#01A88D" stroke-width="2" marker-end="url(#c37)"/>
+          <rect x="365" y="20" width="135" height="150" rx="8" fill="#01A88D" fill-opacity="0.08" stroke="#01A88D"/>
+          <image href="../assets/icons/res/Amazon-SageMaker_Train.svg" x="410" y="30" width="44" height="44"/>
+          <text x="378" y="92" font-size="12" font-weight="700">3. Train &amp; tune</text>
+          <text x="378" y="110" font-size="10">Training job (GPU,</text>
+          <text x="378" y="125" font-size="10">Trainium, Spot)</text>
+          <text x="378" y="140" font-size="10">Clarify (bias)</text>
+          <text x="378" y="155" font-size="10">HyperPod (LLM)</text>
+          <path d="M500 95 H535" stroke="#01A88D" stroke-width="2" marker-end="url(#c37)"/>
+          <rect x="540" y="20" width="205" height="150" rx="8" fill="#ED7100" fill-opacity="0.08" stroke="#ED7100"/>
+          <image href="../assets/icons/res/Amazon-SageMaker_Model.svg" x="620" y="30" width="44" height="44"/>
+          <text x="553" y="92" font-size="12" font-weight="700">4. Deploy (inference)</text>
+          <text x="553" y="110" font-size="10">Real-time endpoint</text>
+          <text x="553" y="125" font-size="10">Serverless Inference</text>
+          <text x="553" y="140" font-size="10">Asynchronous Inference</text>
+          <text x="553" y="155" font-size="10">Batch transform</text>
+          <path d="M640 170 V215 H95 V175" stroke="#01A88D" stroke-width="2" stroke-dasharray="5 4" fill="none" marker-end="url(#c37)"/>
+          <rect x="230" y="200" width="300" height="34" rx="6" fill="#ED7100" fill-opacity="0.10" stroke="#ED7100"/>
+          <text x="245" y="222" font-size="11" font-weight="700">5. Monitor &amp; retrain: Model Monitor, Pipelines (CI/CD)</text>
+          <image href="../assets/icons/res/Client.svg" x="20" y="245" width="34" height="34"/>
+          <text x="62" y="267" font-size="11">Ứng dụng gọi endpoint (qua API Gateway + Lambda, hoặc trực tiếp SDK <tspan font-style="italic">InvokeEndpoint</tspan>) để lấy dự đoán</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> Vòng đời ML trên SageMaker AI: dữ liệu trong S3 được gán nhãn, làm sạch, lưu feature → build trong Studio (hoặc AutoML/Canvas) → train trên hạ tầng managed → deploy thành endpoint hoặc batch job → giám sát và train lại tự động bằng Pipelines.</figcaption>
+      </figure>
+
+      <h3>Chọn kiểu inference – câu hỏi rất hay gặp</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Kiểu</th><th>Khi nào dùng (theo tài liệu)</th><th>Đặc điểm / con số</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Suy luận thời gian thực">Real-time inference</span></td><td>Tải <b>tương tác, độ trễ thấp</b>, lưu lượng ổn định.</td><td>Endpoint chạy liên tục trên instance bạn chọn (có GPU), auto scaling; hỗ trợ VPC, multi-model, A/B (production variants), Model Monitor. Payload ~6 MB, timeout ~60 giây <i>(kiến thức phổ biến)</i>.</td></tr>
+          <tr><td><span class="t" data-vi="Suy luận không máy chủ">Serverless Inference</span></td><td>Có <b>khoảng nghỉ giữa các đợt traffic</b>, <b>chấp nhận cold start</b>; traffic không đều/khó đoán.</td><td>Không chọn instance; <b>scale về 0</b>; tích hợp Lambda; memory <b>1–6 GB</b> (bước 1 GB), 5 GB ephemeral disk; max concurrency <b>200</b>/endpoint, <b>50</b> endpoint/Region; container ≤ 10 GB. <b>Không hỗ trợ GPU, VPC, multi-model, Model Monitor</b>. Giảm cold start bằng <b>Provisioned Concurrency</b>.</td></tr>
+          <tr><td><span class="t" data-vi="Suy luận bất đồng bộ">Asynchronous Inference</span></td><td><b>Payload lớn</b>, <b>xử lý lâu</b>, yêu cầu gần real-time.</td><td>Payload tới <b>1 GB</b>, xử lý tới <b>1 giờ</b>; request được <b>xếp hàng</b>; input/output qua <b>S3</b>, thông báo qua <b>SNS</b>; <b>autoscale về 0</b> khi không có request.</td></tr>
+          <tr><td><span class="t" data-vi="Biến đổi theo lô – suy luận offline">Batch transform</span></td><td>Lấy dự đoán cho <b>dataset lớn</b>, <b>không cần endpoint thường trực</b>; tiền xử lý dataset.</td><td>Job đọc S3, chia file cho nhiều instance, ghi <code>*.out</code> ra S3 rồi dừng; <code>MaxPayloadInMB</code> ≤ 100 MB.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>1 GB / 1 giờ</b><span>payload &amp; thời gian xử lý tối đa của Asynchronous Inference</span></div>
+        <div class="stat"><b>1–6 GB</b><span>memory của Serverless Inference (scale về 0, không GPU)</span></div>
+        <div class="stat"><b>200</b><span>max concurrency mỗi serverless endpoint</span></div>
+        <div class="stat"><b>tới 64%</b><span>tiết kiệm với SageMaker AI Savings Plans (cam kết 1–3 năm)</span></div>
+      </div>
+
+      <h3>Bảo mật &amp; vận hành SageMaker AI (góc nhìn kiến trúc sư)</h3>
+      <ul>
+        <li>Quyền: <b>IAM execution role</b> cho notebook/training job/endpoint để đọc S3, ghi log CloudWatch <i>(kiến thức phổ biến)</i>.</li>
+        <li>Mạng: chạy training/endpoint trong <b>VPC</b> của bạn, gọi API qua <b>interface VPC endpoint (PrivateLink)</b>, bật <b>network isolation</b> cho container (Serverless Inference không hỗ trợ VPC/network isolation – theo tài liệu).</li>
+        <li>Mã hóa: dữ liệu S3, volume training, model artifact bằng <b>KMS</b> (Bài 38).</li>
+        <li>Chi phí: Serverless/Async scale về 0, <b>managed Spot training</b>, Savings Plans, <b>Inferentia</b>/<b>Trainium</b>, <b>Neo</b>, nhiều model chung một endpoint (multi-model / inference components).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Intermittent / unpredictable traffic, idle periods, minimize cost, can tolerate cold starts</i>” ⇒ <b>Serverless Inference</b>.</li>
+          <li>“<i>Large payloads (hundreds of MB), long processing time (minutes), scale to zero when idle</i>” ⇒ <b>Asynchronous Inference</b>.</li>
+          <li>“<i>Predictions for an entire dataset nightly, no persistent endpoint</i>” ⇒ <b>Batch transform</b>.</li>
+          <li>“<i>Low latency, consistent traffic, GPU</i>” ⇒ <b>Real-time endpoint</b> + auto scaling.</li>
+          <li>“<i>Business analysts build ML predictions without code</i>” ⇒ <b>SageMaker Canvas</b>; “<i>label training data</i>” ⇒ <b>Ground Truth</b>; “<i>detect bias / explain predictions</i>” ⇒ <b>Clarify</b>; “<i>share features across teams</i>” ⇒ <b>Feature Store</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Không thể <b>chuyển</b> endpoint real-time (instance-based) thành serverless; ngược lại serverless → real-time thì được nhưng không quay lại được.</li>
+          <li>Đề yêu cầu <b>GPU</b> hoặc <b>VPC</b> cho inference ⇒ loại Serverless Inference.</li>
+          <li>Dùng SageMaker cho bài toán mà AI service đã giải sẵn (OCR, dịch, phát hiện khuôn mặt) là <b>tăng operational overhead</b> – thường là đáp án sai.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: BEDROCK ===================== -->
+      <h2 id="bedrock"><img src="../assets/icons/cat/Machine-Learning.svg" alt="">Generative AI với Amazon Bedrock</h2>
+      <p class="lead"><b>Amazon Bedrock</b> là dịch vụ <b>fully managed, serverless</b> cung cấp quyền truy cập an toàn, cấp doanh nghiệp tới các <span class="t" data-vi="Mô hình nền tảng">foundation model (FM)</span> hiệu năng cao của Amazon (dòng <b>Amazon Nova</b>) và các công ty AI hàng đầu (Anthropic Claude, Meta Llama, Mistral AI, DeepSeek, OpenAI, Stability AI…) <b>qua một API</b>, để build và scale ứng dụng <span class="t" data-vi="AI tạo sinh">generative AI</span>. Tài liệu hiện nêu Bedrock hỗ trợ <b>100+ foundation model</b>. Bạn thử nghiệm FM, <b>tùy biến riêng tư</b> bằng dữ liệu của mình và tích hợp vào ứng dụng AWS mà không quản lý hạ tầng.</p>
+
+      <h3>Các khả năng chính</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khả năng</th><th>Làm gì</th></tr></thead>
+        <tbody>
+          <tr><td><b>Model choice + API thống nhất</b></td><td>Converse API / InvokeModel, endpoint tương thích OpenAI; <b>Bedrock Marketplace</b> để thử thêm model; <b>cross-Region inference</b> tăng throughput.</td></tr>
+          <tr><td><span class="t" data-vi="Cơ sở tri thức – RAG được quản lý">Knowledge Bases</span> (RAG)</td><td>Đưa dữ liệu riêng (S3, SharePoint, Confluence, web crawler…) vào ứng dụng: tìm đoạn liên quan rồi đưa vào prompt; trả lời <b>kèm trích dẫn nguồn (citation)</b>. Vector store: OpenSearch Serverless, Aurora, Neptune… hoặc bản <b>Managed Knowledge Base</b> do Bedrock lo toàn bộ; lọc quyền theo ACL tài liệu.</td></tr>
+          <tr><td><span class="t" data-vi="Rào chắn an toàn cho GenAI">Guardrails</span></td><td>Bộ lọc cấu hình được cho <b>input và output</b>: <b>content filters</b> (Hate, Insults, Sexual, Violence, Misconduct, Prompt Attack), <b>denied topics</b>, <b>word filters</b>, <b>sensitive information filters</b> (chặn/che PII, regex), <b>contextual grounding check</b> (phát hiện hallucination trong RAG), <b>Automated Reasoning checks</b>. Dùng kèm lời gọi model hoặc độc lập qua <code>ApplyGuardrail</code>.</td></tr>
+          <tr><td><b>Agents / AgentCore</b></td><td>Xây, deploy, vận hành <b>AI agent</b> tự lên kế hoạch và gọi công cụ/API để hoàn thành tác vụ nhiều bước, ở quy mô lớn.</td></tr>
+          <tr><td><b>Model customization</b></td><td><b>Fine-tuning</b>, reinforcement fine-tuning, <b>model distillation</b>, <b>custom model import</b> – hạ tầng tối thiểu.</td></tr>
+          <tr><td>Flows, Prompt management, Data Automation</td><td>Workflow GenAI end-to-end; prompt dùng lại; biến dữ liệu phi cấu trúc (tài liệu, ảnh, audio, video) thành dữ liệu có cấu trúc.</td></tr>
+          <tr><td><b>Tối ưu chi phí</b></td><td>Giá theo <b>token input/output</b>; tier Priority/Flex/Reserved; <b>batch inference</b> tiết kiệm tới <b>50%</b>; <b>Provisioned Throughput</b> cho năng lực cam kết; <b>prompt caching</b> giảm tới 90% chi phí và 85% độ trễ; intelligent prompt routing giảm tới 30%.</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Machine-Learning.svg" alt="">Chatbot hỏi-đáp trên tài liệu nội bộ (RAG) với Amazon Bedrock</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Documents.svg" alt="">Tài liệu nội bộ<small>PDF, DOCX trên S3 / SharePoint</small></div>
+            <span class="arrow">① ingest: chunk + embedding</span>
+            <div class="node"><img src="../assets/icons/cat/Machine-Learning.svg" alt="">Bedrock Knowledge Base<small>embedding model</small></div>
+            <span class="arrow">lưu vector</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Elasticsearch-Service.svg" alt="">Vector store<small>OpenSearch Serverless / Aurora</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Nhân viên<small>“Chính sách nghỉ phép?”</small></div>
+            <span class="arrow">HTTPS</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">API Gateway<small>+ Cognito</small></div>
+            <span class="arrow">invoke</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda<small>RetrieveAndGenerate</small></div>
+            <span class="arrow">② retrieve ③ augment prompt</span>
+            <div class="node"><img src="../assets/icons/cat/Machine-Learning.svg" alt="">Foundation model<small>④ generate + Guardrails</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> <span class="t" data-vi="Sinh có tăng cường truy xuất">Retrieval Augmented Generation (RAG)</span> với Bedrock: ① tài liệu được chia nhỏ (chunk), chuyển thành <b>embedding</b> và lưu vào <b>vector store</b>; khi người dùng hỏi, ② Knowledge Base tìm các đoạn liên quan, ③ ghép vào prompt, ④ foundation model sinh câu trả lời <b>kèm trích dẫn</b>; <b>Guardrails</b> lọc nội dung có hại và che PII ở cả input lẫn output. Không cần train lại model khi tài liệu thay đổi – chỉ cần sync lại data source.</figcaption>
+      </figure>
+
+      <h3>Bedrock hay SageMaker AI? (theo AWS decision guide)</h3>
+      <div class="compare">
+        <div style="--accent:#01A88D"><h4><img src="../assets/icons/cat/Machine-Learning.svg" alt="">Amazon Bedrock</h4>
+          <ul>
+            <li>Nền tảng <b>serverless</b> để build, chạy, vận hành ứng dụng và agent AI; <b>không quản lý hạ tầng</b>.</li>
+            <li>Dùng <b>model pre-trained</b> qua API + prompt engineering + <b>RAG</b>; chỉ cần <b>kiến thức ML cơ bản</b>.</li>
+            <li>Giá <b>theo token</b>; có model độc quyền như Claude mà JumpStart không có.</li>
+            <li>Ví dụ: chatbot hỗ trợ khách hàng, kiểm duyệt nội dung bằng FM, sinh mô tả sản phẩm.</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/svc/Amazon-SageMaker.svg" alt="">Amazon SageMaker AI</h4>
+          <ul>
+            <li>Train, tùy biến, deploy model AI, <b>predictive ML, classical ML</b> với <b>kiểm soát tối đa</b> (container, instance, orchestration).</li>
+            <li>Dành cho ML engineer, data scientist; quản lý trực tiếp đánh đổi <b>chi phí – độ trễ – throughput</b>.</li>
+            <li>Giá theo <b>tài nguyên compute</b> (instance), Savings Plans; JumpStart gần 1.000 model.</li>
+            <li>Ví dụ: dự đoán kết cục bệnh nhân từ biomarker, hệ thống chống gian lận riêng của ngân hàng.</li>
+          </ul></div>
+      </div>
+      <p>Hai dịch vụ <b>không loại trừ nhau</b>: lộ trình phổ biến là bắt đầu với Bedrock (prompt + RAG), chuyển sang SageMaker AI khi cần thay đổi hành vi model sâu hơn; model custom train trên SageMaker AI có thể import vào Bedrock để inference serverless.</p>
+
+      <div class="callout key"><span class="ttl">Dữ liệu của bạn trong Bedrock</span>
+        <p>Theo cam kết của AWS (FAQ/trang bảo mật Bedrock – <i>kiến thức phổ biến, không có trong trang “Overview” đã đọc</i>): prompt và dữ liệu của bạn <b>không được dùng để train model gốc</b> và không chia sẻ cho nhà cung cấp model; bản fine-tune là <b>bản sao riêng</b> trong account; dữ liệu được mã hóa (có thể dùng KMS key của bạn) và có thể truy cập Bedrock riêng tư qua <b>VPC interface endpoint (PrivateLink)</b>; lời gọi API ghi vào <b>CloudTrail</b>.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Use foundation models / LLMs via API without managing infrastructure</i>” ⇒ <b>Bedrock</b>.</li>
+          <li>“<i>Chatbot must answer from company documents, cite sources, no model retraining when documents change</i>” ⇒ <b>Bedrock Knowledge Bases (RAG)</b>.</li>
+          <li>“<i>Block harmful content / denied topics / mask PII in GenAI responses</i>” ⇒ <b>Bedrock Guardrails</b>.</li>
+          <li>“<i>Adapt FM to company-specific style/terminology using labeled data</i>” ⇒ <b>fine-tuning</b> (Bedrock custom model); “<i>full control of training, custom architecture</i>” ⇒ <b>SageMaker AI</b>.</li>
+          <li>“<i>GenAI assistant for employees on enterprise data</i>” ⇒ <b>Amazon Q Business</b>; cho lập trình viên ⇒ <b>Amazon Q Developer</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: TỔNG HỢP CHỌN DỊCH VỤ ===================== -->
+      <h2 id="chon-dich-vu"><img src="../assets/icons/cat/Machine-Learning.svg" alt="">Tổng hợp: từ khóa trong đề ⇒ dịch vụ</h2>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Dữ liệu đầu vào</th><th>Yêu cầu</th><th>Dịch vụ</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="3">Ảnh / video</td><td>Nhãn, vật thể, khuôn mặt, người nổi tiếng, nội dung không phù hợp, PPE</td><td><b>Rekognition</b></td></tr>
+          <tr><td>Vật thể riêng của doanh nghiệp (logo, linh kiện)</td><td><b>Rekognition Custom Labels</b></td></tr>
+          <tr><td>Video trực tiếp từ camera</td><td><b>Kinesis Video Streams + Rekognition Video</b> stream processor</td></tr>
+          <tr><td>Tài liệu scan / PDF</td><td>Chữ, chữ viết tay, form, bảng, hóa đơn, ID</td><td><b>Textract</b> (+ A2I duyệt)</td></tr>
+          <tr><td rowspan="4">Văn bản</td><td>Sentiment, entity, key phrase, PII, chủ đề, phân loại</td><td><b>Comprehend</b> (Medical cho y tế)</td></tr>
+          <tr><td>Dịch ngôn ngữ</td><td><b>Translate</b></td></tr>
+          <tr><td>Tìm kiếm ngữ nghĩa trên kho tài liệu doanh nghiệp</td><td><b>Kendra</b> / Bedrock Knowledge Bases</td></tr>
+          <tr><td>Sinh/tóm tắt nội dung, hỏi-đáp GenAI</td><td><b>Bedrock</b> (+ Knowledge Bases, Guardrails)</td></tr>
+          <tr><td>Âm thanh</td><td>Nói → chữ, phụ đề, che PII cuộc gọi</td><td><b>Transcribe</b> (Call Analytics, Medical)</td></tr>
+          <tr><td>Văn bản → âm thanh</td><td>Đọc to, giọng tự nhiên</td><td><b>Polly</b></td></tr>
+          <tr><td>Hội thoại</td><td>Chatbot/voicebot, IVR</td><td><b>Lex</b> (+ Lambda, Connect)</td></tr>
+          <tr><td>Chuỗi thời gian</td><td>Dự báo nhu cầu, capacity</td><td><b>Forecast</b> / SageMaker Canvas</td></tr>
+          <tr><td>Hành vi người dùng</td><td>Gợi ý sản phẩm</td><td><b>Personalize</b></td></tr>
+          <tr><td>Dữ liệu riêng, bài toán riêng</td><td>Build/train/deploy model tùy biến</td><td><b>SageMaker AI</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – cặp hay bị nhầm</span>
+        <ul>
+          <li><b>Rekognition vs Textract</b>: ảnh đời thường/video ⇒ Rekognition; tài liệu có cấu trúc (form, bảng) ⇒ Textract.</li>
+          <li><b>Comprehend vs Macie</b>: PII trong <b>chuỗi văn bản</b> ứng dụng gửi tới ⇒ Comprehend; quét <b>S3 bucket</b> tìm dữ liệu nhạy cảm ⇒ Macie.</li>
+          <li><b>Kendra vs OpenSearch</b>: tìm kiếm ngữ nghĩa “hỏi bằng câu tự nhiên” trên tài liệu doanh nghiệp, ít cấu hình ⇒ Kendra; full-text search/log analytics tự cấu hình index ⇒ OpenSearch (Bài 36).</li>
+          <li><b>Lex vs Polly vs Transcribe</b>: hiểu ý định để hội thoại ⇒ Lex; đọc chữ ⇒ Polly; chép lời ⇒ Transcribe.</li>
+          <li><b>Bedrock vs SageMaker AI</b>: dùng FM có sẵn, serverless ⇒ Bedrock; tự train/kiểm soát hạ tầng ⇒ SageMaker AI.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải thuộc</span>
+        <ul>
+          <li><b>3 tầng</b>: AI services (gọi API, không cần ML) → SageMaker AI (model riêng) → Bedrock (FM, GenAI). Đề nhấn “<i>least operational overhead / no ML expertise</i>” ⇒ AI service.</li>
+          <li><b>Rekognition</b>: ảnh (sync, JPG/PNG, S3 hoặc bytes) + video (stored: async <code>Start…</code> → <b>SNS</b> → <code>Get…</code>; streaming: Kinesis Video Streams + stream processor); label, text, face (collection), celebrity, <b>content moderation</b>, <b>PPE</b>, <b>Custom Labels</b>, <b>Face Liveness</b>.</li>
+          <li><b>Textract</b>: OCR + <b>forms (key-value) + tables</b> + Queries + chữ viết tay; AnalyzeExpense (hóa đơn), AnalyzeID, Lending; sync 1 trang / async nhiều trang; kết hợp <b>A2I</b>.</li>
+          <li><b>Comprehend</b>: entity, key phrase, <b>PII</b>, language, <b>sentiment</b> (positive/neutral/negative/mixed), targeted sentiment, syntax, topic modeling; custom classifier/entity; <b>Medical</b>.</li>
+          <li><b>Translate</b>: neural MT, real-time/batch, <b>custom terminology</b>. <b>Kendra</b>: enterprise search ngữ nghĩa, connector, lọc quyền user/group (không nhận khách mới ⇒ Bedrock KB).</li>
+          <li><b>Lex</b>: chatbot ASR + NLU, intent/slot, fulfillment <b>Lambda</b>, tích hợp <b>Connect</b>. <b>Transcribe</b>: speech-to-text batch (S3) / streaming, timestamp từng từ, diarization, custom vocabulary, <b>PII redaction</b>. <b>Polly</b>: text-to-speech, standard/neural/long-form/generative, <b>SSML</b>, lexicon, cache audio miễn phí.</li>
+          <li><b>Forecast</b>: dự báo time-series (không nhận khách mới ⇒ SageMaker Canvas). <b>Personalize</b>: gợi ý. <b>Fraud Detector</b>: gian lận. <b>A2I</b>: người duyệt.</li>
+          <li><b>SageMaker AI</b>: Ground Truth, Data Wrangler, Feature Store, Studio, JumpStart, Autopilot, <b>Canvas</b> (no-code), Clarify, Pipelines, Model Monitor, HyperPod. Inference: <b>real-time</b> (latency thấp) · <b>serverless</b> (traffic thất thường, cold start, 1–6 GB, không GPU/VPC) · <b>async</b> (≤ 1 GB, ≤ 1 giờ, scale về 0, S3 + SNS) · <b>batch transform</b> (cả dataset, không endpoint).</li>
+          <li><b>Bedrock</b>: FM serverless qua API, giá theo token; <b>Knowledge Bases</b> = RAG có trích dẫn; <b>Guardrails</b> = lọc nội dung/topic/PII/hallucination; Agents/AgentCore; fine-tuning, distillation; batch inference giảm 50%, Provisioned Throughput.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="glossary">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Machine learning (ML) / Artificial intelligence (AI)</dt><dd><b>Học máy / Trí tuệ nhân tạo</b>.</dd></div>
+        <div><dt>Pretrained AI service</dt><dd><b>Dịch vụ AI huấn luyện sẵn</b> – chỉ gọi API, không cần chuyên môn ML.</dd></div>
+        <div><dt>Model / Training / Inference</dt><dd><b>Mô hình / Huấn luyện / Suy luận (dự đoán)</b>.</dd></div>
+        <div><dt>Computer vision</dt><dd><b>Thị giác máy tính</b> – Rekognition, Lookout for Vision.</dd></div>
+        <div><dt>Content moderation</dt><dd><b>Kiểm duyệt nội dung</b> – phát hiện ảnh/video không phù hợp.</dd></div>
+        <div><dt>Face collection</dt><dd><b>Bộ sưu tập khuôn mặt</b> – chỉ mục khuôn mặt để tìm kiếm (storage-based API).</dd></div>
+        <div><dt>Custom Labels</dt><dd><b>Nhãn tùy chỉnh</b> – tự train bộ phân loại vật thể riêng trên Rekognition.</dd></div>
+        <div><dt>Face Liveness</dt><dd><b>Kiểm tra người thật</b> – chống giả mạo khuôn mặt.</dd></div>
+        <div><dt>PPE detection</dt><dd><b>Phát hiện thiết bị bảo hộ cá nhân</b>.</dd></div>
+        <div><dt>OCR</dt><dd><b>Nhận dạng ký tự quang học</b> – Textract còn trích được form, bảng.</dd></div>
+        <div><dt>Key-value pair (form)</dt><dd><b>Cặp khóa – giá trị</b> trong biểu mẫu.</dd></div>
+        <div><dt>Human review / Amazon A2I</dt><dd><b>Con người duyệt lại</b> dự đoán ML.</dd></div>
+        <div><dt>NLP</dt><dd><b>Xử lý ngôn ngữ tự nhiên</b> – Comprehend.</dd></div>
+        <div><dt>Entity / Key phrase</dt><dd><b>Thực thể / Cụm từ khóa</b>.</dd></div>
+        <div><dt>Sentiment analysis / Targeted sentiment</dt><dd><b>Phân tích cảm xúc / Cảm xúc theo từng thực thể</b>.</dd></div>
+        <div><dt>PII redaction</dt><dd><b>Che thông tin nhận dạng cá nhân</b>.</dd></div>
+        <div><dt>Topic modeling</dt><dd><b>Mô hình hóa chủ đề</b> – gom tài liệu theo chủ đề.</dd></div>
+        <div><dt>Custom classification / Custom entity recognition</dt><dd><b>Phân loại tùy chỉnh / Nhận diện thực thể tùy chỉnh</b> (Comprehend Custom).</dd></div>
+        <div><dt>Neural machine translation</dt><dd><b>Dịch máy nơ-ron</b>.</dd></div>
+        <div><dt>Custom terminology</dt><dd><b>Thuật ngữ tùy chỉnh</b> – giữ đúng tên thương hiệu khi dịch.</dd></div>
+        <div><dt>Enterprise search / Index (Kendra)</dt><dd><b>Tìm kiếm doanh nghiệp / Chỉ mục</b>.</dd></div>
+        <div><dt>Conversational interface / Chatbot</dt><dd><b>Giao diện hội thoại / Bot trò chuyện</b>.</dd></div>
+        <div><dt>ASR / NLU</dt><dd><b>Nhận dạng giọng nói tự động / Hiểu ngôn ngữ tự nhiên</b>.</dd></div>
+        <div><dt>Intent / Slot / Utterance</dt><dd><b>Ý định / Ô thông tin / Câu mẫu</b> (Lex).</dd></div>
+        <div><dt>Fulfillment</dt><dd><b>Thực hiện yêu cầu</b> – thường bằng Lambda.</dd></div>
+        <div><dt>Speech-to-text / Text-to-speech (TTS)</dt><dd><b>Giọng nói → văn bản (Transcribe) / Văn bản → giọng nói (Polly)</b>.</dd></div>
+        <div><dt>Speaker diarization</dt><dd><b>Tách lời theo người nói</b>.</dd></div>
+        <div><dt>Custom vocabulary</dt><dd><b>Từ vựng tùy chỉnh</b> – tăng độ chính xác với từ chuyên ngành.</dd></div>
+        <div><dt>SSML / Lexicon</dt><dd><b>Ngôn ngữ đánh dấu tổng hợp giọng nói / Từ điển phát âm</b>.</dd></div>
+        <div><dt>Neural TTS (NTTS)</dt><dd><b>Giọng tổng hợp nơ-ron</b> – tự nhiên hơn giọng standard.</dd></div>
+        <div><dt>Time-series forecasting</dt><dd><b>Dự báo chuỗi thời gian</b>.</dd></div>
+        <div><dt>Recommendation</dt><dd><b>Gợi ý cá nhân hóa</b> – Personalize.</dd></div>
+        <div><dt>Data labeling / Ground Truth</dt><dd><b>Gán nhãn dữ liệu</b>.</dd></div>
+        <div><dt>Feature / Feature Store</dt><dd><b>Đặc trưng / Kho đặc trưng</b>.</dd></div>
+        <div><dt>AutoML / Autopilot</dt><dd><b>Học máy tự động</b>.</dd></div>
+        <div><dt>SageMaker Canvas</dt><dd><b>ML không cần code</b> cho business analyst.</dd></div>
+        <div><dt>Bias / Explainability (Clarify)</dt><dd><b>Thiên lệch / Khả năng giải thích</b>.</dd></div>
+        <div><dt>MLOps / SageMaker Pipelines</dt><dd><b>Vận hành ML / CI/CD cho ML</b>.</dd></div>
+        <div><dt>Real-time / Serverless / Asynchronous inference</dt><dd><b>Suy luận thời gian thực / không máy chủ / bất đồng bộ</b>.</dd></div>
+        <div><dt>Batch transform</dt><dd><b>Suy luận theo lô</b> – không cần endpoint thường trực.</dd></div>
+        <div><dt>Cold start / Provisioned Concurrency</dt><dd><b>Khởi động lạnh / Concurrency khởi tạo sẵn</b> (giống Lambda).</dd></div>
+        <div><dt>Generative AI / Foundation model (FM) / LLM</dt><dd><b>AI tạo sinh / Mô hình nền tảng / Mô hình ngôn ngữ lớn</b>.</dd></div>
+        <div><dt>Prompt / Token</dt><dd><b>Câu lệnh đầu vào / Đơn vị tính văn bản</b> (tính giá Bedrock).</dd></div>
+        <div><dt>RAG / Knowledge Base</dt><dd><b>Sinh có tăng cường truy xuất / Cơ sở tri thức</b>.</dd></div>
+        <div><dt>Embedding / Vector store</dt><dd><b>Vector biểu diễn ngữ nghĩa / Kho vector</b>.</dd></div>
+        <div><dt>Hallucination</dt><dd><b>Ảo giác của model</b> – trả lời sai hoặc bịa.</dd></div>
+        <div><dt>Guardrails (Bedrock)</dt><dd><b>Rào chắn an toàn GenAI</b> – lọc nội dung, topic, PII.</dd></div>
+        <div><dt>Fine-tuning / Model distillation</dt><dd><b>Tinh chỉnh model / Chưng cất model</b>.</dd></div>
+        <div><dt>AI agent</dt><dd><b>Tác tử AI</b> – tự lên kế hoạch, gọi công cụ.</dd></div>
+        <div><dt>Provisioned Throughput</dt><dd><b>Năng lực xử lý cam kết</b> trên Bedrock.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A social media company lets users upload photos to an Amazon S3 bucket. The company must automatically detect and flag images that contain explicit or violent content before the images are published. The company has no machine learning expertise and wants the LEAST operational overhead. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Train an image classification model in Amazon SageMaker AI and deploy it to a real-time endpoint that is called for each upload.</li>
+            <li data-k="B">Configure an S3 event notification to invoke an AWS Lambda function that calls the Amazon Rekognition content moderation API and flags images based on the returned labels.</li>
+            <li data-k="C">Use Amazon Textract to analyze each image and flag images that contain inappropriate words.</li>
+            <li data-k="D">Install an open-source computer vision library on Amazon EC2 instances in an Auto Scaling group that polls the S3 bucket.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Rekognition content moderation</b> là model dựng sẵn phát hiện nội dung khiêu dâm, bạo lực, không phù hợp, trả về nhãn phân cấp + confidence score; ghép với <b>S3 event → Lambda</b> là kiến trúc serverless, không cần chuyên môn ML. <b>A sai</b>: tự train model cần chuyên môn ML và phải vận hành endpoint. <b>C sai</b>: Textract trích xuất chữ từ tài liệu, không phân loại nội dung hình ảnh. <b>D sai</b>: tự quản lý EC2 và thư viện – nhiều vận hành nhất.</div>
+          <div class="trans">
+            <div class="tq">Một công ty mạng xã hội cho phép người dùng upload ảnh lên một Amazon S3 bucket. Công ty phải tự động phát hiện và gắn cờ các ảnh chứa nội dung khiêu dâm hoặc bạo lực trước khi ảnh được đăng. Công ty không có chuyên môn machine learning và muốn LEAST operational overhead (ít công vận hành nhất). Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Train một model phân loại ảnh trong Amazon SageMaker AI và triển khai lên một real-time endpoint được gọi cho mỗi lần upload.</span><span class="why">Sai: tự train model đòi hỏi chuyên môn ML mà công ty không có, và phải vận hành endpoint.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình S3 event notification để gọi một AWS Lambda function, function này gọi API content moderation của Amazon Rekognition và gắn cờ ảnh dựa trên các nhãn trả về.</span><span class="why">Đúng: Rekognition content moderation là model dựng sẵn phát hiện nội dung khiêu dâm/bạo lực, kết hợp S3 event → Lambda tạo kiến trúc serverless không cần chuyên môn ML.</span></li>
+              <li data-k="C"><span class="tv">Dùng Amazon Textract phân tích từng ảnh và gắn cờ các ảnh chứa từ ngữ không phù hợp.</span><span class="why">Sai: Textract trích xuất chữ từ tài liệu, không phân loại nội dung hình ảnh như khiêu dâm hay bạo lực.</span></li>
+              <li data-k="D"><span class="tv">Cài một thư viện computer vision mã nguồn mở trên các Amazon EC2 instance trong một Auto Scaling group poll S3 bucket.</span><span class="why">Sai: phải tự quản lý EC2, thư viện và logic phát hiện – nhiều công vận hành nhất, lại cần chuyên môn ML.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">An insurance company receives thousands of scanned claim forms as multi-page PDF files in Amazon S3 every day. The company needs to extract the values of specific form fields and the contents of tables so that the data can be stored in Amazon DynamoDB. Which AWS service should a solutions architect use to extract the data?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon Rekognition text detection</li>
+            <li data-k="B">Amazon Comprehend entity recognition</li>
+            <li data-k="C">Amazon Textract asynchronous document analysis with forms and tables features</li>
+            <li data-k="D">Amazon Transcribe batch transcription</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Textract</b> vượt xa OCR: trích xuất <b>cặp key-value của form</b> và <b>ô bảng</b>; tài liệu <b>nhiều trang</b> dùng thao tác <b>bất đồng bộ</b>. <b>A sai</b>: Rekognition đọc chữ trong ảnh (biển báo…), không hiểu cấu trúc form/bảng của tài liệu. <b>B sai</b>: Comprehend phân tích văn bản đã có, không đọc file scan. <b>D sai</b>: Transcribe chuyển âm thanh thành chữ.</div>
+          <div class="trans">
+            <div class="tq">Một công ty bảo hiểm mỗi ngày nhận hàng nghìn mẫu đơn yêu cầu bồi thường được scan dưới dạng file PDF nhiều trang trên Amazon S3. Công ty cần trích xuất giá trị của các trường cụ thể trong form và nội dung các bảng để lưu dữ liệu vào Amazon DynamoDB. Solutions architect nên dùng dịch vụ AWS nào để trích xuất dữ liệu?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon Rekognition text detection</span><span class="why">Sai: Rekognition chỉ đọc chữ xuất hiện trong ảnh (biển báo, nhãn…), không hiểu cấu trúc form và bảng của tài liệu nhiều trang.</span></li>
+              <li data-k="B"><span class="tv">Amazon Comprehend entity recognition</span><span class="why">Sai: Comprehend phân tích văn bản đã có sẵn, không đọc được file PDF scan để trích xuất trường form hay bảng.</span></li>
+              <li data-k="C"><span class="tv">Amazon Textract asynchronous document analysis với tính năng forms và tables</span><span class="why">Đúng: Textract trích xuất cặp key-value của form và các ô bảng, và tài liệu PDF nhiều trang được xử lý bằng thao tác bất đồng bộ.</span></li>
+              <li data-k="D"><span class="tv">Amazon Transcribe batch transcription</span><span class="why">Sai: Transcribe chuyển âm thanh thành văn bản, không liên quan tới tài liệu scan.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company’s contact center stores recordings of customer calls in Amazon S3. Many calls are in Spanish. Management wants a daily report of customer sentiment in English, and the transcripts must not contain customers’ credit card numbers. Which TWO services should be part of the solution? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Amazon Transcribe with PII redaction enabled</li>
+            <li data-k="B">Amazon Polly with SSML</li>
+            <li data-k="C">Amazon Lex with a sentiment slot</li>
+            <li data-k="D">Amazon Comprehend sentiment analysis (after translating the transcripts with Amazon Translate)</li>
+            <li data-k="E">Amazon Rekognition Video</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> <b>Transcribe</b> chép lời file audio trên S3 (batch) và <b>PII redaction</b> che số thẻ, thông tin cá nhân trong transcript (A). Sau khi <b>Translate</b> dịch sang tiếng Anh, <b>Comprehend</b> phân tích <b>sentiment</b> (positive/neutral/negative/mixed) (D). <b>B sai</b>: Polly là chữ → giọng nói, chiều ngược lại. <b>C sai</b>: Lex xây chatbot, không phân tích bản ghi đã có. <b>E sai</b>: Rekognition Video phân tích hình ảnh trong video, không phải audio.</div>
+          <div class="trans">
+            <div class="tq">Contact center của một công ty lưu bản ghi âm các cuộc gọi khách hàng trên Amazon S3. Nhiều cuộc gọi bằng tiếng Tây Ban Nha. Ban quản lý muốn có báo cáo hằng ngày về cảm xúc (sentiment) khách hàng bằng tiếng Anh, và bản chép lời (transcript) không được chứa số thẻ tín dụng của khách hàng. HAI dịch vụ nào nên nằm trong giải pháp? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon Transcribe có bật PII redaction</span><span class="why">Đúng: Transcribe chép lời file audio trên S3 theo batch, và PII redaction che số thẻ tín dụng cùng thông tin cá nhân khỏi transcript.</span></li>
+              <li data-k="B"><span class="tv">Amazon Polly với SSML</span><span class="why">Sai: Polly chuyển văn bản thành giọng nói – chiều ngược lại với nhu cầu phân tích bản ghi âm.</span></li>
+              <li data-k="C"><span class="tv">Amazon Lex với một sentiment slot</span><span class="why">Sai: Lex dùng để xây chatbot hội thoại, không phân tích các bản ghi âm đã có.</span></li>
+              <li data-k="D"><span class="tv">Amazon Comprehend sentiment analysis (sau khi dịch transcript bằng Amazon Translate)</span><span class="why">Đúng: sau khi Translate dịch transcript sang tiếng Anh, Comprehend phân tích sentiment (positive/neutral/negative/mixed) để lập báo cáo.</span></li>
+              <li data-k="E"><span class="tv">Amazon Rekognition Video</span><span class="why">Sai: Rekognition Video phân tích hình ảnh trong video, không xử lý audio cuộc gọi.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A data science team has trained a fraud detection model with Amazon SageMaker AI. The model is invoked only a few times per hour at unpredictable times, and there are long idle periods. The application can tolerate a few seconds of additional latency on the first request after an idle period. The company wants to minimize inference cost and avoid managing instances. Which deployment option should the team choose?</div>
+          <ol class="opts">
+            <li data-k="A">A real-time endpoint on a GPU instance with auto scaling configured to a minimum of one instance</li>
+            <li data-k="B">A batch transform job that runs every hour</li>
+            <li data-k="C">An Amazon EC2 instance running the model in a Docker container</li>
+            <li data-k="D">SageMaker Serverless Inference</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Tài liệu nêu <b>Serverless Inference</b> lý tưởng cho tải có <b>khoảng nghỉ giữa các đợt traffic</b> và <b>chấp nhận cold start</b>; không chọn instance, <b>scale về 0</b> khi không có request, trả tiền theo sử dụng. <b>A sai</b>: endpoint luôn có ít nhất một instance (GPU đắt) chạy cả khi idle. <b>B sai</b>: batch transform cho dự đoán theo lô, không đáp ứng request rời rạc cần trả lời ngay. <b>C sai</b>: phải tự quản lý instance và trả tiền liên tục.</div>
+          <div class="trans">
+            <div class="tq">Một đội khoa học dữ liệu đã train một model phát hiện gian lận bằng Amazon SageMaker AI. Model chỉ được gọi vài lần mỗi giờ vào những thời điểm không đoán trước, và có những khoảng thời gian dài không hoạt động. Ứng dụng chấp nhận thêm vài giây độ trễ cho request đầu tiên sau khoảng nghỉ. Công ty muốn giảm thiểu chi phí inference và không phải quản lý instance. Đội nên chọn phương án triển khai nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một real-time endpoint trên GPU instance với auto scaling cấu hình tối thiểu một instance</span><span class="why">Sai: luôn có ít nhất một instance GPU đắt tiền chạy cả khi idle, và vẫn phải quản lý instance.</span></li>
+              <li data-k="B"><span class="tv">Một batch transform job chạy mỗi giờ</span><span class="why">Sai: batch transform dành cho dự đoán theo lô, không trả lời ngay các request rời rạc cần kết quả tức thì.</span></li>
+              <li data-k="C"><span class="tv">Một Amazon EC2 instance chạy model trong Docker container</span><span class="why">Sai: phải tự quản lý instance và trả tiền liên tục kể cả khi không có request.</span></li>
+              <li data-k="D"><span class="tv">SageMaker Serverless Inference</span><span class="why">Đúng: Serverless Inference không cần chọn instance, scale về 0 khi không có request và tính phí theo sử dụng; cold start vài giây là chấp nhận được theo đề.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A media company uses a SageMaker AI model to analyze video files. Each request contains an input file of about 500 MB, and processing takes up to 20 minutes. Requests arrive in bursts a few times per day. The company wants requests to be queued, results to be written to Amazon S3, a notification to be sent when processing finishes, and no compute cost when there are no requests. Which inference option meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">SageMaker Asynchronous Inference with Amazon SNS notifications and autoscaling to zero instances</li>
+            <li data-k="B">SageMaker Serverless Inference with Provisioned Concurrency</li>
+            <li data-k="C">A SageMaker real-time endpoint behind Amazon API Gateway</li>
+            <li data-k="D">AWS Lambda with the model packaged as a container image</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Asynchronous Inference</b> xếp hàng request, hỗ trợ payload tới <b>1 GB</b> và thời gian xử lý tới <b>1 giờ</b>, input/output qua <b>S3</b>, thông báo thành công/lỗi qua <b>SNS</b>, và <b>autoscale về 0</b> khi không có request. <b>B sai</b>: Serverless Inference có giới hạn memory 6 GB, không dành cho payload lớn/xử lý lâu; Provisioned Concurrency còn tốn tiền khi idle. <b>C sai</b>: real-time endpoint chạy liên tục, không hợp với request 20 phút (timeout ngắn) và không về 0 tự nhiên. <b>D sai</b>: Lambda giới hạn 15 phút và bộ nhớ/ephemeral storage, không có hàng đợi kết quả sẵn như async inference.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền thông dùng một model SageMaker AI để phân tích file video. Mỗi request chứa một file đầu vào khoảng 500 MB, và quá trình xử lý mất tới 20 phút. Request đến theo từng đợt vài lần mỗi ngày. Công ty muốn request được xếp hàng đợi, kết quả được ghi vào Amazon S3, có thông báo gửi đi khi xử lý xong, và không tốn chi phí compute khi không có request. Phương án inference nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">SageMaker Asynchronous Inference với thông báo qua Amazon SNS và autoscaling về 0 instance</span><span class="why">Đúng: Asynchronous Inference xếp hàng request, hỗ trợ payload tới 1 GB và xử lý tới 1 giờ, input/output qua S3, báo kết quả qua SNS và autoscale về 0 khi không có request.</span></li>
+              <li data-k="B"><span class="tv">SageMaker Serverless Inference với Provisioned Concurrency</span><span class="why">Sai: Serverless Inference không dành cho payload lớn và xử lý lâu như vậy, còn Provisioned Concurrency vẫn tốn tiền khi idle.</span></li>
+              <li data-k="C"><span class="tv">Một SageMaker real-time endpoint đặt sau Amazon API Gateway</span><span class="why">Sai: real-time endpoint chạy liên tục, timeout ngắn không hợp với request 20 phút, và không tự về 0.</span></li>
+              <li data-k="D"><span class="tv">AWS Lambda với model được đóng gói thành container image</span><span class="why">Sai: Lambda giới hạn 15 phút cùng bộ nhớ/ephemeral storage, không đáp ứng xử lý 20 phút và không có sẵn hàng đợi kết quả.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company wants to build an internal assistant that answers employee questions by using the company’s HR policy documents stored in Amazon S3. Answers must include references to the source documents. The documents change weekly, and the company does not want to retrain or fine-tune any model. The solution must be serverless. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Fine-tune a foundation model in Amazon Bedrock with the HR documents every week.</li>
+            <li data-k="B">Train a custom language model in Amazon SageMaker AI and deploy it to a real-time endpoint.</li>
+            <li data-k="C">Create an Amazon Bedrock knowledge base with the S3 bucket as a data source, sync it when documents change, and use it to generate responses with citations.</li>
+            <li data-k="D">Use Amazon Comprehend topic modeling on the documents and return the topic that matches each question.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Bedrock Knowledge Bases</b> thực hiện <b>RAG</b>: tìm đoạn tài liệu liên quan rồi đưa vào prompt cho foundation model, trả lời <b>kèm citation</b>; tài liệu thay đổi chỉ cần <b>sync</b> lại data source, không train lại model; serverless. <b>A sai</b>: fine-tune hằng tuần tốn kém, trái yêu cầu và không cho trích dẫn nguồn. <b>B sai</b>: tự train model và vận hành endpoint – nhiều công sức nhất. <b>D sai</b>: topic modeling chỉ gom chủ đề, không sinh câu trả lời.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn xây một trợ lý nội bộ trả lời câu hỏi của nhân viên dựa trên các tài liệu chính sách nhân sự (HR) lưu trong Amazon S3. Câu trả lời phải kèm tham chiếu tới tài liệu nguồn. Tài liệu thay đổi hằng tuần, và công ty không muốn train lại hay fine-tune bất kỳ model nào. Giải pháp phải serverless. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Fine-tune một foundation model trong Amazon Bedrock bằng tài liệu HR mỗi tuần.</span><span class="why">Sai: fine-tune hằng tuần tốn kém, trái yêu cầu không fine-tune, và không cho câu trả lời kèm trích dẫn nguồn.</span></li>
+              <li data-k="B"><span class="tv">Train một custom language model trong Amazon SageMaker AI và triển khai lên một real-time endpoint.</span><span class="why">Sai: tự train model và vận hành endpoint là nhiều công nhất, trái yêu cầu không train và không serverless.</span></li>
+              <li data-k="C"><span class="tv">Tạo một Amazon Bedrock knowledge base với S3 bucket làm data source, sync khi tài liệu thay đổi, và dùng nó để sinh câu trả lời kèm citation.</span><span class="why">Đúng: Knowledge Bases thực hiện RAG – truy xuất đoạn tài liệu liên quan để foundation model trả lời kèm citation; tài liệu đổi chỉ cần sync lại, không train lại, và là serverless.</span></li>
+              <li data-k="D"><span class="tv">Dùng Amazon Comprehend topic modeling trên tài liệu và trả về chủ đề khớp với mỗi câu hỏi.</span><span class="why">Sai: topic modeling chỉ gom nhóm chủ đề, không sinh câu trả lời cho câu hỏi của nhân viên.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A bank uses Amazon Bedrock to power a customer-facing chatbot. The bank must prevent the chatbot from giving investment advice, block hateful or insulting content in both user prompts and model responses, and mask any account numbers that appear in responses. Which solution requires the LEAST development effort?</div>
+          <ol class="opts">
+            <li data-k="A">Write an AWS Lambda function that uses regular expressions to scan every prompt and response.</li>
+            <li data-k="B">Configure Amazon Bedrock Guardrails with a denied topic for investment advice, content filters, and a sensitive information filter, and apply the guardrail to the model invocations.</li>
+            <li data-k="C">Use Amazon Comprehend to detect sentiment in each prompt and reject negative prompts.</li>
+            <li data-k="D">Use Amazon Macie to scan the chatbot responses for sensitive data.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Bedrock Guardrails</b> có sẵn <b>denied topics</b> (chặn chủ đề như tư vấn đầu tư bất hợp pháp – chính là ví dụ trong tài liệu), <b>content filters</b> (Hate, Insults…) áp dụng cho <b>cả input và output</b>, và <b>sensitive information filters</b> để chặn/che PII. <b>A sai</b>: tự viết code regex nhiều công, không phát hiện được chủ đề hay nội dung thù ghét. <b>C sai</b>: sentiment tiêu cực ≠ nội dung bị cấm; không xử lý topic hay che PII. <b>D sai</b>: Macie quét dữ liệu nhạy cảm trong <b>S3</b>, không lọc phản hồi chatbot theo thời gian thực.</div>
+          <div class="trans">
+            <div class="tq">Một ngân hàng dùng Amazon Bedrock cho chatbot phục vụ khách hàng. Ngân hàng phải ngăn chatbot đưa ra tư vấn đầu tư, chặn nội dung thù ghét hoặc xúc phạm ở cả prompt của người dùng lẫn phản hồi của model, và che (mask) mọi số tài khoản xuất hiện trong phản hồi. Giải pháp nào đòi hỏi LEAST development effort (ít công phát triển nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Viết một AWS Lambda function dùng regular expression để quét mọi prompt và phản hồi.</span><span class="why">Sai: tự viết code regex tốn công, và regex không phát hiện được chủ đề tư vấn đầu tư hay nội dung thù ghét.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình Amazon Bedrock Guardrails với một denied topic cho tư vấn đầu tư, content filter và sensitive information filter, rồi áp guardrail cho các lần gọi model.</span><span class="why">Đúng: Guardrails có sẵn denied topics, content filters (Hate, Insults…) áp cho cả input và output, và sensitive information filters để che số tài khoản – chỉ cần cấu hình.</span></li>
+              <li data-k="C"><span class="tv">Dùng Amazon Comprehend phát hiện sentiment trong mỗi prompt và từ chối các prompt tiêu cực.</span><span class="why">Sai: sentiment tiêu cực không đồng nghĩa với nội dung bị cấm, và cách này không chặn chủ đề hay che số tài khoản.</span></li>
+              <li data-k="D"><span class="tv">Dùng Amazon Macie quét dữ liệu nhạy cảm trong phản hồi của chatbot.</span><span class="why">Sai: Macie quét dữ liệu nhạy cảm trong S3, không lọc phản hồi chatbot theo thời gian thực.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A retail company wants to add two features to its e-commerce website: (1) a voice and text chatbot that lets customers check order status by calling a backend API, and (2) the ability to read product descriptions aloud with natural-sounding voices for visually impaired customers. Which TWO AWS services should a solutions architect use? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Amazon Transcribe</li>
+            <li data-k="B">Amazon Lex with an AWS Lambda function for fulfillment</li>
+            <li data-k="C">Amazon Kendra</li>
+            <li data-k="D">Amazon Comprehend</li>
+            <li data-k="E">Amazon Polly</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> <b>Lex</b> xây chatbot giọng nói và văn bản (ASR + NLU), nhận diện intent “check order status”, thu thập slot (mã đơn) và gọi <b>Lambda</b> để truy vấn API backend (B). <b>Polly</b> chuyển văn bản thành giọng nói tự nhiên (neural voices) – phục vụ accessibility (E). <b>A sai</b>: Transcribe chỉ chép lời, không quản lý hội thoại. <b>C sai</b>: Kendra là tìm kiếm tài liệu doanh nghiệp. <b>D sai</b>: Comprehend phân tích văn bản, không tạo chatbot hay giọng nói.</div>
+          <div class="trans">
+            <div class="tq">Một công ty bán lẻ muốn thêm hai tính năng cho website thương mại điện tử: (1) một chatbot giọng nói và văn bản cho phép khách hàng kiểm tra trạng thái đơn hàng bằng cách gọi một backend API, và (2) khả năng đọc to mô tả sản phẩm bằng giọng nói tự nhiên cho khách hàng khiếm thị. Solutions architect nên dùng HAI dịch vụ AWS nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon Transcribe</span><span class="why">Sai: Transcribe chỉ chép lời giọng nói thành chữ, không quản lý hội thoại hay gọi backend API.</span></li>
+              <li data-k="B"><span class="tv">Amazon Lex với một AWS Lambda function để fulfillment</span><span class="why">Đúng: Lex xây chatbot giọng nói và văn bản, nhận diện intent kiểm tra đơn hàng, thu thập slot mã đơn và gọi Lambda để truy vấn backend API.</span></li>
+              <li data-k="C"><span class="tv">Amazon Kendra</span><span class="why">Sai: Kendra là dịch vụ tìm kiếm tài liệu doanh nghiệp, không phải chatbot hay chuyển văn bản thành giọng nói.</span></li>
+              <li data-k="D"><span class="tv">Amazon Comprehend</span><span class="why">Sai: Comprehend phân tích văn bản (sentiment, entity…), không tạo chatbot hay giọng nói.</span></li>
+              <li data-k="E"><span class="tv">Amazon Polly</span><span class="why">Đúng: Polly chuyển văn bản thành giọng nói tự nhiên (neural voices), phục vụ đọc to mô tả sản phẩm cho khách hàng khiếm thị.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A global e-commerce company uses Amazon Translate to translate product descriptions into 10 languages. The company’s brand and product names, such as “CloudBook Pro”, are being translated literally, which confuses customers. What is the MOST operationally efficient way to keep these names unchanged in all translations?</div>
+          <ol class="opts">
+            <li data-k="A">Train a custom translation model in Amazon SageMaker AI.</li>
+            <li data-k="B">Use Amazon Comprehend to detect brand names and remove them before translation.</li>
+            <li data-k="C">Write post-processing code that searches each translation and replaces the translated names.</li>
+            <li data-k="D">Create a custom terminology in Amazon Translate that maps each brand name to itself, and specify it in translation requests.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Custom terminology</b> được thiết kế đúng cho mục đích này: đảm bảo <b>tên thương hiệu, tên nhân vật, tên model sản phẩm</b> được dịch như mong muốn (ví dụ “Amazon Photos” giữ nguyên trong tiếng Pháp). <b>A sai</b>: tự train model dịch là quá mức cần thiết. <b>B sai</b>: bỏ tên ra khỏi câu làm hỏng ngữ cảnh và vẫn phải ghép lại. <b>C sai</b>: code hậu xử lý phải duy trì cho mọi ngôn ngữ, dễ lỗi.</div>
+          <div class="trans">
+            <div class="tq">Một công ty thương mại điện tử toàn cầu dùng Amazon Translate để dịch mô tả sản phẩm sang 10 ngôn ngữ. Tên thương hiệu và tên sản phẩm của công ty, như "CloudBook Pro", đang bị dịch theo nghĩa đen, gây bối rối cho khách hàng. Cách MOST operationally efficient (hiệu quả vận hành nhất) để giữ nguyên các tên này trong mọi bản dịch là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Train một custom translation model trong Amazon SageMaker AI.</span><span class="why">Sai: tự train model dịch là quá mức cần thiết, tốn công và chi phí cho một vấn đề đã có tính năng sẵn.</span></li>
+              <li data-k="B"><span class="tv">Dùng Amazon Comprehend phát hiện tên thương hiệu và loại bỏ chúng trước khi dịch.</span><span class="why">Sai: bỏ tên ra khỏi câu làm hỏng ngữ cảnh bản dịch và vẫn phải viết code ghép lại.</span></li>
+              <li data-k="C"><span class="tv">Viết code hậu xử lý tìm trong mỗi bản dịch và thay thế các tên đã bị dịch.</span><span class="why">Sai: phải duy trì code cho mọi ngôn ngữ, dễ lỗi vì tên bị dịch khác nhau ở mỗi ngôn ngữ.</span></li>
+              <li data-k="D"><span class="tv">Tạo một custom terminology trong Amazon Translate ánh xạ mỗi tên thương hiệu thành chính nó, và chỉ định nó trong các request dịch.</span><span class="why">Đúng: custom terminology được thiết kế để bảo đảm tên thương hiệu và tên sản phẩm được dịch đúng như mong muốn (giữ nguyên), chỉ cần cấu hình một lần.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company needs to verify the identity of users during online account sign-up by comparing a selfie with the photo on the user’s ID document. The company also must make sure that a real person is present in front of the camera and that the selfie is not a printed photo or a replayed video. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Use Amazon Rekognition Face Liveness during the selfie capture and Amazon Rekognition face comparison to compare the selfie with the ID photo.</li>
+            <li data-k="B">Use Amazon Textract AnalyzeID to compare the faces in the selfie and the ID document.</li>
+            <li data-k="C">Build a liveness detection model with Amazon SageMaker AI Ground Truth and deploy it on a real-time endpoint.</li>
+            <li data-k="D">Use Amazon Augmented AI (Amazon A2I) to have human reviewers compare every selfie with the ID photo.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Rekognition Face Liveness</b> xác minh người dùng <b>hiện diện thật</b> trước camera, phát hiện tấn công giả mạo như ảnh in, ảnh/video số, mặt nạ 3D, video quay sẵn hoặc deepfake; <b>face comparison</b> so sánh khuôn mặt với ảnh tham chiếu để xác minh danh tính. <b>B sai</b>: AnalyzeID trích xuất <b>chữ</b> (tên, ngày sinh…) từ giấy tờ, không so sánh khuôn mặt. <b>C sai</b>: Ground Truth chỉ gán nhãn dữ liệu; tự build model là nhiều vận hành. <b>D sai</b>: duyệt thủ công mọi hồ sơ không scale và không phát hiện liveness.</div>
+          <div class="trans">
+            <div class="tq">Một công ty cần xác minh danh tính người dùng khi đăng ký tài khoản trực tuyến bằng cách so sánh ảnh selfie với ảnh trên giấy tờ tùy thân của người dùng. Công ty cũng phải bảo đảm có người thật đang hiện diện trước camera và ảnh selfie không phải là ảnh in hay video phát lại. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng Amazon Rekognition Face Liveness trong lúc chụp selfie và Amazon Rekognition face comparison để so sánh selfie với ảnh trên giấy tờ.</span><span class="why">Đúng: Face Liveness xác minh người thật hiện diện và phát hiện giả mạo như ảnh in hay video phát lại, còn face comparison so khớp khuôn mặt với ảnh giấy tờ – đều là dịch vụ dựng sẵn.</span></li>
+              <li data-k="B"><span class="tv">Dùng Amazon Textract AnalyzeID để so sánh khuôn mặt trong selfie và giấy tờ tùy thân.</span><span class="why">Sai: AnalyzeID chỉ trích xuất chữ (tên, ngày sinh…) từ giấy tờ, không so sánh khuôn mặt hay kiểm tra liveness.</span></li>
+              <li data-k="C"><span class="tv">Xây dựng một model phát hiện liveness bằng Amazon SageMaker AI Ground Truth và triển khai trên một real-time endpoint.</span><span class="why">Sai: Ground Truth chỉ dùng để gán nhãn dữ liệu; tự xây và vận hành model là nhiều công nhất.</span></li>
+              <li data-k="D"><span class="tv">Dùng Amazon Augmented AI (Amazon A2I) để người duyệt so sánh mọi ảnh selfie với ảnh giấy tờ.</span><span class="why">Sai: duyệt thủ công mọi hồ sơ không scale được và con người khó phát hiện tấn công giả mạo liveness.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/rekognition/latest/dg/how-it-works.html" target="_blank" rel="noopener">How Amazon Rekognition works</a></li>
+        <li><a href="https://docs.aws.amazon.com/rekognition/latest/dg/how-it-works-operations-intro.html" target="_blank" rel="noopener">Rekognition image and video operations</a></li>
+        <li><a href="https://docs.aws.amazon.com/textract/latest/dg/what-is.html" target="_blank" rel="noopener">What is Amazon Textract?</a></li>
+        <li><a href="https://docs.aws.amazon.com/comprehend/latest/dg/what-is.html" target="_blank" rel="noopener">What is Amazon Comprehend?</a></li>
+        <li><a href="https://docs.aws.amazon.com/translate/latest/dg/what-is.html" target="_blank" rel="noopener">What is Amazon Translate?</a></li>
+        <li><a href="https://docs.aws.amazon.com/translate/latest/dg/how-custom-terminology.html" target="_blank" rel="noopener">Customizing translations with custom terminology</a></li>
+        <li><a href="https://docs.aws.amazon.com/kendra/latest/dg/what-is-kendra.html" target="_blank" rel="noopener">What is Amazon Kendra?</a></li>
+        <li><a href="https://docs.aws.amazon.com/lexv2/latest/dg/what-is.html" target="_blank" rel="noopener">What is Amazon Lex V2?</a></li>
+        <li><a href="https://docs.aws.amazon.com/transcribe/latest/dg/what-is.html" target="_blank" rel="noopener">What is Amazon Transcribe?</a></li>
+        <li><a href="https://docs.aws.amazon.com/transcribe/latest/dg/how-it-works.html" target="_blank" rel="noopener">How Amazon Transcribe works</a></li>
+        <li><a href="https://docs.aws.amazon.com/transcribe/latest/dg/pii-redaction.html" target="_blank" rel="noopener">Redacting or identifying PII (Transcribe)</a></li>
+        <li><a href="https://docs.aws.amazon.com/polly/latest/dg/what-is.html" target="_blank" rel="noopener">What is Amazon Polly?</a></li>
+        <li><a href="https://docs.aws.amazon.com/polly/latest/dg/ssml.html" target="_blank" rel="noopener">Generating speech from SSML documents (Polly)</a></li>
+        <li><a href="https://docs.aws.amazon.com/forecast/latest/dg/what-is-forecast.html" target="_blank" rel="noopener">What is Amazon Forecast?</a></li>
+        <li><a href="https://docs.aws.amazon.com/sagemaker/latest/dg/deploy-model.html" target="_blank" rel="noopener">Deploy models for inference (SageMaker AI)</a></li>
+        <li><a href="https://docs.aws.amazon.com/sagemaker/latest/dg/serverless-endpoints.html" target="_blank" rel="noopener">SageMaker Serverless Inference</a></li>
+        <li><a href="https://docs.aws.amazon.com/sagemaker/latest/dg/async-inference.html" target="_blank" rel="noopener">SageMaker Asynchronous Inference</a></li>
+        <li><a href="https://docs.aws.amazon.com/sagemaker/latest/dg/batch-transform.html" target="_blank" rel="noopener">Batch transform for inference</a></li>
+        <li><a href="https://docs.aws.amazon.com/bedrock/latest/userguide/what-is-bedrock.html" target="_blank" rel="noopener">What is Amazon Bedrock?</a></li>
+        <li><a href="https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base.html" target="_blank" rel="noopener">Amazon Bedrock Knowledge Bases</a></li>
+        <li><a href="https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html" target="_blank" rel="noopener">Amazon Bedrock Guardrails</a></li>
+        <li><a href="https://docs.aws.amazon.com/decision-guides/latest/bedrock-or-sagemaker/bedrock-or-sagemaker.html" target="_blank" rel="noopener">Amazon Bedrock or Amazon SageMaker AI? (Decision guide)</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

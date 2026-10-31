@@ -1,0 +1,947 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 41 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-CloudFormation.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="41" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <b>Infrastructure as Code</b> với <b>AWS CloudFormation</b>: <b>template</b> (YAML/JSON, các section, chỉ <code>Resources</code> là bắt buộc), <b>stack</b>, rollback khi lỗi, <b>DeletionPolicy</b>, <b>stack policy</b>, <b>drift detection</b>, <b>nested stack</b>.</li>
+          <li>Dùng <b>change set</b> để xem trước tác động của một lần cập nhật (đặc biệt là <b>Replacement</b> làm mất dữ liệu) trước khi thực thi.</li>
+          <li>Triển khai cùng một template ra <b>nhiều account và nhiều Region</b> bằng <b>StackSets</b>: administrator/target account, <b>self-managed vs service-managed permissions</b>, automatic deployment cho account mới trong AWS Organizations, các tùy chọn concurrency và failure tolerance.</li>
+          <li>Dùng <b>AWS Elastic Beanstalk</b> để chạy web app mà không tự dựng hạ tầng: application, version, <b>environment</b>, <b>web server vs worker tier</b>, và chọn đúng <b>deployment policy</b> (All at once, Rolling, Rolling with additional batch, Immutable, Traffic splitting, Blue/green).</li>
+          <li>Vận hành fleet máy chủ bằng <b>AWS Systems Manager</b>: managed node &amp; SSM Agent, <b>Session Manager</b> (không mở port, không bastion, không SSH key), <b>Run Command</b> (rate control), <b>Patch Manager</b> (patch baseline, maintenance window, patch policy).</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 9 – Monitoring, Governance &amp; Operations</span>
+        <p>Bài 6 đã giới thiệu Control Tower, CloudFormation hooks (proactive control); Bài 13 đã dạy <b>instance refresh</b> của Auto Scaling; Bài 21 đã dạy <b>bastion host</b> và VPC endpoint; Bài 38 đã dạy <b>SSM Parameter Store</b> và Secrets Manager; Bài 40 đã dạy CloudWatch, CloudTrail và AWS Config (kể cả remediation bằng <b>SSM Automation</b>). Bài này <b>không lặp lại</b> các phần đó mà tập trung vào <b>CloudFormation, Elastic Beanstalk, Systems Manager</b>. Chiến lược <b>disaster recovery</b> (dùng IaC để dựng lại môi trường) học ở <b>Bài 42</b>.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Management-Governance.svg" alt="">Bức tranh tổng thể: dựng hạ tầng bằng mã và vận hành ở quy mô lớn</h2>
+      <p class="lead">Dựng hạ tầng bằng cách click trên console thì nhanh lúc đầu nhưng <b>không lặp lại được</b>, dễ sai sót và khó biết ai đã đổi gì. <span class="t" data-vi="Hạ tầng dưới dạng mã">Infrastructure as Code (IaC)</span> mô tả toàn bộ tài nguyên trong một <b>file văn bản</b> – có thể đưa vào hệ thống quản lý phiên bản, review, tái sử dụng ở nhiều Region – rồi để dịch vụ tự tạo đúng như mô tả. Sau khi hạ tầng chạy, bạn còn cần <b>vận hành</b> hàng trăm máy chủ: đăng nhập sửa lỗi, chạy lệnh hàng loạt, vá bản cập nhật bảo mật. Ba dịch vụ trong bài này phủ hai nhu cầu đó.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-CloudFormation.svg" alt="">
+          <div><h4>AWS CloudFormation</h4><span class="vi">Hạ tầng dưới dạng mã</span><p>Bạn viết <b>template</b> mô tả mọi tài nguyên (EC2, ALB, RDS…); CloudFormation <b>cấp phát và cấu hình</b> chúng, tự xử lý thứ tự phụ thuộc, quản lý cả nhóm như <b>một đơn vị (stack)</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-CloudFormation_Template.svg" alt="">
+          <div><h4>CloudFormation StackSets</h4><span class="vi">Triển khai đa account, đa Region</span><p>Tạo, cập nhật, xóa stack ở <b>nhiều account và Region</b> bằng <b>một thao tác</b> từ administrator account; tích hợp AWS Organizations để tự triển khai cho account mới.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Elastic-Beanstalk.svg" alt="">
+          <div><h4>AWS Elastic Beanstalk</h4><span class="vi">Nền tảng triển khai web app</span><p>Bạn chỉ upload code; Beanstalk tự <b>cấp EC2</b> (hoặc EKS), <b>load balancing</b>, <b>Auto Scaling</b>, giám sát health. <b>Không tính phí thêm</b> – chỉ trả cho tài nguyên bên dưới.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Systems-Manager.svg" alt="">
+          <div><h4>AWS Systems Manager</h4><span class="vi">Quản lý &amp; vận hành node tập trung</span><p>Quản lý EC2, máy on-premises, VM multicloud: <b>Session Manager</b>, <b>Run Command</b>, <b>Patch Manager</b>, Automation, State Manager, Inventory, Parameter Store…</p></div></div>
+      </div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>CloudFormation</th><th>Elastic Beanstalk</th><th>Systems Manager</th></tr></thead>
+        <tbody>
+          <tr><td>Bạn mô tả / cung cấp</td><td><b>Toàn bộ hạ tầng</b> (bất kỳ tài nguyên AWS nào) trong template</td><td><b>Code ứng dụng</b> + vài cấu hình (instance type, scaling, deployment policy)</td><td>Lệnh, script, patch baseline, runbook để chạy <b>trên máy đang có</b></td></tr>
+          <tr><td>Mức kiểm soát</td><td>Cao nhất – từng property của từng resource</td><td>Trung bình – Beanstalk chọn kiến trúc chuẩn (ALB + ASG + EC2)</td><td>Ở tầng <b>hệ điều hành</b> bên trong node</td></tr>
+          <tr><td>Từ khóa đề</td><td>“<i>repeatable, consistent, version-controlled infrastructure</i>”, “<i>replicate the environment to another Region</i>”</td><td>“<i>developers just upload code</i>”, “<i>least operational overhead to deploy a web application</i>”</td><td>“<i>connect without SSH / bastion</i>”, “<i>patch fleet</i>”, “<i>run a script on hundreds of instances</i>”</td></tr>
+          <tr><td>Chi phí dịch vụ</td><td>Không phí với resource type của AWS (<i>kiến thức phổ biến</i>); trả cho tài nguyên được tạo</td><td><b>Không phí thêm</b> (theo tài liệu)</td><td>Phần lớn tool miễn phí cho EC2; Run Command <b>miễn phí trên EC2</b> (theo tài liệu), node hybrid có thể tính phí</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Xây nhà: <b>CloudFormation</b> là <b>bản vẽ kiến trúc</b> chi tiết – đưa cho nhà thầu là họ xây ra đúng căn nhà đó, xây thêm ở thành phố khác cũng y hệt (StackSets là đưa bản vẽ cho nhiều nhà thầu ở nhiều tỉnh cùng lúc). <b>Elastic Beanstalk</b> là mua <b>căn hộ chung cư hoàn thiện</b>: bạn chỉ mang đồ đạc (code) vào ở, điện nước, thang máy, bảo vệ đã có người lo. <b>Systems Manager</b> là <b>ban quản lý tòa nhà</b>: có chìa khóa vào từng căn (Session Manager) mà không cần đục cửa phụ, phát loa thông báo cho cả trăm căn cùng lúc (Run Command) và đi bảo trì định kỳ (Patch Manager).</p></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Beanstalk <b>không phải</b> là một “hộp đen” chạy ở account khác: nó tạo EC2, ASG, ELB… <b>trong chính account của bạn</b> (thực chất bằng một CloudFormation stack – <i>kiến thức phổ biến</i>) và bạn vẫn xem/sửa được.</li>
+          <li>Muốn “<i>tự động hóa hạ tầng</i>” nhưng đề nhấn mạnh <b>developer không muốn quản lý hạ tầng</b> ⇒ Beanstalk (hoặc dịch vụ serverless), không phải tự viết CloudFormation.</li>
+          <li>CloudFormation <b>tạo</b> tài nguyên; Systems Manager <b>vận hành bên trong</b> tài nguyên đã tạo. Câu hỏi “<i>install a package on 500 running instances</i>” ⇒ <b>Run Command</b>, không phải update stack.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: CLOUDFORMATION ===================== -->
+      <h2 id="cloudformation"><img src="../assets/icons/svc/AWS-CloudFormation.svg" alt="">AWS CloudFormation: template và stack</h2>
+      <p class="lead">CloudFormation giúp bạn <b>mô hình hóa và thiết lập</b> tài nguyên AWS để dành thời gian cho ứng dụng thay vì quản lý tài nguyên. Bạn tạo một <span class="t" data-vi="Mẫu mô tả hạ tầng">template</span> mô tả mọi tài nguyên mong muốn; CloudFormation lo việc cấp phát, cấu hình và <b>xác định thứ tự phụ thuộc</b>. Khi dùng template để tạo một <span class="t" data-vi="Ngăn xếp tài nguyên">stack</span>, mọi tài nguyên được tạo; xóa stack thì <b>mọi tài nguyên trong stack bị xóa</b> theo.</p>
+
+      <h3>Ba lợi ích chính theo tài liệu</h3>
+      <ol class="steps">
+        <li><b>Đơn giản hóa quản lý hạ tầng</b> – Web app gồm Auto Scaling group, load balancer, RDS: thay vì tạo và nối từng thứ bằng tay, một template tạo tất cả, quản lý như <b>một đơn vị</b>.</li>
+        <li><b>Nhân bản hạ tầng nhanh</b> – Mô tả tài nguyên <b>một lần</b>, tạo lại <b>nhất quán, lặp lại được</b> ở nhiều Region (phục vụ high availability / DR).</li>
+        <li><b>Kiểm soát &amp; theo dõi thay đổi</b> – Template là file văn bản ⇒ quản lý phiên bản như source code (biết ai đổi gì, khi nào); cần quay lại thì dùng template phiên bản trước.</li>
+      </ol>
+
+      <h3>Template: định dạng và các section</h3>
+      <p>Template là file <b>YAML hoặc JSON</b>, lưu với đuôi bất kỳ (<code>.yaml</code>, <code>.json</code>, <code>.template</code>, <code>.txt</code>). Mỗi resource có một <span class="t" data-vi="Định danh logic">logical ID</span> duy nhất trong template, một <code>Type</code> (vd <code>AWS::EC2::Instance</code>) và các <code>Properties</code>. Sau khi tạo, resource có <span class="t" data-vi="Định danh vật lý">physical ID</span> thật (vd <code>i-0abc…</code>).</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Section</th><th>Bắt buộc?</th><th>Vai trò</th></tr></thead>
+        <tbody>
+          <tr><td><code>AWSTemplateFormatVersion</code></td><td>Không</td><td>Phiên bản định dạng (<code>2010-09-09</code>).</td></tr>
+          <tr><td><code>Description</code></td><td>Không</td><td>Mô tả template (tối đa 1.024 byte).</td></tr>
+          <tr><td><code>Metadata</code></td><td>Không</td><td>Thông tin bổ sung về template.</td></tr>
+          <tr><td><code>Parameters</code></td><td>Không</td><td><b>Giá trị nhập lúc tạo/cập nhật stack</b> (vd instance type, môi trường) ⇒ tái sử dụng template mà không sửa nó.</td></tr>
+          <tr><td><code>Rules</code></td><td>Không</td><td>Kiểm tra hợp lệ một hoặc một tổ hợp parameter khi tạo/cập nhật stack.</td></tr>
+          <tr><td><code>Mappings</code></td><td>Không</td><td><b>Bảng tra cứu</b> key–value, dùng với <code>Fn::FindInMap</code> – vd chọn AMI ID theo Region.</td></tr>
+          <tr><td><code>Conditions</code></td><td>Không</td><td>Quyết định <b>có tạo</b> resource / gán property hay không theo điều kiện (vd chỉ tạo Multi-AZ khi <code>Env=prod</code>).</td></tr>
+          <tr><td><code>Transform</code></td><td>Không</td><td>Áp dụng <b>macro</b>: <code>AWS::Serverless</code> (cú pháp <b>AWS SAM</b> cho serverless app), <code>AWS::Include</code> (chèn đoạn template lưu riêng).</td></tr>
+          <tr><td><b><code>Resources</code></b></td><td><b>Có – section duy nhất bắt buộc</b></td><td>Khai báo tài nguyên và thuộc tính của chúng.</td></tr>
+          <tr><td><code>Outputs</code></td><td>Không</td><td>Giá trị trả về khi xem stack (URL, ID) – dùng cho vận hành hoặc <b>chia sẻ sang stack khác</b>.</td></tr>
+        </tbody>
+      </table></div>
+
+<pre><code><span class="c"># Ví dụ rút gọn từ tài liệu: EC2 instance + Elastic IP gắn vào nó</span>
+AWSTemplateFormatVersion: 2010-09-09
+Description: A sample template
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t2.micro
+Resources:
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0ff8a91507f77f867
+      InstanceType: !Ref InstanceType     <span class="c"># lấy từ Parameters</span>
+      KeyName: testkey
+  MyEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref MyEC2Instance      <span class="c"># CloudFormation tự tạo instance trước</span>
+Outputs:
+  PublicIP:
+    Value: !Ref MyEIP</code></pre>
+      <p>Các <span class="t" data-vi="Hàm nội tại">intrinsic function</span> hay gặp (<i>kiến thức phổ biến</i>): <code>!Ref</code> (tham chiếu parameter hoặc resource), <code>!GetAtt</code> (lấy thuộc tính, vd <code>!GetAtt MyALB.DNSName</code>), <code>!Sub</code> (ghép chuỗi), <code>!FindInMap</code>, <code>!If</code>, <code>!ImportValue</code> (lấy giá trị export từ stack khác). Pseudo parameter như <code>AWS::Region</code>, <code>AWS::AccountId</code>, <code>AWS::StackName</code> giúp template chạy được ở mọi Region/account.</p>
+
+      <h3>CloudFormation hoạt động thế nào?</h3>
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-CloudFormation.svg" alt="">Quy trình tạo stack</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Kỹ sư / pipeline<small>viết YAML/JSON, Git</small></div>
+            <span class="arrow">lưu</span>
+            <div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Template.svg" alt="">Template<small>local hoặc S3 URL</small></div>
+            <span class="arrow">CreateStack</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-CloudFormation.svg" alt="">CloudFormation<small>validate → gọi API thay bạn</small></div>
+            <span class="arrow">cấp phát</span>
+            <div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Stack.svg" alt="">Stack<small>CREATE_COMPLETE</small></div>
+          </div>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">Tài nguyên trong stack (song song nếu độc lập, tuần tự nếu phụ thuộc)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB</div>
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">Auto Scaling group</div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS DB instance</div>
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 bucket</div>
+              </div></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> CloudFormation dùng template làm “bản thiết kế”. Template upload từ máy local được CloudFormation tự lưu vào một S3 bucket trong account (mỗi Region một bucket). Trước khi tạo, CloudFormation chạy <b>pre-deployment validation</b> (lỗi cú pháp property, trùng tên resource…). Nó gọi API của từng dịch vụ <b>bằng quyền của bạn</b> (hoặc service role), tạo song song các resource độc lập. Nếu tạo stack lỗi ⇒ mặc định <b>rollback</b>, xóa những gì đã tạo.</figcaption>
+      </figure>
+      <ul>
+        <li><b>Quyền</b>: CloudFormation gọi API dịch vụ thay bạn ⇒ bạn cần quyền tạo các tài nguyên đó (quản lý bằng IAM). Template có tạo IAM resource ⇒ phải xác nhận <b>capability</b> <code>CAPABILITY_IAM</code> / <code>CAPABILITY_NAMED_IAM</code>.</li>
+        <li><b>Thời gian triển khai</b> phụ thuộc resource: database, load balancer, NAT gateway mất lâu nhất. <b>Express mode</b> kết thúc thao tác ngay khi cấu hình được áp dụng, không chờ resource ổn định – dành cho môi trường dev (và mặc định tắt rollback).</li>
+        <li><b>Rollback khi lỗi</b>: tạo stack lỗi ⇒ xóa resource đã tạo; cập nhật lỗi ⇒ quay về <b>trạng thái ổn định cuối cùng</b> (<code>UPDATE_ROLLBACK_COMPLETE</code>).</li>
+        <li><span class="t" data-vi="Tùy chọn khi stack lỗi">Stack failure options</span> – chọn <b>Preserve successfully provisioned resources</b> (CLI: <code>--disable-rollback</code>) để giữ resource đã tạo thành công, sửa lỗi rồi <b>Retry / Update / Roll back</b>, không phải làm lại từ đầu.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>500</b><span>resource tối đa trong một template</span></div>
+        <div class="stat"><b>200</b><span>parameter / output / mapping tối đa mỗi template</span></div>
+        <div class="stat"><b>51.200 byte</b><span>template body gửi trực tiếp; <b>1 MB</b> nếu qua S3 URL</span></div>
+        <div class="stat"><b>2.000</b><span>stack mỗi account (quota mặc định, xin tăng được)</span></div>
+      </div>
+
+      <h3>Bảo vệ tài nguyên: DeletionPolicy, stack policy, termination protection</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cơ chế</th><th>Bảo vệ khỏi gì</th><th>Chi tiết theo tài liệu</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Chính sách khi xóa">DeletionPolicy</span> (thuộc tính từng resource)</td><td>Mất resource khi <b>xóa stack</b> hoặc khi resource bị gỡ khỏi template</td><td><code>Delete</code> (mặc định), <code>Retain</code> (giữ lại, vẫn tính phí), <code>RetainExceptOnCreate</code> (giữ, trừ khi chính lần tạo bị rollback), <code>Snapshot</code> (chụp snapshot rồi mới xóa – EBS volume, RDS DB instance/cluster, ElastiCache, Redshift, Neptune, DocumentDB). <b>Ngoại lệ</b>: <code>AWS::RDS::DBCluster</code> và DB instance không thuộc cluster mặc định là <b>Snapshot</b>. S3 bucket chỉ xóa được khi đã rỗng. Không áp dụng cho resource bị <b>replace</b> khi update (dùng <code>UpdateReplacePolicy</code>).</td></tr>
+          <tr><td><span class="t" data-vi="Chính sách bảo vệ stack">Stack policy</span> (JSON, 1 policy/stack)</td><td>Bị <b>cập nhật/replace/xóa ngoài ý muốn trong lúc update stack</b></td><td>Đã đặt policy ⇒ <b>mọi resource được bảo vệ mặc định</b>, phải <code>Allow</code> rõ ràng. Action: <code>Update:Modify</code>, <code>Update:Replace</code>, <code>Update:Delete</code>, <code>Update:*</code>; <code>Deny</code> luôn thắng <code>Allow</code>. Chỉ áp dụng <b>khi update</b>, không thay IAM. Không xóa được policy, chỉ sửa; cập nhật resource bị bảo vệ bằng <b>override policy tạm thời</b>.</td></tr>
+          <tr><td>Termination protection (<i>kiến thức phổ biến</i>)</td><td>Bị <b>xóa cả stack</b> ngoài ý muốn</td><td>Bật trên stack ⇒ lệnh delete stack bị từ chối cho tới khi tắt.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Drift detection – phát hiện thay đổi ngoài CloudFormation</h3>
+      <p>Người dùng vẫn có thể sửa resource trực tiếp (vd đổi security group trên console EC2). <span class="t" data-vi="Phát hiện trôi lệch cấu hình">Drift detection</span> so sánh giá trị property <b>thực tế</b> với giá trị <b>mong đợi</b> theo template + parameter. Resource bị coi là drift nếu property bị đổi hoặc <b>resource bị xóa</b>.</p>
+      <ul>
+        <li>Trạng thái stack: <code>DRIFTED</code>, <code>IN_SYNC</code>, <code>NOT_CHECKED</code>; trạng thái resource: <code>MODIFIED</code>, <code>DELETED</code>, <code>IN_SYNC</code>, <code>NOT_CHECKED</code> (resource không hỗ trợ drift).</li>
+        <li>Chỉ kiểm tra property được <b>khai báo rõ</b> trong template (không tính giá trị mặc định). Không tự kiểm tra nested stack (phải chạy riêng). Không kiểm tra <code>KMSKeyId</code>, mật khẩu, source code Lambda.</li>
+        <li>Drift detection chỉ <b>phát hiện</b> – không tự sửa. Xử lý: sửa resource về đúng template, hoặc cập nhật template / import resource.</li>
+      </ul>
+
+      <h3>Nested stack vs cross-stack reference</h3>
+      <div class="compare">
+        <div style="--accent:#E7157B"><h4><img src="../assets/icons/res/AWS-CloudFormation_Stack.svg" alt="">Nested stack</h4>
+          <ul>
+            <li>Tách cấu hình dùng chung (vd load balancer chuẩn) thành template riêng, gọi bằng resource <code>AWS::CloudFormation::Stack</code> + <code>TemplateURL</code> (S3).</li>
+            <li>Có <b>root stack</b> (cấp cao nhất) và <b>parent stack</b> (cha trực tiếp); nested stack lồng nhiều cấp được.</li>
+            <li>Cập nhật phải bắt đầu <b>từ root stack</b>; chỉ nested stack có thay đổi mới được update. Giúp vượt giới hạn 500 resource/template.</li>
+            <li>Dùng khi các thành phần có <b>chung vòng đời</b>, là <b>tái sử dụng</b> template.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/AWS-CloudFormation_Template.svg" alt="">Cross-stack reference (<i>kiến thức phổ biến</i>)</h4>
+          <ul>
+            <li>Stack A <b>export</b> giá trị trong <code>Outputs</code> (<code>Export: Name</code>); stack B dùng <code>!ImportValue</code>.</li>
+            <li>Các stack <b>độc lập vòng đời</b>, do nhóm khác nhau quản lý – vd stack network (VPC, subnet) dùng chung cho nhiều stack ứng dụng.</li>
+            <li>Không xóa được stack đang có export bị stack khác import; export name là duy nhất trong account/Region.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Provision the same infrastructure consistently / repeatably in multiple environments or Regions</i>”, “<i>infrastructure in version control</i>” ⇒ <b>CloudFormation</b> template (có Parameters/Mappings cho khác biệt từng môi trường).</li>
+          <li>“<i>Keep the database / S3 data when the stack is deleted</i>” ⇒ <code>DeletionPolicy: Retain</code> hoặc <code>Snapshot</code>.</li>
+          <li>“<i>Prevent accidental updates to the production database during stack updates</i>” ⇒ <b>stack policy</b> Deny <code>Update:*</code> cho logical ID đó. “<i>Prevent the stack from being deleted</i>” ⇒ <b>termination protection</b>.</li>
+          <li>“<i>Detect resources changed manually outside CloudFormation</i>” ⇒ <b>drift detection</b>.</li>
+          <li>“<i>Serverless application template (Lambda + API Gateway + DynamoDB) with simplified syntax</i>” ⇒ <b>AWS SAM</b> (là CloudFormation <code>Transform: AWS::Serverless</code>). Viết hạ tầng bằng ngôn ngữ lập trình (TypeScript, Python) ⇒ <b>AWS CDK</b> – sinh ra CloudFormation template (<i>kiến thức phổ biến</i>).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: CHANGE SETS ===================== -->
+      <h2 id="change-sets"><img src="../assets/icons/res/AWS-CloudFormation_Change-Set.svg" alt="">Change sets: xem trước thay đổi trước khi cập nhật stack</h2>
+      <p class="lead">Khi cần sửa tài nguyên đang chạy trong stack, bạn <b>update stack</b>, không cần tạo stack mới rồi xóa stack cũ. Nhưng một số thay đổi nhỏ trên template có thể khiến CloudFormation <b>xóa và tạo lại</b> tài nguyên. <span class="t" data-vi="Bộ thay đổi đề xuất">Change set</span> là <b>bản tóm tắt các thay đổi đề xuất</b>, cho bạn thấy tác động lên tài nguyên đang chạy (nhất là tài nguyên quan trọng) <b>trước khi</b> thực hiện. CloudFormation <b>chỉ thay đổi stack khi bạn execute</b> change set.</p>
+
+      <h3>Ba kiểu hành vi khi cập nhật resource</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Update behavior</th><th>Điều gì xảy ra</th><th>Ví dụ trong tài liệu</th></tr></thead>
+        <tbody>
+          <tr><td><b>Update with No Interruption</b></td><td>Cập nhật không gián đoạn, <b>giữ physical ID</b></td><td>Sửa một số property của <code>AWS::CloudTrail::Trail</code></td></tr>
+          <tr><td><b>Updates with Some Interruption</b></td><td>Có gián đoạn tạm thời, vẫn giữ physical ID</td><td>Sửa một số property của <code>AWS::EC2::Instance</code> (vd đổi instance type phải stop/start)</td></tr>
+          <tr><td><b>Replacement</b></td><td><b>Tạo resource mới</b> (physical ID mới), trỏ các resource phụ thuộc sang, rồi <b>xóa resource cũ</b></td><td>Đổi <code>AvailabilityZone</code> của EC2 instance; đổi <code>Port</code> hoặc tên của <code>AWS::RDS::DBInstance</code> ⇒ DB mới, <b>mất dữ liệu cũ</b> nếu chưa backup</td></tr>
+        </tbody>
+      </table></div>
+      <p>Hành vi phụ thuộc vào <b>property nào</b> bị đổi (ghi trong tài liệu tham chiếu của từng resource type). Với Replacement trên DB, tài liệu khuyên: chụp snapshot, chuẩn bị chiến lược cho ứng dụng khi DB bị thay, cập nhật cấu hình kết nối, restore dữ liệu vào DB mới.</p>
+
+      <h3>Quy trình dùng change set</h3>
+      <ol class="steps">
+        <li><b>Create change set</b>: gửi template đã sửa và/hoặc parameter mới. CloudFormation so sánh với stack hiện tại, <b>chưa đổi gì</b> trên stack.</li>
+        <li><b>View change set</b>: xem resource nào được <b>Add / Modify / Remove</b>, có <b>Replacement</b> không, so sánh trước–sau của property và tag.</li>
+        <li>(Tùy chọn) Tạo <b>thêm change set khác</b> để so sánh phương án; tạo bao nhiêu cũng được.</li>
+        <li><b>Execute change set</b> muốn áp dụng. Sau khi execute, CloudFormation <b>xóa mọi change set khác</b> của stack (không còn hợp lệ). Có thể xóa change set để tránh bị execute nhầm.</li>
+      </ol>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 270" width="800" role="img" aria-label="Quy trình change set">
+          <defs><marker id="a41" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <rect x="10" y="40" width="160" height="110" rx="10" fill="#E7157B" fill-opacity="0.08" stroke="#E7157B"/>
+          <image href="../assets/icons/res/AWS-CloudFormation_Stack.svg" x="66" y="52" width="48" height="48"/>
+          <text x="90" y="118" font-size="13" font-weight="700" text-anchor="middle">Stack đang chạy</text>
+          <text x="90" y="136" font-size="11" text-anchor="middle">template v1</text>
+          <rect x="10" y="175" width="160" height="70" rx="10" fill="#147EBA" fill-opacity="0.08" stroke="#147EBA"/>
+          <image href="../assets/icons/res/AWS-CloudFormation_Template.svg" x="20" y="190" width="40" height="40"/>
+          <text x="66" y="206" font-size="12" font-weight="700">Template v2</text>
+          <text x="66" y="224" font-size="11">+ parameter mới</text>
+          <path d="M170 210 C 230 210, 230 120, 270 110" fill="none" stroke="#545B64" stroke-width="1.5" marker-end="url(#a41)"/>
+          <path d="M170 95 H268" stroke="#545B64" stroke-width="1.5" marker-end="url(#a41)"/>
+          <rect x="275" y="40" width="230" height="140" rx="10" fill="#7AA116" fill-opacity="0.08" stroke="#7AA116"/>
+          <image href="../assets/icons/res/AWS-CloudFormation_Change-Set.svg" x="290" y="52" width="40" height="40"/>
+          <text x="340" y="70" font-size="13" font-weight="700">Change set</text>
+          <text x="340" y="86" font-size="11">(chưa đổi gì trên stack)</text>
+          <text x="290" y="112" font-size="11">Modify WebASG – No interruption</text>
+          <text x="290" y="130" font-size="11">Add CacheCluster</text>
+          <text x="290" y="148" font-size="11" fill="#DD344C" font-weight="700">Modify ProdDB – Replacement: True</text>
+          <text x="290" y="166" font-size="11">Remove OldQueue</text>
+          <path d="M505 90 H585" stroke="#545B64" stroke-width="1.5" marker-end="url(#a41)"/>
+          <text x="512" y="82" font-size="11">Execute</text>
+          <path d="M505 150 H585" stroke="#545B64" stroke-width="1.5" marker-end="url(#a41)"/>
+          <text x="512" y="142" font-size="11">Xóa / sửa</text>
+          <rect x="590" y="50" width="200" height="70" rx="10" fill="#E7157B" fill-opacity="0.08" stroke="#E7157B"/>
+          <text x="690" y="80" font-size="12" font-weight="700" text-anchor="middle">UPDATE_COMPLETE</text>
+          <text x="690" y="100" font-size="11" text-anchor="middle">lỗi ⇒ rollback về trạng thái ổn định</text>
+          <rect x="590" y="130" width="200" height="60" rx="10" fill="#545B64" fill-opacity="0.06" stroke="#545B64"/>
+          <text x="690" y="156" font-size="12" font-weight="700" text-anchor="middle">Tạo change set khác</text>
+          <text x="690" y="174" font-size="11" text-anchor="middle">thêm DeletionPolicy, snapshot…</text>
+          <text x="10" y="265" font-size="11">Change set cho thấy ProdDB sẽ bị thay thế (mất dữ liệu) ⇒ dừng lại, backup hoặc đổi cách sửa trước khi execute.</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Change set là bước “xem trước” giữa template mới và stack đang chạy. Dòng <b>Replacement: True</b> trên database là tín hiệu phải dừng lại. Lưu ý: change set <b>không bảo đảm</b> cập nhật thành công. Pre-deployment validation bắt được lỗi cú pháp, trùng tên, quota khi tạo change set, nhưng lỗi do điều kiện lúc chạy (logic custom resource, ràng buộc riêng của dịch vụ) vẫn có thể xảy ra khi execute.</figcaption>
+      </figure>
+
+      <ul>
+        <li>Stack có <b>nested stack</b>: update root stack sẽ khởi động update trên mọi nested stack để xác định cái nào thay đổi; change set có thể bao gồm thay đổi của nested stack.</li>
+        <li><b>Drift-aware change set</b>: tính đến trạng thái thực tế (đã drift) của resource khi tạo change set.</li>
+        <li>Update stack trên console cũng có phần “Preview your changes”: CloudFormation tạo change set để hiển thị preview.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Review / preview the impact of changes to a production stack before applying them</i>”, “<i>determine whether the update will replace the RDS instance</i>” ⇒ <b>change set</b>.</li>
+          <li>Change set ≠ drift detection: change set so sánh <b>template mới với stack</b>; drift so sánh <b>stack với thực tế</b> (thay đổi ngoài CloudFormation).</li>
+          <li>Change set ≠ stack policy: change set chỉ <b>cho xem</b>; stack policy mới <b>chặn</b> cập nhật lên resource được bảo vệ.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: STACKSETS ===================== -->
+      <h2 id="stacksets"><img src="../assets/icons/res/AWS-CloudFormation_Template.svg" alt="">CloudFormation StackSets: một template, nhiều account và Region</h2>
+      <p class="lead"><span class="t" data-vi="Bộ stack đa account/Region">StackSets</span> mở rộng khả năng của stack: <b>tạo, cập nhật hoặc xóa stack trên nhiều account và nhiều Region bằng một thao tác duy nhất</b>. Từ một <b>administrator account</b>, bạn định nghĩa template rồi dùng nó làm cơ sở để cấp phát stack vào các <b>target account</b> ở các Region đã chọn. Đây là cách chuẩn để rải “baseline” (IAM role, Config rule, CloudTrail, VPC chuẩn…) cho cả tổ chức.</p>
+
+      <h3>Khái niệm</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khái niệm</th><th>Ý nghĩa theo tài liệu</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Tài khoản quản trị">Administrator account</span></td><td>Account nơi tạo StackSet. Với service-managed permissions: là <b>management account</b> của Organization hoặc <b>delegated administrator</b> account.</td></tr>
+          <tr><td><span class="t" data-vi="Tài khoản đích">Target account</span></td><td>Account mà StackSet tạo/cập nhật/xóa stack vào. Cần quan hệ tin cậy (trust) giữa administrator và target.</td></tr>
+          <tr><td>StackSet</td><td><b>Container</b> chứa nhiều stack cùng template, tùy biến từng stack bằng parameter. StackSet là <b>tài nguyên theo Region</b>: chỉ thấy ở Region đã tạo nó.</td></tr>
+          <tr><td><span class="t" data-vi="Thực thể stack">Stack instance</span></td><td><b>Tham chiếu</b> tới một stack trong một target account ở một Region. Có thể tồn tại mà không có stack (vd tạo lỗi, instance lưu lý do lỗi). Mỗi stack instance chỉ thuộc một StackSet.</td></tr>
+          <tr><td>Thao tác</td><td><b>Create</b> StackSet; <b>Update</b> (thay đổi template luôn áp dụng cho <b>mọi</b> stack, không chọn lọc được); <b>Delete stacks</b> (theo account/Region, có thể chọn <b>Retain stacks</b> để stack tiếp tục chạy độc lập); <b>Delete StackSet</b> (chỉ khi không còn stack instance).</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Hai mô hình quyền (permission model)</h3>
+      <div class="compare">
+        <div style="--accent:#545B64"><h4><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Self-managed permissions</h4>
+          <ul>
+            <li><b>Bạn tự tạo IAM role</b> ở administrator account và từng target account để thiết lập quan hệ tin cậy (tên role thường dùng: <code>AWSCloudFormationStackSetAdministrationRole</code> / <code>AWSCloudFormationStackSetExecutionRole</code>, <i>kiến thức phổ biến</i>).</li>
+            <li>Triển khai được tới <b>bất kỳ account nào</b> bạn có quyền tạo IAM role, kể cả account <b>không</b> thuộc Organization.</li>
+            <li>Không có automatic deployment.</li>
+          </ul></div>
+        <div style="--accent:#E7157B"><h4><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">Service-managed permissions</h4>
+          <ul>
+            <li>Triển khai tới account <b>do AWS Organizations quản lý</b>; StackSets <b>tự tạo IAM role</b> thay bạn (cần bật <b>trusted access</b>).</li>
+            <li>Target theo <b>OU</b>; bật <b>automatic deployment</b> ⇒ account <b>mới thêm vào OU</b> tự nhận stack; chuyển account sang OU khác ⇒ stack được gỡ ở OU cũ và tạo theo OU mới.</li>
+            <li>Quản trị từ management account hoặc <b>delegated administrator</b> (member account được ủy quyền).</li>
+            <li>Không hỗ trợ template có <b>macro/transform</b>.</li>
+          </ul></div>
+      </div>
+
+      <h3>Tùy chọn khi chạy thao tác (operation options)</h3>
+      <ul>
+        <li><b>Maximum concurrent accounts</b>: số (hoặc %) account chạy đồng thời. Thao tác chạy <b>từng Region một</b> theo <i>Deployment order</i>. Ví dụ tài liệu: 10 account, 2 Region, 50% ⇒ 5 account đầu ở Region 1, rồi 5 account tiếp, rồi mới sang Region 2. Phần trăm lẻ được <b>làm tròn xuống</b>.</li>
+        <li><b>Failure tolerance</b>: số (hoặc %) stack được phép lỗi <b>mỗi Region</b> trước khi CloudFormation tự dừng. Vượt ngưỡng ⇒ thao tác <code>FAILED</code> và <b>hủy ở các Region còn lại</b>.</li>
+        <li><b>Region concurrency</b>: <b>Sequential</b> (mặc định, từng Region theo thứ tự) hoặc <b>Parallel</b> (mọi Region cùng lúc).</li>
+        <li><b>Concurrency mode</b>: ở chế độ <i>Strict Failure Tolerance</i>, maximum concurrent accounts tối đa bằng failure tolerance + 1.</li>
+        <li><b>Retain stacks</b> khi xóa: stack tách khỏi StackSet, vẫn chạy và được quản lý tại target account.</li>
+        <li>Trạng thái stack instance: <code>CURRENT</code> (khớp StackSet), <code>OUTDATED</code> (thao tác lỗi/dừng), <code>INOPERABLE</code>, <code>FAILED</code>, <code>SKIPPED_SUSPENDED_ACCOUNT</code>…</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">AWS Organization – StackSet với service-managed permissions</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/AWS-Organizations_Management-Account.svg" alt="">Management / delegated admin<small>administrator account</small></div>
+            <span class="arrow">tạo</span>
+            <div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Template.svg" alt="">StackSet<small>template + parameter</small></div>
+            <span class="arrow">target = OU</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">OU Workloads<small>auto deployment: ON</small></div>
+          </div>
+          <div class="row">
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account A</span>
+              <div class="flow">
+                <div class="grp region"><span class="lbl">us-east-1</span><div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Stack.svg" alt="">stack instance</div></div>
+                <div class="grp region"><span class="lbl">eu-west-1</span><div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Stack.svg" alt="">stack instance</div></div>
+              </div></div>
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account B</span>
+              <div class="flow">
+                <div class="grp region"><span class="lbl">us-east-1</span><div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Stack.svg" alt="">stack instance</div></div>
+                <div class="grp region"><span class="lbl">eu-west-1</span><div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Stack.svg" alt="">stack instance</div></div>
+              </div></div>
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account C (mới gia nhập OU)</span>
+              <div class="flow">
+                <div class="grp region"><span class="lbl">us-east-1</span><div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Stack.svg" alt="">tự tạo</div></div>
+                <div class="grp region"><span class="lbl">eu-west-1</span><div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Stack.svg" alt="">tự tạo</div></div>
+              </div></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Một StackSet tạo <b>một stack instance cho mỗi cặp (account, Region)</b>: 3 account × 2 Region = 6 stack. Với service-managed permissions và automatic deployment, account C vừa được thêm vào OU sẽ <b>tự động</b> nhận stack mà không cần ai chạy lại thao tác. Cập nhật template của StackSet ⇒ mọi stack instance được cập nhật theo các tùy chọn concurrency/failure tolerance.</figcaption>
+      </figure>
+
+      <div class="stats">
+        <div class="stat"><b>1.000</b><span>StackSet mỗi administrator account (quota)</span></div>
+        <div class="stat"><b>100.000</b><span>stack instance mỗi StackSet</span></div>
+        <div class="stat"><b>10.000</b><span>stack instance chạy thao tác đồng thời mỗi Region / admin account</span></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Deploy the same IAM roles / Config rules / resources to all accounts in the organization, including future accounts, with least operational overhead</i>” ⇒ <b>StackSets service-managed permissions</b> + target OU/root + <b>automatic deployment</b>.</li>
+          <li>Account <b>không</b> thuộc Organization (vd account của đối tác) ⇒ chỉ dùng được <b>self-managed permissions</b>.</li>
+          <li>“<i>Stop the rollout if more than N accounts fail</i>” ⇒ <b>failure tolerance</b>; “<i>roll out gradually</i>” ⇒ maximum concurrent accounts thấp + Region sequential.</li>
+          <li>Muốn bỏ stack khỏi StackSet nhưng <b>giữ tài nguyên</b> ⇒ delete stack instances với <b>Retain stacks</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: ELASTIC BEANSTALK ===================== -->
+      <h2 id="beanstalk"><img src="../assets/icons/svc/AWS-Elastic-Beanstalk.svg" alt="">AWS Elastic Beanstalk: chỉ cần upload code</h2>
+      <p class="lead">Với <span class="t" data-vi="Nền tảng triển khai ứng dụng web">Elastic Beanstalk</span>, bạn xây dựng và deploy ứng dụng; Beanstalk <b>cấp EC2 instance (hoặc EKS cluster), cấu hình load balancing, thiết lập health monitoring và tự động scale</b> môi trường. Hỗ trợ <b>Go, Java, .NET, Node.js, PHP, Python, Ruby</b> và <b>Docker</b> (tự chọn ngôn ngữ và dependency). <b>Không có phí riêng</b> cho Beanstalk: chỉ trả tiền tài nguyên ứng dụng tiêu thụ.</p>
+      <p>Beanstalk có hai mode: <b>Standard</b> (chạy trực tiếp trên EC2, tiết kiệm khi chạy ít/nhỏ ứng dụng, hỗ trợ Windows) và <b>Cluster</b> (chạy container trên Amazon EKS, deploy và autoscaling nhanh hơn, tận dụng tài nguyên tốt hơn khi có nhiều environment). Đề SAA-C03 chủ yếu hỏi mode Standard. Bạn làm việc qua console, AWS CLI, <b>EB CLI</b>, GitHub Action, hoặc định nghĩa environment bằng CloudFormation/Terraform.</p>
+
+      <h3>Khái niệm</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khái niệm</th><th>Ý nghĩa theo tài liệu</th></tr></thead>
+        <tbody>
+          <tr><td><b>Application</b></td><td>Nhóm logic chứa environment, version, environment configuration.</td></tr>
+          <tr><td><span class="t" data-vi="Phiên bản ứng dụng">Application version</span></td><td>Một lần lặp <b>có nhãn</b> của code có thể deploy; trỏ tới <b>object S3</b> chứa source bundle (vd file Java WAR). Một application có nhiều version.</td></tr>
+          <tr><td><span class="t" data-vi="Môi trường">Environment</span></td><td>Tập tài nguyên AWS chạy <b>một</b> application version tại một thời điểm; nhiều environment có thể chạy cùng hoặc khác version song song (dev, test, prod).</td></tr>
+          <tr><td><span class="t" data-vi="Tầng môi trường">Environment tier</span></td><td><b>Web server tier</b> (phục vụ HTTP), <b>worker tier</b> (kéo việc từ SQS), cluster tier (EKS). <b>Không đổi tier sau khi tạo</b>.</td></tr>
+          <tr><td>Environment configuration / Saved configuration</td><td>Tập tham số định nghĩa hành vi environment; đổi cấu hình ⇒ Beanstalk sửa tài nguyên hiện có hoặc xóa và tạo mới. Saved configuration (API gọi là <b>configuration template</b>) là mẫu để tạo environment mới.</td></tr>
+          <tr><td><b>Platform</b></td><td>Tổ hợp hệ điều hành + runtime ngôn ngữ + web server + application server + thành phần Beanstalk.</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li><b>Preset</b> khi tạo environment: <b>Single instance</b> (dev/test, free tier eligible) hoặc <b>High availability</b> (load-balanced + Auto Scaling, cho production).</li>
+        <li>Cần 2 role: <b>service role</b> (Beanstalk giám sát EC2, nâng cấp platform) và <b>EC2 instance profile</b> (ghi log, gọi dịch vụ khác).</li>
+        <li>Chỉ đặt được lúc tạo: tên environment, domain, platform version, processor, <b>loại load balancer</b>, <b>tier</b>.</li>
+        <li>Tùy biến thêm tài nguyên/cấu hình bằng file trong thư mục <code>.ebextensions</code> của source bundle (<i>kiến thức phổ biến</i>).</li>
+      </ul>
+
+      <h3>Web server tier vs worker tier</h3>
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/res/AWS-Elastic-Beanstalk_Application.svg" alt="">Elastic Beanstalk application “shop” – hai environment tách rời</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng<small>URL của environment</small></div>
+            <span class="arrow">HTTP</span>
+            <div class="grp vpc"><span class="lbl">Web server environment</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB</div>
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">ASG<small>EC2 web</small></div>
+              </div></div>
+            <span class="arrow">SendMessage</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Queue-Service.svg" alt="">SQS queue<small>+ dead-letter queue</small></div>
+            <span class="arrow">sqsd kéo</span>
+            <div class="grp vpc"><span class="lbl">Worker environment</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">ASG worker<small>daemon POST localhost:80</small></div>
+              </div></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> Tác vụ dài (xử lý ảnh/video, gửi email, tạo file ZIP) không nên chạy trong request web (vốn chỉ &lt; 500 ms). Web tier gửi việc vào <b>SQS</b>; ở <b>worker tier</b>, daemon <b>sqsd</b> trên mỗi instance kéo message và gửi <b>HTTP POST tới <code>http://localhost/</code> cổng 80</b>. Ứng dụng trả <code>200 OK</code> ⇒ daemon xóa message; lỗi ⇒ message trở lại queue sau visibility timeout; quá số lần thử ⇒ vào <b>dead-letter queue</b>. Đây là mô hình <b>decouple</b> kinh điển (SQS đã học ở Bài 30).</figcaption>
+      </figure>
+      <ul>
+        <li>Queue <b>autogenerated</b> là standard queue và có <b>dead-letter queue</b> bật mặc định; dùng queue có sẵn thì tự cấu hình DLQ (có thể là FIFO, nhưng khi đó không có periodic task).</li>
+        <li><b>Periodic tasks</b>: khai báo trong <code>cron.yaml</code> (name, url, schedule cron); Beanstalk dùng <b>leader election</b> qua bảng DynamoDB để chỉ một instance đẩy task vào queue.</li>
+        <li>Tham số worker: HTTP connections mặc định 50 (1–100), visibility timeout tới 43.200 giây, <b>Max retries</b> mặc định 10 (1–100), inactivity timeout mặc định 180 giây, retention mặc định 345.600 giây (4 ngày), tối đa 1.209.600 giây (14 ngày).</li>
+        <li>Worker tier scale theo CPU (CloudWatch + EC2 Auto Scaling); message chưa xử lý khi instance bị terminate sẽ trở lại queue. Nền tảng <b>.NET on Windows Server</b> không hỗ trợ worker tier.</li>
+      </ul>
+
+      <h3>Deployment policies: cập nhật phiên bản mới thế nào?</h3>
+      <p>Mỗi lần deploy có một <b>deployment ID</b> tăng dần. Beanstalk cung cấp nhiều <span class="t" data-vi="Chính sách triển khai">deployment policy</span>; chọn policy là đánh đổi giữa <b>tốc độ</b>, <b>downtime</b>, <b>dung lượng phục vụ</b> và <b>chi phí</b>.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Policy</th><th>Cách làm</th><th>Lỗi giữa chừng</th><th>Thời gian</th><th>Zero downtime</th><th>Rollback</th><th>Code deploy lên</th></tr></thead>
+        <tbody>
+          <tr><td><b>All at once</b></td><td>Deploy lên <b>tất cả</b> instance cùng lúc; proxy/app server có thể restart</td><td><b>Downtime</b></td><td>Nhanh nhất</td><td>Không</td><td>Redeploy thủ công</td><td>Instance hiện có</td></tr>
+          <tr><td><b>Rolling</b></td><td>Deploy <b>từng batch</b>; batch đang deploy bị rút khỏi phục vụ</td><td>Một batch out of service; các batch đã xong chạy version mới</td><td>Vừa (tùy batch size)</td><td>Có (nhưng <b>giảm capacity</b>)</td><td>Redeploy thủ công</td><td>Instance hiện có</td></tr>
+          <tr><td><b>Rolling with additional batch</b></td><td>Khởi chạy <b>thêm một batch</b> trước, rồi rolling ⇒ <b>giữ nguyên capacity</b></td><td>Tối thiểu nếu batch đầu lỗi; còn lại như Rolling</td><td>Chậm hơn</td><td>Có</td><td>Redeploy thủ công</td><td>Instance mới + hiện có</td></tr>
+          <tr><td><b>Immutable</b></td><td>Tạo <b>Auto Scaling group thứ hai</b> với instance mới; version mới phục vụ song song tới khi qua health check</td><td><b>Tối thiểu</b></td><td>Chậm nhất</td><td>Có</td><td><b>Terminate instance mới</b> (nhanh, an toàn)</td><td>Instance mới</td></tr>
+          <tr><td><b>Traffic splitting</b></td><td><b>Canary</b>: chuyển một <b>% traffic</b> sang version mới trong thời gian đánh giá (cần <b>ALB</b>)</td><td>Chỉ % traffic sang version mới bị ảnh hưởng</td><td>Chậm nhất (tùy evaluation time)</td><td>Có</td><td>Chuyển traffic lại + terminate instance mới</td><td>Instance mới</td></tr>
+          <tr><td><b>Blue/green</b> (không phải policy, là kỹ thuật)</td><td>Environment <b>riêng</b> chạy version mới, rồi <b>Swap environment URLs</b> (đổi CNAME)</td><td>Tối thiểu</td><td>Chậm nhất</td><td>Có</td><td><b>Swap URL lại</b></td><td>Instance mới (environment mới)</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Hỗ trợ theo loại environment: <b>single-instance</b> chỉ có All at once và Immutable; Rolling, Rolling with additional batch, Traffic splitting cần <b>load-balanced</b> environment.</li>
+        <li>Immutable, traffic splitting và managed platform update có thay instance ⇒ <b>mất CPU credit</b> tích lũy của instance burstable (T-family).</li>
+        <li>Blue/green là cột duy nhất <b>có thay đổi DNS</b>: không terminate environment cũ cho tới khi DNS mới lan truyền và bản ghi cũ hết hạn (DNS resolver không phải lúc nào cũng tôn trọng TTL).</li>
+        <li>Blue/green cũng là cách bắt buộc khi nâng cấp lên <b>platform version không tương thích</b>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/res/AWS-Elastic-Beanstalk_Deployment.svg" alt="">Blue/green với Swap environment URLs</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng<small>shop-prod.elasticbeanstalk.com</small></div>
+            <span class="arrow">CNAME swap</span>
+            <div class="grp vpc"><span class="lbl">Blue environment (v1 – đang phục vụ)</span>
+              <div class="flow"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB</div><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">EC2 v1</div></div></div>
+            <div class="grp vpc"><span class="lbl">Green environment (v2 – clone, đã test)</span>
+              <div class="flow"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB</div><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">EC2 v2</div></div></div>
+          </div>
+          <div class="row">
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">Amazon RDS tạo NGOÀI Beanstalk – cả blue và green cùng kết nối (connection string qua environment property / Secrets Manager)</span></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> Blue/green: clone environment hiện tại (hoặc tạo mới), deploy và test version mới trên green, rồi <b>Swap environment URLs</b> để Beanstalk hoán đổi CNAME của hai environment. Rollback = swap lại. Điều kiện: environment phải <b>chạy độc lập với database production</b>. DB do Beanstalk tạo bên trong environment sẽ gắn vòng đời với environment ⇒ khi production nên tạo RDS <b>riêng</b>, hoặc dùng tùy chọn <b>database lifecycle Retain</b> để tách DB ra.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>RDS tạo bên trong Beanstalk environment</b> bị xóa khi terminate environment (nếu không chọn Retain) và cản trở blue/green ⇒ đề hỏi “<i>decouple the database</i>” ⇒ tạo RDS riêng, truyền endpoint qua cấu hình.</li>
+          <li><b>Rolling</b> giữ zero downtime nhưng <b>giảm capacity</b>; đề nói “<i>must maintain full capacity during deployment</i>” ⇒ <b>Rolling with additional batch</b> hoặc <b>Immutable</b>.</li>
+          <li>Đề nói “<i>quick rollback, failed deployment must not affect existing instances</i>” ⇒ <b>Immutable</b> (hoặc blue/green), không phải Rolling.</li>
+          <li><b>Traffic splitting</b> chỉ có với <b>Application Load Balancer</b>.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Developers want to deploy a Java/Node.js/Python web app without managing infrastructure (capacity, load balancing, scaling, health)</i>” ⇒ <b>Elastic Beanstalk</b>.</li>
+          <li>“<i>Long-running background jobs / process tasks asynchronously</i>” trong Beanstalk ⇒ <b>worker environment</b> + SQS; tác vụ định kỳ ⇒ <code>cron.yaml</code>.</li>
+          <li>“<i>Fastest deployment, downtime acceptable (dev)</i>” ⇒ <b>All at once</b>. “<i>Canary – test with 10% of traffic</i>” ⇒ <b>Traffic splitting</b>. “<i>Zero downtime, instant rollback by switching environments</i>” ⇒ <b>blue/green + Swap URLs</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: SYSTEMS MANAGER ===================== -->
+      <h2 id="ssm"><img src="../assets/icons/svc/AWS-Systems-Manager.svg" alt="">AWS Systems Manager: managed node, SSM Agent và các tool</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ quản lý hệ thống">AWS Systems Manager</span> (trước đây gọi là Amazon EC2 Systems Manager / Simple Systems Manager – nên viết tắt <b>SSM</b>) giúp bạn <b>xem, quản lý và vận hành node tập trung, ở quy mô lớn</b> trên AWS, on-premises và multicloud. Systems Manager quản lý máy <b>từ xa, an toàn mà không cần đăng nhập vào server</b> – tài liệu nói rõ: không còn cần bastion host, SSH hay remote PowerShell.</p>
+
+      <h3>Điều kiện để một máy là “managed node”</h3>
+      <ol class="steps">
+        <li><b>SSM Agent</b> được cài trên máy (có sẵn trên nhiều AMI chính thức như Amazon Linux, Windows Server – <i>kiến thức phổ biến</i>). Máy on-premises/VM khác đăng ký bằng <b>Hybrid Activation</b> (activation code + ID).</li>
+        <li><b>Quyền IAM</b>: khuyến nghị bật <b>Default Host Management Configuration</b> (cấp quyền ở cấp account/Region cho mọi EC2 dùng <b>IMDSv2</b> và SSM Agent ≥ 3.2.582.0, không cần instance profile), hoặc gắn <b>instance profile</b> có managed policy <code>AmazonSSMManagedInstanceCore</code>. Thêm <code>CloudWatchAgentServerPolicy</code> nếu chạy CloudWatch agent.</li>
+        <li><b>Kết nối mạng ra ngoài</b>: SSM Agent <b>chủ động mở kết nối</b> HTTPS 443 tới <code>ssm</code>, <code>ssmmessages</code>, <code>ec2messages</code> ⇒ <b>không cần inbound rule</b>. Subnet private không có internet/NAT ⇒ tạo <b>interface VPC endpoint</b> (AWS PrivateLink).</li>
+      </ol>
+
+      <h3>Các tool theo nhóm</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhóm</th><th>Tool</th><th>Dùng để</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="8"><b>Node tools</b></td><td><b>Session Manager</b></td><td>Shell tương tác (browser/CLI) vào node <b>không mở inbound port, không bastion, không SSH key</b>.</td></tr>
+          <tr><td><b>Run Command</b></td><td>Chạy lệnh/script <b>theo yêu cầu</b> trên hàng chục–hàng trăm node.</td></tr>
+          <tr><td><b>Patch Manager</b></td><td>Tự động vá OS và ứng dụng theo <b>patch baseline</b>.</td></tr>
+          <tr><td><span class="t" data-vi="Bộ quản lý trạng thái">State Manager</span></td><td>Giữ node ở <b>trạng thái mong muốn</b> liên tục (association): cài phần mềm khi khởi động, join domain Windows, áp cấu hình định kỳ.</td></tr>
+          <tr><td>Inventory</td><td>Thu thập metadata phần mềm, file, patch, cấu hình trên node.</td></tr>
+          <tr><td>Fleet Manager</td><td>Giao diện quản lý node từ xa: file, registry Windows, user OS, hiệu năng.</td></tr>
+          <tr><td>Distributor</td><td>Đóng gói và phân phối phần mềm (vd package <b>AmazonCloudWatchAgent</b>).</td></tr>
+          <tr><td>Compliance / Hybrid Activations</td><td>Tổng hợp tuân thủ patch &amp; association / đăng ký máy ngoài EC2.</td></tr>
+          <tr><td rowspan="4"><b>Change management</b></td><td><b>Automation</b></td><td>Runbook tự động bảo trì/triển khai: tạo AMI, reset mật khẩu, áp patch… (dùng làm remediation của Config – Bài 40).</td></tr>
+          <tr><td><span class="t" data-vi="Cửa sổ bảo trì">Maintenance Windows</span></td><td>Lịch định kỳ chạy tác vụ quản trị (patch, update) <b>không ảnh hưởng giờ kinh doanh</b>.</td></tr>
+          <tr><td>Documents (SSM document)</td><td>Định nghĩa hành động (JSON/YAML): <b>Command</b> document (Run Command, State Manager), <b>Automation runbook</b>, Session document.</td></tr>
+          <tr><td>Quick Setup / Change Calendar</td><td>Cấu hình best practice cho cả Organization / khoảng thời gian được/không được thay đổi.</td></tr>
+          <tr><td><b>Application tools</b></td><td>Parameter Store, AppConfig, Application Manager</td><td>Lưu cấu hình/secret (Bài 38), deploy feature flag có kiểm tra và rollback, nhìn theo ứng dụng.</td></tr>
+          <tr><td><b>Operations tools</b></td><td>OpsCenter, Explorer, Incident Manager</td><td>Quản lý OpsItem, dashboard vận hành, xử lý sự cố.</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Systems-Manager.svg" alt="">Quản lý EC2 trong private subnet không có internet</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Kỹ sư vận hành<small>console / AWS CLI + plugin</small></div>
+            <span class="arrow">IAM auth (SigV4)</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Systems-Manager.svg" alt="">Systems Manager<small>Session / Run Command / Patch</small></div>
+          </div>
+          <div class="row">
+            <div class="grp vpc"><span class="lbl">VPC</span>
+              <div class="grp priv"><span class="lbl">Private subnet – không IGW, không NAT, SG không có inbound 22/3389</span>
+                <div class="flow">
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 + SSM Agent<small>instance profile</small></div>
+                  <span class="arrow">HTTPS 443 outbound</span>
+                  <div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">Interface endpoints<small>ssm · ssmmessages · ec2messages</small></div>
+                  <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 gateway endpoint<small>update agent, patch, log</small></div>
+                </div></div>
+            </div>
+            <div class="grp plain"><span class="lbl">Log phiên</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">CloudWatch Logs<small>endpoint logs</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">CloudTrail<small>API StartSession…</small></div>
+              </div></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 6.</b> SSM Agent <b>khởi tạo mọi kết nối</b> ra Systems Manager nên security group không cần inbound rule nào. Instance trong private subnet không internet vẫn được quản lý nhờ <b>interface VPC endpoint</b> <code>com.amazonaws.&lt;region&gt;.ssm</code>, <code>.ssmmessages</code> (bắt buộc cho Session Manager &amp; Run Command), <code>.ec2messages</code>, cộng <b>S3</b> endpoint; tùy chọn <code>.kms</code> (mã hóa session/Parameter Store) và <code>.logs</code> (gửi log CloudWatch). Security group của endpoint phải cho phép <b>inbound 443</b> từ subnet của instance.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Instance <b>không hiện</b> trong danh sách managed node ⇒ thường do thiếu <b>quyền IAM</b> (instance profile / DHMC), SSM Agent không chạy, hoặc <b>không có đường ra</b> tới endpoint (thiếu NAT hoặc VPC endpoint). Không phải do thiếu inbound port 22.</li>
+          <li>Default Host Management Configuration <b>không hỗ trợ IMDSv1</b> và phải bật ở <b>từng Region</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: SESSION MANAGER ===================== -->
+      <h2 id="session-manager"><img src="../assets/icons/svc/AWS-Systems-Manager.svg" alt="">Session Manager: truy cập máy chủ không cần SSH, không bastion</h2>
+      <p class="lead"><span class="t" data-vi="Trình quản lý phiên">Session Manager</span> là tool được quản lý hoàn toàn, cho phép quản lý EC2, edge device, máy on-premises và VM qua <b>shell tương tác trên trình duyệt</b> hoặc <b>AWS CLI</b>, cung cấp truy cập an toàn <b>mà không cần mở inbound port, duy trì bastion host hay quản lý SSH key</b>, đồng thời đáp ứng chính sách doanh nghiệp về kiểm soát truy cập và <b>log đầy đủ</b>.</p>
+
+      <h3>Lợi ích theo tài liệu</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Lợi ích</th><th>Chi tiết</th></tr></thead>
+        <tbody>
+          <tr><td><b>Kiểm soát truy cập tập trung bằng IAM</b></td><td>Một nơi cấp/thu hồi quyền; policy IAM quyết định user/group nào được mở session tới node nào (vd theo tag); cấp quyền <b>tạm thời</b> cho kỹ sư trực ca.</td></tr>
+          <tr><td><b>Không mở inbound port, không bastion, không SSH key</b></td><td>Đóng cổng 22 / remote PowerShell ⇒ giảm bề mặt tấn công; không phải quản lý key, certificate, jump box.</td></tr>
+          <tr><td>Truy cập trực tiếp từ console &amp; CLI</td><td>Một click từ Systems Manager hoặc EC2 console; CLI cần <b>Session Manager plugin</b>. Node <b>không cần public IP</b>.</td></tr>
+          <tr><td>Hybrid &amp; multicloud, đa nền tảng</td><td>Windows, Linux, macOS từ một công cụ – không cần SSH client hay RDP.</td></tr>
+          <tr><td><b>Port forwarding / tunneling</b></td><td>Chuyển một port trong node về port local trên máy client (vd truy cập DB/web nội bộ), dùng Session-type SSM document.</td></tr>
+          <tr><td><b>Ghi log phiên</b></td><td><b>CloudTrail</b> ghi API call (StartSession…); dữ liệu phiên (lệnh &amp; output) gửi tới <b>S3</b> và/hoặc <b>CloudWatch Logs</b>, có thể mã hóa bằng <b>KMS key</b>; <b>EventBridge</b> + SNS báo khi user bắt đầu/kết thúc phiên.</td></tr>
+          <tr><td>Mã hóa</td><td>Kênh client ⇄ node dùng <b>TLS 1.2</b>, request ký <b>SigV4</b>; có thể mã hóa thêm dữ liệu phiên bằng KMS key.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/Traditional-server.svg" alt="">Bastion host + SSH (cách cũ – Bài 21)</h4>
+          <ul>
+            <li>EC2 bastion ở public subnet, mở port 22 (giới hạn IP), private instance cho SSH từ bastion.</li>
+            <li>Phải vá, giám sát bastion; phân phối và xoay vòng SSH key.</li>
+            <li>Khó ghi lại từng lệnh đã gõ.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/AWS-Systems-Manager.svg" alt="">Session Manager</h4>
+          <ul>
+            <li>Không bastion, không public IP, <b>security group không có inbound</b>.</li>
+            <li>Quyền bằng IAM, thu hồi tức thì; không SSH key.</li>
+            <li>Log lệnh vào S3/CloudWatch Logs, API vào CloudTrail.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <p>Session Manager <b>không ghi log được</b> nội dung phiên khi kết nối bằng <b>port forwarding</b> hoặc <b>SSH qua Session Manager</b>: SSH tự mã hóa toàn bộ dữ liệu trong kết nối TLS và Session Manager chỉ đóng vai trò đường hầm. Đề yêu cầu “<i>log every command</i>” ⇒ dùng shell session chuẩn.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Securely access EC2 instances in private subnets without opening inbound ports / without bastion hosts / without managing SSH keys, and audit all session activity</i>” ⇒ <b>Session Manager</b> + logging S3/CloudWatch Logs.</li>
+          <li>Instance <b>không có internet</b> ⇒ thêm <b>VPC interface endpoints</b> (ssm, ssmmessages, ec2messages).</li>
+          <li>EC2 Instance Connect vẫn cần inbound SSH (hoặc EC2 Instance Connect Endpoint) – khi đề nhấn mạnh “<i>no inbound ports</i>” và audit lệnh ⇒ ưu tiên Session Manager (<i>kiến thức phổ biến</i>).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: RUN COMMAND & PATCH MANAGER ===================== -->
+      <h2 id="run-patch"><img src="../assets/icons/res/AWS-Systems-Manager_Patch-Manager.svg" alt="">Run Command và Patch Manager: vận hành fleet ở quy mô lớn</h2>
+
+      <h3><img src="../assets/icons/res/AWS-Systems-Manager_Run-Command.svg" alt="" style="width:28px;vertical-align:middle"> Run Command</h3>
+      <p><span class="t" data-vi="Chạy lệnh từ xa">Run Command</span> giúp <b>quản lý cấu hình node từ xa, an toàn</b>: tự động hóa tác vụ quản trị thường gặp và thay đổi cấu hình <b>một lần (one-time)</b> ở quy mô lớn. Dùng được từ console, CLI, Tools for PowerShell, SDK. <b>Miễn phí khi dùng trên EC2</b>. Ứng dụng tiêu biểu: cài/bootstrap ứng dụng, xây deployment pipeline, <b>lấy log file khi instance bị gỡ khỏi Auto Scaling group</b>, join instance vào Windows domain.</p>
+      <ul>
+        <li>Lệnh được định nghĩa bằng <b>Command document</b>, vd <code>AWS-RunShellScript</code>, <code>AWS-RunPowerShellScript</code>, <code>AWS-RunPatchBaseline</code> (<i>tên document: kiến thức phổ biến</i>).</li>
+        <li><b>Chọn target</b> bằng <b>tag</b> (<code>Key=tag:Environment,Values=Production</code>), <b>resource group</b>, hoặc danh sách <b>instance ID</b>. Tối đa 5 key, mỗi key 5 value; nhiều key ⇒ node phải thỏa <b>tất cả</b>.</li>
+        <li>Tích hợp <b>EventBridge</b> (Run Command vừa là nguồn event vừa là <b>target</b> của rule), ghi API qua <b>CloudTrail</b>; output có thể ghi vào S3 / CloudWatch Logs (<i>kiến thức phổ biến</i>).</li>
+        <li>API theo mô hình <b>eventual consistency</b>.</li>
+      </ul>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Rate control</th><th>Tham số</th><th>Hoạt động theo tài liệu</th></tr></thead>
+        <tbody>
+          <tr><td><b>Concurrency</b></td><td><code>max-concurrency</code> (số hoặc %), <b>mặc định 50</b></td><td>Gửi tới 1 node, chờ xác nhận rồi gửi thêm 2, tăng <b>theo cấp số mũ</b> tới ngưỡng.</td></tr>
+          <tr><td><b>Error threshold</b></td><td><code>max-errors</code> (số hoặc %), <b>mặc định 0</b></td><td>Đặt 3 ⇒ dừng gửi khi nhận lỗi thứ 4; 0 ⇒ dừng sau lỗi đầu tiên; 10% của 50 node ⇒ dừng ở lỗi thứ 6. Lệnh đang chạy vẫn được chạy xong; muốn chắc chắn không vượt ngưỡng ⇒ <code>max-concurrency 1</code>.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3><img src="../assets/icons/res/AWS-Systems-Manager_Patch-Manager.svg" alt="" style="width:28px;vertical-align:middle"> Patch Manager</h3>
+      <p><span class="t" data-vi="Trình quản lý bản vá">Patch Manager</span> tự động hóa việc vá managed node với cả bản cập nhật bảo mật và loại khác, cho <b>hệ điều hành và ứng dụng</b> (trên Windows Server chỉ ứng dụng do Microsoft phát hành). Vá được EC2, edge device, server on-premises, VM theo loại OS; cài Service Pack Windows, nâng <b>minor version</b> Linux. <b>Không</b> nâng major version OS (vd Windows Server 2016 → 2019, RHEL 7 → 8). AWS <b>không test patch</b> trước khi đưa vào Patch Manager.</p>
+      <ul>
+        <li><span class="t" data-vi="Đường cơ sở bản vá">Patch baseline</span>: quy tắc <b>auto-approve patch sau N ngày</b> kể từ khi phát hành, danh sách patch <b>approved / rejected</b>, lọc theo classification (Security, Bugfix…) và severity (Critical, Important…); với Linux có thể chỉ định repository tin cậy. Mỗi baseline cho <b>một loại OS</b>. AWS có <b>predefined baseline</b> (chỉ là ví dụ) – khuyến nghị tạo <b>custom baseline</b>.</li>
+        <li><b>Compliance</b> do <b>bạn</b> định nghĩa qua baseline: node “compliant” = đã cài mọi patch <i>có sẵn và được duyệt</i> – không có nghĩa là “an toàn tuyệt đối”.</li>
+        <li>Hai thao tác: <b>Scan</b> (chỉ báo cáo patch thiếu) và <b>Scan and install</b> (cài patch thiếu). Mặc định tập trung vào bản cập nhật bảo mật.</li>
+        <li><b>Lifecycle hooks</b>: chạy SSM document trước/sau khi vá (vd drain khỏi load balancer, health check ứng dụng).</li>
+        <li>Báo cáo compliance dạng <b>CSV vào S3</b> (một lần hoặc định kỳ); tích hợp <b>Security Hub CSPM</b>, AWS Config, CloudTrail, Organizations.</li>
+      </ul>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cách chạy patching</th><th>Phạm vi</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><b>Patch policy trong Quick Setup</b> (khuyến nghị)</td><td><b>Mọi account, mọi Region</b> trong Organization, hoặc một số OU</td><td>Một policy định nghĩa baseline và lịch scan/install khác nhau (cron/rate).</td></tr>
+          <tr><td>Host Management (Quick Setup)</td><td>Tới cả Organization</td><td>Chỉ <b>scan</b> với default baseline, <b>không cài</b>.</td></tr>
+          <tr><td><b>Maintenance window</b> + task Run Command <code>AWS-RunPatchBaseline</code></td><td>Một cặp account–Region</td><td>Chạy theo lịch trong khung giờ bảo trì, chọn node theo tag/patch group.</td></tr>
+          <tr><td><b>Patch now</b></td><td>Một cặp account–Region</td><td>Chạy ngay theo yêu cầu (vá khẩn cấp lỗ hổng zero-day).</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Systems-Manager.svg" alt="">Vá fleet theo lịch: baseline + maintenance window + Run Command</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/AWS-Systems-Manager_Patch-Manager.svg" alt="">Patch baseline<small>Security/Critical, auto-approve 7 ngày</small></div>
+            <span class="arrow">dùng bởi</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Systems-Manager_Maintenance-Windows.svg" alt="">Maintenance window<small>CN 02:00–04:00</small></div>
+            <span class="arrow">task</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Systems-Manager_Run-Command.svg" alt="">Run Command<small>AWS-RunPatchBaseline, 10%, max-errors 2</small></div>
+          </div>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">Target theo tag Patch Group / Environment</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">EC2 prod<small>SSM Agent</small></div>
+                <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">Server on-prem<small>hybrid activation</small></div>
+              </div></div>
+            <div class="grp plain"><span class="lbl">Kết quả</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/AWS-Systems-Manager_Inventory.svg" alt="">Compliance<small>báo cáo CSV → S3</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Config.svg" alt="">Config / Security Hub</div>
+              </div></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 7.</b> Patch baseline quyết định <b>vá cái gì</b>; maintenance window quyết định <b>khi nào</b>; Run Command (document <code>AWS-RunPatchBaseline</code>) thực thi trên node chọn theo tag với rate control để không vá đồng loạt toàn bộ fleet. Ở quy mô Organization, <b>patch policy</b> trong Quick Setup thay thế việc tạo maintenance window ở từng account–Region.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Run a script / install software on hundreds of EC2 instances (and on-premises servers) without SSH</i>” ⇒ <b>Run Command</b> (target theo tag, rate control).</li>
+          <li>“<i>Automatically patch EC2 and on-premises servers during a weekly maintenance window, report compliance</i>” ⇒ <b>Patch Manager</b> + <b>patch baseline</b> + <b>Maintenance Windows</b>; nhiều account/Region ⇒ <b>patch policy</b> (Quick Setup).</li>
+          <li>“<i>Ensure instances continuously stay in a defined configuration (agent always installed)</i>” ⇒ <b>State Manager</b> association; “<i>one-time</i>” ⇒ Run Command.</li>
+          <li>“<i>Find which instances have a specific software version installed</i>” ⇒ <b>Inventory</b>.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>CloudFormation</b>: template YAML/JSON (chỉ <code>Resources</code> bắt buộc; Parameters, Mappings, Conditions, Outputs, Transform…) → <b>stack</b> quản lý như một đơn vị; lỗi ⇒ rollback; <b>DeletionPolicy</b> Retain/Snapshot giữ dữ liệu khi xóa; <b>stack policy</b> chặn update ngoài ý muốn; <b>drift detection</b> phát hiện sửa tay; <b>nested stack</b> tái sử dụng, <b>Export/ImportValue</b> chia sẻ giữa stack. 500 resource/template.</li>
+          <li><b>Change set</b>: xem trước Add/Modify/Remove và <b>Replacement</b> trước khi execute; không bảo đảm update thành công.</li>
+          <li><b>StackSets</b>: một thao tác ⇒ stack ở nhiều account × Region; <b>self-managed</b> (tự tạo role, account bất kỳ) vs <b>service-managed</b> (Organizations, OU, <b>automatic deployment</b> cho account mới); max concurrent accounts, failure tolerance, sequential/parallel Region.</li>
+          <li><b>Elastic Beanstalk</b>: upload code, Beanstalk lo EC2/ALB/ASG/health; không phí thêm; application → version (S3) → environment; <b>web vs worker tier</b> (SQS + sqsd, cron.yaml); deployment: <b>All at once</b> (nhanh, downtime), <b>Rolling</b> (giảm capacity), <b>Rolling + additional batch</b> (giữ capacity), <b>Immutable</b> (ASG mới, rollback an toàn), <b>Traffic splitting</b> (canary, ALB), <b>Blue/green</b> (Swap URLs, DB phải tách riêng).</li>
+          <li><b>Systems Manager</b>: managed node = SSM Agent + quyền IAM (<code>AmazonSSMManagedInstanceCore</code> / DHMC) + đường ra 443 (hoặc VPC endpoint ssm, ssmmessages, ec2messages). <b>Session Manager</b>: không inbound port, không bastion, không SSH key, IAM + log S3/CloudWatch/CloudTrail. <b>Run Command</b>: lệnh one-time theo tag, concurrency (mặc định 50) &amp; error threshold (mặc định 0). <b>Patch Manager</b>: patch baseline, Scan / Scan and install, maintenance window, patch policy cho cả Organization.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Infrastructure as Code (IaC)</dt><dd><b>Hạ tầng dưới dạng mã</b> – mô tả tài nguyên bằng file văn bản có quản lý phiên bản.</dd></div>
+        <div><dt>Template / Stack</dt><dd><b>Mẫu mô tả hạ tầng / Ngăn xếp tài nguyên</b> được tạo từ template, quản lý như một đơn vị.</dd></div>
+        <div><dt>Logical ID / Physical ID</dt><dd><b>Định danh logic</b> trong template / <b>định danh vật lý</b> của tài nguyên thật.</dd></div>
+        <div><dt>Parameters / Mappings / Conditions / Outputs</dt><dd><b>Tham số đầu vào / Bảng tra cứu / Điều kiện tạo / Giá trị đầu ra</b> của template.</dd></div>
+        <div><dt>Intrinsic function</dt><dd><b>Hàm nội tại</b>: Ref, GetAtt, Sub, FindInMap, ImportValue…</dd></div>
+        <div><dt>Transform / AWS SAM / AWS CDK</dt><dd><b>Macro xử lý template</b> / <b>mô hình ứng dụng serverless</b> / <b>bộ công cụ viết hạ tầng bằng ngôn ngữ lập trình</b>.</dd></div>
+        <div><dt>Stack failure options</dt><dd><b>Tùy chọn khi stack lỗi</b>: roll back hết hoặc giữ tài nguyên đã tạo thành công.</dd></div>
+        <div><dt>DeletionPolicy</dt><dd><b>Chính sách khi xóa</b>: Delete, Retain, RetainExceptOnCreate, Snapshot.</dd></div>
+        <div><dt>Stack policy</dt><dd><b>Chính sách bảo vệ stack</b> khỏi update/replace/delete ngoài ý muốn khi cập nhật.</dd></div>
+        <div><dt>Termination protection</dt><dd><b>Chống xóa nhầm stack</b>.</dd></div>
+        <div><dt>Drift detection</dt><dd><b>Phát hiện trôi lệch cấu hình</b> giữa stack và thực tế.</dd></div>
+        <div><dt>Nested stack / Root stack</dt><dd><b>Stack lồng</b> qua AWS::CloudFormation::Stack / <b>stack gốc</b> cấp cao nhất.</dd></div>
+        <div><dt>Cross-stack reference (Export / ImportValue)</dt><dd><b>Tham chiếu chéo giữa stack</b>.</dd></div>
+        <div><dt>Change set</dt><dd><b>Bộ thay đổi đề xuất</b> để xem trước khi cập nhật stack.</dd></div>
+        <div><dt>Update with No Interruption / Some Interruption / Replacement</dt><dd><b>Cập nhật không gián đoạn / có gián đoạn / thay thế tài nguyên</b> (physical ID mới).</dd></div>
+        <div><dt>StackSets / Stack instance</dt><dd><b>Bộ stack đa account/Region</b> / <b>tham chiếu tới một stack</b> ở một account–Region.</dd></div>
+        <div><dt>Administrator account / Target account</dt><dd><b>Tài khoản quản trị</b> tạo StackSet / <b>tài khoản đích</b> nhận stack.</dd></div>
+        <div><dt>Self-managed / Service-managed permissions</dt><dd><b>Quyền tự quản lý</b> (tự tạo IAM role) / <b>quyền do dịch vụ quản lý</b> (qua Organizations).</dd></div>
+        <div><dt>Automatic deployment</dt><dd><b>Tự triển khai</b> stack cho account mới thêm vào OU.</dd></div>
+        <div><dt>Maximum concurrent accounts / Failure tolerance</dt><dd><b>Số account chạy đồng thời tối đa / Ngưỡng lỗi chấp nhận</b> mỗi Region.</dd></div>
+        <div><dt>Application / Application version / Environment</dt><dd><b>Ứng dụng / Phiên bản ứng dụng</b> (source bundle trên S3) / <b>Môi trường</b> chạy một version.</dd></div>
+        <div><dt>Web server tier / Worker tier</dt><dd><b>Tầng phục vụ HTTP / Tầng xử lý nền</b> từ hàng đợi SQS.</dd></div>
+        <div><dt>Worker daemon (sqsd) / cron.yaml</dt><dd><b>Tiến trình kéo message SQS</b> và POST tới localhost / <b>file khai báo tác vụ định kỳ</b>.</dd></div>
+        <div><dt>Saved configuration (configuration template)</dt><dd><b>Cấu hình đã lưu</b> làm mẫu tạo environment.</dd></div>
+        <div><dt>Deployment policy</dt><dd><b>Chính sách triển khai</b>: All at once, Rolling, Rolling with additional batch, Immutable, Traffic splitting.</dd></div>
+        <div><dt>Immutable update</dt><dd><b>Cập nhật bất biến</b> – deploy lên ASG/instance mới hoàn toàn.</dd></div>
+        <div><dt>Traffic splitting</dt><dd><b>Chia traffic kiểu canary</b> sang version mới (cần ALB).</dd></div>
+        <div><dt>Swap environment URLs (CNAME swap)</dt><dd><b>Hoán đổi URL giữa hai environment</b> để blue/green.</dd></div>
+        <div><dt>Managed node / SSM Agent</dt><dd><b>Node được Systems Manager quản lý</b> / <b>tác nhân SSM</b> cài trên máy.</dd></div>
+        <div><dt>Default Host Management Configuration (DHMC)</dt><dd><b>Cấu hình quản lý host mặc định</b> – cấp quyền SSM cho mọi EC2 trong account/Region (IMDSv2).</dd></div>
+        <div><dt>Hybrid Activation</dt><dd><b>Kích hoạt máy ngoài AWS</b> thành managed node.</dd></div>
+        <div><dt>Session Manager</dt><dd><b>Trình quản lý phiên</b> – shell vào node không cần inbound port/bastion/SSH key.</dd></div>
+        <div><dt>Port forwarding (Session Manager)</dt><dd><b>Chuyển tiếp cổng</b> từ node về máy local qua phiên.</dd></div>
+        <div><dt>Run Command / Command document</dt><dd><b>Chạy lệnh từ xa</b> / <b>tài liệu SSM định nghĩa lệnh</b>.</dd></div>
+        <div><dt>Rate control (concurrency / error threshold)</dt><dd><b>Kiểm soát tốc độ</b>: số node chạy đồng thời / số lỗi tối đa.</dd></div>
+        <div><dt>Patch Manager / Patch baseline</dt><dd><b>Trình quản lý bản vá</b> / <b>đường cơ sở bản vá</b> (quy tắc duyệt patch).</dd></div>
+        <div><dt>Scan / Scan and install</dt><dd><b>Chỉ quét báo cáo / Quét và cài</b> patch thiếu.</dd></div>
+        <div><dt>Patch policy (Quick Setup)</dt><dd><b>Chính sách vá</b> cho nhiều account/Region trong Organization.</dd></div>
+        <div><dt>Maintenance Windows</dt><dd><b>Cửa sổ bảo trì</b> – lịch chạy tác vụ quản trị.</dd></div>
+        <div><dt>State Manager / Association</dt><dd><b>Bộ quản lý trạng thái</b> / <b>liên kết</b> giữ node ở cấu hình mong muốn.</dd></div>
+        <div><dt>Inventory / Fleet Manager</dt><dd><b>Kiểm kê phần mềm</b> / <b>giao diện quản lý fleet</b>.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="cau-hoi">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company manages its production stack with AWS CloudFormation. An engineer needs to change a property of an Amazon RDS DB instance in the template. The company wants to know before the update whether the change will cause the DB instance to be replaced, and wants no changes made until the operations team approves. What should the engineer do?</div>
+          <ol class="opts">
+            <li data-k="A">Run drift detection on the stack and review the resources with a MODIFIED status.</li>
+            <li data-k="B">Create a change set with the modified template, review the Replacement value for the DB instance, and execute the change set only after approval.</li>
+            <li data-k="C">Update the stack directly with the Preserve successfully provisioned resources option enabled.</li>
+            <li data-k="D">Apply a stack policy that allows Update:Replace on the DB instance.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Change set</b> tóm tắt các thay đổi đề xuất, cho biết resource nào bị <b>Replacement</b> (physical ID mới, mất dữ liệu), và CloudFormation chỉ đổi stack khi bạn <b>execute</b>. <b>A sai</b>: drift detection so sánh stack với thực tế (sửa tay ngoài CloudFormation), không xem trước template mới. <b>C sai</b>: update trực tiếp là thực hiện luôn; tùy chọn này chỉ giữ resource khi lỗi. <b>D sai</b>: stack policy dùng để chặn/cho phép update, không cho xem trước; và cho phép Replace càng nguy hiểm.</div>
+          <div class="trans">
+            <div class="tq">Một công ty quản lý stack production bằng AWS CloudFormation. Một kỹ sư cần thay đổi một thuộc tính của Amazon RDS DB instance trong template. Công ty muốn biết trước khi update liệu thay đổi có khiến DB instance bị thay thế (replace) hay không, và không muốn có bất kỳ thay đổi nào được thực hiện cho tới khi đội vận hành phê duyệt. Kỹ sư nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chạy drift detection trên stack và xem lại các resource có trạng thái MODIFIED.</span><span class="why">Sai: drift detection so sánh stack hiện tại với cấu hình thực tế (bị sửa tay ngoài CloudFormation), không xem trước tác động của template mới.</span></li>
+              <li data-k="B"><span class="tv">Tạo một change set với template đã sửa, xem giá trị Replacement của DB instance, và chỉ execute change set sau khi được phê duyệt.</span><span class="why">Đúng: change set liệt kê thay đổi đề xuất kèm cột Replacement cho biết DB có bị thay thế không, và stack chỉ thay đổi khi bạn execute – khớp với quy trình phê duyệt.</span></li>
+              <li data-k="C"><span class="tv">Update stack trực tiếp với tùy chọn Preserve successfully provisioned resources được bật.</span><span class="why">Sai: update trực tiếp là thực hiện ngay, không có bước xem trước hay phê duyệt; tùy chọn này chỉ giữ resource khi update lỗi.</span></li>
+              <li data-k="D"><span class="tv">Áp dụng một stack policy cho phép Update:Replace trên DB instance.</span><span class="why">Sai: stack policy chỉ chặn/cho phép update, không cho xem trước; cho phép Replace càng làm tăng rủi ro mất dữ liệu.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company uses AWS Organizations with 200 accounts. The security team must deploy a standard set of IAM roles and AWS Config rules to every account in two AWS Regions. Accounts that are added to the organization in the future must receive the same resources automatically. Which solution requires the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Write a script that assumes a role in each account and creates a CloudFormation stack in each Region, and run it weekly.</li>
+            <li data-k="B">Create CloudFormation StackSets with self-managed permissions and manually add new accounts as stack instances.</li>
+            <li data-k="C">Use CloudFormation nested stacks from the management account.</li>
+            <li data-k="D">Create a CloudFormation StackSet with service-managed permissions that targets the organization root and enable automatic deployment.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Service-managed permissions</b> tích hợp Organizations: StackSets tự tạo IAM role cần thiết, target theo OU/root, và <b>automatic deployment</b> tự tạo stack cho account mới gia nhập. <b>A sai</b>: tự viết và vận hành script, account mới phải chờ lần chạy sau. <b>B sai</b>: self-managed phải tự tạo role trong từng account và tự thêm account mới – không có automatic deployment. <b>C sai</b>: nested stack chỉ tổ chức template trong <b>một</b> stack/account/Region, không triển khai đa account.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng AWS Organizations với 200 account. Đội bảo mật phải triển khai một bộ IAM role và AWS Config rule tiêu chuẩn tới mọi account ở hai AWS Region. Các account được thêm vào organization trong tương lai phải tự động nhận cùng các tài nguyên này. Giải pháp nào cần LEAST operational overhead (ít công vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Viết một script assume role vào từng account và tạo một CloudFormation stack ở mỗi Region, chạy hằng tuần.</span><span class="why">Sai: phải tự viết và vận hành script, và account mới phải chờ tới lần chạy kế tiếp mới được triển khai.</span></li>
+              <li data-k="B"><span class="tv">Tạo CloudFormation StackSets với self-managed permissions và thêm thủ công các account mới làm stack instance.</span><span class="why">Sai: self-managed phải tự tạo IAM role trong từng account và tự thêm account mới, không có automatic deployment.</span></li>
+              <li data-k="C"><span class="tv">Dùng CloudFormation nested stacks từ management account.</span><span class="why">Sai: nested stack chỉ tổ chức template bên trong một stack ở một account/Region, không triển khai sang nhiều account.</span></li>
+              <li data-k="D"><span class="tv">Tạo một CloudFormation StackSet với service-managed permissions nhắm tới organization root và bật automatic deployment.</span><span class="why">Đúng: service-managed permissions tích hợp Organizations, tự tạo role cần thiết, nhắm theo root/OU, và automatic deployment tự triển khai cho account mới gia nhập.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company runs a web application on AWS Elastic Beanstalk in a load-balanced environment. The company wants to deploy new versions with zero downtime. If a deployment fails, the existing instances must not be affected, and rollback must be fast and safe. Full capacity must be maintained during the deployment. Which deployment policy should be used?</div>
+          <ol class="opts">
+            <li data-k="A">Immutable</li>
+            <li data-k="B">Rolling</li>
+            <li data-k="C">All at once</li>
+            <li data-k="D">Rolling with an additional batch</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Immutable</b> khởi chạy một <b>Auto Scaling group thứ hai</b> với instance mới; instance cũ không bị đụng tới; lỗi ⇒ chỉ cần <b>terminate instance mới</b> – rollback nhanh và an toàn, capacity giữ nguyên. <b>B sai</b>: Rolling deploy lên instance hiện có và rút từng batch khỏi phục vụ (giảm capacity); lỗi phải redeploy thủ công. <b>C sai</b>: All at once gây downtime. <b>D sai</b>: giữ được capacity nhưng vẫn deploy lên instance hiện có, rollback là redeploy thủ công.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng web trên AWS Elastic Beanstalk trong một môi trường load-balanced. Công ty muốn triển khai phiên bản mới mà không có downtime. Nếu triển khai thất bại, các instance hiện có không được bị ảnh hưởng, và rollback phải nhanh và an toàn. Phải duy trì đầy đủ capacity trong suốt quá trình triển khai. Nên dùng deployment policy nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Immutable</span><span class="why">Đúng: Immutable khởi chạy instance mới trong một Auto Scaling group tạm thời, instance cũ không bị đụng tới; nếu lỗi chỉ cần terminate instance mới – rollback nhanh, an toàn và giữ đủ capacity.</span></li>
+              <li data-k="B"><span class="tv">Rolling</span><span class="why">Sai: Rolling deploy lên chính các instance hiện có và rút từng batch khỏi phục vụ nên giảm capacity; lỗi thì phải redeploy thủ công.</span></li>
+              <li data-k="C"><span class="tv">All at once</span><span class="why">Sai: All at once deploy lên tất cả instance cùng lúc, gây downtime và ảnh hưởng toàn bộ instance nếu lỗi.</span></li>
+              <li data-k="D"><span class="tv">Rolling with an additional batch</span><span class="why">Sai: giữ được capacity nhưng vẫn deploy lên instance hiện có, nên lỗi sẽ ảnh hưởng chúng và rollback là redeploy thủ công.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A web application runs on AWS Elastic Beanstalk. Some user requests trigger video transcoding that takes several minutes, causing the web tier to become unresponsive under load. The company wants to decouple this processing with minimal code changes and also run a cleanup job every night. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the instance size of the web server environment and enable sticky sessions on the load balancer.</li>
+            <li data-k="B">Use Elastic Beanstalk traffic splitting to send transcoding requests to a different application version.</li>
+            <li data-k="C">Create an Elastic Beanstalk worker environment. Have the web tier send tasks to the worker environment's Amazon SQS queue, and define the nightly job in a cron.yaml file.</li>
+            <li data-k="D">Move the transcoding code to the .ebextensions folder of the web server environment.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Worker tier</b> được thiết kế cho tác vụ dài: web tier đẩy việc vào <b>SQS</b>, daemon trên worker instance kéo message và POST tới ứng dụng; <b>periodic task</b> khai báo trong <code>cron.yaml</code>. <b>A sai</b>: tăng instance chỉ trì hoãn vấn đề, không decouple. <b>B sai</b>: traffic splitting là canary deployment, không phải định tuyến theo loại request. <b>D sai</b>: <code>.ebextensions</code> chứa cấu hình môi trường, không tách xử lý nền.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng web chạy trên AWS Elastic Beanstalk. Một số request của người dùng kích hoạt việc chuyển mã video (transcoding) mất vài phút, khiến web tier không phản hồi khi tải cao. Công ty muốn tách rời (decouple) phần xử lý này với ít thay đổi code nhất và đồng thời chạy một job dọn dẹp mỗi đêm. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng kích thước instance của môi trường web server và bật sticky sessions trên load balancer.</span><span class="why">Sai: tăng instance chỉ trì hoãn vấn đề, không tách rời xử lý dài khỏi web tier; sticky sessions không liên quan.</span></li>
+              <li data-k="B"><span class="tv">Dùng Elastic Beanstalk traffic splitting để gửi các request transcoding tới một application version khác.</span><span class="why">Sai: traffic splitting là canary deployment chia theo tỷ lệ phần trăm, không định tuyến theo loại request.</span></li>
+              <li data-k="C"><span class="tv">Tạo một Elastic Beanstalk worker environment. Cho web tier gửi tác vụ vào Amazon SQS queue của worker environment, và định nghĩa job hằng đêm trong file cron.yaml.</span><span class="why">Đúng: worker tier được thiết kế cho tác vụ dài – web tier đẩy việc vào SQS, daemon trên worker kéo message và POST tới ứng dụng; periodic task khai báo trong cron.yaml.</span></li>
+              <li data-k="D"><span class="tv">Chuyển code transcoding vào thư mục .ebextensions của môi trường web server.</span><span class="why">Sai: .ebextensions chứa file cấu hình môi trường, không tách xử lý nền ra khỏi web tier.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company has Amazon EC2 instances in private subnets that have no route to the internet and no NAT gateway. Administrators must be able to open a shell on the instances without opening any inbound ports, without bastion hosts, and without managing SSH keys. All session activity must be logged. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Add an inbound rule for TCP port 22 from the VPC CIDR to the instances' security group.</li>
+            <li data-k="B">Attach an instance profile with the AmazonSSMManagedInstanceCore policy and create interface VPC endpoints for ssm, ssmmessages, and ec2messages.</li>
+            <li data-k="C">Deploy a bastion host in a public subnet with EC2 Instance Connect.</li>
+            <li data-k="D">Create a VPC peering connection to a VPC that has a NAT gateway.</li>
+            <li data-k="E">Use AWS Systems Manager Session Manager and configure session logging to Amazon S3 or Amazon CloudWatch Logs.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Instance cần <b>quyền IAM</b> (<code>AmazonSSMManagedInstanceCore</code>) và <b>đường ra</b> tới Systems Manager; không có internet ⇒ <b>interface VPC endpoints</b> ssm, ssmmessages, ec2messages (B). <b>Session Manager</b> cho shell không cần inbound port, bastion hay SSH key; log phiên vào S3/CloudWatch Logs, API vào CloudTrail (E). <b>A sai</b>: mở port 22 trái yêu cầu và vẫn cần key. <b>C sai</b>: yêu cầu không dùng bastion. <b>D sai</b>: VPC peering không hỗ trợ đi internet qua NAT của VPC khác (không transitive), và vẫn chưa giải quyết quyền.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có các Amazon EC2 instance trong private subnet không có route ra internet và không có NAT gateway. Quản trị viên phải mở được shell trên các instance mà không mở bất kỳ inbound port nào, không dùng bastion host, và không phải quản lý SSH key. Mọi hoạt động trong phiên phải được ghi log. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm inbound rule cho TCP port 22 từ VPC CIDR vào security group của các instance.</span><span class="why">Sai: mở port 22 trái với yêu cầu không mở inbound port, và SSH vẫn cần quản lý key.</span></li>
+              <li data-k="B"><span class="tv">Gắn một instance profile có policy AmazonSSMManagedInstanceCore và tạo các interface VPC endpoint cho ssm, ssmmessages và ec2messages.</span><span class="why">Đúng: SSM Agent cần quyền IAM và đường kết nối tới Systems Manager; không có internet nên phải dùng interface VPC endpoint cho ssm, ssmmessages, ec2messages.</span></li>
+              <li data-k="C"><span class="tv">Triển khai một bastion host trong public subnet với EC2 Instance Connect.</span><span class="why">Sai: đề yêu cầu rõ không dùng bastion host.</span></li>
+              <li data-k="D"><span class="tv">Tạo một VPC peering connection tới một VPC có NAT gateway.</span><span class="why">Sai: VPC peering không transitive nên không thể đi internet qua NAT gateway của VPC khác, và vẫn chưa giải quyết quyền IAM hay cách mở shell.</span></li>
+              <li data-k="E"><span class="tv">Dùng AWS Systems Manager Session Manager và cấu hình ghi log phiên vào Amazon S3 hoặc Amazon CloudWatch Logs.</span><span class="why">Đúng: Session Manager cho shell mà không cần inbound port, bastion hay SSH key, và ghi log phiên vào S3/CloudWatch Logs (API call vào CloudTrail).</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company must apply critical security patches to 800 Amazon EC2 instances and 150 on-premises Linux servers every Sunday between 02:00 and 04:00. Only patches classified as Security with Critical severity that have been released for at least 7 days should be installed. The company needs a compliance report. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Register the on-premises servers with a Systems Manager hybrid activation. Create a custom patch baseline with the required approval rules, and use a maintenance window to run AWS-RunPatchBaseline with Scan and install on the instances by tag. Review Patch Manager compliance reports.</li>
+            <li data-k="B">Create a new AMI every week with patches applied and replace all instances and servers using an Auto Scaling instance refresh.</li>
+            <li data-k="C">Use AWS Config managed rules to install missing patches on all instances.</li>
+            <li data-k="D">Use Session Manager to connect to each server every Sunday and run the package manager update command.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Patch Manager</b> vá cả EC2 và server on-premises (đăng ký bằng <b>hybrid activation</b>); <b>custom patch baseline</b> định nghĩa classification/severity và <b>auto-approve sau 7 ngày</b>; <b>maintenance window</b> chạy đúng khung giờ; có báo cáo compliance. <b>B sai</b>: instance refresh không áp dụng cho server on-premises và tốn công. <b>C sai</b>: Config rule chỉ đánh giá; cài patch phải qua SSM. <b>D sai</b>: thủ công, không mở rộng được với 950 máy.</div>
+          <div class="trans">
+            <div class="tq">Một công ty phải áp dụng các bản vá bảo mật quan trọng cho 800 Amazon EC2 instance và 150 server Linux on-premises vào mỗi Chủ nhật từ 02:00 đến 04:00. Chỉ những bản vá thuộc phân loại Security với mức độ Critical và đã được phát hành ít nhất 7 ngày mới được cài đặt. Công ty cần một báo cáo tuân thủ. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đăng ký các server on-premises bằng Systems Manager hybrid activation. Tạo một custom patch baseline với các approval rule cần thiết, và dùng maintenance window để chạy AWS-RunPatchBaseline với Scan and install trên các instance theo tag. Xem báo cáo tuân thủ của Patch Manager.</span><span class="why">Đúng: hybrid activation đưa server on-premises vào Systems Manager, custom baseline lọc Security/Critical và auto-approve sau 7 ngày, maintenance window chạy đúng khung giờ, Patch Manager cung cấp báo cáo tuân thủ.</span></li>
+              <li data-k="B"><span class="tv">Tạo AMI mới mỗi tuần đã áp bản vá và thay thế tất cả instance và server bằng Auto Scaling instance refresh.</span><span class="why">Sai: instance refresh không áp dụng được cho server on-premises, tốn công, và không lọc bản vá theo phân loại/độ tuổi.</span></li>
+              <li data-k="C"><span class="tv">Dùng AWS Config managed rule để cài các bản vá còn thiếu trên tất cả instance.</span><span class="why">Sai: Config rule chỉ đánh giá tuân thủ, không tự cài bản vá; việc cài phải thực hiện qua Systems Manager.</span></li>
+              <li data-k="D"><span class="tv">Dùng Session Manager kết nối vào từng server mỗi Chủ nhật và chạy lệnh cập nhật của trình quản lý gói.</span><span class="why">Sai: thủ công, không thể mở rộng cho 950 máy, không lọc bản vá đúng tiêu chí và không có báo cáo tuân thủ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">An operations team must run a shell script on 500 Amazon EC2 instances tagged Environment=Production. To reduce risk, the script must run on no more than 10% of the instances at a time, and the rollout must stop if more than 5 instances fail. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Update the CloudFormation stack that launched the instances with new user data.</li>
+            <li data-k="B">Create an AWS Lambda function that connects to each instance over SSH in batches.</li>
+            <li data-k="C">Use Systems Manager Run Command with the AWS-RunShellScript document, target the tag Environment=Production, and set the concurrency to 10% and the error threshold to 5.</li>
+            <li data-k="D">Use Elastic Beanstalk rolling deployments with a batch size of 10%.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Run Command</b> chọn target theo <b>tag</b> và có <b>rate control</b>: <code>max-concurrency</code> 10% và <code>max-errors</code> 5 (dừng khi nhận lỗi thứ 6). Không cần SSH. <b>A sai</b>: user data chỉ chạy lúc khởi tạo instance; thay đổi có thể gây replace. <b>B sai</b>: tự viết, cần quản lý SSH key và mở port. <b>D sai</b>: các instance này không do Beanstalk quản lý; Beanstalk deploy application version, không chạy script tùy ý.</div>
+          <div class="trans">
+            <div class="tq">Một đội vận hành phải chạy một shell script trên 500 Amazon EC2 instance được gắn tag Environment=Production. Để giảm rủi ro, script phải chạy trên không quá 10% số instance cùng lúc, và quá trình triển khai phải dừng nếu có hơn 5 instance thất bại. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Update CloudFormation stack đã khởi chạy các instance với user data mới.</span><span class="why">Sai: user data chỉ chạy khi instance khởi tạo lần đầu, và thay đổi user data có thể gây gián đoạn/replace instance; không có rate control theo 10%.</span></li>
+              <li data-k="B"><span class="tv">Tạo một AWS Lambda function kết nối tới từng instance qua SSH theo từng batch.</span><span class="why">Sai: phải tự viết logic batch/dừng lỗi, quản lý SSH key và mở port – nhiều công vận hành.</span></li>
+              <li data-k="C"><span class="tv">Dùng Systems Manager Run Command với document AWS-RunShellScript, nhắm tới tag Environment=Production, và đặt concurrency là 10% và error threshold là 5.</span><span class="why">Đúng: Run Command chọn target theo tag và có sẵn rate control – max-concurrency 10% và max-errors 5 (dừng khi lỗi thứ 6), không cần SSH.</span></li>
+              <li data-k="D"><span class="tv">Dùng Elastic Beanstalk rolling deployment với batch size 10%.</span><span class="why">Sai: các instance này không do Elastic Beanstalk quản lý, và Beanstalk triển khai application version chứ không chạy script tùy ý.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company deploys infrastructure with AWS CloudFormation. The stack includes an Amazon RDS database and an Amazon S3 bucket that store critical data. The company must ensure that the data is preserved if the stack is accidentally deleted, and that no one can accidentally replace the database during routine stack updates. Which combination of actions meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Enable drift detection and create change sets for every update.</li>
+            <li data-k="B">Use nested stacks for the database and the bucket.</li>
+            <li data-k="C">Export the database endpoint and bucket name as stack outputs.</li>
+            <li data-k="D">Set DeletionPolicy to Snapshot on the DB instance and Retain on the bucket, and apply a stack policy that denies Update:Replace and Update:Delete on the database.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>DeletionPolicy</b> giữ dữ liệu khi xóa stack: <b>Snapshot</b> cho RDS (snapshot trước khi xóa), <b>Retain</b> cho S3 bucket. <b>Stack policy</b> với <code>Deny</code> trên <code>Update:Replace</code>/<code>Update:Delete</code> chặn thay thế DB trong lúc update. <b>A sai</b>: drift chỉ phát hiện, change set chỉ xem trước – không bảo vệ khi xóa stack. <b>B sai</b>: nested stack không bảo vệ dữ liệu. <b>C sai</b>: output chỉ chia sẻ giá trị.</div>
+          <div class="trans">
+            <div class="tq">Một công ty triển khai hạ tầng bằng AWS CloudFormation. Stack bao gồm một cơ sở dữ liệu Amazon RDS và một Amazon S3 bucket lưu dữ liệu quan trọng. Công ty phải bảo đảm dữ liệu được giữ lại nếu stack vô tình bị xóa, và không ai có thể vô tình thay thế (replace) cơ sở dữ liệu trong các lần update stack thường lệ. Tổ hợp hành động nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật drift detection và tạo change set cho mọi lần update.</span><span class="why">Sai: drift detection chỉ phát hiện sửa tay, change set chỉ xem trước – không bảo vệ dữ liệu khi stack bị xóa và không chặn được replace.</span></li>
+              <li data-k="B"><span class="tv">Dùng nested stack cho cơ sở dữ liệu và bucket.</span><span class="why">Sai: nested stack chỉ tổ chức template, xóa stack cha vẫn xóa resource trong nested stack.</span></li>
+              <li data-k="C"><span class="tv">Export endpoint của cơ sở dữ liệu và tên bucket làm stack output.</span><span class="why">Sai: output chỉ chia sẻ giá trị giữa các stack, không bảo vệ resource.</span></li>
+              <li data-k="D"><span class="tv">Đặt DeletionPolicy là Snapshot cho DB instance và Retain cho bucket, và áp dụng một stack policy từ chối Update:Replace và Update:Delete trên cơ sở dữ liệu.</span><span class="why">Đúng: DeletionPolicy Snapshot/Retain giữ dữ liệu khi stack bị xóa, còn stack policy Deny Update:Replace/Update:Delete chặn việc thay thế DB khi update.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs a production application on AWS Elastic Beanstalk with an Amazon RDS database that was created as part of the Elastic Beanstalk environment. The company wants to start using blue/green deployments by swapping environment URLs. What should a solutions architect do FIRST?</div>
+          <ol class="opts">
+            <li data-k="A">Change the deployment policy of the environment to Traffic splitting.</li>
+            <li data-k="B">Decouple the database from the environment so that it runs independently, and configure both environments to connect to the external database.</li>
+            <li data-k="C">Enable Multi-AZ on the RDS database inside the environment.</li>
+            <li data-k="D">Change the environment tier from web server to worker.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Tài liệu nêu: blue/green yêu cầu environment <b>chạy độc lập với database production</b>; DB do Beanstalk tạo gắn với vòng đời environment, không được giữ khi chuyển đổi nếu không xử lý (dùng database lifecycle <b>Retain</b> rồi tách ra, hoặc tạo RDS riêng). <b>A sai</b>: traffic splitting là deployment policy khác, không giải quyết DB. <b>C sai</b>: Multi-AZ tăng HA nhưng DB vẫn gắn với environment. <b>D sai</b>: không đổi tier sau khi tạo, và không liên quan.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng production trên AWS Elastic Beanstalk với một cơ sở dữ liệu Amazon RDS được tạo như một phần của môi trường Elastic Beanstalk. Công ty muốn bắt đầu dùng blue/green deployment bằng cách hoán đổi URL của môi trường (swap environment URLs). Solutions architect nên làm gì TRƯỚC TIÊN (FIRST)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đổi deployment policy của môi trường thành Traffic splitting.</span><span class="why">Sai: traffic splitting là một deployment policy khác (canary trong cùng môi trường), không giải quyết việc DB gắn với vòng đời môi trường.</span></li>
+              <li data-k="B"><span class="tv">Tách cơ sở dữ liệu ra khỏi môi trường để nó chạy độc lập, và cấu hình cả hai môi trường kết nối tới cơ sở dữ liệu bên ngoài đó.</span><span class="why">Đúng: blue/green yêu cầu môi trường độc lập với DB production; DB do Beanstalk tạo gắn với vòng đời môi trường nên phải tách ra để cả blue và green dùng chung khi swap.</span></li>
+              <li data-k="C"><span class="tv">Bật Multi-AZ cho cơ sở dữ liệu RDS bên trong môi trường.</span><span class="why">Sai: Multi-AZ tăng tính sẵn sàng nhưng DB vẫn gắn với môi trường và sẽ bị xóa cùng môi trường cũ.</span></li>
+              <li data-k="D"><span class="tv">Đổi environment tier từ web server sang worker.</span><span class="why">Sai: không thể đổi tier sau khi tạo môi trường, và việc này không liên quan tới blue/green.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A company wants its development team to deploy a Python web application to AWS with the LEAST operational overhead. The application needs load balancing and automatic scaling. The operations team later wants to verify that no one has manually modified the security groups that were created by the company's CloudFormation network stack. Which TWO services or features should be used? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">AWS Elastic Beanstalk with a load-balanced environment</li>
+            <li data-k="B">CloudFormation change sets on the network stack</li>
+            <li data-k="C">CloudFormation drift detection on the network stack</li>
+            <li data-k="D">Systems Manager Run Command to check each security group</li>
+            <li data-k="E">EC2 instances with a manually configured Application Load Balancer and Auto Scaling group</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> <b>Elastic Beanstalk</b> load-balanced environment tự cấp ALB, Auto Scaling, health monitoring – developer chỉ upload code (A). <b>Drift detection</b> so sánh cấu hình thực tế của resource trong stack với template, báo <code>MODIFIED</code> nếu bị sửa tay (C). <b>B sai</b>: change set xem trước template mới, không phát hiện sửa ngoài CloudFormation. <b>D sai</b>: Run Command chạy lệnh trong OS của node, không kiểm tra security group. <b>E sai</b>: tự dựng tốn công vận hành.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn đội phát triển triển khai một ứng dụng web Python lên AWS với LEAST operational overhead (ít công vận hành nhất). Ứng dụng cần load balancing và automatic scaling. Sau đó, đội vận hành muốn xác minh rằng không ai đã sửa tay các security group được tạo bởi CloudFormation network stack của công ty. Nên dùng HAI dịch vụ hoặc tính năng nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">AWS Elastic Beanstalk với một môi trường load-balanced</span><span class="why">Đúng: môi trường load-balanced của Elastic Beanstalk tự cấp ALB, Auto Scaling và health monitoring; developer chỉ cần upload code – ít vận hành nhất.</span></li>
+              <li data-k="B"><span class="tv">CloudFormation change set trên network stack</span><span class="why">Sai: change set xem trước tác động của template mới, không phát hiện thay đổi được làm tay ngoài CloudFormation.</span></li>
+              <li data-k="C"><span class="tv">CloudFormation drift detection trên network stack</span><span class="why">Đúng: drift detection so sánh cấu hình thực tế của security group với template và báo MODIFIED nếu bị sửa tay.</span></li>
+              <li data-k="D"><span class="tv">Systems Manager Run Command để kiểm tra từng security group</span><span class="why">Sai: Run Command chạy lệnh trong OS của managed node, không dùng để kiểm tra cấu hình security group.</span></li>
+              <li data-k="E"><span class="tv">Các EC2 instance với Application Load Balancer và Auto Scaling group được cấu hình thủ công</span><span class="why">Sai: tự dựng và duy trì ALB, Auto Scaling tốn nhiều công vận hành hơn Elastic Beanstalk.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cloudformation-overview.html" target="_blank" rel="noopener">How CloudFormation works</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-anatomy.html" target="_blank" rel="noopener">CloudFormation template sections</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cloudformation-limits.html" target="_blank" rel="noopener">Understand CloudFormation quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stack-failure-options.html" target="_blank" rel="noopener">Choose how to handle failures when provisioning resources</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-deletionpolicy.html" target="_blank" rel="noopener">DeletionPolicy attribute</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/protect-stack-resources.html" target="_blank" rel="noopener">Prevent updates to stack resources (stack policy)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-stack-drift.html" target="_blank" rel="noopener">Detect unmanaged configuration changes with drift detection</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-nested-stacks.html" target="_blank" rel="noopener">Split a template into reusable pieces using nested stacks</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-updating-stacks-changesets.html" target="_blank" rel="noopener">Update CloudFormation stacks using change sets</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-updating-stacks-update-behaviors.html" target="_blank" rel="noopener">Understand update behaviors of stack resources</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/what-is-cfnstacksets.html" target="_blank" rel="noopener">Managing stacks across accounts and Regions with StackSets</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-concepts.html" target="_blank" rel="noopener">StackSets concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/concepts.html" target="_blank" rel="noopener">Elastic Beanstalk concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/using-features.environments.html" target="_blank" rel="noopener">Creating an Elastic Beanstalk environment</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/using-features-managing-env-tiers.html" target="_blank" rel="noopener">Elastic Beanstalk worker environments</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/using-features.deploy-existing-version.html" target="_blank" rel="noopener">Deploying applications to Elastic Beanstalk environments</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/using-features.CNAMESwap.html" target="_blank" rel="noopener">Blue/Green deployments with Elastic Beanstalk</a></li>
+        <li><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-tools.html" target="_blank" rel="noopener">Using AWS Systems Manager tools</a></li>
+        <li><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/setup-instance-permissions.html" target="_blank" rel="noopener">Configure instance permissions required for Systems Manager</a></li>
+        <li><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/setup-create-vpc.html" target="_blank" rel="noopener">Use VPC endpoints for Systems Manager</a></li>
+        <li><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html" target="_blank" rel="noopener">AWS Systems Manager Session Manager</a></li>
+        <li><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/run-command.html" target="_blank" rel="noopener">AWS Systems Manager Run Command</a></li>
+        <li><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/send-commands-multiple.html" target="_blank" rel="noopener">Run commands at scale (targets, rate controls)</a></li>
+        <li><a href="https://docs.aws.amazon.com/systems-manager/latest/userguide/patch-manager.html" target="_blank" rel="noopener">AWS Systems Manager Patch Manager</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

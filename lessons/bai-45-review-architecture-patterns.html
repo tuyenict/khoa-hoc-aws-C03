@@ -1,0 +1,931 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 45 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Well-Architected-Tool.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="45" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Nắm chắc <b>cấu trúc đề SAA-C03</b> (65 câu, 50 câu tính điểm + 15 câu không tính điểm, thang 100–1.000, đậu 720, chấm bù trừ) và có <b>chiến thuật đọc đề, loại trừ, quản lý thời gian</b>.</li>
+          <li>Vẽ lại được bốn <b>mẫu kiến trúc</b> xuất hiện nhiều nhất trong đề: <b>3-tier web app</b>, <b>serverless web app</b>, <b>event-driven pipeline</b> và <b>multi-Region active-active</b> – biết mỗi thành phần giải quyết yêu cầu nào.</li>
+          <li>Biết dùng <b>AWS Decision Guides</b> và <b>Reference Architecture Diagrams</b> như “bản đồ” để chọn giữa các dịch vụ gần giống nhau (SQS / SNS / EventBridge, Lambda / Fargate…).</li>
+          <li>Thuộc bảng <b>từ khóa trong đề ⇒ dịch vụ/đáp án</b> theo 4 domain, kèm liên kết ngược về bài đã học để ôn lại chi tiết.</li>
+          <li>Có <b>kế hoạch ôn tập</b> cho những ngày cuối và checklist cho ngày thi.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Cách dùng bài ôn tập này</span>
+        <p>Đây là bài <b>cuối cùng</b> của khóa. Bài <b>không giảng lại</b> chi tiết từng dịch vụ mà <b>ghép các mảnh</b> đã học thành những kiến trúc hoàn chỉnh, đúng kiểu đề hỏi “<i>Which solution meets these requirements?</i>”. Mỗi khi gặp một dịch vụ mà bạn còn mơ hồ, hãy bấm vào liên kết <b>(Bài XX)</b> để quay về bài gốc. Lời khuyên: đọc bài này một lần, sau đó làm đề thử; với mỗi câu sai, tra bảng <a href="#cheat-sheet">Keyword → service</a> và quay lại bài tương ứng.</p></div>
+
+      <!-- ===================== PHẦN 1: ĐỀ THI & CHIẾN THUẬT ===================== -->
+      <h2 id="de-thi"><img src="../assets/icons/svc/AWS-Well-Architected-Tool.svg" alt="">Nhìn lại đề thi SAA-C03: cấu trúc, cách chấm và 4 domain</h2>
+      <p class="lead">Theo <b>Exam Guide</b> chính thức, SAA-C03 dành cho người làm vai trò solutions architect và <b>kiểm tra khả năng thiết kế giải pháp dựa trên <span class="t" data-vi="Khung kiến trúc tốt của AWS">AWS Well-Architected Framework</span></b>: thiết kế giải pháp đáp ứng yêu cầu kinh doanh hiện tại và nhu cầu tương lai; thiết kế kiến trúc <b>secure, resilient, high-performing, cost-optimized</b>; và <b>rà soát giải pháp có sẵn để cải tiến</b>. Ứng viên mục tiêu có <b>ít nhất 1 năm</b> kinh nghiệm thực tế thiết kế giải pháp cloud trên AWS. (Ôn lại Exam Guide và hạ tầng toàn cầu ở <a href="bai-01-exam-global-infrastructure.html">Bài 1</a>, sáu trụ cột ở <a href="bai-02-well-architected.html">Bài 2</a>.)</p>
+
+      <div class="stats">
+        <div class="stat"><b>65 câu</b><span>50 câu tính điểm + 15 câu <i>unscored</i> không được đánh dấu</span></div>
+        <div class="stat"><b>720 / 1.000</b><span>điểm đậu trên thang <i>scaled score</i> 100–1.000</span></div>
+        <div class="stat"><b>0 điểm trừ</b><span>câu bỏ trống tính sai, đoán sai không bị trừ</span></div>
+        <div class="stat"><b>130 phút</b><span>thời gian làm bài (kiến thức phổ biến, không ghi trong Exam Guide)</span></div>
+        <div class="stat"><b>~2 phút</b><span>mỗi câu (130 phút / 65 câu)</span></div>
+      </div>
+
+      <h3>Hai dạng câu hỏi và cách chấm</h3>
+      <ul>
+        <li><b>Multiple choice</b>: 1 đáp án đúng, 3 <span class="t" data-vi="Phương án gây nhiễu">distractors</span>. <b>Multiple response</b>: <b>từ 2 đáp án đúng trở lên</b> trong <b>5 phương án trở lên</b> – đề ghi rõ “<i>Select TWO</i>” / “<i>Select THREE</i>”.</li>
+        <li>Exam Guide mô tả distractor là phương án mà <b>người có kiến thức chưa đầy đủ</b> dễ chọn; chúng thường <b>hợp lý</b> và <b>đúng chủ đề</b>. Vì vậy nhiều phương án “chạy được”, nhưng chỉ một phương án <b>khớp nhất với ràng buộc</b> của đề.</li>
+        <li>Đề có <b>15 <span class="t" data-vi="Câu hỏi không tính điểm">unscored questions</span></b> để AWS thử nghiệm câu hỏi mới. Bạn <b>không biết câu nào</b> là câu thử ⇒ làm mọi câu nghiêm túc, đừng hoảng khi gặp câu “lạ”.</li>
+        <li>Kết quả <b>đậu/trượt</b> dựa trên <b>scaled score</b> (để cân bằng độ khó giữa các bộ đề). Mô hình <span class="t" data-vi="Chấm điểm bù trừ">compensatory scoring</span>: <b>không cần đậu từng domain</b>, chỉ cần tổng đạt 720. Bảng phân loại theo section chỉ mang tính tham khảo.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Domain</th><th>Tỷ trọng</th><th>Task statements</th><th>Bài ôn lại</th></tr></thead>
+        <tbody>
+          <tr><td><b>D1 – Design Secure Architectures</b></td><td><b>30%</b></td><td>1.1 Secure access to AWS resources · 1.2 Secure workloads and applications · 1.3 Data security controls</td><td><a href="bai-04-iam-basics.html">4</a>, <a href="bai-05-iam-advanced-sts.html">5</a>, <a href="bai-06-organizations-scp.html">6</a>, <a href="bai-07-cognito-directory.html">7</a>, <a href="bai-16-s3-security.html">16</a>, <a href="bai-21-vpc-security.html">21</a>, <a href="bai-38-kms-secrets.html">38</a>, <a href="bai-39-threat-protection.html">39</a></td></tr>
+          <tr><td><b>D2 – Design Resilient Architectures</b></td><td><b>26%</b></td><td>2.1 Scalable and loosely coupled architectures · 2.2 Highly available and/or fault-tolerant architectures</td><td><a href="bai-12-elastic-load-balancing.html">12</a>, <a href="bai-13-auto-scaling.html">13</a>, <a href="bai-30-sqs-sns.html">30</a>–<a href="bai-34-containers.html">34</a>, <a href="bai-26-rds.html">26</a>, <a href="bai-42-disaster-recovery.html">42</a></td></tr>
+          <tr><td><b>D3 – Design High-Performing Architectures</b></td><td><b>24%</b></td><td>3.1 Storage · 3.2 Elastic compute · 3.3 Database · 3.4 Network · 3.5 Data ingestion &amp; transformation</td><td><a href="bai-11-ebs-instance-store.html">11</a>, <a href="bai-14-s3-basics.html">14</a>, <a href="bai-17-efs-fsx.html">17</a>, <a href="bai-25-cloudfront-global-accelerator.html">25</a>, <a href="bai-27-aurora.html">27</a>–<a href="bai-29-elasticache-purpose-built-db.html">29</a>, <a href="bai-35-streaming-kinesis-msk.html">35</a>, <a href="bai-36-analytics.html">36</a></td></tr>
+          <tr><td><b>D4 – Design Cost-Optimized Architectures</b></td><td><b>20%</b></td><td>4.1 Storage · 4.2 Compute · 4.3 Database · 4.4 Network (đều là “cost-optimized”)</td><td><a href="bai-09-ec2-purchasing.html">9</a>, <a href="bai-15-s3-advanced.html">15</a>, <a href="bai-22-vpc-connectivity.html">22</a>, <a href="bai-44-cost-optimization.html">44</a></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy về cách hiểu đề</span>
+        <ul>
+          <li>Exam Guide <b>không phải danh sách đầy đủ</b> nội dung thi – nó chỉ đưa task statement kèm “ví dụ”. Dịch vụ nằm trong danh sách <b>in-scope</b> đều có thể xuất hiện, kể cả khi không được nêu tên trong task statement.</li>
+          <li>Câu “Select TWO” <b>không cho điểm từng phần</b> theo cách bạn hy vọng: hãy coi như phải chọn đúng cả hai (kiến thức phổ biến). Đừng chọn hai phương án <b>loại trừ nhau</b> (vd vừa “Multi-AZ” vừa “Single-AZ”).</li>
+          <li>Không có điểm trừ ⇒ <b>không bao giờ bỏ trống</b>. Hết giờ thì đoán.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: QUY TRÌNH GIẢI MỘT CÂU ===================== -->
+      <h2 id="chien-thuat"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">Chiến thuật giải một câu hỏi tình huống</h2>
+      <p class="lead">Mỗi câu SAA-C03 gần như đều có cấu trúc: <b>bối cảnh</b> (công ty đang chạy gì) → <b>vấn đề / yêu cầu mới</b> → <b>ràng buộc</b> (“<i>MOST cost-effective</i>”, “<i>LEAST operational overhead</i>”, “<i>without changing the application code</i>”…) → câu hỏi. Kỹ năng quan trọng nhất là <b>đọc đúng ràng buộc</b>, vì distractor thường đúng về kỹ thuật nhưng <b>vi phạm ràng buộc</b>.</p>
+
+      <ol class="steps">
+        <li><b>Đọc câu hỏi cuối trước</b> (dòng chứa “<i>Which solution…?</i>”) để biết đề hỏi gì: chọn dịch vụ, chọn cấu hình, hay chọn <b>bước tiếp theo</b>.</li>
+        <li><b>Gạch chân từ khóa yêu cầu</b>: <i>highly available</i>, <i>fault tolerant</i>, <i>decouple</i>, <i>real-time</i>, <i>millisecond latency</i>, <i>encrypted</i>, <i>least privilege</i>, <i>serverless</i>…</li>
+        <li><b>Gạch chân ràng buộc ưu tiên</b> (xem bảng dưới). Đây là “trọng tài” khi hai phương án cùng đúng.</li>
+        <li><b>Loại trừ</b> phương án sai rõ ràng: dịch vụ không làm được việc đó, vi phạm giới hạn (vd Lambda &gt; 15 phút), làm thủ công khi đề yêu cầu tự động, phải sửa code khi đề cấm sửa code.</li>
+        <li>So hai phương án còn lại theo ràng buộc ưu tiên; chọn phương án <b>dùng managed service</b> và <b>ít thành phần nhất</b> nếu cả hai đều đúng.</li>
+        <li>Nếu vẫn phân vân quá 2 phút: <b>chọn tạm một đáp án</b>, đánh dấu <b>Flag for review</b> rồi đi tiếp (kiến thức phổ biến về giao diện thi).</li>
+      </ol>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Ràng buộc trong đề</th><th>Thường ưu tiên</th><th>Thường loại bỏ</th></tr></thead>
+        <tbody>
+          <tr><td><b>LEAST operational overhead</b> / <i>fully managed</i></td><td>Serverless, managed service (Lambda, Fargate, DynamoDB, Aurora Serverless, Firehose, AWS Backup), tính năng có sẵn</td><td>Tự cài trên EC2, cron job, script tự viết, “write a custom Lambda” khi đã có tính năng native</td></tr>
+          <tr><td><b>MOST cost-effective</b> / <i>lowest cost</i></td><td>Spot cho việc chịu gián đoạn, Savings Plans/RI cho tải ổn định, S3 lifecycle / Intelligent-Tiering, gateway endpoint, serverless cho tải thất thường</td><td>Over-provisioning, Provisioned IOPS khi không cần, multi-Region khi chỉ cần Multi-AZ, NAT cho traffic S3</td></tr>
+          <tr><td><b>Highly available</b> / <i>fault tolerant</i></td><td><b>Multi-AZ</b> (ALB + ASG ≥ 2 AZ, RDS Multi-AZ, Aurora), dịch vụ regional (S3, DynamoDB, SQS)</td><td>Single instance, một AZ, một NAT gateway cho mọi AZ</td></tr>
+          <tr><td><b>Disaster recovery cross-Region</b> với RPO/RTO cụ thể</td><td>Chọn đúng mức: backup &amp; restore → pilot light → warm standby → multi-site</td><td>Chọn chiến lược đắt hơn mức cần thiết</td></tr>
+          <tr><td><b>Without modifying the application</b> / legacy</td><td>Thêm lớp hạ tầng: ALB, Global Accelerator, RDS Proxy, Storage Gateway, EFS, MGN (rehost)</td><td>Viết lại thành microservices, đổi sang DynamoDB, dùng SDK mới</td></tr>
+          <tr><td><b>Most secure</b> / <i>least privilege</i></td><td>IAM role (không access key), private subnet + VPC endpoint, KMS, Secrets Manager rotation, SCP</td><td>Access key trong code, mở 0.0.0.0/0, bucket public</td></tr>
+          <tr><td><b>Lowest latency</b> / global users</td><td>CloudFront, Global Accelerator, ElastiCache/DAX, read replica gần người dùng, Aurora Global Database</td><td>Tăng size instance ở một Region xa người dùng</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – đọc tín hiệu ẩn trong đề</span>
+        <ul>
+          <li>Đề nhắc “<i>the company's operations team is small</i>” hoặc “<i>does not want to manage servers</i>” ⇒ ngầm yêu cầu <b>least operational overhead</b> dù không viết hoa.</li>
+          <li>“<i>Unpredictable / spiky traffic</i>” ⇒ serverless (Lambda, DynamoDB on-demand, Aurora Serverless v2) hoặc hàng đợi SQS để hấp thụ đỉnh.</li>
+          <li>“<i>Steady, predictable usage for 1–3 years</i>” ⇒ Savings Plans / Reserved Instances (<a href="bai-09-ec2-purchasing.html">Bài 9</a>).</li>
+          <li>“<i>Can be interrupted / stateless / batch / flexible start time</i>” ⇒ <b>Spot</b>.</li>
+          <li>Hai phương án chỉ khác nhau ở một chi tiết (vd <i>gateway</i> vs <i>interface</i> endpoint, <i>SSE-S3</i> vs <i>SSE-KMS</i>) ⇒ chi tiết đó chính là thứ đề muốn kiểm tra – đọc lại ràng buộc.</li>
+        </ul></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Làm đề SAA-C03 giống như <b>tư vấn mua xe</b> cho khách. Nhiều xe đều “chạy được” (đúng kỹ thuật), nhưng khách nói “<i>tôi cần rẻ nhất</i>”, “<i>tôi không muốn tự bảo dưỡng</i>” hay “<i>cả nhà 7 người</i>”. Người tư vấn giỏi không chọn xe <b>tốt nhất</b>, mà chọn xe <b>khớp nhất với ràng buộc</b> của khách. Ràng buộc trong đề chính là câu “tôi cần…” của khách hàng.</p></div>
+
+      <!-- ===================== PHẦN 3: DECISION GUIDES & REFERENCE ARCH ===================== -->
+      <h2 id="ban-do"><img src="../assets/icons/cat/Management-Governance.svg" alt="">Bản đồ chọn dịch vụ: AWS Decision Guides &amp; Reference Architecture Diagrams</h2>
+      <p class="lead">AWS cung cấp hai bộ tài liệu rất hợp để ôn tổng. <span class="t" data-vi="Hướng dẫn ra quyết định của AWS">AWS Decision Guides</span> đưa ra <b>so sánh có cấu trúc</b> giúp bạn đánh giá các dịch vụ, hiểu <b>tiêu chí</b> dẫn tới lựa chọn và chọn phương án tốt nhất cho workload. <span class="t" data-vi="Sơ đồ kiến trúc tham chiếu">AWS Reference Architecture Diagrams</span> là thư viện sơ đồ cho thấy <b>cách kết hợp dịch vụ AWS</b> để xây giải pháp, lọc theo lĩnh vực công nghệ (Serverless &amp; Application Architecture, Networking &amp; Connectivity, Data &amp; Analytics, Security &amp; Compliance, Observability &amp; Logging, Storage…) và theo ngành (tài chính, y tế, bán lẻ, hàng không…). Mỗi sơ đồ có các bước đánh số mô tả vai trò từng dịch vụ.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/cat/Compute.svg" alt="">
+          <div><h4>Compute</h4><span class="vi">Choosing an AWS compute service</span><p>VM / container / serverless; <i>Fargate or Lambda?</i>; <i>Lightsail, Elastic Beanstalk or EC2?</i>; <i>EC2 purchasing options</i>. Ôn: <a href="bai-08-ec2-basics.html">Bài 8</a>, <a href="bai-32-lambda.html">32</a>, <a href="bai-34-containers.html">34</a>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Database.svg" alt="">
+          <div><h4>Databases</h4><span class="vi">Choosing an AWS database service</span><p>Quan hệ, key-value, document, graph, in-memory… chọn theo <b>data model</b> và access pattern. Ôn: <a href="bai-26-rds.html">26</a>–<a href="bai-29-elasticache-purpose-built-db.html">29</a>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Storage.svg" alt="">
+          <div><h4>Storage</h4><span class="vi">Choosing an AWS storage service</span><p>Block (EBS), file (EFS, FSx), object (S3) theo access pattern. Ôn: <a href="bai-11-ebs-instance-store.html">11</a>, <a href="bai-14-s3-basics.html">14</a>, <a href="bai-17-efs-fsx.html">17</a>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Application-Integration.svg" alt="">
+          <div><h4>Application Integration</h4><span class="vi">SQS, SNS hay EventBridge?</span><p>Queue (pull), pub/sub (push), event bus (rule). Ôn: <a href="bai-30-sqs-sns.html">30</a>, <a href="bai-31-eventbridge-stepfunctions-mq.html">31</a>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Networking-Content-Delivery.svg" alt="">
+          <div><h4>Networking &amp; Content Delivery</h4><span class="vi">VPC, LB, CDN, VPN, hybrid</span><p>Ôn: <a href="bai-20-vpc-basics.html">20</a>–<a href="bai-25-cloudfront-global-accelerator.html">25</a>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Security-Identity-Compliance.svg" alt="">
+          <div><h4>Security, Identity &amp; Compliance</h4><span class="vi">Identity, cryptography, WAF or Shield?</span><p>Ôn: <a href="bai-04-iam-basics.html">4</a>–<a href="bai-07-cognito-directory.html">7</a>, <a href="bai-38-kms-secrets.html">38</a>, <a href="bai-39-threat-protection.html">39</a>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Management-Governance.svg" alt="">
+          <div><h4>Management &amp; Governance</h4><span class="vi">CloudTrail or CloudWatch?, governance, cost</span><p>Ôn: <a href="bai-40-cloudwatch-cloudtrail-config.html">40</a>, <a href="bai-41-iac-deployment.html">41</a>, <a href="bai-44-cost-optimization.html">44</a>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Analytics.svg" alt="">
+          <div><h4>Analytics &amp; ML</h4><span class="vi">Analytics, ML, generative AI, Bedrock or SageMaker AI?</span><p>Ôn: <a href="bai-35-streaming-kinesis-msk.html">35</a>–<a href="bai-37-machine-learning.html">37</a>.</p></div></div>
+      </div>
+
+      <h3>Decision guide “Amazon SQS, Amazon SNS, or Amazon EventBridge?”</h3>
+      <p>Ba dịch vụ đều giúp <b>tách rời (decouple)</b> các thành phần nhưng khác nhau về kiến trúc. Bảng dưới tóm tắt từ decision guide (chi tiết ở <a href="bai-30-sqs-sns.html">Bài 30</a> và <a href="bai-31-eventbridge-stepfunctions-mq.html">Bài 31</a>):</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Amazon SQS</th><th>Amazon SNS</th><th>Amazon EventBridge</th></tr></thead>
+        <tbody>
+          <tr><td>Mô hình</td><td><b>Pull</b> – consumer poll từ queue; long polling chờ tối đa <b>20 giây</b></td><td><b>Push</b> – pub/sub tới subscriber</td><td><b>Event bus</b> – rule khớp event rồi route tới target</td></tr>
+          <tr><td>Lưu giữ</td><td>Message nằm trong queue tới khi xử lý xong hoặc hết hạn (tối đa <b>14 ngày</b>)</td><td>Không lưu, giao ngay</td><td>Không lưu; retry mặc định <b>24 giờ</b>, tới <b>185 lần</b> (exponential backoff + jitter)</td></tr>
+          <tr><td>Thứ tự</td><td><b>FIFO queue</b></td><td><b>SNS FIFO topic</b></td><td><b>Không</b> đảm bảo thứ tự</td></tr>
+          <tr><td>Lọc</td><td>Không tự chọn consumer theo nội dung (kết hợp SNS filter)</td><td><b>Subscription filter policy</b></td><td><b>Event pattern</b> phức tạp, lọc theo nội dung</td></tr>
+          <tr><td>Đích</td><td>Consumer pull (EC2, Lambda)</td><td>HTTP/S, email, SMS, mobile push, Lambda, SQS</td><td>AWS services, Lambda, <b>API destinations</b>, event bus ở <b>account khác</b>, SaaS</td></tr>
+          <tr><td>Dùng khi</td><td>Đệm request, xử lý bất đồng bộ, worker co giãn độc lập</td><td><b>Fan-out</b>, thông báo, mobile push</td><td>Kiến trúc hướng sự kiện, chia sẻ event cross-account, tích hợp SaaS</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Decision guide “AWS Fargate or AWS Lambda?”</h3>
+      <div class="compare">
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">AWS Lambda</h4>
+          <ul>
+            <li>Function chạy theo <b>event</b>; tối đa <b>15 phút</b> mỗi lần gọi (durable functions điều phối workflow tới 1 năm).</li>
+            <li>Memory <b>128 MB – 10 GB</b>, CPU tỉ lệ theo memory (tới 6 vCPU); package 250 MB unzipped, container image 10 GB.</li>
+            <li>Concurrency mặc định <b>1.000</b>/Region (tăng được); scale <b>1.000 môi trường mỗi 10 giây</b> cho mỗi function.</li>
+            <li>Tính tiền theo request + GB-giây; free tier 1 triệu request và 400.000 GB-giây/tháng ⇒ rẻ với tải thấp, thất thường.</li>
+            <li>Cold start: giảm bằng <b>provisioned concurrency</b>, <b>SnapStart</b>. Truy cập RDS với concurrency cao ⇒ <b>RDS Proxy</b>.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/AWS-Fargate.svg" alt="">AWS Fargate</h4>
+          <ul>
+            <li>Serverless cho <b>container</b> (ECS/EKS); <b>không giới hạn</b> thời gian chạy ⇒ hợp tác vụ dài, process liên tục, kết nối bền.</li>
+            <li>CPU <b>0,25 – 32 vCPU</b>, memory tới <b>244 GiB</b>, chọn độc lập.</li>
+            <li>Mọi ngôn ngữ đóng gói được vào container; ephemeral storage tới 200 GiB.</li>
+            <li>Tính tiền theo giây (tối thiểu 1 phút) cho vCPU + memory đã cấp; có <b>Fargate Spot</b> ⇒ kinh tế hơn với tải cao, ổn định.</li>
+            <li>Cả hai đủ điều kiện <b>Compute Savings Plans</b> (giảm tới 66%).</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Processing takes 30–60 minutes</i>” hoặc “<i>long-running</i>” ⇒ <b>không</b> chọn Lambda (giới hạn 15 phút) ⇒ <b>Fargate / ECS</b>, <b>AWS Batch</b>, hoặc chia nhỏ bằng <b>Step Functions</b>.</li>
+          <li>“<i>Strict ordering</i>” + decouple ⇒ <b>SQS FIFO</b> (hoặc SNS FIFO cho fan-out có thứ tự); EventBridge <b>không</b> đảm bảo thứ tự.</li>
+          <li>“<i>Route events from a SaaS partner / to another AWS account based on event content</i>” ⇒ <b>EventBridge</b>.</li>
+          <li>“<i>Send the same message to multiple independent consumers</i>” ⇒ <b>SNS fan-out → nhiều SQS queue</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: 3-TIER ===================== -->
+      <h2 id="three-tier"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Mẫu 1 – 3-tier web app có tính sẵn sàng cao</h2>
+      <p class="lead"><span class="t" data-vi="Kiến trúc ba tầng">3-tier architecture</span> (một dạng <span class="t" data-vi="Kiến trúc nhiều tầng">multi-tier architecture</span>) chia ứng dụng thành <b>tầng web (presentation)</b>, <b>tầng ứng dụng (application/logic)</b> và <b>tầng dữ liệu (data)</b>. Reference architecture “<i>Web Application Architecture on AWS</i>” mô tả cách host một ứng dụng web cổ điển: dùng <b>nhiều Availability Zone</b> cho high availability, <b>Application Load Balancer</b> để phân phối traffic, và <b>managed services</b> cho database, cache, shared storage. Đây là kiến trúc “nền” của rất nhiều câu hỏi D1, D2, D3.</p>
+
+      <h3>11 bước của reference architecture (theo tài liệu AWS)</h3>
+      <ol class="steps">
+        <li><b>Route 53</b> định tuyến traffic từ web client theo đường dẫn cho nội dung tĩnh và động (<a href="bai-24-route-53.html">Bài 24</a>).</li>
+        <li><b>CloudFront</b> (CDN) giảm độ trễ khi phân phối nội dung tĩnh (<a href="bai-25-cloudfront-global-accelerator.html">Bài 25</a>).</li>
+        <li><b>Amazon S3</b> lưu nội dung tĩnh và bản backup (<a href="bai-14-s3-basics.html">Bài 14</a>).</li>
+        <li><b>AWS WAF</b> bảo vệ ứng dụng khỏi các kiểu tấn công web phổ biến (<a href="bai-39-threat-protection.html">Bài 39</a>).</li>
+        <li><b>AWS Certificate Manager (ACM)</b> đơn giản hóa quản lý chứng chỉ SSL/TLS (<a href="bai-38-kms-secrets.html">Bài 38</a>).</li>
+        <li><b>Internet-facing ALB</b> phân phối traffic tới web server trải trên nhiều AZ (<a href="bai-12-elastic-load-balancing.html">Bài 12</a>).</li>
+        <li><b>NAT gateway trong mỗi public subnet</b> cho EC2 ở private subnet ra Internet (<a href="bai-20-vpc-basics.html">Bài 20</a>).</li>
+        <li><b>Internal ALB</b> phân phối traffic tới application server trải trên nhiều AZ.</li>
+        <li><b>Amazon RDS</b> đơn giản hóa quản trị tầng database (<a href="bai-26-rds.html">Bài 26</a>).</li>
+        <li>Nếu truy cập DB <b>đọc nhiều</b>, thêm tầng cache <b>Amazon ElastiCache</b> (<a href="bai-29-elasticache-purpose-built-db.html">Bài 29</a>).</li>
+        <li>Nếu các server cần file dùng chung, dùng <b>Amazon EFS</b> (<a href="bai-17-efs-fsx.html">Bài 17</a>).</li>
+      </ol>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Users<small>trình duyệt</small></div>
+          <span class="arrow">DNS</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Route 53<small>alias record</small></div>
+          <span class="arrow">HTTPS</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">CloudFront + WAF<small>ACM cert, cache tĩnh</small></div>
+          <span class="arrow dashed">/static/*</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">S3 bucket<small>OAC, không public</small></div>
+        </div>
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region (dynamic content: CloudFront → ALB)</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">Availability Zone A</span>
+                  <div class="grp pub"><span class="lbl">Public subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB (internet-facing)</div><div class="node"><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">NAT gateway</div></div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet – web tier</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Web EC2<small>ASG</small></div></div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet – app tier</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Internal ALB</div><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">App EC2<small>ASG</small></div></div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet – data tier</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS primary</div><div class="node"><img src="../assets/icons/svc/Amazon-ElastiCache.svg" alt="">ElastiCache</div></div></div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone B</span>
+                  <div class="grp pub"><span class="lbl">Public subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB node</div><div class="node"><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">NAT gateway</div></div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet – web tier</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Web EC2<small>ASG</small></div></div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet – app tier</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Internal ALB node</div><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">App EC2<small>ASG</small></div></div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet – data tier</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS standby<small>Multi-AZ, sync</small></div><div class="node"><img src="../assets/icons/res/Amazon-Elastic-File-System_File-System.svg" alt="">EFS<small>mount target</small></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> 3-tier web app theo reference architecture của AWS: nội dung tĩnh từ S3 qua CloudFront; nội dung động qua ALB internet-facing → web tier → internal ALB → app tier → RDS Multi-AZ + ElastiCache; EFS cho file dùng chung; NAT gateway ở <b>mỗi</b> AZ. Mọi tầng trải ít nhất 2 AZ nên mất một AZ ứng dụng vẫn chạy.</figcaption>
+      </figure>
+
+      <h3>Những “nút vặn” mà đề hay hỏi trên kiến trúc này</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu trong đề</th><th>Thay đổi đúng</th><th>Bài</th></tr></thead>
+        <tbody>
+          <tr><td>Session người dùng mất khi ASG scale in</td><td>Đưa session ra <b>ElastiCache</b> hoặc <b>DynamoDB</b> ⇒ tầng web <b>stateless</b> (sticky session chỉ là giải pháp tạm)</td><td><a href="bai-29-elasticache-purpose-built-db.html">29</a>, <a href="bai-12-elastic-load-balancing.html">12</a></td></tr>
+          <tr><td>DB quá tải vì đọc nhiều, báo cáo chạy chậm</td><td><b>Read replica</b> (chuyển truy vấn đọc/báo cáo sang replica) và/hoặc <b>ElastiCache</b></td><td><a href="bai-26-rds.html">26</a>, <a href="bai-27-aurora.html">27</a></td></tr>
+          <tr><td>DB phải chịu được mất một AZ, failover tự động</td><td><b>RDS Multi-AZ</b> (standby đồng bộ) hoặc <b>Aurora</b> (6 bản sao trên 3 AZ – kiến thức phổ biến)</td><td><a href="bai-26-rds.html">26</a>, <a href="bai-27-aurora.html">27</a></td></tr>
+          <tr><td>Tải tăng theo giờ cao điểm đã biết</td><td><b>Scheduled scaling</b>; tải có chu kỳ ⇒ <b>predictive scaling</b>; còn lại <b>target tracking</b></td><td><a href="bai-13-auto-scaling.html">13</a></td></tr>
+          <tr><td>Chặn SQL injection, XSS, rate limit theo IP</td><td><b>AWS WAF</b> gắn vào CloudFront hoặc ALB; DDoS lớp 3/4 ⇒ <b>Shield</b></td><td><a href="bai-39-threat-protection.html">39</a></td></tr>
+          <tr><td>Chỉ cho truy cập S3 qua CloudFront</td><td><b>Origin access control (OAC)</b> + bucket policy, chặn public access</td><td><a href="bai-16-s3-security.html">16</a>, <a href="bai-25-cloudfront-global-accelerator.html">25</a></td></tr>
+          <tr><td>Mật khẩu DB không nằm trong code, xoay vòng tự động</td><td><b>Secrets Manager</b> + IAM role của EC2</td><td><a href="bai-38-kms-secrets.html">38</a></td></tr>
+          <tr><td>DB chỉ nhận kết nối từ app tier</td><td>Security group của DB cho phép inbound từ <b>security group của app tier</b> (tham chiếu SG, không dùng CIDR)</td><td><a href="bai-21-vpc-security.html">21</a></td></tr>
+          <tr><td>EC2 private cần gọi S3/DynamoDB rẻ và riêng tư</td><td><b>Gateway VPC endpoint</b> (miễn phí) thay vì đi qua NAT</td><td><a href="bai-22-vpc-connectivity.html">22</a>, <a href="bai-44-cost-optimization.html">44</a></td></tr>
+          <tr><td>Triển khai nhanh, không muốn tự dựng từng thành phần</td><td><b>Elastic Beanstalk</b> (web server tier + worker tier) hoặc <b>CloudFormation</b></td><td><a href="bai-41-iac-deployment.html">41</a></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp với 3-tier</span>
+        <ul>
+          <li><b>Một NAT gateway</b> cho mọi AZ là <span class="t" data-vi="Điểm lỗi đơn lẻ">single point of failure</span> (và tốn phí cross-AZ). Reference architecture đặt NAT gateway <b>trong mỗi public subnet</b>.</li>
+          <li><b>Read replica không phải giải pháp HA</b> của RDS (bất đồng bộ, phải promote) – HA là <b>Multi-AZ</b>. Ngược lại, Multi-AZ standby của RDS (kiểu instance) <b>không phục vụ đọc</b>.</li>
+          <li>Đặt web server ở <b>public subnet</b> với public IP không sai về kỹ thuật, nhưng phương án “instance ở private subnet sau ALB” luôn <b>an toàn hơn</b>.</li>
+          <li>ALB là <b>Layer 7</b> (path/host routing, HTTP); cần <b>IP tĩnh</b>, TCP/UDP, cực nhiều kết nối ⇒ <b>NLB</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: SERVERLESS WEB APP ===================== -->
+      <h2 id="serverless"><img src="../assets/icons/cat/Serverless.svg" alt="">Mẫu 2 – Serverless web app</h2>
+      <p class="lead">Khi đề nói “<i>serverless</i>”, “<i>no servers to manage</i>”, “<i>scale automatically to zero</i>” hoặc “<i>least operational overhead</i>” cho một web/mobile app, mẫu chuẩn là: <b>front-end tĩnh</b> trên <b>S3 + CloudFront</b>, <b>API</b> trên <b>API Gateway</b>, <b>logic</b> trong <b>Lambda</b>, <b>dữ liệu</b> trong <b>DynamoDB</b>, <b>đăng nhập</b> bằng <b>Cognito</b>. Mọi thành phần đều <span class="t" data-vi="Phi máy chủ">serverless</span>: tự co giãn, trả theo mức dùng, HA sẵn trên nhiều AZ.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 820 330" width="820" role="img" aria-label="Kiến trúc serverless web app">
+          <defs><marker id="a45s" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <image href="../assets/icons/res/Mobile-client.svg" x="20" y="130" width="52" height="52"/>
+          <text x="46" y="200" font-size="12" font-weight="700" text-anchor="middle">Web / mobile</text>
+          <text x="46" y="215" font-size="11" text-anchor="middle">client</text>
+          <line x1="78" y1="140" x2="170" y2="70" stroke="#545B64" stroke-width="2" marker-end="url(#a45s)"/>
+          <line x1="78" y1="160" x2="170" y2="160" stroke="#545B64" stroke-width="2" marker-end="url(#a45s)"/>
+          <line x1="78" y1="180" x2="170" y2="255" stroke="#545B64" stroke-width="2" marker-end="url(#a45s)"/>
+          <text x="112" y="92" font-size="10.5" text-anchor="middle">HTML/JS</text>
+          <text x="122" y="152" font-size="10.5" text-anchor="middle">REST + JWT</text>
+          <text x="112" y="240" font-size="10.5" text-anchor="middle">sign in</text>
+          <image href="../assets/icons/svc/Amazon-CloudFront.svg" x="175" y="40" width="48" height="48"/>
+          <text x="199" y="104" font-size="12" font-weight="700" text-anchor="middle">CloudFront</text>
+          <line x1="228" y1="64" x2="300" y2="64" stroke="#545B64" stroke-width="2" marker-end="url(#a45s)"/>
+          <text x="264" y="56" font-size="10.5" text-anchor="middle">OAC</text>
+          <image href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" x="305" y="40" width="48" height="48"/>
+          <text x="329" y="104" font-size="12" font-weight="700" text-anchor="middle">S3 (static site)</text>
+          <image href="../assets/icons/svc/Amazon-API-Gateway.svg" x="175" y="136" width="48" height="48"/>
+          <text x="199" y="200" font-size="12" font-weight="700" text-anchor="middle">API Gateway</text>
+          <text x="199" y="215" font-size="10.5" text-anchor="middle">throttling, authorizer</text>
+          <line x1="228" y1="160" x2="370" y2="160" stroke="#545B64" stroke-width="2" marker-end="url(#a45s)"/>
+          <image href="../assets/icons/svc/AWS-Lambda.svg" x="375" y="136" width="48" height="48"/>
+          <text x="399" y="200" font-size="12" font-weight="700" text-anchor="middle">Lambda</text>
+          <text x="399" y="215" font-size="10.5" text-anchor="middle">≤ 15 phút, IAM role</text>
+          <line x1="428" y1="160" x2="560" y2="160" stroke="#545B64" stroke-width="2" marker-end="url(#a45s)"/>
+          <image href="../assets/icons/svc/Amazon-DynamoDB.svg" x="565" y="136" width="48" height="48"/>
+          <text x="589" y="200" font-size="12" font-weight="700" text-anchor="middle">DynamoDB</text>
+          <text x="589" y="215" font-size="10.5" text-anchor="middle">on-demand</text>
+          <line x1="618" y1="160" x2="700" y2="100" stroke="#545B64" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a45s)"/>
+          <text x="672" y="118" font-size="10.5" text-anchor="middle">Streams</text>
+          <image href="../assets/icons/svc/AWS-Lambda.svg" x="705" y="60" width="44" height="44"/>
+          <text x="727" y="120" font-size="11" font-weight="700" text-anchor="middle">Lambda async</text>
+          <line x1="428" y1="175" x2="700" y2="250" stroke="#545B64" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a45s)"/>
+          <text x="560" y="232" font-size="10.5" text-anchor="middle">publish event</text>
+          <image href="../assets/icons/svc/Amazon-EventBridge.svg" x="705" y="230" width="44" height="44"/>
+          <text x="727" y="290" font-size="11" font-weight="700" text-anchor="middle">EventBridge / SQS</text>
+          <image href="../assets/icons/svc/Amazon-Cognito.svg" x="175" y="235" width="48" height="48"/>
+          <text x="199" y="299" font-size="12" font-weight="700" text-anchor="middle">Cognito user pool</text>
+          <line x1="199" y1="233" x2="199" y2="190" stroke="#7AA116" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#a45s)"/>
+          <text x="250" y="226" font-size="10.5">verify token</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Serverless web app: CloudFront phục vụ front-end tĩnh từ S3 (OAC); client đăng nhập qua Cognito user pool, gửi JWT tới API Gateway (Cognito authorizer); Lambda xử lý và ghi DynamoDB; tác vụ phụ chạy bất đồng bộ qua DynamoDB Streams hoặc EventBridge/SQS. Không có server nào để patch.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Vì sao chọn</th><th>Biến thể đề hay hỏi</th><th>Bài</th></tr></thead>
+        <tbody>
+          <tr><td><b>S3 + CloudFront</b></td><td>Host static site rẻ, bền, cache ở edge</td><td>Chỉ cho truy cập qua CloudFront ⇒ OAC; HTTPS + custom domain ⇒ ACM cert ở <b>us-east-1</b> cho CloudFront (kiến thức phổ biến)</td><td><a href="bai-14-s3-basics.html">14</a>, <a href="bai-25-cloudfront-global-accelerator.html">25</a></td></tr>
+          <tr><td><b>API Gateway</b></td><td>Cửa ngõ API managed: auth, throttling, caching, usage plan</td><td>Chặn client gọi quá nhiều ⇒ throttling / usage plan + API key; WebSocket ⇒ WebSocket API</td><td><a href="bai-33-api-gateway.html">33</a></td></tr>
+          <tr><td><b>Lambda</b></td><td>Chạy code theo request, scale theo request, trả theo ms</td><td>Cold start ⇒ provisioned concurrency / SnapStart; nhiều kết nối RDS ⇒ RDS Proxy; &gt; 15 phút ⇒ Fargate/Step Functions</td><td><a href="bai-32-lambda.html">32</a></td></tr>
+          <tr><td><b>DynamoDB</b></td><td>Key-value độ trễ mili-giây ổn định ở mọi quy mô, serverless</td><td>Đọc micro-giây ⇒ <b>DAX</b>; tải thất thường ⇒ on-demand; multi-Region ⇒ global tables; phản ứng thay đổi ⇒ Streams</td><td><a href="bai-28-dynamodb.html">28</a></td></tr>
+          <tr><td><b>Cognito</b></td><td>Đăng ký/đăng nhập, social/SAML federation, JWT</td><td>Cần credentials AWS tạm cho client ⇒ <b>identity pool</b></td><td><a href="bai-07-cognito-directory.html">7</a></td></tr>
+          <tr><td><b>Fargate</b> (thay Lambda)</td><td>Container chạy dài / cần nhiều tài nguyên</td><td>Microservices container không muốn quản EC2 ⇒ ECS on Fargate</td><td><a href="bai-34-containers.html">34</a></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Static website, highly available, lowest cost</i>” ⇒ <b>S3 static website</b> (+ CloudFront nếu cần HTTPS/global). Không dựng EC2.</li>
+          <li>“<i>REST API, unpredictable traffic, least operational overhead</i>” ⇒ <b>API Gateway + Lambda + DynamoDB</b>.</li>
+          <li>“<i>Lambda functions exhaust database connections</i>” ⇒ <b>RDS Proxy</b> (decision guide Fargate/Lambda cũng nêu điều này).</li>
+          <li>“<i>Users sign in with social identity providers</i>” ⇒ <b>Cognito user pool</b>; “<i>temporary AWS credentials to upload directly to S3</i>” ⇒ <b>Cognito identity pool</b> hoặc <b>presigned URL</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: EVENT-DRIVEN ===================== -->
+      <h2 id="event-driven"><img src="../assets/icons/cat/Application-Integration.svg" alt="">Mẫu 3 – Event-driven &amp; decoupled pipeline</h2>
+      <p class="lead">Task 2.1 của Exam Guide yêu cầu “<i>designing event-driven, microservice, and/or multi-tier architectures</i>” và “<i>determining the AWS services required to achieve loose coupling</i>”. Trong <span class="t" data-vi="Kiến trúc hướng sự kiện">event-driven architecture</span>, thành phần phát ra <b>event</b> mà không cần biết ai xử lý; bên nhận phản ứng độc lập. Có năm mẫu con bạn cần nhận ra ngay trong đề.</p>
+
+      <h3>3a. Queue-based load leveling – đệm tải bằng SQS</h3>
+      <p>Producer gửi job vào <b>SQS</b>; worker (EC2 ASG, ECS/Fargate, Lambda) lấy job theo tốc độ của mình. Hàng đợi hấp thụ đỉnh tải, worker hỏng thì message vẫn còn (tối đa 14 ngày). Reference architecture “<i>Autoscaling Asynchronous Job Queues</i>” mô tả đúng mẫu này cho tác vụ nền (tạo tài liệu, ETL, inference):</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 820 300" width="820" role="img" aria-label="Autoscaling asynchronous job queues">
+          <defs><marker id="a45q" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <image href="../assets/icons/res/Client.svg" x="15" y="110" width="48" height="48"/>
+          <text x="39" y="174" font-size="12" font-weight="700" text-anchor="middle">Client</text>
+          <line x1="66" y1="134" x2="118" y2="134" stroke="#545B64" stroke-width="2" marker-end="url(#a45q)"/>
+          <image href="../assets/icons/svc/Amazon-API-Gateway.svg" x="122" y="110" width="48" height="48"/>
+          <text x="146" y="174" font-size="11.5" font-weight="700" text-anchor="middle">API Gateway</text>
+          <text x="146" y="189" font-size="10.5" text-anchor="middle">add / query / cancel</text>
+          <line x1="173" y1="134" x2="228" y2="134" stroke="#545B64" stroke-width="2" marker-end="url(#a45q)"/>
+          <image href="../assets/icons/svc/AWS-Lambda.svg" x="232" y="110" width="48" height="48"/>
+          <text x="256" y="174" font-size="11.5" font-weight="700" text-anchor="middle">Add-job Lambda</text>
+          <line x1="284" y1="124" x2="350" y2="70" stroke="#545B64" stroke-width="2" marker-end="url(#a45q)"/>
+          <text x="300" y="86" font-size="10.5">job state</text>
+          <line x1="284" y1="140" x2="350" y2="140" stroke="#545B64" stroke-width="2" marker-end="url(#a45q)"/>
+          <text x="318" y="132" font-size="10.5" text-anchor="middle">job ID</text>
+          <image href="../assets/icons/svc/Amazon-DynamoDB.svg" x="355" y="30" width="48" height="48"/>
+          <text x="379" y="94" font-size="11.5" font-weight="700" text-anchor="middle">DynamoDB</text>
+          <image href="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" x="355" y="116" width="48" height="48"/>
+          <text x="379" y="180" font-size="11.5" font-weight="700" text-anchor="middle">SQS job queue</text>
+          <line x1="379" y1="186" x2="379" y2="226" stroke="#545B64" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#a45q)"/>
+          <image href="../assets/icons/svc/Amazon-CloudWatch.svg" x="355" y="228" width="44" height="44"/>
+          <text x="440" y="250" font-size="11" font-weight="700">CloudWatch alarm</text>
+          <text x="440" y="265" font-size="10.5">queue depth &gt; X / = 0</text>
+          <line x1="560" y1="250" x2="610" y2="200" stroke="#545B64" stroke-width="2" marker-end="url(#a45q)"/>
+          <text x="610" y="240" font-size="10.5">đổi desiredCount</text>
+          <rect x="560" y="95" width="160" height="100" rx="8" fill="#ED7100" fill-opacity="0.07" stroke="#ED7100"/>
+          <image href="../assets/icons/svc/AWS-Fargate.svg" x="578" y="112" width="44" height="44"/>
+          <image href="../assets/icons/svc/AWS-Fargate.svg" x="630" y="112" width="44" height="44"/>
+          <text x="640" y="178" font-size="11.5" font-weight="700" text-anchor="middle">ECS on Fargate workers</text>
+          <line x1="556" y1="140" x2="408" y2="140" stroke="#545B64" stroke-width="2" marker-end="url(#a45q)"/>
+          <text x="482" y="132" font-size="10.5" text-anchor="middle">poll</text>
+          <line x1="560" y1="110" x2="408" y2="60" stroke="#545B64" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a45q)"/>
+          <text x="485" y="76" font-size="10.5" text-anchor="middle">cập nhật status</text>
+          <line x1="722" y1="140" x2="760" y2="140" stroke="#545B64" stroke-width="2" marker-end="url(#a45q)"/>
+          <image href="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" x="762" y="116" width="44" height="44"/>
+          <text x="784" y="176" font-size="11" font-weight="700" text-anchor="middle">SNS</text>
+          <text x="784" y="190" font-size="10" text-anchor="middle">status</text>
+          <image href="../assets/icons/svc/Amazon-Elastic-Container-Registry.svg" x="618" y="30" width="40" height="40"/>
+          <text x="638" y="84" font-size="10.5" text-anchor="middle">ECR image</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Reference architecture “Autoscaling Asynchronous Job Queues”: API Gateway nhận job → Lambda ghi trạng thái vào DynamoDB và đẩy job ID vào SQS → CloudWatch theo dõi độ sâu hàng đợi, kích alarm khi vượt ngưỡng hoặc khi rỗng → ECS đổi <code>desiredCount</code> (bắt đầu từ 0) → task Fargate (image từ ECR) poll SQS, xử lý, cập nhật DynamoDB và publish thay đổi trạng thái lên SNS.</figcaption>
+      </figure>
+
+      <h3>3b. Fan-out – SNS → nhiều SQS</h3>
+      <p>Một event (vd “đơn hàng mới”) cần được <b>nhiều hệ thống độc lập</b> xử lý (thanh toán, kho, email, analytics). Publish lên <b>SNS topic</b>, mỗi hệ thống có <b>SQS queue riêng</b> subscribe vào topic ⇒ mỗi bên xử lý theo tốc độ riêng, lỗi một bên không ảnh hưởng bên khác; dùng <b>subscription filter policy</b> để mỗi queue chỉ nhận loại message nó cần (<a href="bai-30-sqs-sns.html">Bài 30</a>). Muốn route theo nội dung phức tạp, nguồn SaaS hoặc cross-account ⇒ <b>EventBridge</b> (<a href="bai-31-eventbridge-stepfunctions-mq.html">Bài 31</a>).</p>
+
+      <h3>3c. S3 event → xử lý tự động</h3>
+      <p>Upload ảnh/tài liệu lên S3 ⇒ <b>S3 Event Notification</b> (hoặc EventBridge) gọi <b>Lambda</b> tạo thumbnail, trích xuất metadata, chạy Rekognition/Textract… Khi lượng file lớn hoặc xử lý chậm, chèn <b>SQS</b> giữa S3 và worker để đệm (<a href="bai-15-s3-advanced.html">Bài 15</a>, <a href="bai-37-machine-learning.html">Bài 37</a>).</p>
+
+      <h3>3d. Orchestration – Step Functions &amp; mẫu Saga</h3>
+      <p>Khi quy trình có <b>nhiều bước</b>, cần <b>retry</b>, <b>rẽ nhánh</b>, <b>chờ phê duyệt của người</b>, hoặc <b>bù trừ (rollback) khi một bước lỗi</b> ⇒ <b>AWS Step Functions</b>. Reference architecture “<i>Serverless Architecture for Global Applications</i>” dùng <span class="t" data-vi="Mẫu giao dịch phân tán có bù trừ">Saga pattern</span> với Step Functions để điều phối giao dịch phân tán theo hướng <b>eventual consistency</b>; “<i>Invoking Asynchronous External APIs</i>” dùng Step Functions cho callback từ dịch vụ bên thứ ba chạy lâu (<a href="bai-31-eventbridge-stepfunctions-mq.html">Bài 31</a>).</p>
+
+      <h3>3e. Streaming – Kinesis → Firehose → S3 → Athena</h3>
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Mobile-client.svg" alt="">Producers<small>clickstream, IoT, log</small></div>
+          <span class="arrow">PutRecords</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" alt="">Kinesis Data Streams<small>real-time, nhiều consumer, replay</small></div>
+          <span class="arrow">consumer</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">Amazon Data Firehose<small>buffer, Lambda transform, → Parquet</small></div>
+          <span class="arrow">near real-time</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">S3 data lake<small>partitioned</small></div>
+          <span class="arrow dashed">Glue Data Catalog</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">Athena / QuickSight<small>SQL serverless, dashboard</small></div>
+        </div>
+        <figcaption><b>Hình 4.</b> Pipeline streaming điển hình: Kinesis Data Streams nhận dữ liệu thời gian thực; Firehose gom, biến đổi (vd CSV/JSON → Parquet) và giao vào S3; Glue Data Catalog lưu schema; Athena truy vấn SQL trực tiếp, QuickSight vẽ dashboard (<a href="bai-35-streaming-kinesis-msk.html">Bài 35</a>, <a href="bai-36-analytics.html">Bài 36</a>). Chỉ cần nạp vào S3/Redshift/OpenSearch, không cần xử lý tùy biến ⇒ Firehose trực tiếp là đủ.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – nhận diện mẫu event-driven</span>
+        <ul>
+          <li>“<i>Orders are lost when the processing tier fails / traffic spikes overwhelm the backend</i>” ⇒ chèn <b>SQS</b> giữa hai tầng; scale worker theo <b>độ sâu hàng đợi</b> (vd metric backlog per instance).</li>
+          <li>“<i>Process each message exactly once, in order</i>” ⇒ <b>SQS FIFO</b> (exactly-once processing, theo message group).</li>
+          <li>“<i>Messages that fail repeatedly must be isolated for analysis</i>” ⇒ <b>dead-letter queue</b>.</li>
+          <li>“<i>Coordinate multiple Lambda functions with retries, error handling, and a manual approval step</i>” ⇒ <b>Step Functions</b> (không phải chuỗi Lambda gọi nhau).</li>
+          <li>“<i>Ingest streaming data and store in S3 in Parquet with least operational overhead</i>” ⇒ <b>Data Firehose</b> (record format conversion).</li>
+        </ul></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p><b>SQS</b> giống <b>quầy lấy số</b> ở ngân hàng: khách (message) xếp hàng, giao dịch viên (worker) gọi số khi rảnh; đông khách thì mở thêm quầy. <b>SNS</b> giống <b>loa phát thanh</b>: một thông báo, mọi phòng ban cùng nghe. <b>EventBridge</b> giống <b>tổng đài phân luồng</b>: đọc nội dung cuộc gọi rồi chuyển đúng bộ phận, kể cả sang công ty đối tác. <b>Step Functions</b> là <b>người quản lý dự án</b> cầm checklist: bước nào xong, bước nào lỗi phải làm lại, bước nào chờ sếp ký.</p></div>
+
+      <!-- ===================== PHẦN 7: MULTI-REGION ===================== -->
+      <h2 id="multi-region"><img src="../assets/icons/svc/AWS-Global-Accelerator.svg" alt="">Mẫu 4 – Multi-Region active-active &amp; chọn chiến lược DR</h2>
+      <p class="lead">Theo whitepaper Disaster Recovery, <span class="t" data-vi="Đa địa điểm cùng hoạt động">multi-site active/active</span> chạy workload <b>đồng thời ở nhiều Region</b> và <b>phục vụ traffic từ mọi Region</b>. Đây là cách <b>phức tạp và đắt nhất</b>, nhưng có thể đưa thời gian phục hồi về <b>gần bằng 0</b> với đa số thảm họa (sự cố hỏng/xóa dữ liệu vẫn phải dựa vào backup nên RPO thường &gt; 0). Ôn đầy đủ bốn chiến lược ở <a href="bai-42-disaster-recovery.html">Bài 42</a>.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Chiến lược</th><th>Trạng thái Region DR</th><th>RPO / RTO</th><th>Chi phí</th><th>Từ khóa đề</th></tr></thead>
+        <tbody>
+          <tr><td><b>Backup &amp; restore</b></td><td>Chỉ có backup (AWS Backup copy cross-Region, snapshot, S3 CRR); hạ tầng dựng lại bằng IaC</td><td>Giờ</td><td>Thấp nhất</td><td>“<i>lowest cost</i>”, RTO tính bằng giờ</td></tr>
+          <tr><td><b>Pilot light</b></td><td>Dữ liệu replicate liên tục (DB luôn bật); app server “tắt” (chưa deploy)</td><td>Phút (RPO) / hàng chục phút</td><td>Thấp</td><td>“<i>core components always running</i>”, Elastic Disaster Recovery</td></tr>
+          <tr><td><b>Warm standby</b></td><td>Bản thu nhỏ nhưng <b>chạy được</b>, nhận traffic ngay ở công suất thấp, chỉ cần scale up</td><td>Phút</td><td>Trung bình</td><td>“<i>scaled-down but fully functional</i>”</td></tr>
+          <tr><td><b>Multi-site active/active</b> (hoặc hot standby)</td><td>Đầy đủ công suất, mọi Region nhận traffic (hot standby: đủ công suất nhưng không nhận traffic)</td><td>Gần 0</td><td>Cao nhất</td><td>“<i>near-zero downtime</i>”, “<i>users in any Region</i>”</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Ba chiến lược ghi dữ liệu khi active/active</h3>
+      <p>Đọc thường phục vụ ở Region gần người dùng nhất (<b>read local</b>). Phần khó là <b>ghi</b>:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Chiến lược ghi</th><th>Cách làm</th><th>Dịch vụ phù hợp (theo whitepaper)</th></tr></thead>
+        <tbody>
+          <tr><td><b>Write global</b></td><td>Mọi lệnh ghi về <b>một Region</b>; Region đó hỏng thì promote Region khác</td><td><b>Aurora Global Database</b>: replicate tới <b>tối đa 5 Region phụ</b>, độ trễ điển hình <b>dưới 1 giây</b>; promote Region phụ nhận read/write <b>dưới 1 phút</b>; <b>write forwarding</b> cho phép cluster phụ chuyển lệnh ghi về primary (<a href="bai-27-aurora.html">Bài 27</a>)</td></tr>
+          <tr><td><b>Write local</b></td><td>Ghi vào Region <b>gần nhất</b> giống như đọc</td><td><b>DynamoDB global tables</b>: đọc/ghi ở mọi Region, xung đột xử lý theo <b>last writer wins</b> (<a href="bai-28-dynamodb.html">Bài 28</a>)</td></tr>
+          <tr><td><b>Write partitioned</b></td><td>Gán lệnh ghi vào một Region theo <b>partition key</b> (vd user ID) để tránh xung đột</td><td><b>S3 replication hai chiều</b> (bật <i>replica modification sync</i>), chọn có replicate delete marker hay không (<a href="bai-15-s3-advanced.html">Bài 15</a>)</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 820 360" width="820" role="img" aria-label="Kiến trúc multi-Region active-active">
+          <defs><marker id="a45m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <image href="../assets/icons/res/Users.svg" x="386" y="6" width="48" height="48"/>
+          <text x="410" y="66" font-size="12" font-weight="700" text-anchor="middle">Người dùng toàn cầu</text>
+          <image href="../assets/icons/svc/Amazon-Route-53.svg" x="300" y="76" width="44" height="44"/>
+          <text x="322" y="134" font-size="11" font-weight="700" text-anchor="middle">Route 53 latency</text>
+          <text x="322" y="148" font-size="10.5" text-anchor="middle">+ health check</text>
+          <image href="../assets/icons/svc/AWS-Global-Accelerator.svg" x="476" y="76" width="44" height="44"/>
+          <text x="498" y="134" font-size="11" font-weight="700" text-anchor="middle">hoặc Global Accelerator</text>
+          <text x="498" y="148" font-size="10.5" text-anchor="middle">anycast IP, traffic dial</text>
+          <line x1="300" y1="110" x2="200" y2="170" stroke="#545B64" stroke-width="2" marker-end="url(#a45m)"/>
+          <line x1="520" y1="110" x2="620" y2="170" stroke="#545B64" stroke-width="2" marker-end="url(#a45m)"/>
+          <rect x="20" y="172" width="340" height="176" rx="8" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="32" y="192" font-size="13" font-weight="700" style="fill:#147EBA">Region A (active)</text>
+          <image href="../assets/icons/svc/Amazon-API-Gateway.svg" x="40" y="206" width="40" height="40"/>
+          <text x="60" y="260" font-size="10.5" text-anchor="middle">API GW / ALB</text>
+          <image href="../assets/icons/svc/AWS-Lambda.svg" x="120" y="206" width="40" height="40"/>
+          <text x="140" y="260" font-size="10.5" text-anchor="middle">Lambda / ECS</text>
+          <image href="../assets/icons/svc/Amazon-DynamoDB.svg" x="200" y="206" width="40" height="40"/>
+          <text x="220" y="260" font-size="10.5" text-anchor="middle">DynamoDB</text>
+          <image href="../assets/icons/svc/Amazon-Aurora.svg" x="280" y="206" width="40" height="40"/>
+          <text x="300" y="260" font-size="10.5" text-anchor="middle">Aurora primary</text>
+          <image href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" x="120" y="280" width="40" height="40"/>
+          <text x="140" y="336" font-size="10.5" text-anchor="middle">S3</text>
+          <rect x="460" y="172" width="340" height="176" rx="8" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="472" y="192" font-size="13" font-weight="700" style="fill:#147EBA">Region B (active)</text>
+          <image href="../assets/icons/svc/Amazon-API-Gateway.svg" x="480" y="206" width="40" height="40"/>
+          <text x="500" y="260" font-size="10.5" text-anchor="middle">API GW / ALB</text>
+          <image href="../assets/icons/svc/AWS-Lambda.svg" x="560" y="206" width="40" height="40"/>
+          <text x="580" y="260" font-size="10.5" text-anchor="middle">Lambda / ECS</text>
+          <image href="../assets/icons/svc/Amazon-DynamoDB.svg" x="640" y="206" width="40" height="40"/>
+          <text x="660" y="260" font-size="10.5" text-anchor="middle">DynamoDB</text>
+          <image href="../assets/icons/svc/Amazon-Aurora.svg" x="720" y="206" width="40" height="40"/>
+          <text x="740" y="260" font-size="10.5" text-anchor="middle">Aurora secondary</text>
+          <image href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" x="560" y="280" width="40" height="40"/>
+          <text x="580" y="336" font-size="10.5" text-anchor="middle">S3</text>
+          <path class="line-o" d="M242 226 C 400 150, 480 150, 638 226" fill="none" marker-end="url(#a45m)"/>
+          <text x="440" y="170" font-size="10.5" text-anchor="middle">global tables (write local, last writer wins)</text>
+          <path class="line-o" d="M322 240 C 450 290, 600 290, 718 240" fill="none" marker-end="url(#a45m)"/>
+          <text x="520" y="292" font-size="10.5" text-anchor="middle">Aurora Global DB (&lt; 1 s)</text>
+          <path class="line-o" d="M162 300 H 556" fill="none" marker-end="url(#a45m)"/>
+          <text x="360" y="318" font-size="10.5" text-anchor="middle">S3 CRR hai chiều</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Multi-Region active-active: Route 53 (latency/geoproximity + health check) hoặc Global Accelerator (anycast IP, traffic dial) đưa người dùng tới Region gần nhất; mỗi Region có đầy đủ tầng compute; dữ liệu replicate bất đồng bộ bằng DynamoDB global tables (write local), Aurora Global Database (write global) và S3 replication. Đây cũng là ý tưởng của reference architecture “Serverless Architecture for Global Applications”.</figcaption>
+      </figure>
+
+      <h3>Định tuyến traffic giữa các Region</h3>
+      <ul>
+        <li><b>Route 53</b>: gắn nhiều endpoint ở nhiều Region vào một tên miền; <b>health check</b> + DNS failover tự động là thao tác <b>data plane</b> rất tin cậy; hỗ trợ weighted, latency, geoproximity… (<a href="bai-24-route-53.html">Bài 24</a>). Failover thủ công an toàn ⇒ <b>Amazon Application Recovery Controller (ARC)</b> với routing control đóng vai “công tắc”.</li>
+        <li><b>Global Accelerator</b>: <b>anycast static IP</b> gắn endpoint ở nhiều Region, health check tự chuyển traffic, <b>traffic dial</b> chỉnh % traffic mỗi Region; đưa traffic vào backbone AWS sớm nhất và <b>tránh vấn đề cache DNS</b> (<a href="bai-25-cloudfront-global-accelerator.html">Bài 25</a>).</li>
+        <li><b>CloudFront origin failover</b>: chuyển sang origin phụ <b>theo từng request</b> khi origin chính lỗi.</li>
+        <li>Whitepaper nhấn mạnh: khi failover chỉ nên dựa vào thao tác <b>data plane</b> (sẵn sàng cao hơn <b>control plane</b>); đảm bảo <b>service quotas</b> ở Region DR đủ để scale lên production.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp với multi-Region</span>
+        <ul>
+          <li><b>Multi-AZ ≠ multi-Region</b>. Đề chỉ yêu cầu “<i>highly available</i>” ⇒ Multi-AZ là đủ và rẻ hơn; chỉ chọn multi-Region khi đề nói <b>Region outage</b>, <b>DR cross-Region</b>, hoặc <b>người dùng toàn cầu cần độ trễ thấp</b>.</li>
+          <li><b>Replication liên tục không thay thế backup</b>: xóa nhầm/hỏng dữ liệu sẽ được replicate sang Region kia. Vẫn cần point-in-time backup, S3 versioning.</li>
+          <li><b>RDS cross-Region read replica</b> (không phải Aurora) promote mất vài phút và có reboot; cần RPO giây, RTO &lt; 1 phút ⇒ <b>Aurora Global Database</b>.</li>
+          <li>Ghi ở nhiều Region với dữ liệu quan hệ cần nhất quán mạnh ⇒ không dùng “write local” của DynamoDB (last writer wins) mà dùng write global.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: CÁC MẪU KHÁC ===================== -->
+      <h2 id="mau-khac"><img src="../assets/icons/cat/Networking-Content-Delivery.svg" alt="">Các mẫu kiến trúc khác hay gặp (ôn nhanh)</h2>
+      <p class="lead">Ngoài bốn mẫu lớn, đề còn lặp lại nhiều “mẫu nhỏ”. Bảng dưới gom lại để bạn nhận diện nhanh và quay về bài gốc khi cần.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Mẫu</th><th>Thành phần chính</th><th>Khi nào dùng</th><th>Bài</th></tr></thead>
+        <tbody>
+          <tr><td><b>Hybrid network HA</b></td><td>Direct Connect (đường riêng, băng thông ổn định) + <b>Site-to-Site VPN làm backup</b>; Transit Gateway gom nhiều VPC</td><td>Kết nối on-prem ổn định, cần dự phòng giá rẻ; DX không mã hóa sẵn ⇒ VPN over DX hoặc MACsec</td><td><a href="bai-23-hybrid-networking.html">23</a>, <a href="bai-22-vpc-connectivity.html">22</a></td></tr>
+          <tr><td><b>Hub-and-spoke nhiều VPC</b></td><td><b>Transit Gateway</b>; centralized egress (NAT trong VPC egress), centralized inspection (Network Firewall / GWLB)</td><td>Hàng chục VPC, nhiều account; peering không transitive</td><td><a href="bai-22-vpc-connectivity.html">22</a>, <a href="bai-21-vpc-security.html">21</a></td></tr>
+          <tr><td><b>Chia sẻ dịch vụ riêng tư</b></td><td><b>PrivateLink</b> (NLB + endpoint service ↔ interface endpoint)</td><td>Cung cấp dịch vụ cho VPC/account khác mà không mở mạng, CIDR trùng nhau</td><td><a href="bai-22-vpc-connectivity.html">22</a></td></tr>
+          <tr><td><b>Hybrid storage</b></td><td>Storage Gateway (File/Volume/Tape), DataSync (chuyển online), Snow Family (offline), Transfer Family (SFTP)</td><td>On-prem dùng S3 qua NFS/SMB; di chuyển TB–PB; đối tác gửi file SFTP</td><td><a href="bai-18-hybrid-storage-transfer.html">18</a></td></tr>
+          <tr><td><b>Data lake</b></td><td>S3 + Glue (crawler, ETL, Data Catalog) + Lake Formation (phân quyền) + Athena / Redshift Spectrum / EMR</td><td>Gom dữ liệu nhiều nguồn, truy vấn ad-hoc serverless, phân quyền cột/hàng</td><td><a href="bai-36-analytics.html">36</a></td></tr>
+          <tr><td><b>Multi-account governance</b></td><td>Organizations + SCP, Control Tower (landing zone, guardrails), IAM Identity Center, CloudTrail organization trail</td><td>Nhiều team/môi trường, cần chặn hành động ở mọi account, SSO</td><td><a href="bai-06-organizations-scp.html">6</a>, <a href="bai-40-cloudwatch-cloudtrail-config.html">40</a></td></tr>
+          <tr><td><b>Bảo vệ ứng dụng web</b></td><td>CloudFront + WAF + Shield Advanced, ALB ở private subnet, GuardDuty, Security Hub</td><td>SQL injection, bot, DDoS, tổng hợp finding</td><td><a href="bai-39-threat-protection.html">39</a></td></tr>
+          <tr><td><b>Mã hóa &amp; bí mật</b></td><td>KMS (SSE-KMS, key policy), Secrets Manager (rotation), ACM (TLS)</td><td>Encrypt at rest / in transit, audit việc dùng key, xoay vòng mật khẩu DB</td><td><a href="bai-38-kms-secrets.html">38</a>, <a href="bai-16-s3-security.html">16</a></td></tr>
+          <tr><td><b>Migration</b></td><td>MGN (rehost), DMS + SCT (đổi engine, CDC), DataSync, Snowball</td><td>Lift-and-shift ít downtime, chuyển DB đang chạy</td><td><a href="bai-43-migration.html">43</a></td></tr>
+          <tr><td><b>Backup tập trung</b></td><td>AWS Backup (backup plan, vault lock, copy cross-Region/cross-account)</td><td>Chính sách backup thống nhất, chống xóa (WORM), tuân thủ</td><td><a href="bai-19-aws-backup.html">19</a></td></tr>
+          <tr><td><b>Batch giá rẻ</b></td><td>Spot Instances / Fargate Spot, AWS Batch, SQS + ASG mixed instances</td><td>Tác vụ chịu gián đoạn, thời điểm chạy linh hoạt</td><td><a href="bai-09-ec2-purchasing.html">9</a>, <a href="bai-13-auto-scaling.html">13</a></td></tr>
+          <tr><td><b>Lưu trữ phân tầng</b></td><td>S3 Lifecycle → Standard-IA → Glacier; Intelligent-Tiering khi không rõ pattern; EFS IA</td><td>Dữ liệu nguội dần, lưu trữ dài hạn tuân thủ</td><td><a href="bai-14-s3-basics.html">14</a>, <a href="bai-15-s3-advanced.html">15</a>, <a href="bai-17-efs-fsx.html">17</a></td></tr>
+          <tr><td><b>Giám sát &amp; tự khắc phục</b></td><td>CloudWatch alarm → SNS/EventBridge → Lambda/SSM Automation; AWS Config rule + remediation</td><td>Tự động phản ứng khi cấu hình sai hoặc metric vượt ngưỡng</td><td><a href="bai-40-cloudwatch-cloudtrail-config.html">40</a>, <a href="bai-41-iac-deployment.html">41</a></td></tr>
+        </tbody>
+      </table></div>
+
+      <!-- ===================== PHẦN 9: CHEAT SHEET ===================== -->
+      <h2 id="cheat-sheet"><img src="../assets/icons/cat/Compute.svg" alt="">Keyword → service cheat sheet</h2>
+      <p class="lead">Bảng tra nhanh <b>cụm từ trong đề ⇒ dịch vụ/đáp án thường đúng</b>, chia theo domain. Đây là “phản xạ” cần có để tiết kiệm thời gian; nhưng luôn kiểm tra lại <b>ràng buộc</b> trước khi chốt, vì đề có thể cố tình đặt từ khóa để dẫn bạn vào distractor.</p>
+
+      <h3>D1 – Secure</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Từ khóa trong đề</th><th>Đáp án thường đúng</th><th>Bài</th></tr></thead>
+        <tbody>
+          <tr><td>Application on EC2 needs to access S3 / DynamoDB securely</td><td><b>IAM role</b> (instance profile), không lưu access key</td><td><a href="bai-04-iam-basics.html">4</a></td></tr>
+          <tr><td>Cross-account access, temporary credentials</td><td><b>IAM role + STS AssumeRole</b></td><td><a href="bai-05-iam-advanced-sts.html">5</a></td></tr>
+          <tr><td>Prevent all accounts from using a Region / disabling CloudTrail</td><td><b>SCP</b> trong Organizations</td><td><a href="bai-06-organizations-scp.html">6</a></td></tr>
+          <tr><td>Delegate permissions but limit maximum permissions</td><td><b>Permissions boundary</b></td><td><a href="bai-05-iam-advanced-sts.html">5</a></td></tr>
+          <tr><td>Single sign-on across many accounts with corporate identity</td><td><b>IAM Identity Center</b></td><td><a href="bai-06-organizations-scp.html">6</a></td></tr>
+          <tr><td>User sign-up/sign-in for mobile app, social login</td><td><b>Cognito user pool</b></td><td><a href="bai-07-cognito-directory.html">7</a></td></tr>
+          <tr><td>Rotate database credentials automatically</td><td><b>Secrets Manager</b></td><td><a href="bai-38-kms-secrets.html">38</a></td></tr>
+          <tr><td>Encrypt with keys you control, audit key usage</td><td><b>KMS customer managed key</b> (+ CloudTrail); FIPS 140-2 level 3, single-tenant HSM ⇒ <b>CloudHSM</b></td><td><a href="bai-38-kms-secrets.html">38</a></td></tr>
+          <tr><td>Protect against SQL injection / XSS / bad bots</td><td><b>AWS WAF</b></td><td><a href="bai-39-threat-protection.html">39</a></td></tr>
+          <tr><td>DDoS protection, cost protection, DRT support</td><td><b>Shield Advanced</b></td><td><a href="bai-39-threat-protection.html">39</a></td></tr>
+          <tr><td>Detect threats from VPC Flow Logs, DNS, CloudTrail</td><td><b>GuardDuty</b></td><td><a href="bai-39-threat-protection.html">39</a></td></tr>
+          <tr><td>Find PII / sensitive data in S3</td><td><b>Macie</b></td><td><a href="bai-39-threat-protection.html">39</a></td></tr>
+          <tr><td>Vulnerability scanning of EC2, ECR images, Lambda</td><td><b>Inspector</b></td><td><a href="bai-39-threat-protection.html">39</a></td></tr>
+          <tr><td>WORM, cannot be deleted for N years</td><td><b>S3 Object Lock</b> (compliance mode) / <b>Glacier Vault Lock</b> / <b>Backup Vault Lock</b></td><td><a href="bai-16-s3-security.html">16</a>, <a href="bai-19-aws-backup.html">19</a></td></tr>
+          <tr><td>Temporary access to a private S3 object for an external user</td><td><b>Presigned URL</b></td><td><a href="bai-16-s3-security.html">16</a></td></tr>
+          <tr><td>Private access to S3 from VPC without internet</td><td><b>Gateway VPC endpoint</b> (+ bucket policy <code>aws:SourceVpce</code>)</td><td><a href="bai-22-vpc-connectivity.html">22</a></td></tr>
+          <tr><td>Who made this API call? / track configuration changes</td><td><b>CloudTrail</b> / <b>AWS Config</b></td><td><a href="bai-40-cloudwatch-cloudtrail-config.html">40</a></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>D2 – Resilient</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Từ khóa trong đề</th><th>Đáp án thường đúng</th><th>Bài</th></tr></thead>
+        <tbody>
+          <tr><td>Decouple components, absorb spikes, no lost orders</td><td><b>SQS</b> (standard; thứ tự ⇒ FIFO)</td><td><a href="bai-30-sqs-sns.html">30</a></td></tr>
+          <tr><td>Notify multiple subscribers / fan-out</td><td><b>SNS → SQS</b></td><td><a href="bai-30-sqs-sns.html">30</a></td></tr>
+          <tr><td>React to events from AWS services / SaaS / schedule (cron)</td><td><b>EventBridge</b> (rule, Scheduler)</td><td><a href="bai-31-eventbridge-stepfunctions-mq.html">31</a></td></tr>
+          <tr><td>Migrate app using JMS / AMQP / MQTT without code change</td><td><b>Amazon MQ</b></td><td><a href="bai-31-eventbridge-stepfunctions-mq.html">31</a></td></tr>
+          <tr><td>Database HA with automatic failover</td><td><b>RDS Multi-AZ</b> / <b>Aurora</b></td><td><a href="bai-26-rds.html">26</a>, <a href="bai-27-aurora.html">27</a></td></tr>
+          <tr><td>Too many DB connections from Lambda, faster failover</td><td><b>RDS Proxy</b></td><td><a href="bai-26-rds.html">26</a></td></tr>
+          <tr><td>Replace unhealthy instances automatically across AZs</td><td><b>Auto Scaling group</b> nhiều AZ + <b>ELB health check</b></td><td><a href="bai-13-auto-scaling.html">13</a></td></tr>
+          <tr><td>Shared file system for Linux instances across AZs</td><td><b>EFS</b>; Windows SMB ⇒ <b>FSx for Windows File Server</b></td><td><a href="bai-17-efs-fsx.html">17</a></td></tr>
+          <tr><td>DNS failover to a static site / secondary Region</td><td><b>Route 53 failover routing</b> + health check</td><td><a href="bai-24-route-53.html">24</a></td></tr>
+          <tr><td>RPO seconds, RTO under a minute, relational, cross-Region</td><td><b>Aurora Global Database</b></td><td><a href="bai-27-aurora.html">27</a>, <a href="bai-42-disaster-recovery.html">42</a></td></tr>
+          <tr><td>Multi-Region read/write NoSQL</td><td><b>DynamoDB global tables</b></td><td><a href="bai-28-dynamodb.html">28</a></td></tr>
+          <tr><td>Replicate on-prem servers to AWS for DR, block-level</td><td><b>AWS Elastic Disaster Recovery</b></td><td><a href="bai-42-disaster-recovery.html">42</a></td></tr>
+          <tr><td>Centralized backup policy across accounts and Regions</td><td><b>AWS Backup</b></td><td><a href="bai-19-aws-backup.html">19</a></td></tr>
+          <tr><td>Trace requests across microservices</td><td><b>AWS X-Ray</b></td><td><a href="bai-40-cloudwatch-cloudtrail-config.html">40</a></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>D3 – High-performing</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Từ khóa trong đề</th><th>Đáp án thường đúng</th><th>Bài</th></tr></thead>
+        <tbody>
+          <tr><td>Cache static content globally, reduce latency</td><td><b>CloudFront</b></td><td><a href="bai-25-cloudfront-global-accelerator.html">25</a></td></tr>
+          <tr><td>Static IP, non-HTTP (TCP/UDP), fast regional failover</td><td><b>Global Accelerator</b></td><td><a href="bai-25-cloudfront-global-accelerator.html">25</a></td></tr>
+          <tr><td>Millions of requests/s, ultra-low latency, static IP per AZ, TCP/UDP</td><td><b>Network Load Balancer</b></td><td><a href="bai-12-elastic-load-balancing.html">12</a></td></tr>
+          <tr><td>Route by URL path / host header, containers, Lambda targets</td><td><b>Application Load Balancer</b></td><td><a href="bai-12-elastic-load-balancing.html">12</a></td></tr>
+          <tr><td>Read-heavy relational, offload reads/reports</td><td><b>Read replicas</b> / <b>ElastiCache</b></td><td><a href="bai-26-rds.html">26</a>, <a href="bai-29-elasticache-purpose-built-db.html">29</a></td></tr>
+          <tr><td>DynamoDB microsecond reads</td><td><b>DAX</b></td><td><a href="bai-28-dynamodb.html">28</a></td></tr>
+          <tr><td>Highest IOPS for a database on EBS</td><td><b>io2 Block Express</b> (Provisioned IOPS); throughput tuần tự giá rẻ ⇒ <b>st1</b></td><td><a href="bai-11-ebs-instance-store.html">11</a></td></tr>
+          <tr><td>Temporary, very high IOPS scratch data</td><td><b>Instance store</b></td><td><a href="bai-11-ebs-instance-store.html">11</a></td></tr>
+          <tr><td>HPC, low-latency between instances</td><td><b>Cluster placement group</b> (+ EFA); HPC file system ⇒ <b>FSx for Lustre</b></td><td><a href="bai-10-ec2-networking-placement.html">10</a>, <a href="bai-17-efs-fsx.html">17</a></td></tr>
+          <tr><td>Upload large files to S3 faster from far away</td><td><b>S3 Transfer Acceleration</b> + <b>multipart upload</b></td><td><a href="bai-15-s3-advanced.html">15</a></td></tr>
+          <tr><td>Real-time streaming, multiple consumers, replay</td><td><b>Kinesis Data Streams</b>; managed Kafka ⇒ <b>MSK</b></td><td><a href="bai-35-streaming-kinesis-msk.html">35</a></td></tr>
+          <tr><td>Load streaming data into S3/Redshift/OpenSearch, no code</td><td><b>Amazon Data Firehose</b></td><td><a href="bai-35-streaming-kinesis-msk.html">35</a></td></tr>
+          <tr><td>Ad-hoc SQL on S3, serverless</td><td><b>Athena</b>; data warehouse ⇒ <b>Redshift</b>; Spark/Hadoop ⇒ <b>EMR</b>; ETL ⇒ <b>Glue</b></td><td><a href="bai-36-analytics.html">36</a></td></tr>
+          <tr><td>Full-text search, log analytics</td><td><b>OpenSearch Service</b></td><td><a href="bai-36-analytics.html">36</a></td></tr>
+          <tr><td>Graph relationships / time series / ledger / MongoDB-compatible</td><td><b>Neptune</b> / <b>Timestream</b> / ledger trên Aurora PostgreSQL hoặc DynamoDB (QLDB đã ngừng – kiến thức phổ biến) / <b>DocumentDB</b></td><td><a href="bai-29-elasticache-purpose-built-db.html">29</a></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>D4 – Cost-optimized</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Từ khóa trong đề</th><th>Đáp án thường đúng</th><th>Bài</th></tr></thead>
+        <tbody>
+          <tr><td>Steady-state 1–3 years, flexible across instance family/Region/Fargate/Lambda</td><td><b>Compute Savings Plans</b>; cố định family + Region ⇒ EC2 Instance Savings Plans / Standard RI</td><td><a href="bai-09-ec2-purchasing.html">9</a></td></tr>
+          <tr><td>Fault-tolerant, interruptible, batch</td><td><b>Spot Instances</b></td><td><a href="bai-09-ec2-purchasing.html">9</a></td></tr>
+          <tr><td>Unknown or changing access pattern on S3</td><td><b>S3 Intelligent-Tiering</b></td><td><a href="bai-14-s3-basics.html">14</a></td></tr>
+          <tr><td>Data rarely accessed after 30/90 days, archive for years</td><td><b>S3 Lifecycle</b> → Standard-IA / Glacier Flexible Retrieval / Deep Archive</td><td><a href="bai-15-s3-advanced.html">15</a></td></tr>
+          <tr><td>Requester should pay for downloads</td><td><b>S3 Requester Pays</b></td><td><a href="bai-14-s3-basics.html">14</a></td></tr>
+          <tr><td>Reduce NAT gateway charges for S3/DynamoDB traffic</td><td><b>Gateway VPC endpoint</b></td><td><a href="bai-22-vpc-connectivity.html">22</a></td></tr>
+          <tr><td>Intermittent / unpredictable relational DB load</td><td><b>Aurora Serverless v2</b></td><td><a href="bai-27-aurora.html">27</a></td></tr>
+          <tr><td>Track / alert / forecast spend, prevent overspend</td><td><b>Cost Explorer</b> / <b>Budgets (+ actions)</b> / <b>Cost Anomaly Detection</b></td><td><a href="bai-44-cost-optimization.html">44</a></td></tr>
+          <tr><td>Rightsize EC2, Lambda, EBS based on utilization</td><td><b>Compute Optimizer</b></td><td><a href="bai-44-cost-optimization.html">44</a></td></tr>
+          <tr><td>Transfer 100s of TB with limited bandwidth</td><td><b>Snowball Edge</b>; online, lịch định kỳ ⇒ <b>DataSync</b></td><td><a href="bai-18-hybrid-storage-transfer.html">18</a></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – các cặp dễ nhầm nhất</span>
+        <ul>
+          <li><b>CloudFront vs Global Accelerator</b>: cache HTTP(S) ⇒ CloudFront; static anycast IP, TCP/UDP, failover nhanh không phụ thuộc DNS ⇒ Global Accelerator.</li>
+          <li><b>Multi-AZ vs Read replica</b>: HA/failover ⇒ Multi-AZ; scale đọc ⇒ read replica.</li>
+          <li><b>Gateway vs Interface endpoint</b>: S3/DynamoDB, miễn phí ⇒ gateway; hầu hết dịch vụ khác, truy cập từ on-prem ⇒ interface (PrivateLink, có phí).</li>
+          <li><b>Security group vs NACL</b>: stateful, chỉ allow, cấp ENI ⇒ SG; stateless, có deny, cấp subnet (chặn IP cụ thể) ⇒ NACL.</li>
+          <li><b>CloudTrail vs CloudWatch vs Config</b>: ai gọi API ⇒ CloudTrail; metric/log/alarm ⇒ CloudWatch; lịch sử cấu hình &amp; tuân thủ rule ⇒ Config.</li>
+          <li><b>Kinesis Data Streams vs Firehose</b>: xử lý tùy biến real-time, nhiều consumer ⇒ Data Streams; chỉ cần đổ vào đích, không code ⇒ Firehose.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 10: QUẢN LÝ THỜI GIAN ===================== -->
+      <h2 id="thoi-gian"><img src="../assets/icons/cat/Management-Governance.svg" alt="">Quản lý thời gian và kế hoạch những ngày cuối</h2>
+      <p class="lead">Với khoảng <b>2 phút mỗi câu</b>, thời gian thường đủ nếu bạn <b>không sa lầy</b>. Mục tiêu là đi hết đề một lượt với thời gian dư để quay lại các câu đã đánh dấu. (Thời lượng và tính năng flag/review là kiến thức phổ biến về kỳ thi, không nằm trong Exam Guide.)</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Mốc</th><th>Mục tiêu</th><th>Gợi ý</th></tr></thead>
+        <tbody>
+          <tr><td><b>Lượt 1</b> (≈ 90–100 phút)</td><td>Trả lời cả 65 câu</td><td>Câu dễ chốt ngay; câu khó: loại trừ, chọn tạm, <b>flag</b>. Kiểm tra tiến độ: câu ~22 ở phút 45, câu ~44 ở phút 90 (kiến thức phổ biến – áp dụng cho 130 phút).</td></tr>
+          <tr><td><b>Lượt 2</b> (≈ 20–30 phút)</td><td>Xem lại câu đã flag</td><td>Đọc lại <b>ràng buộc</b>; chỉ đổi đáp án khi tìm ra lý do cụ thể (vd bỏ sót chữ “<i>NOT</i>”, “<i>cost-effective</i>”).</td></tr>
+          <tr><td><b>5 phút cuối</b></td><td>Không để trống câu nào</td><td>Không có điểm trừ – đoán mọi câu còn lại.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Kế hoạch ôn 7 ngày cuối (gợi ý)</h3>
+      <ol class="steps">
+        <li><b>Ngày 1–2</b>: làm một đề thử đầy đủ có bấm giờ. Ghi lỗi sai vào bảng theo domain; với mỗi câu sai, quay về bài tương ứng (bảng ở phần 1 và cheat sheet).</li>
+        <li><b>Ngày 3</b>: D1 (30%) – ôn lại IAM policy evaluation, SCP, KMS, S3 security, VPC security (<a href="bai-05-iam-advanced-sts.html">5</a>, <a href="bai-06-organizations-scp.html">6</a>, <a href="bai-16-s3-security.html">16</a>, <a href="bai-21-vpc-security.html">21</a>, <a href="bai-38-kms-secrets.html">38</a>).</li>
+        <li><b>Ngày 4</b>: D2 (26%) – vẽ lại Hình 1, 3, 5 bài này từ trí nhớ; ôn DR (<a href="bai-42-disaster-recovery.html">42</a>), decoupling (<a href="bai-30-sqs-sns.html">30</a>, <a href="bai-31-eventbridge-stepfunctions-mq.html">31</a>).</li>
+        <li><b>Ngày 5</b>: D3 + D4 – storage/DB/network performance và các bảng so sánh giá (<a href="bai-11-ebs-instance-store.html">11</a>, <a href="bai-14-s3-basics.html">14</a>, <a href="bai-28-dynamodb.html">28</a>, <a href="bai-44-cost-optimization.html">44</a>).</li>
+        <li><b>Ngày 6</b>: đề thử thứ hai; chỉ ôn lại phần “Tóm tắt ghi nhớ” của các bài còn yếu.</li>
+        <li><b>Ngày 7</b>: nghỉ nhẹ; đọc lại cheat sheet và các callout “Mẹo thi”; ngủ đủ.</li>
+      </ol>
+
+      <div class="callout warn"><span class="ttl">Bẫy tâm lý trong phòng thi</span>
+        <ul>
+          <li><b>Sa lầy</b> vào một câu dài 5 phút – chính câu đó có thể là câu <b>unscored</b>. Flag và đi tiếp.</li>
+          <li><b>Đổi đáp án theo cảm giác</b> ở lượt 2: chỉ đổi khi phát hiện một ràng buộc đã đọc sót.</li>
+          <li><b>Chọn đáp án “xịn nhất”</b> thay vì đáp án “đủ và khớp ràng buộc”: multi-Region active-active khi đề chỉ cần Multi-AZ, Shield Advanced khi đề chỉ hỏi SQL injection…</li>
+          <li>Bỏ sót <b>từ phủ định</b>: “<i>Which option will NOT…</i>”, “<i>…without…</i>”.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điểm phải nhớ</span>
+        <ul>
+          <li><b>Đề thi</b>: 65 câu (50 tính điểm + 15 unscored ẩn), multiple choice (1 đúng/4) và multiple response (≥ 2 đúng/≥ 5), scaled score 100–1.000, đậu <b>720</b>, chấm <b>bù trừ</b>, đoán sai không bị trừ. D1 30% · D2 26% · D3 24% · D4 20%.</li>
+          <li><b>Quy trình giải</b>: đọc câu hỏi cuối → gạch từ khóa yêu cầu → gạch <b>ràng buộc</b> (least operational overhead, most cost-effective, without code change…) → loại trừ → chọn managed &amp; ít thành phần → flag nếu &gt; 2 phút.</li>
+          <li><b>3-tier</b>: Route 53 → CloudFront + WAF + ACM → ALB internet-facing → web ASG (private) → internal ALB → app ASG → RDS Multi-AZ + ElastiCache; S3 cho tĩnh, EFS cho file chung, NAT mỗi AZ; tầng web stateless.</li>
+          <li><b>Serverless</b>: S3 + CloudFront (OAC) → Cognito → API Gateway → Lambda (≤ 15 phút, 128 MB–10 GB) → DynamoDB; dài/nặng ⇒ Fargate (không giới hạn thời gian, tới 32 vCPU/244 GiB); nhiều kết nối RDS ⇒ RDS Proxy.</li>
+          <li><b>Event-driven</b>: SQS (pull, ≤ 14 ngày, long polling 20 s) đệm tải; SNS fan-out (push, filter policy); EventBridge (rule, cross-account, SaaS, không thứ tự, retry 24 giờ/185 lần); Step Functions điều phối/saga; Kinesis → Firehose → S3 → Athena.</li>
+          <li><b>Multi-Region</b>: Route 53 (latency, health check, ARC) hoặc Global Accelerator (anycast, traffic dial); write global = Aurora Global DB (≤ 5 Region phụ, &lt; 1 s, promote &lt; 1 phút); write local = DynamoDB global tables (last writer wins); write partitioned = S3 replication hai chiều. Replication không thay backup.</li>
+          <li><b>DR</b>: backup &amp; restore (giờ) → pilot light (DB chạy, app tắt) → warm standby (thu nhỏ nhưng chạy) → multi-site (gần 0). Chọn mức <b>vừa đủ</b> theo RPO/RTO.</li>
+          <li><b>Tài liệu ôn</b>: AWS Decision Guides (so sánh dịch vụ có tiêu chí), Reference Architecture Diagrams (sơ đồ có bước đánh số), Exam Guide (task statements).</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Unscored question</dt><dd><b>Câu hỏi không tính điểm</b> – 15 câu thử nghiệm ẩn trong đề.</dd></div>
+        <div><dt>Scaled score / Compensatory scoring</dt><dd><b>Điểm quy đổi</b> 100–1.000 (đậu 720) / <b>chấm điểm bù trừ</b> – không cần đậu từng domain.</dd></div>
+        <div><dt>Distractor</dt><dd><b>Phương án gây nhiễu</b> – hợp lý, đúng chủ đề nhưng không khớp ràng buộc.</dd></div>
+        <div><dt>Flag for review</dt><dd><b>Đánh dấu để xem lại</b> câu hỏi trong giao diện thi.</dd></div>
+        <div><dt>Process of elimination</dt><dd><b>Phương pháp loại trừ</b> các phương án sai trước khi chọn.</dd></div>
+        <div><dt>AWS Decision Guides</dt><dd><b>Hướng dẫn ra quyết định</b> – so sánh có cấu trúc giữa các dịch vụ AWS.</dd></div>
+        <div><dt>Reference architecture</dt><dd><b>Kiến trúc tham chiếu</b> – sơ đồ mẫu có các bước đánh số do AWS công bố.</dd></div>
+        <div><dt>Multi-tier / 3-tier architecture</dt><dd><b>Kiến trúc nhiều tầng / ba tầng</b>: presentation (web), application (logic), data.</dd></div>
+        <div><dt>Internet-facing / Internal load balancer</dt><dd><b>Load balancer hướng Internet / nội bộ</b> giữa các tầng.</dd></div>
+        <div><dt>Single point of failure (SPOF)</dt><dd><b>Điểm lỗi đơn lẻ</b> – thành phần hỏng thì cả hệ thống ngừng.</dd></div>
+        <div><dt>Serverless web app</dt><dd><b>Ứng dụng web phi máy chủ</b> – S3/CloudFront, API Gateway, Lambda, DynamoDB, Cognito.</dd></div>
+        <div><dt>Event-driven architecture</dt><dd><b>Kiến trúc hướng sự kiện</b> – thành phần phát và phản ứng với event, ghép lỏng.</dd></div>
+        <div><dt>Queue-based load leveling</dt><dd><b>Cân bằng tải bằng hàng đợi</b> – SQS đệm đỉnh tải, worker xử lý theo tốc độ riêng.</dd></div>
+        <div><dt>Fan-out</dt><dd><b>Phát tán một message tới nhiều đích</b> – SNS → nhiều SQS.</dd></div>
+        <div><dt>Orchestration / Choreography</dt><dd><b>Điều phối tập trung</b> (Step Functions) / <b>phối hợp phi tập trung</b> qua event (EventBridge) – kiến thức phổ biến.</dd></div>
+        <div><dt>Saga pattern</dt><dd><b>Mẫu giao dịch phân tán có bù trừ</b> – mỗi bước có thao tác hoàn tác khi bước sau lỗi.</dd></div>
+        <div><dt>CQRS</dt><dd><b>Tách luồng lệnh ghi và truy vấn đọc</b> (Command Query Responsibility Segregation).</dd></div>
+        <div><dt>Event sourcing</dt><dd><b>Lưu trạng thái dưới dạng chuỗi sự kiện</b>.</dd></div>
+        <div><dt>Eventual consistency</dt><dd><b>Nhất quán cuối cùng</b> – dữ liệu đồng bộ sau một khoảng trễ.</dd></div>
+        <div><dt>Multi-site active/active</dt><dd><b>Đa địa điểm cùng hoạt động</b> – mọi Region đều phục vụ traffic.</dd></div>
+        <div><dt>Read local / Write global / Write local / Write partitioned</dt><dd><b>Đọc tại chỗ / Ghi tập trung / Ghi tại chỗ / Ghi phân vùng theo khóa</b>.</dd></div>
+        <div><dt>Last writer wins</dt><dd><b>Bản ghi sau cùng thắng</b> – cách DynamoDB global tables giải quyết xung đột.</dd></div>
+        <div><dt>Traffic dial</dt><dd><b>Núm chỉnh % traffic</b> cho mỗi endpoint group của Global Accelerator.</dd></div>
+        <div><dt>Data plane / Control plane</dt><dd><b>Mặt phẳng dữ liệu</b> (phục vụ thời gian thực, sẵn sàng cao hơn) / <b>mặt phẳng điều khiển</b> (cấu hình).</dd></div>
+        <div><dt>Keyword → service mapping</dt><dd><b>Ánh xạ từ khóa đề sang dịch vụ</b> – phản xạ làm bài.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="cau-hoi">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs a web application on a single Amazon EC2 instance in a public subnet. The application stores session data in memory and uses a MySQL database installed on the same instance. The company wants the application to be highly available and to tolerate the failure of an Availability Zone with minimal changes to the application code. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create a larger EC2 instance, take hourly EBS snapshots, and copy the snapshots to another Availability Zone.</li>
+            <li data-k="B">Place EC2 instances in an Auto Scaling group across two Availability Zones behind an Application Load Balancer, move the database to Amazon RDS for MySQL Multi-AZ, and store session data in Amazon ElastiCache.</li>
+            <li data-k="C">Place EC2 instances in an Auto Scaling group in one Availability Zone behind a Network Load Balancer and create an RDS read replica in another Availability Zone.</li>
+            <li data-k="D">Rewrite the application as AWS Lambda functions and migrate the database to Amazon DynamoDB global tables.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Đây là mẫu <b>3-tier HA</b>: ASG trải <b>2 AZ</b> sau <b>ALB</b>, DB tách ra <b>RDS Multi-AZ</b> (failover tự động), session đưa ra <b>ElastiCache</b> để tầng web <b>stateless</b> – thay đổi code tối thiểu (đổi chuỗi kết nối DB và session store). <b>A sai</b>: vẫn một instance, snapshot chỉ là backup, không HA. <b>C sai</b>: ASG chỉ một AZ; read replica không phải giải pháp HA (bất đồng bộ, phải promote). <b>D sai</b>: viết lại toàn bộ ứng dụng – trái yêu cầu “minimal changes”, và multi-Region là thừa.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng web trên một Amazon EC2 instance duy nhất trong public subnet. Ứng dụng lưu dữ liệu session trong bộ nhớ và dùng cơ sở dữ liệu MySQL cài trên cùng instance đó. Công ty muốn ứng dụng có tính sẵn sàng cao (highly available) và chịu được sự cố của một Availability Zone, với thay đổi tối thiểu đối với code ứng dụng. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một EC2 instance lớn hơn, chụp EBS snapshot mỗi giờ và copy snapshot sang một Availability Zone khác.</span><span class="why">Sai: Vẫn chỉ có một instance (single point of failure); snapshot chỉ là backup, không mang lại HA khi AZ lỗi.</span></li>
+              <li data-k="B"><span class="tv">Đặt các EC2 instance trong một Auto Scaling group trải trên hai Availability Zone phía sau Application Load Balancer, chuyển cơ sở dữ liệu sang Amazon RDS for MySQL Multi-AZ, và lưu dữ liệu session trong Amazon ElastiCache.</span><span class="why">Đúng: Mẫu 3-tier HA – ASG trên 2 AZ sau ALB, RDS Multi-AZ failover tự động, session đưa ra ElastiCache để tầng web stateless; code chỉ đổi chuỗi kết nối DB và session store.</span></li>
+              <li data-k="C"><span class="tv">Đặt các EC2 instance trong một Auto Scaling group ở một Availability Zone phía sau Network Load Balancer và tạo RDS read replica ở một Availability Zone khác.</span><span class="why">Sai: ASG chỉ ở một AZ nên không chịu được AZ lỗi; read replica sao chép bất đồng bộ và phải promote thủ công, không phải giải pháp HA.</span></li>
+              <li data-k="D"><span class="tv">Viết lại ứng dụng thành các AWS Lambda function và di chuyển cơ sở dữ liệu sang Amazon DynamoDB global tables.</span><span class="why">Sai: Viết lại toàn bộ ứng dụng trái yêu cầu thay đổi tối thiểu, và global tables đa Region là thừa so với yêu cầu chịu lỗi AZ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A startup is building a new web application with a single-page front end and a REST API. Traffic is expected to be very low most of the time with unpredictable spikes during marketing campaigns. Users must sign in with email or with their social media accounts. The company has a small team and wants the solution with the LEAST operational overhead. Which architecture should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Host the front end and API on Amazon EC2 instances in an Auto Scaling group behind an Application Load Balancer, and use Amazon RDS for user accounts.</li>
+            <li data-k="B">Deploy the front end and API as containers on Amazon EKS with managed node groups, and use AWS IAM Identity Center for user sign-in.</li>
+            <li data-k="C">Host the front end on Amazon EC2, use Amazon API Gateway with AWS Lambda for the API, and store user passwords in AWS Secrets Manager.</li>
+            <li data-k="D">Host the front end in Amazon S3 behind Amazon CloudFront, use Amazon Cognito user pools for sign-in, and use Amazon API Gateway with AWS Lambda and Amazon DynamoDB for the API.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Mẫu <b>serverless web app</b>: S3 + CloudFront cho front-end tĩnh, <b>Cognito user pool</b> (email + social login), API Gateway + Lambda + DynamoDB – tất cả tự co giãn, trả theo mức dùng (gần 0 khi ít traffic), không có server để quản lý. <b>A sai</b>: EC2/ASG/RDS phải vá OS, trả tiền cả lúc nhàn rỗi. <b>B sai</b>: EKS nhiều công vận hành; IAM Identity Center dành cho nhân viên truy cập AWS account/ứng dụng doanh nghiệp, không phải khách hàng đăng nhập bằng mạng xã hội. <b>C sai</b>: vẫn có EC2; Secrets Manager không phải hệ thống quản lý người dùng.</div>
+          <div class="trans">
+            <div class="tq">Một startup đang xây dựng ứng dụng web mới với front end dạng single-page và một REST API. Lưu lượng dự kiến rất thấp hầu hết thời gian, với các đợt tăng đột biến không dự đoán được trong các chiến dịch marketing. Người dùng phải đăng nhập bằng email hoặc bằng tài khoản mạng xã hội. Công ty có đội ngũ nhỏ và muốn giải pháp có LEAST operational overhead (ít gánh nặng vận hành nhất). Solutions architect nên đề xuất kiến trúc nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Host front end và API trên các Amazon EC2 instance trong Auto Scaling group phía sau Application Load Balancer, và dùng Amazon RDS cho tài khoản người dùng.</span><span class="why">Sai: EC2/ASG/RDS phải vá OS và quản lý server, lại tốn tiền cả lúc nhàn rỗi; còn phải tự xây chức năng đăng nhập mạng xã hội.</span></li>
+              <li data-k="B"><span class="tv">Triển khai front end và API dưới dạng container trên Amazon EKS với managed node group, và dùng AWS IAM Identity Center cho việc đăng nhập của người dùng.</span><span class="why">Sai: EKS tốn nhiều công vận hành; IAM Identity Center dành cho nhân viên truy cập AWS account/ứng dụng doanh nghiệp, không phải khách hàng đăng nhập bằng mạng xã hội.</span></li>
+              <li data-k="C"><span class="tv">Host front end trên Amazon EC2, dùng Amazon API Gateway với AWS Lambda cho API, và lưu mật khẩu người dùng trong AWS Secrets Manager.</span><span class="why">Sai: Vẫn còn EC2 phải quản lý; Secrets Manager lưu secret của ứng dụng, không phải hệ thống quản lý/đăng nhập người dùng.</span></li>
+              <li data-k="D"><span class="tv">Host front end trong Amazon S3 phía sau Amazon CloudFront, dùng Amazon Cognito user pool cho việc đăng nhập, và dùng Amazon API Gateway với AWS Lambda và Amazon DynamoDB cho API.</span><span class="why">Đúng: Kiến trúc serverless hoàn toàn – tự co giãn theo đột biến, trả theo mức dùng (gần 0 khi ít traffic), Cognito hỗ trợ sẵn email và social login, không có server để quản lý.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">An e-commerce company publishes an event every time an order is placed. The payment service, the inventory service, and the shipping service must each process every order event independently. If one service is unavailable for several hours, it must not lose any events and must not affect the other services. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Publish the order events to an Amazon SNS topic, and subscribe a separate Amazon SQS queue for each service to the topic.</li>
+            <li data-k="B">Send the order events to a single Amazon SQS standard queue that all three services poll.</li>
+            <li data-k="C">Publish the order events to an Amazon SNS topic and subscribe each service's HTTPS endpoint directly to the topic.</li>
+            <li data-k="D">Write the order events to an Amazon S3 bucket and have each service list the bucket every minute.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Fan-out SNS → SQS</b>: mỗi service có queue riêng, nhận <b>bản sao</b> của mọi event; message được <b>lưu trong queue</b> (tối đa 14 ngày) khi service ngừng vài giờ, và lỗi của một service không ảnh hưởng service khác. <b>B sai</b>: một queue chung ⇒ mỗi message chỉ được một consumer xử lý, không phải cả ba. <b>C sai</b>: SNS <b>không lưu</b> message; endpoint HTTPS ngừng vài giờ có thể mất event sau khi hết retry. <b>D sai</b>: polling S3 là tự chế, nhiều công, không có cơ chế đánh dấu đã xử lý.</div>
+          <div class="trans">
+            <div class="tq">Một công ty thương mại điện tử phát ra một event mỗi khi có đơn hàng được đặt. Service thanh toán, service kho hàng và service vận chuyển đều phải xử lý mọi event đơn hàng một cách độc lập. Nếu một service không khả dụng trong vài giờ, nó không được mất bất kỳ event nào và không được ảnh hưởng tới các service khác. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Publish các event đơn hàng lên một Amazon SNS topic, và cho mỗi service một Amazon SQS queue riêng subscribe vào topic đó.</span><span class="why">Đúng: Fan-out SNS → SQS – mỗi service nhận bản sao của mọi event trong queue riêng; message được lưu trong queue (tối đa 14 ngày) khi service ngừng, và lỗi của service này không ảnh hưởng service khác.</span></li>
+              <li data-k="B"><span class="tv">Gửi các event đơn hàng vào một Amazon SQS standard queue duy nhất mà cả ba service cùng poll.</span><span class="why">Sai: Với một queue chung, mỗi message chỉ được một consumer xử lý, nên không phải cả ba service đều nhận được mọi event.</span></li>
+              <li data-k="C"><span class="tv">Publish các event đơn hàng lên một Amazon SNS topic và subscribe trực tiếp HTTPS endpoint của từng service vào topic.</span><span class="why">Sai: SNS không lưu trữ message lâu dài; endpoint HTTPS ngừng vài giờ có thể mất event sau khi hết số lần retry.</span></li>
+              <li data-k="D"><span class="tv">Ghi các event đơn hàng vào một Amazon S3 bucket và cho mỗi service list bucket mỗi phút.</span><span class="why">Sai: Polling S3 là cách tự chế, tốn công, không có cơ chế đánh dấu event đã xử lý.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company has a web tier that accepts document conversion requests and a processing tier of Amazon EC2 instances that converts the documents. During peak hours, the processing tier is overwhelmed and some requests are dropped. Outside peak hours, most processing instances are idle. The company wants to ensure no requests are lost and to optimize costs. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the size of the processing instances and purchase Reserved Instances for them.</li>
+            <li data-k="B">Use an Application Load Balancer between the web tier and the processing tier with sticky sessions.</li>
+            <li data-k="C">Have the web tier send requests to an Amazon SQS queue, and run the processing tier in an Auto Scaling group that scales based on the number of messages in the queue.</li>
+            <li data-k="D">Have the web tier publish requests to an Amazon SNS topic that the processing instances subscribe to with HTTP endpoints.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Queue-based load leveling</b>: SQS giữ request an toàn khi tầng xử lý quá tải; ASG scale theo <b>độ sâu hàng đợi</b> (vd backlog per instance) – đông thì thêm instance, vắng thì giảm, tiết kiệm chi phí (giống reference architecture “Autoscaling Asynchronous Job Queues”). <b>A sai</b>: instance to hơn vẫn có giới hạn, và RI cho tài nguyên nhàn rỗi ngoài giờ là lãng phí. <b>B sai</b>: ALB không đệm request; sticky session không giải quyết quá tải. <b>D sai</b>: SNS push không lưu message, instance bận vẫn có thể làm rơi request.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có tầng web nhận yêu cầu chuyển đổi tài liệu và một tầng xử lý gồm các Amazon EC2 instance thực hiện chuyển đổi. Vào giờ cao điểm, tầng xử lý bị quá tải và một số yêu cầu bị rơi. Ngoài giờ cao điểm, phần lớn instance xử lý nhàn rỗi. Công ty muốn bảo đảm không yêu cầu nào bị mất và tối ưu chi phí. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng kích thước các instance xử lý và mua Reserved Instance cho chúng.</span><span class="why">Sai: Instance lớn hơn vẫn có giới hạn khi đột biến, và mua RI cho tài nguyên nhàn rỗi ngoài giờ là lãng phí.</span></li>
+              <li data-k="B"><span class="tv">Dùng một Application Load Balancer giữa tầng web và tầng xử lý với sticky session.</span><span class="why">Sai: ALB không đệm (buffer) request; sticky session không giải quyết quá tải hay mất request.</span></li>
+              <li data-k="C"><span class="tv">Cho tầng web gửi yêu cầu vào một Amazon SQS queue, và chạy tầng xử lý trong Auto Scaling group scale dựa trên số lượng message trong queue.</span><span class="why">Đúng: SQS giữ yêu cầu an toàn khi tầng xử lý quá tải (không mất request), ASG scale theo độ sâu hàng đợi – đông thì thêm, vắng thì giảm instance để tiết kiệm.</span></li>
+              <li data-k="D"><span class="tv">Cho tầng web publish yêu cầu lên một Amazon SNS topic mà các instance xử lý subscribe bằng HTTP endpoint.</span><span class="why">Sai: SNS đẩy (push) message mà không lưu trữ; instance bận vẫn có thể làm rơi request.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A global gaming company runs its player profile service in us-east-1 and eu-west-1. Players must be able to read and write their profiles with single-digit millisecond latency from the Region closest to them, and the service must keep running if an entire Region becomes unavailable. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Store the profiles in an Amazon RDS for MySQL database with a cross-Region read replica.</li>
+            <li data-k="B">Store the profiles in Amazon DynamoDB global tables with replicas in both Regions.</li>
+            <li data-k="C">Use an Amazon CloudFront distribution with a cache behavior for the profile API to cache write requests.</li>
+            <li data-k="D">Use Amazon Route 53 simple routing with one record that points to the us-east-1 endpoint.</li>
+            <li data-k="E">Use Amazon Route 53 latency-based routing with health checks that point to the API endpoints in both Regions.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Đây là mẫu <b>multi-Region active-active, write local</b>: <b>DynamoDB global tables</b> cho phép đọc <b>và ghi</b> ở mọi Region (xung đột theo last writer wins), độ trễ mili-giây; <b>Route 53 latency-based routing + health check</b> đưa người chơi tới Region gần nhất và tránh Region hỏng. <b>A sai</b>: read replica chỉ cho đọc, ghi vẫn phải về Region chính; promote mất vài phút. <b>C sai</b>: CloudFront không cache được request ghi. <b>D sai</b>: simple routing một Region – không active-active, không failover.</div>
+          <div class="trans">
+            <div class="tq">Một công ty game toàn cầu chạy service hồ sơ người chơi ở us-east-1 và eu-west-1. Người chơi phải đọc và ghi hồ sơ với độ trễ mili-giây một chữ số từ Region gần họ nhất, và service phải tiếp tục chạy nếu toàn bộ một Region không khả dụng. Solutions architect nên thực hiện HAI hành động nào? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Lưu hồ sơ trong cơ sở dữ liệu Amazon RDS for MySQL với một cross-Region read replica.</span><span class="why">Sai: Read replica chỉ cho đọc, mọi thao tác ghi vẫn phải về Region chính; khi Region chính lỗi phải promote mất vài phút.</span></li>
+              <li data-k="B"><span class="tv">Lưu hồ sơ trong Amazon DynamoDB global tables với replica ở cả hai Region.</span><span class="why">Đúng: Global tables cho phép đọc và ghi ở mọi Region với độ trễ mili-giây một chữ số, và Region còn lại vẫn hoạt động khi một Region lỗi.</span></li>
+              <li data-k="C"><span class="tv">Dùng một Amazon CloudFront distribution với cache behavior cho profile API để cache các request ghi.</span><span class="why">Sai: CloudFront không cache được request ghi; ghi vẫn phải tới backend.</span></li>
+              <li data-k="D"><span class="tv">Dùng Amazon Route 53 simple routing với một record trỏ tới endpoint ở us-east-1.</span><span class="why">Sai: Simple routing chỉ trỏ một Region – không active-active, không tự failover khi us-east-1 lỗi.</span></li>
+              <li data-k="E"><span class="tv">Dùng Amazon Route 53 latency-based routing với health check, trỏ tới API endpoint ở cả hai Region.</span><span class="why">Đúng: Latency-based routing đưa người chơi tới Region có độ trễ thấp nhất, và health check tự loại bỏ Region bị lỗi.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A financial services company runs a relational database workload on Amazon Aurora PostgreSQL in us-east-1. A new regulation requires a disaster recovery plan in another Region with an RPO of a few seconds and an RTO of less than 1 minute. Reads from the DR Region should be possible during normal operations. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Convert the cluster to an Amazon Aurora Global Database with a secondary cluster in the DR Region, and promote the secondary cluster during a disaster.</li>
+            <li data-k="B">Use AWS Backup to copy daily snapshots of the Aurora cluster to the DR Region and restore them during a disaster.</li>
+            <li data-k="C">Export the database to Amazon S3 every hour and enable S3 Cross-Region Replication to the DR Region.</li>
+            <li data-k="D">Create a second Aurora cluster in the DR Region and use AWS DMS full-load tasks once a day to copy the data.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Theo whitepaper DR, <b>Aurora Global Database</b> dùng hạ tầng chuyên dụng, replicate sang Region phụ với độ trễ điển hình <b>dưới 1 giây</b> (RPO giây) và có thể promote Region phụ nhận read/write <b>trong chưa đầy 1 phút</b> (RTO); cluster phụ phục vụ đọc bình thường. <b>B sai</b>: snapshot hằng ngày ⇒ RPO tới 24 giờ, restore mất lâu. <b>C sai</b>: RPO 1 giờ, phải import lại. <b>D sai</b>: full load một lần/ngày ⇒ RPO 24 giờ.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dịch vụ tài chính chạy workload cơ sở dữ liệu quan hệ trên Amazon Aurora PostgreSQL ở us-east-1. Một quy định mới yêu cầu kế hoạch khôi phục thảm họa ở một Region khác với RPO vài giây và RTO dưới 1 phút. Trong vận hành bình thường, phải có thể đọc dữ liệu từ Region DR. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển cluster thành Amazon Aurora Global Database với một secondary cluster ở Region DR, và promote secondary cluster khi có thảm họa.</span><span class="why">Đúng: Aurora Global Database sao chép sang Region phụ với độ trễ điển hình dưới 1 giây (RPO giây), promote trong chưa đầy 1 phút (RTO), và cluster phụ phục vụ đọc trong lúc bình thường.</span></li>
+              <li data-k="B"><span class="tv">Dùng AWS Backup để copy snapshot hằng ngày của Aurora cluster sang Region DR và restore khi có thảm họa.</span><span class="why">Sai: Snapshot hằng ngày cho RPO tới 24 giờ, restore mất lâu, và không đọc được ở Region DR lúc bình thường.</span></li>
+              <li data-k="C"><span class="tv">Export cơ sở dữ liệu sang Amazon S3 mỗi giờ và bật S3 Cross-Region Replication sang Region DR.</span><span class="why">Sai: RPO tới 1 giờ và phải import lại dữ liệu khi thảm họa, RTO vượt xa 1 phút.</span></li>
+              <li data-k="D"><span class="tv">Tạo một Aurora cluster thứ hai ở Region DR và dùng các task full load của AWS DMS mỗi ngày một lần để copy dữ liệu.</span><span class="why">Sai: Full load mỗi ngày một lần cho RPO tới 24 giờ, không đạt yêu cầu vài giây.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company collects clickstream data from its website at a rate of several thousand events per second. The data must be stored in Amazon S3 in Apache Parquet format within a few minutes of arrival so that analysts can run SQL queries on it. The company wants the solution with the LEAST operational overhead. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Send the events to an Amazon SQS queue and use a fleet of EC2 instances to convert the events to Parquet and write them to S3 every few minutes.</li>
+            <li data-k="B">Write the events directly to an Amazon RDS database and run a nightly export job to Amazon S3.</li>
+            <li data-k="C">Send the events to Amazon Kinesis Data Streams and write a custom consumer application on EC2 that converts the data and stores it in Amazon Redshift.</li>
+            <li data-k="D">Send the events to Amazon Data Firehose with record format conversion to Parquet, deliver them to Amazon S3, and query the data with Amazon Athena.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Firehose</b> là dịch vụ managed để nạp streaming data vào S3 (near real-time, theo buffer), có sẵn <b>chuyển đổi định dạng sang Parquet</b> (dùng schema trong Glue Data Catalog); <b>Athena</b> truy vấn SQL serverless trên S3 – không có server nào để quản lý. <b>A sai</b>: tự viết code chuyển đổi và quản lý EC2. <b>B sai</b>: RDS không hợp làm đích ingest clickstream tốc độ cao; export hằng đêm vi phạm “within a few minutes”. <b>C sai</b>: consumer tự viết trên EC2 nhiều công vận hành và đích là Redshift chứ không phải S3 Parquet.</div>
+          <div class="trans">
+            <div class="tq">Một công ty thu thập dữ liệu clickstream từ website với tốc độ vài nghìn event mỗi giây. Dữ liệu phải được lưu trong Amazon S3 ở định dạng Apache Parquet trong vòng vài phút kể từ khi đến để các nhà phân tích có thể chạy truy vấn SQL. Công ty muốn giải pháp có LEAST operational overhead (ít gánh nặng vận hành nhất). Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gửi các event vào một Amazon SQS queue và dùng một nhóm EC2 instance để chuyển đổi event sang Parquet rồi ghi vào S3 mỗi vài phút.</span><span class="why">Sai: Phải tự viết code chuyển đổi và quản lý nhóm EC2 – gánh vận hành lớn.</span></li>
+              <li data-k="B"><span class="tv">Ghi các event trực tiếp vào một cơ sở dữ liệu Amazon RDS và chạy job export hằng đêm sang Amazon S3.</span><span class="why">Sai: RDS không phù hợp làm đích ingest clickstream tốc độ cao, và export hằng đêm vi phạm yêu cầu "trong vòng vài phút".</span></li>
+              <li data-k="C"><span class="tv">Gửi các event vào Amazon Kinesis Data Streams và viết một ứng dụng consumer tùy chỉnh trên EC2 để chuyển đổi dữ liệu và lưu vào Amazon Redshift.</span><span class="why">Sai: Consumer tự viết trên EC2 tốn công vận hành, và đích là Redshift chứ không phải S3 dạng Parquet.</span></li>
+              <li data-k="D"><span class="tv">Gửi các event vào Amazon Data Firehose với tính năng record format conversion sang Parquet, giao vào Amazon S3, và truy vấn dữ liệu bằng Amazon Athena.</span><span class="why">Đúng: Firehose là dịch vụ managed nạp streaming data vào S3 gần real-time, có sẵn chuyển đổi sang Parquet; Athena truy vấn SQL serverless – không có server nào để quản lý.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A media company needs to transcode uploaded video files. Each transcoding job takes between 20 and 90 minutes and needs 4 vCPUs and 16 GB of memory. The jobs are packaged as a container image. Uploads are sporadic, and the company does not want to manage servers or clusters of EC2 instances. Which compute option should a solutions architect choose?</div>
+          <ol class="opts">
+            <li data-k="A">AWS Lambda functions triggered by Amazon S3 event notifications, configured with 10 GB of memory.</li>
+            <li data-k="B">An Amazon EC2 Auto Scaling group of compute optimized instances with a minimum capacity of two instances.</li>
+            <li data-k="C">Amazon ECS tasks on AWS Fargate, started for each upload (for example, by an Amazon EventBridge rule on the S3 upload event).</li>
+            <li data-k="D">Amazon Lightsail instances that run the container image.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Theo decision guide “Fargate or Lambda?”, <b>Fargate</b> chạy container <b>không giới hạn thời gian</b>, chọn được CPU (tới 32 vCPU) và memory (tới 244 GiB) độc lập, không cần quản lý server; EventBridge rule có thể chạy ECS task khi có file mới. <b>A sai</b>: Lambda tối đa <b>15 phút</b> mỗi lần gọi – job 20–90 phút sẽ bị dừng. <b>B sai</b>: phải quản lý EC2 và trả tiền cho tối thiểu 2 instance kể cả khi không có upload. <b>D sai</b>: Lightsail vẫn là server tự quản, không tự co giãn theo job.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền thông cần transcode các file video được tải lên. Mỗi job transcode mất từ 20 đến 90 phút và cần 4 vCPU cùng 16 GB bộ nhớ. Các job được đóng gói dưới dạng container image. Việc tải lên diễn ra rời rạc, và công ty không muốn quản lý server hay cluster EC2 instance. Solutions architect nên chọn phương án compute nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Các AWS Lambda function được kích hoạt bởi Amazon S3 event notification, cấu hình 10 GB bộ nhớ.</span><span class="why">Sai: Lambda chạy tối đa 15 phút mỗi lần gọi, job 20–90 phút sẽ bị dừng giữa chừng.</span></li>
+              <li data-k="B"><span class="tv">Một Amazon EC2 Auto Scaling group gồm các instance compute optimized với capacity tối thiểu hai instance.</span><span class="why">Sai: Phải quản lý EC2 (trái yêu cầu) và trả tiền cho tối thiểu 2 instance kể cả khi không có upload.</span></li>
+              <li data-k="C"><span class="tv">Các Amazon ECS task trên AWS Fargate, được khởi chạy cho mỗi lần tải lên (ví dụ bằng một Amazon EventBridge rule bắt sự kiện upload lên S3).</span><span class="why">Đúng: Fargate chạy container không giới hạn thời gian, chọn CPU/memory linh hoạt (đủ 4 vCPU/16 GB), không cần quản lý server và chỉ trả tiền khi task chạy.</span></li>
+              <li data-k="D"><span class="tv">Các Amazon Lightsail instance chạy container image.</span><span class="why">Sai: Lightsail vẫn là server phải tự quản lý, chạy thường trực và không tự co giãn theo job.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company processes loan applications in several steps: validate the application, run a credit check by calling a third-party API, wait for a human underwriter to approve, and then create the account. If account creation fails, previous steps must be compensated (for example, the credit hold must be released). Each step is implemented as an AWS Lambda function. The company wants built-in retries, error handling, and visibility into each execution with the LEAST custom code. What should a solutions architect use?</div>
+          <ol class="opts">
+            <li data-k="A">Have each Lambda function invoke the next function directly and store progress in Amazon DynamoDB.</li>
+            <li data-k="B">An AWS Step Functions state machine that orchestrates the Lambda functions, uses a wait-for-callback task for the human approval, and uses Catch states to run compensating steps.</li>
+            <li data-k="C">An Amazon SQS FIFO queue between each pair of Lambda functions.</li>
+            <li data-k="D">An Amazon EventBridge rule for each step that matches the output of the previous step.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Quy trình nhiều bước có <b>retry</b>, <b>xử lý lỗi</b>, <b>chờ con người</b> và <b>bù trừ (saga)</b> là trường hợp kinh điển của <b>Step Functions</b>: Retry/Catch có sẵn, task token chờ callback, lịch sử từng execution trực quan. <b>A sai</b>: Lambda gọi nhau là “chuỗi tự chế”, phải tự viết retry, bù trừ, theo dõi trạng thái. <b>C sai</b>: SQS chỉ đệm message, không có logic điều phối, không chờ phê duyệt. <b>D sai</b>: choreography qua EventBridge không cho cái nhìn tập trung và phải tự xây logic bù trừ.</div>
+          <div class="trans">
+            <div class="tq">Một công ty xử lý hồ sơ vay vốn qua nhiều bước: xác thực hồ sơ, kiểm tra tín dụng bằng cách gọi API của bên thứ ba, chờ chuyên viên thẩm định (con người) phê duyệt, rồi tạo tài khoản. Nếu tạo tài khoản thất bại, các bước trước đó phải được bù trừ (ví dụ phải giải phóng khoản giữ tín dụng). Mỗi bước được triển khai dưới dạng một AWS Lambda function. Công ty muốn có sẵn cơ chế retry, xử lý lỗi và khả năng quan sát từng lần thực thi với LEAST custom code (ít code tự viết nhất). Solutions architect nên dùng gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cho mỗi Lambda function gọi trực tiếp function kế tiếp và lưu tiến trình trong Amazon DynamoDB.</span><span class="why">Sai: Lambda gọi nhau là chuỗi tự chế, phải tự viết retry, bù trừ và theo dõi trạng thái – nhiều code.</span></li>
+              <li data-k="B"><span class="tv">Một AWS Step Functions state machine điều phối các Lambda function, dùng task wait-for-callback cho bước phê duyệt của con người, và dùng Catch để chạy các bước bù trừ.</span><span class="why">Đúng: Step Functions có sẵn Retry/Catch, task token chờ callback cho phê duyệt thủ công, mẫu saga bù trừ và lịch sử từng execution trực quan – ít code nhất.</span></li>
+              <li data-k="C"><span class="tv">Một Amazon SQS FIFO queue giữa mỗi cặp Lambda function.</span><span class="why">Sai: SQS chỉ đệm message, không có logic điều phối, không hỗ trợ chờ phê duyệt hay bù trừ.</span></li>
+              <li data-k="D"><span class="tv">Một Amazon EventBridge rule cho mỗi bước, khớp với output của bước trước đó.</span><span class="why">Sai: Choreography qua EventBridge không cho cái nhìn tập trung về từng execution và phải tự xây logic bù trừ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company is deploying a three-tier web application on AWS. The web tier runs on EC2 instances behind an internet-facing Application Load Balancer, and the database tier runs on Amazon RDS. The security team requires protection against common web exploits such as SQL injection, and requires that the database be reachable only from the application tier. Which TWO actions meet these requirements? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Associate an AWS WAF web ACL with managed rule groups for SQL injection with the Application Load Balancer.</li>
+            <li data-k="B">Enable Amazon GuardDuty to block SQL injection requests.</li>
+            <li data-k="C">Place the RDS DB instance in a public subnet and restrict access with a network ACL that allows the company's office IP range.</li>
+            <li data-k="D">Place the RDS DB instance in private subnets and configure its security group to allow inbound database traffic only from the security group of the application tier instances.</li>
+            <li data-k="E">Enable encryption at rest on the RDS DB instance with AWS KMS.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> <b>AWS WAF</b> gắn vào ALB (hoặc CloudFront) với managed rule SQL injection chặn tấn công lớp 7 (A). DB ở <b>private subnet</b>, security group <b>tham chiếu security group của app tier</b> ⇒ chỉ app tier kết nối được, kể cả khi ASG thay instance/IP (D). <b>B sai</b>: GuardDuty <b>phát hiện</b> mối đe dọa, không chặn request web. <b>C sai</b>: DB ở public subnet và mở cho IP văn phòng trái yêu cầu “only from the application tier”. <b>E sai</b>: mã hóa at rest là tốt nhưng không giải quyết SQL injection hay kiểm soát truy cập mạng.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang triển khai ứng dụng web ba tầng trên AWS. Tầng web chạy trên các EC2 instance phía sau một Application Load Balancer internet-facing, và tầng cơ sở dữ liệu chạy trên Amazon RDS. Đội bảo mật yêu cầu bảo vệ trước các kiểu tấn công web phổ biến như SQL injection, và yêu cầu cơ sở dữ liệu chỉ có thể truy cập được từ tầng ứng dụng. HAI hành động nào đáp ứng các yêu cầu này? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gắn một AWS WAF web ACL với các managed rule group chống SQL injection vào Application Load Balancer.</span><span class="why">Đúng: AWS WAF gắn vào ALB với managed rule SQL injection chặn các tấn công web lớp 7 trước khi tới ứng dụng.</span></li>
+              <li data-k="B"><span class="tv">Bật Amazon GuardDuty để chặn các request SQL injection.</span><span class="why">Sai: GuardDuty chỉ phát hiện mối đe dọa từ log, không chặn request web.</span></li>
+              <li data-k="C"><span class="tv">Đặt RDS DB instance trong public subnet và giới hạn truy cập bằng network ACL cho phép dải IP văn phòng công ty.</span><span class="why">Sai: DB ở public subnet và mở cho IP văn phòng trái yêu cầu chỉ tầng ứng dụng mới truy cập được.</span></li>
+              <li data-k="D"><span class="tv">Đặt RDS DB instance trong các private subnet và cấu hình security group của nó chỉ cho phép traffic cơ sở dữ liệu inbound từ security group của các instance tầng ứng dụng.</span><span class="why">Đúng: Private subnet cộng security group tham chiếu security group của app tier bảo đảm chỉ tầng ứng dụng kết nối được, kể cả khi ASG thay instance/IP.</span></li>
+              <li data-k="E"><span class="tv">Bật mã hóa at rest cho RDS DB instance bằng AWS KMS.</span><span class="why">Sai: Mã hóa at rest bảo vệ dữ liệu lưu trữ, không chống SQL injection hay kiểm soát truy cập mạng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/reference-architecture-diagrams/" target="_blank" rel="noopener">AWS Reference Architecture Diagrams (trang mới trên docs.aws.amazon.com)</a></li>
+        <li><a href="https://docs.aws.amazon.com/reference-architecture-diagrams/latest/web-application-architecture/web-application-architecture.html" target="_blank" rel="noopener">Reference architecture – Web Application Architecture on AWS</a></li>
+        <li><a href="https://docs.aws.amazon.com/reference-architecture-diagrams/latest/serverless-global-applications/serverless-global-applications.html" target="_blank" rel="noopener">Reference architecture – Serverless Architecture for Global Applications</a></li>
+        <li><a href="https://docs.aws.amazon.com/reference-architecture-diagrams/latest/autoscaling-async-job-queues/autoscaling-async-job-queues.html" target="_blank" rel="noopener">Reference architecture – Autoscaling Asynchronous Job Queues</a></li>
+        <li><a href="https://docs.aws.amazon.com/decision-guides/latest/decision-guides/sns-or-sqs-or-eventbridge.html" target="_blank" rel="noopener">Decision guide – Amazon SQS, Amazon SNS, or Amazon EventBridge?</a></li>
+        <li><a href="https://docs.aws.amazon.com/decision-guides/latest/decision-guides/fargate-or-lambda.html" target="_blank" rel="noopener">Decision guide – AWS Fargate or AWS Lambda?</a></li>
+        <li><a href="https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-options-in-the-cloud.html" target="_blank" rel="noopener">Disaster Recovery of Workloads on AWS – Disaster recovery options in the cloud</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-certification/latest/solutions-architect-associate-03/solutions-architect-associate-03-domain1.html" target="_blank" rel="noopener">SAA-C03 – Content Domain 1: Design Secure Architectures</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-certification/latest/solutions-architect-associate-03/solutions-architect-associate-03-domain2.html" target="_blank" rel="noopener">SAA-C03 – Content Domain 2: Design Resilient Architectures</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-certification/latest/solutions-architect-associate-03/solutions-architect-associate-03-domain3.html" target="_blank" rel="noopener">SAA-C03 – Content Domain 3: Design High-Performing Architectures</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-certification/latest/solutions-architect-associate-03/solutions-architect-associate-03-domain4.html" target="_blank" rel="noopener">SAA-C03 – Content Domain 4: Design Cost-Optimized Architectures</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

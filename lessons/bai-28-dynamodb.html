@@ -1,0 +1,874 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 28 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-DynamoDB.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="28" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Giải thích <b>Amazon DynamoDB</b> là CSDL <b>NoSQL serverless, key-value &amp; document</b>, độ trễ <b>single-digit millisecond</b> ở mọi quy mô, tự sao chép dữ liệu qua <b>3 AZ</b> (SLA 99,99%) – và khi nào chọn nó thay cho RDS/Aurora.</li>
+          <li>Thiết kế <b>primary key</b>: <b>partition key</b> (simple) hoặc <b>partition key + sort key</b> (composite), tránh <b>hot partition</b> (mỗi partition tối đa 3.000 RCU / 1.000 WCU), nhớ giới hạn item <b>400 KB</b>.</li>
+          <li>Chọn đúng <b>capacity mode</b>: <b>on-demand</b> (mặc định, trả theo request) vs <b>provisioned</b> (+ auto scaling, reserved capacity) và <b>tính được RCU/WCU</b> cho một bài toán.</li>
+          <li>Phân biệt <b>GSI</b> và <b>LSI</b> (khóa, thời điểm tạo, tính nhất quán, throughput) – câu hỏi rất hay gặp.</li>
+          <li>Dùng đúng các tính năng: <b>DAX</b> (cache microsecond), <b>DynamoDB Streams</b> (CDC 24 giờ + Lambda trigger), <b>TTL</b> (tự xóa item hết hạn, không tốn WCU), <b>Global Tables</b> (multi-Region, multi-active, MREC/MRSC, SLA 99,999%) và <b>PITR</b> (khôi phục từng giây trong 35 ngày).</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 5 – Databases</span>
+        <p><b>Bài 26–27</b> đã dạy CSDL quan hệ (RDS, Aurora). Bài này chuyển sang <b>NoSQL</b> với DynamoDB. Những phần đã/ sẽ học ở bài khác chỉ nhắc ngắn: <b>gateway endpoint</b> cho DynamoDB (Bài 22), <b>AWS Backup</b> (Bài 19), <b>ElastiCache</b> và các CSDL chuyên dụng (Bài 29), <b>Lambda</b> (Bài 32), <b>API Gateway + Lambda + DynamoDB</b> serverless (Bài 33), <b>Kinesis</b> (Bài 35), chiến lược DR tổng thể (Bài 42).</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">Tổng quan: Amazon DynamoDB là gì?</h2>
+      <p class="lead">Theo tài liệu AWS, <b>Amazon DynamoDB</b> là một CSDL <span class="t" data-vi="Không máy chủ">serverless</span>, <span class="t" data-vi="Được quản lý hoàn toàn">fully managed</span>, phân tán, kiểu <span class="t" data-vi="CSDL phi quan hệ">NoSQL</span>, cho hiệu năng <span class="t" data-vi="Độ trễ một chữ số mili-giây">single-digit millisecond</span> ở <b>mọi quy mô</b> – dù ứng dụng có 100 hay 100 triệu người dùng.</p>
+
+      <p>DynamoDB ra đời năm 2012 để giải quyết bài toán <b>scale và vận hành</b> của CSDL quan hệ. Nó hỗ trợ hai mô hình dữ liệu: <span class="t" data-vi="Khóa – giá trị">key-value</span> và <span class="t" data-vi="Tài liệu (JSON lồng nhau)">document</span>. DynamoDB phục vụ Alexa, Amazon.com và toàn bộ trung tâm fulfillment của Amazon; có khách hàng chạy bảng đỉnh <b>hơn nửa triệu request/giây</b>, bảng <b>trên 200 TB</b>.</p>
+
+      <h3>Bốn đặc điểm cốt lõi (theo tài liệu)</h3>
+      <ul>
+        <li><b>Serverless</b>: không có server để cấp phát, patch, cài đặt; <b>không có version</b> (major/minor/patch), <b>không có maintenance window</b>, bảo trì <b>zero downtime</b>. Ở chế độ on-demand bảng <b>scale về 0</b> khi không có traffic và <b>không có cold start</b>.</li>
+        <li><b>NoSQL</b>: <b>không có JOIN</b> – AWS khuyên <b>denormalize</b> (phi chuẩn hóa) mô hình dữ liệu để giảm số lần truy vấn. Vẫn có <b>strongly consistent read</b> và <b>ACID transactions</b>.</li>
+        <li><b>Fully managed</b>: DynamoDB lo setup, cấu hình, bảo trì, high availability, phần cứng, bảo mật, backup, giám sát. Tạo bảng xong là dùng cho production ngay.</li>
+        <li><b>Single-digit ms ở mọi quy mô</b>: DynamoDB cố ý <b>bỏ các tính năng không hiệu quả khi scale</b> (như JOIN) và cung cấp API khuyến khích truy cập hiệu quả.</li>
+      </ul>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">
+          <div><h4>Amazon DynamoDB</h4><span class="vi">CSDL NoSQL serverless</span><p>Key-value &amp; document, single-digit ms, tự sao chép 3 AZ, SLA 99,99%, không giới hạn kích thước bảng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-DynamoDB_Table.svg" alt="">
+          <div><h4>Table / Item / Attribute</h4><span class="vi">Bảng / mục / thuộc tính</span><p>Bảng chứa item (tối đa <b>400 KB</b>/item), schemaless ngoài primary key.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-DynamoDB_Global-secondary-index.svg" alt="">
+          <div><h4>GSI / LSI</h4><span class="vi">Chỉ mục phụ toàn cục / cục bộ</span><p>Truy vấn theo khóa khác: 20 GSI (mặc định) + 5 LSI mỗi bảng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-DynamoDB_Amazon-DynamoDB-Accelerator.svg" alt="">
+          <div><h4>DynamoDB Accelerator (DAX)</h4><span class="vi">Bộ đệm in-memory cho DynamoDB</span><p>Tăng tới 10×: từ mili-giây xuống <b>micro-giây</b>, API tương thích DynamoDB.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-DynamoDB_Stream.svg" alt="">
+          <div><h4>DynamoDB Streams</h4><span class="vi">Luồng thay đổi dữ liệu</span><p>Ghi lại mọi thay đổi item theo thứ tự, lưu <b>24 giờ</b>, kích hoạt Lambda.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Database.svg" alt="">
+          <div><h4>Global Tables</h4><span class="vi">Bảng toàn cầu đa Region</span><p>Multi-Region, <b>multi-active</b> (mọi replica đọc + ghi), SLA <b>99,999%</b>.</p></div></div>
+      </div>
+
+      <h3>DynamoDB khác RDS / Aurora ở điểm nào?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>RDS / Aurora (Bài 26–27)</th><th>Amazon DynamoDB</th></tr></thead>
+        <tbody>
+          <tr><td>Mô hình dữ liệu</td><td>Quan hệ (SQL), schema cố định, JOIN, khóa ngoại</td><td class="yes"><b>Key-value &amp; document</b>, schemaless ngoài primary key, <b>không JOIN</b></td></tr>
+          <tr><td>Đơn vị quản trị</td><td>DB instance / DB cluster (chọn instance class)</td><td class="yes"><b>Table</b> – không có instance, không có server</td></tr>
+          <tr><td>Scale</td><td>Scale up (đổi class) + read replica; ghi giới hạn bởi 1 writer</td><td class="yes">Scale ngang tự động theo partition, đọc <b>và ghi</b> tới hàng triệu request/giây</td></tr>
+          <tr><td>Bảo trì / version</td><td>Maintenance window, nâng cấp engine version</td><td class="yes">Không version, không maintenance window, zero downtime</td></tr>
+          <tr><td>Độ sẵn sàng trong Region</td><td>Phải bật Multi-AZ / thêm replica</td><td class="yes">Mặc định sao chép <b>3 AZ</b>, SLA <b>99,99%</b></td></tr>
+          <tr><td>Đa Region</td><td>Cross-Region read replica, Aurora Global Database (1 Region ghi)</td><td class="yes"><b>Global Tables</b>: mọi Region đều đọc + ghi, SLA 99,999%</td></tr>
+          <tr><td>Xác thực</td><td>User/password DB (+ IAM DB auth tùy chọn)</td><td class="yes">Chỉ <b>IAM</b> – không có user name/password</td></tr>
+          <tr><td>Truy vấn phức tạp, báo cáo ad hoc</td><td class="yes">Rất tốt (SQL, JOIN, aggregate)</td><td class="no">Kém – phải thiết kế trước <b>access pattern</b>; analytics nên export sang S3 / Redshift</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>&lt; 10 ms</b><span>độ trễ single-digit millisecond ở mọi quy mô</span></div>
+        <div class="stat"><b>3 AZ</b><span>dữ liệu tự sao chép mặc định</span></div>
+        <div class="stat"><b>99,99%</b><span>SLA bảng một Region</span></div>
+        <div class="stat"><b>99,999%</b><span>SLA Global Tables</span></div>
+        <div class="stat"><b>400 KB</b><span>kích thước tối đa một item</span></div>
+        <div class="stat"><b>35 ngày</b><span>cửa sổ PITR, độ chính xác từng giây</span></div>
+      </div>
+
+      <h3>Use case điển hình (theo tài liệu)</h3>
+      <ul>
+        <li><b>Tài chính</b>: live trading, quản lý khoản vay, sổ cái giao dịch – dùng <b>global tables</b> cho đọc/ghi local ở nhiều Region và <b>ACID transactions</b> cho xử lý giao dịch, đơn hàng.</li>
+        <li><b>Gaming</b>: game state, dữ liệu người chơi, lịch sử phiên, <b>leaderboard</b>; scale ra cho giờ cao điểm, về 0 khi vắng, không cold start.</li>
+        <li><b>Streaming/media</b>: metadata index cho nội dung, watchlist, bookmark, thống kê thể thao gần thời gian thực, xử lý hàng tỉ sự kiện mỗi ngày.</li>
+        <li>Kiến thức thi phổ biến: <b>shopping cart</b>, <b>session state</b> của web app, dữ liệu <b>IoT/thiết bị</b>, metadata của object S3, ứng dụng <b>serverless</b> (API Gateway + Lambda + DynamoDB – Bài 33).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>NoSQL</i>”, “<i>key-value</i>”, “<i>single-digit millisecond latency at any scale</i>”, “<i>serverless database</i>”, “<i>millions of requests per second</i>”, “<i>schema changes frequently / flexible schema</i>” ⇒ <b>Amazon DynamoDB</b>.</li>
+          <li>“<i>Least operational overhead</i>” + lưu session / giỏ hàng / dữ liệu người chơi ⇒ DynamoDB (không phải RDS trên instance, không phải tự dựng Cassandra/MongoDB trên EC2).</li>
+          <li>Đề yêu cầu <b>JOIN phức tạp, báo cáo SQL ad hoc, khóa ngoại</b> ⇒ <b>RDS/Aurora</b>, không phải DynamoDB.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: MÔ HÌNH DỮ LIỆU ===================== -->
+      <h2 id="mo-hinh-du-lieu"><img src="../assets/icons/res/Amazon-DynamoDB_Table.svg" alt="">Mô hình dữ liệu: table, item, attribute và primary key</h2>
+      <p class="lead">Ba thành phần cốt lõi: <span class="t" data-vi="Bảng">table</span> là tập hợp các <span class="t" data-vi="Mục (tương đương hàng)">item</span>, mỗi item là tập hợp các <span class="t" data-vi="Thuộc tính (tương đương cột)">attribute</span>. DynamoDB dùng <span class="t" data-vi="Khóa chính">primary key</span> để định danh duy nhất từng item.</p>
+
+      <ul>
+        <li><b>Table</b>: <b>không giới hạn số item</b> hay số byte. Mỗi account có quota ban đầu <b>2.500 bảng / Region</b> (xin tăng tới 10.000).</li>
+        <li><b>Item</b>: giống hàng (row) trong RDBMS; kích thước tối đa <b>400 KB</b> (tính cả tên và giá trị attribute). Vượt ⇒ ghi lỗi <code>ValidationException</code>.</li>
+        <li><b>Attribute</b>: giống cột (column), nhưng ngoài primary key thì bảng là <span class="t" data-vi="Không cần định nghĩa lược đồ trước">schemaless</span> – mỗi item có thể có tập attribute riêng. Attribute có thể là <b>scalar</b> (string, number…) hoặc <b>lồng nhau</b> (map, list) sâu tới <b>32 cấp</b>.</li>
+      </ul>
+
+      <h3>Hai loại primary key</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-DynamoDB_Attribute.svg" alt="">Simple primary key – Partition key</h4>
+          <ul>
+            <li>Gồm <b>một</b> attribute: <span class="t" data-vi="Khóa phân vùng">partition key</span> (còn gọi <i>hash attribute</i>).</li>
+            <li>DynamoDB đưa giá trị partition key qua <b>hàm băm nội bộ</b>; kết quả quyết định item nằm ở <b>partition</b> (vùng lưu trữ vật lý) nào.</li>
+            <li><b>Không có hai item trùng partition key</b>.</li>
+            <li>Ví dụ: bảng <i>People</i> với key <code>PersonID</code>.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-DynamoDB_Attributes.svg" alt="">Composite primary key – Partition key + Sort key</h4>
+          <ul>
+            <li>Gồm <b>hai</b> attribute: partition key + <span class="t" data-vi="Khóa sắp xếp">sort key</span> (còn gọi <i>range attribute</i>).</li>
+            <li>Các item <b>cùng partition key</b> được lưu cạnh nhau, <b>sắp xếp theo sort key</b>.</li>
+            <li>Nhiều item có thể trùng partition key nhưng phải <b>khác sort key</b>.</li>
+            <li>Ví dụ: bảng <i>Music</i> với <code>Artist</code> + <code>SongTitle</code> – lấy mọi bài của một ca sĩ, hoặc dải tên bài.</li>
+          </ul></div>
+      </div>
+      <p>Mỗi attribute của primary key phải là <b>scalar</b> và chỉ được là kiểu <b>String, Number hoặc Binary</b>. Các attribute khác không bị giới hạn kiểu.</p>
+
+      <h3>Partition – nơi dữ liệu và throughput thực sự nằm</h3>
+      <p>Theo best practice của AWS, <b>mỗi partition</b> được thiết kế phục vụ tối đa <b>3.000 read unit/giây</b> và <b>1.000 write unit/giây</b>. Throughput tổng của bảng có thể rất lớn, nhưng nếu phần lớn request dồn vào <b>một vài giá trị partition key</b> thì partition đó thành <span class="t" data-vi="Phân vùng nóng">hot partition</span> và bị <span class="t" data-vi="Bóp băng thông / từ chối request">throttle</span>. Ví dụ tài liệu: item 20 KB ⇒ mỗi strongly consistent read tốn 5 read unit ⇒ chỉ đọc được ~600 lần/giây trên item đó trước khi chạm giới hạn partition.</p>
+      <ul>
+        <li>Chọn partition key có <b>cardinality cao</b> (nhiều giá trị khác nhau) và truy cập <b>đều</b>: <code>UserID</code>, <code>DeviceID</code>, <code>OrderID</code> tốt hơn <code>Status</code>, <code>Date</code>, <code>Country</code>.</li>
+        <li><span class="t" data-vi="Chia nhỏ ghi (thêm hậu tố ngẫu nhiên)">Write sharding</span>: thêm hậu tố ngẫu nhiên/tính toán vào partition key (vd <code>2026-10-31#7</code>) để rải ghi ra nhiều partition.</li>
+        <li><span class="t" data-vi="Năng lực thích ứng">Adaptive capacity</span>: DynamoDB tự cân bằng lại capacity cho partition nóng – áp dụng cho <b>cả on-demand và provisioned</b> – nhưng <b>không vượt</b> giới hạn 3.000/1.000 của một partition.</li>
+        <li>Đọc lặp lại cùng một item “nóng” (flash sale) ⇒ đưa <b>DAX</b> vào phía trước (phần 5).</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Database.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region – bảng DynamoDB “Music” (dữ liệu tự sao chép 3 AZ)</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Client.svg" alt="">Ứng dụng<small>PutItem / GetItem / Query</small></div>
+              <span class="arrow">partition key “Artist”</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">Hàm băm nội bộ<small>hash(Artist) ⇒ partition</small></div>
+            </div>
+            <div class="row">
+              <div class="grp priv"><span class="lbl">Partition 1</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Items.svg" alt="">Artist = “Acme Band”<small>sort: “Look Out, World” · “Still in Love”</small></div></div></div>
+              <div class="grp priv"><span class="lbl">Partition 2</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Items.svg" alt="">Artist = “No One You Know”<small>sort: “My Dog Spot” · “Somewhere…”</small></div></div></div>
+              <div class="grp priv"><span class="lbl">Partition 3 …</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Item.svg" alt="">Artist khác<small>≤ 3.000 RU/s · ≤ 1.000 WU/s mỗi partition</small></div></div></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Partition key được băm để chọn partition; các item cùng partition key nằm chung và được sắp theo sort key (item collection). Thiết kế key phân bố đều giúp mọi partition cùng gánh tải – key “nóng” dồn vào một partition sẽ bị throttle dù tổng capacity của bảng còn dư.</figcaption>
+      </figure>
+
+      <h3>Item lớn hơn 400 KB thì sao?</h3>
+      <p>Tài liệu đưa ra ba cách: <b>nén</b> attribute lớn (GZIP, LZO → kiểu Binary, nhưng không filter được), <b>chia nhỏ</b> thành nhiều item cùng partition key (vertical partitioning, phân biệt bằng sort key), hoặc <b>lưu object trong Amazon S3</b> và chỉ lưu <b>S3 object key</b> trong item DynamoDB. Lưu ý: không có transaction xuyên S3 + DynamoDB – ứng dụng phải tự dọn object “mồ côi”.</p>
+
+      <h3>Read consistency – eventually vs strongly consistent</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Kiểu đọc</th><th>Đặc điểm</th><th>Áp dụng cho</th><th>Chi phí</th></tr></thead>
+        <tbody>
+          <tr><td><b>Eventually consistent</b> (mặc định)</td><td>Có thể chưa thấy ghi vừa hoàn thành; đọc lại sau chốc lát sẽ thấy</td><td>Table, LSI, <b>GSI</b>, <b>Streams</b></td><td class="yes"><b>Một nửa</b> strongly consistent</td></tr>
+          <tr><td><b>Strongly consistent</b> (<code>ConsistentRead=true</code>)</td><td>Luôn trả dữ liệu mới nhất đã ghi thành công</td><td>Chỉ <b>Table và LSI</b> (GetItem, Query, Scan) – <b>không</b> có cho GSI, Streams</td><td>Gấp đôi</td></tr>
+          <tr><td><b>Transactional</b> (TransactGetItems)</td><td>ACID, all-or-nothing nhiều item, nhiều bảng</td><td>Table</td><td>Gấp đôi strongly consistent (kiến thức phổ biến)</td></tr>
+        </tbody>
+      </table></div>
+      <p>Khi ghi nhận HTTP 200, dữ liệu đã được <b>ghi bền vững</b>. DynamoDB đảm bảo <b>read-committed isolation</b> – không bao giờ đọc được bản ghi dở dang.</p>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – tủ đồ siêu thị</span>
+        <p>DynamoDB giống dãy tủ gửi đồ khổng lồ. <b>Partition key</b> là số tủ: máy băm biến số vé thành vị trí tủ nên lấy đồ <b>tức thì</b>, bất kể có 100 hay 100 triệu tủ. <b>Sort key</b> là ngăn trong tủ, xếp theo thứ tự. Nhưng nếu cả nghìn người cùng gửi vào <b>một tủ</b> (hot partition), hàng sẽ ùn tắc dù cả dãy còn trống. Và bạn <b>không thể hỏi</b> “tìm mọi túi màu đỏ” nhanh được – trừ khi đã làm sẵn một sổ tra cứu theo màu (secondary index).</p></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Chọn partition key là <b>ngày</b> hoặc <b>trạng thái</b> (ít giá trị) cho bảng ghi nhiều ⇒ hot partition, throttle – đáp án đúng thường là đổi key cardinality cao hoặc <b>write sharding</b>, không phải chỉ tăng WCU.</li>
+          <li><code>Scan</code> đọc <b>toàn bộ bảng</b> và tốn capacity theo dữ liệu đọc – truy vấn thường xuyên theo attribute không phải key ⇒ tạo <b>GSI</b> rồi <code>Query</code>.</li>
+          <li>Lưu ảnh, video, file lớn trực tiếp trong item ⇒ vượt 400 KB; đáp án: <b>S3 + lưu object key trong DynamoDB</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: CAPACITY MODE ===================== -->
+      <h2 id="capacity"><img src="../assets/icons/svc/AWS-Application-Auto-Scaling.svg" alt="">Capacity mode: on-demand vs provisioned, RCU / WCU</h2>
+      <p class="lead"><span class="t" data-vi="Chế độ thông lượng">Throughput mode</span> (capacity mode) quyết định <b>cách quản lý năng lực đọc/ghi</b> của bảng và <b>cách tính tiền</b>. Có hai lựa chọn: <span class="t" data-vi="Chế độ theo nhu cầu">on-demand</span> và <span class="t" data-vi="Chế độ cấp phát trước">provisioned</span>.</p>
+
+      <h3>Đơn vị đo: RCU / WCU (và RRU / WRU)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Đơn vị</th><th>Ý nghĩa (theo tài liệu)</th><th>Kích thước làm tròn</th></tr></thead>
+        <tbody>
+          <tr><td><b>1 RCU</b> – <span class="t" data-vi="Đơn vị năng lực đọc">read capacity unit</span> (provisioned)</td><td><b>1</b> strongly consistent read/giây <b>hoặc 2</b> eventually consistent read/giây</td><td>Item tới <b>4 KB</b> (làm tròn lên bội 4 KB)</td></tr>
+          <tr><td><b>1 WCU</b> – <span class="t" data-vi="Đơn vị năng lực ghi">write capacity unit</span> (provisioned)</td><td><b>1</b> write/giây</td><td>Item tới <b>1 KB</b> (làm tròn lên bội 1 KB)</td></tr>
+          <tr><td><b>RRU / WRU</b> – read/write request unit (on-demand)</td><td>Định nghĩa giống RCU/WCU nhưng là đơn vị <b>tính tiền theo request</b></td><td>4 KB / 1 KB</td></tr>
+          <tr><td>Transactional read / write</td><td>Tốn <b>gấp đôi</b> đơn vị thường (kiến thức phổ biến)</td><td>4 KB / 1 KB</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Cách tính – ví dụ trong tài liệu và mở rộng</h3>
+      <ol class="steps">
+        <li><b>Đọc strongly consistent</b> 80 item/giây, mỗi item 3 KB: 3 KB / 4 KB = 0,75 ⇒ làm tròn <b>1 RCU</b>/item ⇒ 1 × 80 = <b>80 RCU</b>.</li>
+        <li>Cùng bài toán nhưng <b>eventually consistent</b>: mỗi RCU phục vụ 2 lần đọc ⇒ 80 / 2 = <b>40 RCU</b>.</li>
+        <li>Đọc strongly consistent item <b>10 KB</b>, 50 lần/giây: 10 / 4 = 2,5 ⇒ làm tròn <b>3 RCU</b>/item ⇒ 3 × 50 = <b>150 RCU</b> (eventually ⇒ 75 RCU).</li>
+        <li><b>Ghi</b> 100 item/giây, mỗi item 512 byte: 0,5 KB ⇒ làm tròn <b>1 WCU</b>/item ⇒ <b>100 WCU</b>.</li>
+        <li>Ghi 20 item/giây, mỗi item <b>2,5 KB</b>: làm tròn <b>3 WCU</b>/item ⇒ <b>60 WCU</b>.</li>
+      </ol>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – công thức nhanh</span>
+        <ul>
+          <li><b>RCU</b> = ⌈kích thước item / 4 KB⌉ × số lần đọc/giây; <b>chia 2</b> nếu eventually consistent; <b>nhân 2</b> nếu transactional.</li>
+          <li><b>WCU</b> = ⌈kích thước item / 1 KB⌉ × số lần ghi/giây; <b>nhân 2</b> nếu transactional.</li>
+          <li>Luôn <b>làm tròn kích thước item lên trước</b> rồi mới nhân với số request.</li>
+        </ul></div>
+
+      <h3>So sánh hai chế độ</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">On-demand (mặc định, khuyến nghị)</h4>
+          <ul>
+            <li><b>Pay-per-request</b>: trả theo số request đọc/ghi thực tế; <b>không traffic ⇒ không phí throughput</b>.</li>
+            <li>Không cần capacity planning, không scaling policy; scale tới <b>hàng triệu request/giây</b>.</li>
+            <li>Bảng mới chịu ngay <b>4.000 ghi/s và 12.000 đọc/s</b>.</li>
+            <li>Tức thì phục vụ tới <b>gấp đôi đỉnh trước đó</b>; vượt quá gấp đôi trong vòng <b>30 phút</b> có thể bị throttle ⇒ nên tăng dần hoặc <b>pre-warm</b> (warm throughput).</li>
+            <li>Có thể đặt <b>maximum throughput</b> cho từng bảng/GSI để chặn chi phí bất ngờ.</li>
+            <li>Cùng latency, SLA, bảo mật như provisioned.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/AWS-Auto-Scaling.svg" alt="">Provisioned</h4>
+          <ul>
+            <li>Khai báo trước số <b>RCU / WCU</b>; trả tiền <b>theo giờ cho phần đã cấp phát</b>, dù dùng hay không.</li>
+            <li>Phù hợp workload <b>ổn định, tăng trưởng dự đoán được</b>, cần <b>chi phí dự đoán được</b>.</li>
+            <li><b>DynamoDB auto scaling</b> (Application Auto Scaling, target tracking): đặt min, max và <b>target utilization</b> (AWS khuyên <b>70%</b>); kích hoạt khi vượt target <b>2 phút liên tiếp</b>. Bật mặc định khi tạo bảng bằng console.</li>
+            <li>Vượt capacity ⇒ request bị <b>throttle</b> (<code>ProvisionedThroughputExceededException</code>).</li>
+            <li>Giảm capacity: bắt đầu ngày có <b>4 lần</b>, mỗi giờ thêm 1 ⇒ tối đa <b>27 lần/ngày</b>. Tăng: bao nhiêu lần cũng được.</li>
+            <li>Mua <span class="t" data-vi="Năng lực đặt trước">reserved capacity</span> để giảm giá cho mức nền (kỳ hạn 1 hoặc 3 năm – kiến thức phổ biến).</li>
+          </ul></div>
+      </div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Quy tắc / quota (theo tài liệu)</th><th>Giá trị</th></tr></thead>
+        <tbody>
+          <tr><td>Chuyển <b>provisioned → on-demand</b></td><td>Tối đa <b>4 lần</b> trong cửa sổ 24 giờ cuốn chiếu; mất vài phút</td></tr>
+          <tr><td>Chuyển <b>on-demand → provisioned</b></td><td><b>Bất cứ lúc nào</b></td></tr>
+          <tr><td>Throughput mặc định mỗi bảng</td><td>40.000 RCU/RRU + 40.000 WCU/WRU (tăng được qua Service Quotas)</td></tr>
+          <tr><td>Throughput provisioned mỗi account / Region</td><td>80.000 RCU + 80.000 WCU (on-demand không áp quota account)</td></tr>
+          <tr><td>Reserved capacity tối đa mỗi account</td><td>1.000.000 capacity unit đang hoạt động</td></tr>
+          <tr><td>Free tier vĩnh viễn</td><td>25 GB storage + 25 RCU + 25 WCU provisioned</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Table class: Standard vs Standard-IA</h3>
+      <p>Ngoài capacity mode, mỗi bảng có một <span class="t" data-vi="Lớp bảng">table class</span>: <b>DynamoDB Standard</b> (mặc định, cho đa số workload) và <b>DynamoDB Standard-Infrequent Access (Standard-IA)</b> – tối ưu cho bảng mà <b>chi phí lưu trữ là chủ yếu</b> (log ứng dụng, bài đăng cũ, lịch sử đơn hàng, thành tích game cũ). Standard-IA rẻ hơn về storage nhưng đắt hơn về đọc/ghi; mọi index dùng chung class với bảng; đổi class được (không vĩnh viễn).</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Unpredictable traffic</i>”, “<i>new application, unknown workload</i>”, “<i>spiky / idle for long periods</i>”, “<i>pay only for what you use</i>” ⇒ <b>on-demand</b>.</li>
+          <li>“<i>Steady, predictable traffic</i>” + “<i>most cost-effective</i>” ⇒ <b>provisioned + auto scaling</b> (+ <b>reserved capacity</b> cho mức nền dài hạn).</li>
+          <li>“<i>Large table, rarely accessed data, storage cost dominates</i>” ⇒ <b>Standard-IA table class</b>.</li>
+          <li>Throttle chỉ ở <b>một vài key</b> trong khi tổng capacity còn dư ⇒ vấn đề là <b>partition key design / hot key</b> (hoặc thêm DAX cho đọc), không phải chuyển capacity mode.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: SECONDARY INDEXES ===================== -->
+      <h2 id="indexes"><img src="../assets/icons/res/Amazon-DynamoDB_Global-secondary-index.svg" alt="">Secondary index: GSI và LSI</h2>
+      <p class="lead">DynamoDB chỉ truy cập nhanh theo primary key. Muốn truy vấn theo attribute khác (vd tìm bài hát theo <code>Genre</code>), tạo <span class="t" data-vi="Chỉ mục phụ">secondary index</span> – một cấu trúc chứa tập con attribute của bảng cùng một <b>khóa thay thế</b>, đọc bằng <code>Query</code> (hoặc <code>Scan</code>). DynamoDB <b>tự cập nhật index</b> khi bảng gốc (<i>base table</i>) thay đổi.</p>
+
+      <ul>
+        <li><span class="t" data-vi="Chỉ mục phụ toàn cục">Global secondary index (GSI)</span>: partition key và sort key <b>có thể khác hoàn toàn</b> bảng gốc; truy vấn trải trên <b>mọi partition</b>; lưu ở <b>không gian partition riêng</b> và scale tách biệt.</li>
+        <li><span class="t" data-vi="Chỉ mục phụ cục bộ">Local secondary index (LSI)</span>: <b>cùng partition key</b> với bảng, <b>khác sort key</b>; mỗi partition của LSI gắn với partition của bảng gốc có cùng giá trị partition key.</li>
+        <li><span class="t" data-vi="Thuộc tính được chiếu (sao chép) sang index">Projected attributes</span>: chọn attribute nào được copy sang index – <code>KEYS_ONLY</code>, <code>INCLUDE</code> (liệt kê thêm) hoặc <code>ALL</code>. Key của bảng luôn được chiếu.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Đặc điểm</th><th>Global secondary index (GSI)</th><th>Local secondary index (LSI)</th></tr></thead>
+        <tbody>
+          <tr><td>Key schema</td><td>Simple (partition key) <b>hoặc</b> composite</td><td>Bắt buộc composite: <b>cùng partition key</b> + sort key khác</td></tr>
+          <tr><td>Thời điểm tạo</td><td class="yes">Tạo cùng bảng <b>hoặc thêm/xóa bất cứ lúc nào</b> trên bảng có sẵn</td><td class="no"><b>Chỉ tạo lúc tạo bảng</b>; không thêm, không xóa sau đó</td></tr>
+          <tr><td>Giới hạn kích thước</td><td>Không giới hạn</td><td>Mỗi giá trị partition key: tổng item đã index ≤ <b>10 GB</b></td></tr>
+          <tr><td>Phạm vi truy vấn</td><td>Toàn bảng, mọi partition</td><td>Một partition (theo partition key trong query)</td></tr>
+          <tr><td>Read consistency</td><td class="no">Chỉ <b>eventually consistent</b></td><td class="yes">Eventually <b>hoặc strongly</b> consistent</td></tr>
+          <tr><td>Throughput</td><td><b>Riêng của index</b> (provisioned: phải đặt RCU/WCU riêng); ghi bảng tốn WCU của GSI</td><td>Dùng <b>RCU/WCU của bảng gốc</b></td></tr>
+          <tr><td>Attribute chưa chiếu</td><td>Không lấy được (DynamoDB không fetch từ bảng)</td><td>Lấy được – DynamoDB tự fetch từ bảng (tốn thêm đọc)</td></tr>
+          <tr><td>Quota / bảng</td><td><b>20</b> (mặc định, tăng được)</td><td><b>5</b></td></tr>
+        </tbody>
+      </table></div>
+      <p>Tổng số attribute chiếu kiểu <code>INCLUDE</code> trên mọi index của một bảng tối đa <b>100</b>. Xóa bảng ⇒ mọi index bị xóa theo.</p>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“Thêm LSI vào bảng đang chạy” – <b>không được</b>. Bảng đã tồn tại cần truy vấn theo khóa mới ⇒ <b>GSI</b>.</li>
+          <li>Cần <b>strongly consistent</b> read trên khóa thay thế ⇒ chỉ <b>LSI</b> làm được (GSI chỉ eventually consistent).</li>
+          <li>GSI của bảng provisioned có WCU <b>quá thấp</b> ⇒ ghi vào <b>bảng gốc</b> cũng bị throttle (back-pressure – kiến thức phổ biến) – nhớ cấp đủ WCU cho GSI.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Query on a non-key attribute efficiently, avoid Scan</i>” ⇒ <b>GSI</b> với attribute đó làm partition key.</li>
+          <li>“<i>Same partition key, sort by a different attribute, strongly consistent</i>” và đang <b>thiết kế bảng mới</b> ⇒ <b>LSI</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: DAX ===================== -->
+      <h2 id="dax"><img src="../assets/icons/res/Amazon-DynamoDB_Amazon-DynamoDB-Accelerator.svg" alt="">DynamoDB Accelerator (DAX) – cache micro-giây</h2>
+      <p class="lead"><span class="t" data-vi="Bộ tăng tốc DynamoDB">DynamoDB Accelerator (DAX)</span> là dịch vụ cache <b>in-memory</b>, fully managed, highly available, <b>tương thích API DynamoDB</b>. DAX giảm thời gian phản hồi của các lần <b>đọc eventually consistent</b> một bậc độ lớn – <b>từ mili-giây xuống micro-giây</b> (tới 10×), kể cả ở hàng triệu request/giây, mà không bắt bạn tự lo cache invalidation hay quản lý cluster.</p>
+
+      <h3>DAX xử lý request thế nào?</h3>
+      <ul>
+        <li>Ứng dụng dùng <b>DAX client</b> (Go, Java, Node.js, Python, .NET) trỏ tới <b>cluster endpoint</b> – chỉ cần <b>thay đổi code tối thiểu</b> vì API giống DynamoDB.</li>
+        <li><b>Đọc</b> (<code>GetItem</code>, <code>BatchGetItem</code>, <code>Query</code>, <code>Scan</code>) eventually consistent: <b>cache hit</b> ⇒ trả ngay; <b>cache miss</b> ⇒ DAX gọi DynamoDB, trả kết quả và lưu vào cache.</li>
+        <li><b>Đọc strongly consistent</b> ⇒ DAX <b>chuyển thẳng</b> tới DynamoDB, <b>không cache</b> kết quả.</li>
+        <li><b>Ghi</b> (<code>PutItem</code>, <code>UpdateItem</code>, <code>DeleteItem</code>, <code>BatchWriteItem</code>) là <span class="t" data-vi="Ghi xuyên (ghi bảng rồi ghi cache)">write-through</span>: ghi vào bảng DynamoDB trước, rồi vào DAX; chỉ thành công khi ghi được cả hai.</li>
+        <li>Thao tác quản trị bảng (<code>CreateTable</code>, <code>UpdateTable</code>…) phải gọi thẳng DynamoDB.</li>
+      </ul>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-DynamoDB_Item.svg" alt="">Item cache</h4>
+          <ul>
+            <li>Lưu kết quả <code>GetItem</code> / <code>BatchGetItem</code>, theo <b>primary key</b>.</li>
+            <li>TTL mặc định <b>5 phút</b>; đặt khi tạo cluster.</li>
+            <li>Đầy cache ⇒ loại item cũ theo <b>LRU</b> (luôn bật, không cấu hình được).</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-DynamoDB_Items.svg" alt="">Query cache</h4>
+          <ul>
+            <li>Lưu <b>tập kết quả</b> của <code>Query</code> / <code>Scan</code>, theo <b>giá trị tham số</b>.</li>
+            <li>TTL cấu hình riêng; TTL = 0 ⇒ không cache query.</li>
+            <li>Cũng dùng LRU khi đầy.</li>
+          </ul></div>
+      </div>
+
+      <h3>Cluster DAX</h3>
+      <ul>
+        <li>Gồm 1 <b>primary node</b> + tối đa <b>10 read replica</b> ⇒ tối đa <b>11 node</b>; mọi node cùng node type. Scale đọc bằng thêm node, hoặc dùng node lớn hơn (phải tạo cluster mới).</li>
+        <li>Primary node hỏng ⇒ DAX <b>tự failover</b> sang một read replica.</li>
+        <li>Production: AWS <b>khuyến nghị mạnh ≥ 3 node ở 3 AZ khác nhau</b> – 3 node là điều kiện để cluster <b>fault-tolerant</b>. 1–2 node chỉ cho dev/test.</li>
+        <li>DAX <b>chạy trong VPC</b> (chỉ EC2-VPC), truy cập qua security group (TCP <b>8111</b>), cần <b>subnet group</b>. Cluster chỉ phục vụ bảng <b>cùng Region</b>; tối đa ~500 bảng/cluster.</li>
+        <li>Hỗ trợ <b>encryption at rest</b> và <b>in transit</b> (TLS, endpoint <code>daxs://</code>).</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Database.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC – DAX subnet group (3 AZ)</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">Availability Zone A</span>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">App + DAX client</div>
+                    <div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Amazon-DynamoDB-Accelerator.svg" alt="">DAX primary<small>ghi + đọc cache</small></div></div></div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone B</span>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Amazon-DynamoDB-Accelerator.svg" alt="">DAX read replica<small>đọc cache</small></div></div></div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone C</span>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Amazon-DynamoDB-Accelerator.svg" alt="">DAX read replica<small>đọc cache</small></div></div></div>
+                </div>
+              </div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Ứng dụng<small>eventually consistent read</small></div>
+              <span class="arrow">cache hit: micro-giây</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Amazon-DynamoDB-Accelerator.svg" alt="">DAX cluster<small>item cache + query cache</small></div>
+              <span class="arrow dashed">cache miss / write-through / strongly consistent</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Table.svg" alt="">Bảng DynamoDB<small>single-digit ms</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> DAX chạy trong VPC, đặt giữa ứng dụng và DynamoDB. Cluster 3 node trên 3 AZ là cấu hình production khuyến nghị; primary node xử lý ghi (write-through) và đồng bộ cache sang read replica. Đọc strongly consistent luôn đi thẳng tới DynamoDB.</figcaption>
+      </figure>
+
+      <h3>Khi nào dùng / không dùng DAX</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Phù hợp với DAX</th><th>Không phù hợp với DAX</th></tr></thead>
+        <tbody>
+          <tr><td class="yes">Cần thời gian đọc <b>nhanh nhất có thể</b> (micro-giây): real-time bidding, social gaming, trading</td><td class="no">Cần <b>strongly consistent read</b> (hoặc không chấp nhận eventually consistent)</td></tr>
+          <tr><td class="yes">Một số ít item được đọc nhiều hơn hẳn (<b>hot key</b>, flash sale một sản phẩm)</td><td class="no">Không cần micro-giây, không có đọc lặp lại để offload</td></tr>
+          <tr><td class="yes">Đọc nhiều nhưng <b>nhạy chi phí</b> – giảm RCU phải mua</td><td class="no">Ứng dụng <b>ghi nhiều</b> (write-intensive) – tăng replication giữa các node</td></tr>
+          <tr><td class="yes">Đọc lặp lại trên tập dữ liệu lớn (phân tích dài) mà không “ăn” hết capacity của ứng dụng khác</td><td class="no">Ít đọc lặp lại – DAX tốt nhất khi <b>cache hit rate &gt; 90%</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Microsecond latency</i>” + DynamoDB, “<i>read-heavy, same items read repeatedly</i>”, “<i>without changing application logic significantly</i>” ⇒ <b>DAX</b>.</li>
+          <li>Cache cho DynamoDB ⇒ ưu tiên <b>DAX</b> (API-compatible, write-through tự động). <b>ElastiCache</b> (Bài 29) là cache đa dụng (session, kết quả tính toán, RDS…) – phải tự viết logic cache.</li>
+          <li>DAX <b>không</b> tăng throughput ghi và <b>không</b> giúp strongly consistent read.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: STREAMS & TTL ===================== -->
+      <h2 id="streams-ttl"><img src="../assets/icons/res/Amazon-DynamoDB_Stream.svg" alt="">DynamoDB Streams và Time to Live (TTL)</h2>
+      <p class="lead"><span class="t" data-vi="Luồng thay đổi dữ liệu DynamoDB">DynamoDB Streams</span> là tính năng tùy chọn ghi lại <b>chuỗi thay đổi cấp item theo thứ tự thời gian</b> (<span class="t" data-vi="Thu thập dữ liệu thay đổi">change data capture – CDC</span>) và lưu trong log <b>tối đa 24 giờ</b>. Ứng dụng đọc được item <b>trước và sau</b> khi bị sửa, gần thời gian thực – nền tảng cho kiến trúc <b>event-driven</b>.</p>
+
+      <h3>Stream record và StreamViewType</h3>
+      <ul>
+        <li>Mỗi lần <b>tạo, sửa, xóa</b> item ⇒ một <span class="t" data-vi="Bản ghi luồng">stream record</span> (kèm tên bảng, timestamp, metadata). <code>PutItem</code>/<code>UpdateItem</code> không đổi dữ liệu thì <b>không</b> sinh record.</li>
+        <li>Đảm bảo: mỗi record xuất hiện <b>đúng một lần</b> (exactly once) và <b>đúng thứ tự</b> thay đổi của <b>từng item</b>.</li>
+        <li><code>StreamViewType</code> chọn nội dung ghi vào stream: <code>KEYS_ONLY</code> · <code>NEW_IMAGE</code> · <code>OLD_IMAGE</code> · <code>NEW_AND_OLD_IMAGES</code>. Không sửa được sau khi bật – phải tắt và tạo stream mới.</li>
+        <li>Record nhóm thành <b>shard</b> (mỗi partition ghi vào một shard riêng; shard tự tạo/tách). Mỗi shard nên có tối đa <b>2 tiến trình đọc</b> đồng thời (global table: 1) để tránh throttle.</li>
+        <li>Streams chạy <b>bất đồng bộ</b> ⇒ bật stream <b>không ảnh hưởng hiệu năng</b> bảng. Có endpoint riêng (<code>streams.dynamodb.&lt;region&gt;.amazonaws.com</code>). Đọc từ stream luôn eventually consistent.</li>
+        <li>Tắt stream ⇒ dữ liệu vẫn đọc được thêm 24 giờ; không xóa thủ công được.</li>
+      </ul>
+
+      <h3>Lambda trigger – mẫu kiến trúc kinh điển</h3>
+      <p>Kết hợp DynamoDB Streams với <b>AWS Lambda</b> (event source mapping) để tạo <span class="t" data-vi="Bộ kích hoạt">trigger</span>: code tự chạy khi có record mới. Ví dụ trong tài liệu: bảng <i>Customers</i> bật stream, Lambda xử lý item mới và gọi <b>Amazon SES</b> gửi email chào mừng. Lambda xử lý mỗi shard theo thứ tự, theo dõi cha–con của shard; <code>ParallelizationFactor</code> tới <b>10</b> instance/shard mà vẫn giữ thứ tự theo item; có thể <b>lọc sự kiện</b> (event filtering) để giảm chi phí. Ứng dụng khác: sao chép dữ liệu trong/khác Region, <b>materialized view</b>, đẩy sang hệ thống phân tích/tìm kiếm.</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Database.svg" alt="">AWS Cloud – Region</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Mobile-client.svg" alt="">Ứng dụng<small>PutItem khách hàng mới</small></div>
+            <span class="arrow">ghi</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Table.svg" alt="">Bảng Customers<small>stream: NEW_IMAGE</small></div>
+            <span class="arrow">stream record (≤ 24 giờ)</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Stream.svg" alt="">DynamoDB Streams<small>shard theo partition</small></div>
+            <span class="arrow">event source mapping</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda<small>lọc INSERT có EmailAddress</small></div>
+            <span class="arrow">SendEmail</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Email-Service.svg" alt="">Amazon SES<small>email chào mừng</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Item.svg" alt="">Item hết hạn (TTL)<small>expireAt &lt; now</small></div>
+            <span class="arrow dashed">TTL xóa (không tốn WCU) ⇒ record “service delete”</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Stream.svg" alt="">Streams</div>
+            <span class="arrow dashed">Lambda</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier.svg" alt="">Lưu trữ lâu dài<small>vd archive sang S3</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Kiến trúc event-driven với DynamoDB Streams + Lambda: mọi thay đổi item sinh stream record, Lambda phản ứng gần thời gian thực (gửi email qua SES). Hàng dưới: item bị TTL xóa cũng đi vào stream dưới dạng <i>service deletion</i> – có thể dùng Lambda để archive dữ liệu hết hạn trước khi mất hẳn.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>DynamoDB Streams</th><th>Kinesis Data Streams for DynamoDB</th></tr></thead>
+        <tbody>
+          <tr><td>Thời gian lưu</td><td><b>24 giờ</b> (cố định)</td><td>Theo cấu hình Kinesis, tới <b>1 năm</b> (kiến thức phổ biến – Bài 35)</td></tr>
+          <tr><td>Số consumer</td><td>≤ 2 tiến trình đọc / shard</td><td>Nhiều consumer hơn, có enhanced fan-out (kiến thức phổ biến)</td></tr>
+          <tr><td>Thứ tự / trùng lặp</td><td>Exactly once, đúng thứ tự từng item</td><td>Có thể trùng lặp, cần xử lý theo timestamp (kiến thức phổ biến)</td></tr>
+          <tr><td>Khi chọn</td><td>Lambda trigger đơn giản, chi phí thấp</td><td>Cần lưu lâu, nhiều ứng dụng tiêu thụ, tích hợp Firehose/analytics</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Time to Live (TTL) – tự xóa item hết hạn</h3>
+      <ul>
+        <li><span class="t" data-vi="Thời gian sống của item">Time to Live (TTL)</span> là cách <b>cost-effective</b> để xóa item không còn cần: bật TTL trên bảng và chỉ định <b>một attribute</b> chứa thời điểm hết hạn.</li>
+        <li>Attribute phải kiểu <b>Number</b>, định dạng <b>Unix epoch time tính bằng giây</b>; kiểu khác ⇒ bị TTL bỏ qua.</li>
+        <li>DynamoDB xóa item hết hạn <b>trong vòng vài ngày</b> sau thời điểm hết hạn – <b>không tốn write throughput</b> (miễn phí thao tác xóa).</li>
+        <li>Item đã hết hạn nhưng <b>chưa bị xóa vẫn xuất hiện</b> khi đọc ⇒ dùng <b>filter expression</b> để loại khỏi kết quả Query/Scan. Có thể cập nhật/gia hạn item trước khi bị xóa.</li>
+        <li>Item bị TTL xóa cũng bị xóa khỏi LSI/GSI và đi vào Streams dưới dạng <b>service deletion</b> (không phải user delete).</li>
+        <li>Global tables (MREC): xóa TTL được <b>sao chép</b> sang các replica – Region gốc không tốn WCU nhưng các Region khác tính <b>replicated write</b>. MRSC <b>không hỗ trợ</b> TTL.</li>
+        <li>Use case: session hết hạn, token, log/sự kiện tạm, dữ liệu cần xóa theo chính sách lưu giữ.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>TTL <b>không xóa đúng giây</b> hết hạn – có thể trễ vài ngày. Yêu cầu “không bao giờ trả về dữ liệu hết hạn” ⇒ thêm <b>filter expression</b> khi đọc.</li>
+          <li>Đặt TTL attribute dạng chuỗi ISO 8601 (vd <code>"2026-10-31T10:00:00Z"</code>) ⇒ <b>không có tác dụng</b>; phải là Number epoch seconds.</li>
+          <li>Dùng cron Lambda <code>Scan</code> + <code>DeleteItem</code> để dọn dữ liệu cũ ⇒ tốn WCU, nhiều công vận hành; đáp án tốt hơn là <b>TTL</b>.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>React to every insert/update in a DynamoDB table</i>”, “<i>trigger a workflow / send notification when an item changes</i>” ⇒ <b>DynamoDB Streams + Lambda</b>.</li>
+          <li>“<i>Automatically delete session data after 24 hours, no extra cost</i>” ⇒ <b>TTL</b>.</li>
+          <li>“<i>Archive expired items to S3 before they are gone</i>” ⇒ <b>TTL + Streams + Lambda</b> (lọc record service deletion) ghi ra S3.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: GLOBAL TABLES ===================== -->
+      <h2 id="global-tables"><img src="../assets/icons/cat/Database.svg" alt="">Global Tables – multi-Region, multi-active</h2>
+      <p class="lead"><span class="t" data-vi="Bảng toàn cầu">Global tables</span> là tính năng fully managed tự <b>sao chép bảng DynamoDB qua nhiều Region</b> (và tùy chọn qua nhiều account) mà không cần tự xây giải pháp replication. Đây là kiến trúc <span class="t" data-vi="Đa chủ – mọi bản sao đều nhận ghi">multi-active</span>: <b>mọi replica đều đọc và ghi được</b>, không có bảng “primary”, nên <b>không có failover phức tạp</b> hay downtime khi chuyển ứng dụng giữa các Region.</p>
+
+      <h3>Khái niệm chính</h3>
+      <ul>
+        <li><span class="t" data-vi="Bảng bản sao">Replica table</span>: một bảng DynamoDB thuộc global table; global table gồm <b>≥ 2 replica</b> ở các Region khác nhau, <b>tối đa 1 replica / Region</b>. Mọi replica có cùng tên bảng, key schema, dữ liệu.</li>
+        <li>Version hiện tại: <b>2019.11.21 (Current)</b> – nên dùng; 2017.11.29 là Legacy.</li>
+        <li>SLA <b>99,999%</b> (so với 99,99% của bảng một Region). Mỗi replica có cùng độ bền và độ sẵn sàng như bảng một Region.</li>
+        <li>Dùng chính API DynamoDB hiện có ⇒ <b>không cần đổi ứng dụng</b>; trả tiền theo tài nguyên dùng, không phí trả trước. Có ở mọi Region của DynamoDB.</li>
+        <li>Replication <b>tốn write capacity</b> ở replica đích (replicated write). Provisioned: auto scaling ghi được đồng bộ giữa các replica; on-demand: write capacity tự đồng bộ.</li>
+        <li>Đồng bộ luôn: capacity mode, write capacity, GSI, TTL, kiểu SSE… <b>Không đồng bộ</b>: <b>PITR</b>, deletion protection, tag, resource policy – phải bật PITR <b>trên từng replica</b>.</li>
+        <li>Ghi vào replica <b>bỏ qua DAX</b> ⇒ cache DAX ở Region khác có thể cũ cho tới khi TTL cache hết hạn.</li>
+      </ul>
+
+      <h3>Hai consistency mode: MREC vs MRSC</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Multi-Region eventual consistency (MREC) – mặc định</th><th>Multi-Region strong consistency (MRSC)</th></tr></thead>
+        <tbody>
+          <tr><td>Cách sao chép</td><td><b>Bất đồng bộ</b>, thường <b>≤ 1 giây</b> (qua DynamoDB Streams – luôn bật, không tắt được)</td><td><b>Đồng bộ</b> tới ít nhất một Region khác <b>trước khi</b> trả thành công</td></tr>
+          <tr><td>Xung đột ghi đồng thời</td><td><span class="t" data-vi="Ghi sau cùng thắng">Last writer wins</span> theo timestamp nội bộ, từng item</td><td>Ghi vào item đang được sửa ở Region khác ⇒ <code>ReplicatedWriteConflictException</code> (retry được)</td></tr>
+          <tr><td>Strongly consistent read</td><td>Chỉ mới nhất nếu item được ghi <b>ở cùng Region</b>; có thể cũ nếu ghi ở Region khác</td><td class="yes">Luôn trả bản <b>mới nhất</b> ở <b>mọi</b> replica</td></tr>
+          <tr><td>RPO</td><td>Bằng độ trễ replication (thường vài giây)</td><td class="yes"><b>RPO = 0</b></td></tr>
+          <tr><td>Độ trễ ghi</td><td class="yes">Thấp hơn</td><td>Cao hơn (cần round-trip liên Region)</td></tr>
+          <tr><td>Số Region</td><td>Bao nhiêu Region tùy ý; thêm/bớt replica bất cứ lúc nào</td><td><b>Đúng 3 Region</b>: 3 replica, hoặc 2 replica + 1 <span class="t" data-vi="Nhân chứng – chỉ giữ dữ liệu để bỏ phiếu">witness</span>; bảng gốc phải <b>rỗng</b> khi chuyển đổi</td></tr>
+          <tr><td>Hạn chế</td><td>Transaction chỉ atomic trong Region gọi</td><td>Không hỗ trợ <b>TTL</b>, <b>LSI</b>, <b>transaction</b>; chỉ same-account</td></tr>
+        </tbody>
+      </table></div>
+      <p>Consistency mode chọn <b>lúc tạo</b>, <b>không đổi được</b> sau đó; mọi replica phải cùng mode. Giám sát MREC bằng metric CloudWatch <code>ReplicationLatency</code>; kiểm thử cô lập Region bằng <b>AWS Fault Injection Service</b>.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 320" width="800" role="img" aria-label="DynamoDB global table với ba replica multi-active">
+          <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="15" y="20" width="230" height="280" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="28" y="42" font-size="12" font-weight="700" style="fill:#147EBA">Region: us-east-1</text>
+          <image href="../assets/icons/res/Users.svg" x="40" y="65" width="40" height="40"/>
+          <text x="60" y="120" font-size="10" text-anchor="middle">Người dùng Mỹ</text>
+          <image href="../assets/icons/res/Amazon-DynamoDB_Table.svg" x="105" y="160" width="50" height="50"/>
+          <text x="130" y="226" font-size="11" text-anchor="middle" font-weight="700">Replica (đọc + ghi)</text>
+          <path class="line-o" d="M70 125 L115 160" marker-end="url(#ah3)"/>
+          <rect x="285" y="20" width="230" height="280" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="298" y="42" font-size="12" font-weight="700" style="fill:#7AA116">Region: eu-west-1</text>
+          <image href="../assets/icons/res/Users.svg" x="310" y="65" width="40" height="40"/>
+          <text x="330" y="120" font-size="10" text-anchor="middle">Người dùng châu Âu</text>
+          <image href="../assets/icons/res/Amazon-DynamoDB_Table.svg" x="375" y="160" width="50" height="50"/>
+          <text x="400" y="226" font-size="11" text-anchor="middle" font-weight="700">Replica (đọc + ghi)</text>
+          <path class="line-o" d="M340 125 L385 160" marker-end="url(#ah3)"/>
+          <rect x="555" y="20" width="230" height="280" rx="8" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <text x="568" y="42" font-size="12" font-weight="700" style="fill:#DD344C">Region: ap-southeast-1</text>
+          <image href="../assets/icons/res/Users.svg" x="580" y="65" width="40" height="40"/>
+          <text x="600" y="120" font-size="10" text-anchor="middle">Người dùng châu Á</text>
+          <image href="../assets/icons/res/Amazon-DynamoDB_Table.svg" x="645" y="160" width="50" height="50"/>
+          <text x="670" y="226" font-size="11" text-anchor="middle" font-weight="700">Replica (đọc + ghi)</text>
+          <path class="line-o" d="M610 125 L655 160" marker-end="url(#ah3)"/>
+          <path class="line-o" d="M160 180 L370 180" marker-start="url(#ah3)" marker-end="url(#ah3)"/>
+          <path class="line-o" d="M430 180 L640 180" marker-start="url(#ah3)" marker-end="url(#ah3)"/>
+          <path class="line-o" d="M130 230 Q400 330 670 230" fill="none" marker-start="url(#ah3)" marker-end="url(#ah3)"/>
+          <text x="265" y="172" font-size="10" text-anchor="middle" class="muted">MREC: async ≤ ~1 s</text>
+          <text x="535" y="172" font-size="10" text-anchor="middle" class="muted">last writer wins</text>
+          <text x="400" y="272" font-size="10" text-anchor="middle" class="muted">MRSC: sync, đúng 3 Region, RPO 0</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> Global table với 3 replica: người dùng mỗi châu lục đọc <b>và ghi</b> vào replica gần nhất (single-digit ms local). MREC sao chép bất đồng bộ (thường ≤ 1 giây), giải quyết xung đột bằng last writer wins; MRSC sao chép đồng bộ trong đúng 3 Region cho RPO = 0. Region sự cố ⇒ chỉ cần chuyển traffic sang Region khác, không cần promote.</figcaption>
+      </figure>
+
+      <h3>Global Tables vs Aurora Global Database</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/Amazon-Aurora.svg" alt="">Aurora Global Database (Bài 27)</h4>
+          <ul>
+            <li>CSDL <b>quan hệ</b>; 1 Region <b>ghi</b> + ≤ 10 Region <b>chỉ đọc</b> (write forwarding tùy chọn).</li>
+            <li>DR cần <b>switchover/failover</b>: RPO giây, RTO phút.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">DynamoDB Global Tables</h4>
+          <ul>
+            <li><b>NoSQL</b>; <b>mọi Region đều ghi</b> (multi-active), SLA 99,999%.</li>
+            <li>Không cần promote – chuyển traffic là xong; MRSC cho <b>RPO = 0</b>.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Users worldwide need low-latency reads <b>and writes</b></i>”, “<i>multi-Region active-active</i>”, “<i>99.999% availability</i>” với dữ liệu key-value ⇒ <b>DynamoDB Global Tables</b>.</li>
+          <li>“<i>Strongly consistent reads across Regions</i>”, “<i>RPO of zero</i>” ⇒ global table <b>MRSC</b>; còn lại (độ trễ ghi thấp, chấp nhận RPO &gt; 0) ⇒ <b>MREC</b> (mặc định).</li>
+          <li>Đừng chọn “DynamoDB Streams + Lambda tự sao chép sang Region khác” khi đề hỏi <b>least operational overhead</b> – Global Tables đã làm sẵn.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: BACKUP & SECURITY ===================== -->
+      <h2 id="backup-security"><img src="../assets/icons/svc/AWS-Backup.svg" alt="">Sao lưu (PITR, on-demand backup) và bảo mật</h2>
+      <p class="lead">Mặc định DynamoDB đã sao chép dữ liệu qua 3 AZ, nhưng điều đó <b>không</b> chống được lỗi người dùng (xóa nhầm, ghi đè sai). Hai cơ chế sao lưu: <span class="t" data-vi="Khôi phục về một thời điểm">point-in-time recovery (PITR)</span> và <span class="t" data-vi="Sao lưu theo yêu cầu">on-demand backup</span>.</p>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/AWS-Backup_Recovery-Point-Objective.svg" alt="">PITR – continuous backups</h4>
+          <ul>
+            <li>Backup <b>liên tục, tự động</b>, khôi phục tới <b>bất kỳ giây nào</b> trong cửa sổ <b>1–35 ngày</b> (<code>RecoveryPeriodInDays</code>, mặc định 35). Phải <b>bật</b> trên bảng.</li>
+            <li>Khôi phục luôn tạo <b>bảng mới</b>; có thể restore <b>sang Region khác</b>.</li>
+            <li><b>Không tốn provisioned capacity</b>, không ảnh hưởng hiệu năng/availability.</li>
+            <li>Giá theo kích thước bảng + LSI (rút ngắn cửa sổ không giảm giá). Tắt rồi bật lại ⇒ <b>reset</b> mốc khôi phục.</li>
+            <li>Global table: bật PITR <b>trên từng replica</b>; restore ra bảng độc lập.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Backup_Backup-Vault.svg" alt="">On-demand backup &amp; AWS Backup</h4>
+          <ul>
+            <li>Bản backup <b>đầy đủ</b>, giữ <b>lâu dài</b> cho lưu trữ/tuân thủ; mọi kích thước bảng, không ảnh hưởng hiệu năng.</li>
+            <li>Tích hợp <b>AWS Backup</b> (Bài 19): lên lịch, copy <b>cross-account / cross-Region</b>, tag, vòng đời, chuyển backup cũ sang <b>cold storage</b>.</li>
+            <li>Giới hạn: 50 restore đồng thời, tổng 50 TB (AWS Backup: 25 TB).</li>
+          </ul></div>
+      </div>
+
+      <h3>Bảo mật và tích hợp</h3>
+      <ul>
+        <li><b>IAM</b> là cơ chế xác thực duy nhất – <b>không có user/password</b> DB. Hỗ trợ <b>fine-grained access control</b> tới mức <b>item / attribute</b> (vd điều kiện <code>dynamodb:LeadingKeys</code> = ID người dùng – kiến thức phổ biến), <b>resource-based policy</b> + IAM Access Analyzer + <b>Block Public Access</b>.</li>
+        <li><b>Encryption at rest</b> <b>luôn bật mặc định</b> bằng KMS: <b>AWS owned key</b> (mặc định, miễn phí), <b>AWS managed key</b> hoặc <b>customer managed key</b>. Mã hóa phía client: AWS Database Encryption SDK.</li>
+        <li>Truy cập riêng tư từ VPC: <b>gateway endpoint</b> cho DynamoDB (miễn phí, qua route table – Bài 22) hoặc interface endpoint.</li>
+        <li>Tuân thủ HIPAA, PCI DSS, GDPR. Ghi log API bằng <b>CloudTrail</b>.</li>
+        <li><b>Export to S3</b> (full hoặc incremental, không ảnh hưởng bảng – dùng cho analytics với Athena) và <b>import from S3</b> vào bảng mới; <b>zero-ETL</b> sang Amazon Redshift và OpenSearch Service không ảnh hưởng production.</li>
+        <li><b>ACID transactions</b> (<code>TransactWriteItems</code>/<code>TransactGetItems</code>): thay đổi all-or-nothing nhiều item, nhiều bảng trong một request.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Accidental deletes/overwrites; restore to any second in the last 35 days</i>” ⇒ <b>PITR</b> (restore ra bảng mới).</li>
+          <li>“<i>Retain backups for years for compliance</i>”, “<i>copy backups to another account/Region</i>” ⇒ <b>on-demand backup qua AWS Backup</b>.</li>
+          <li>“<i>EC2 in private subnet must reach DynamoDB without internet/NAT, at no extra cost</i>” ⇒ <b>gateway VPC endpoint</b>.</li>
+          <li>“<i>Run complex analytics on DynamoDB data without impacting the table</i>” ⇒ <b>export to S3</b> (+ Athena) hoặc <b>zero-ETL</b> sang Redshift.</li>
+          <li>“<i>Each user may only access items whose partition key equals their user ID</i>” ⇒ IAM <b>fine-grained access control</b> (thường kết hợp Cognito – Bài 7).</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>DynamoDB</b> = NoSQL <b>serverless</b>, key-value &amp; document, <b>single-digit ms</b> mọi quy mô, sao chép <b>3 AZ</b>, SLA 99,99%, không version/maintenance window, <b>không JOIN</b>, chỉ xác thực bằng <b>IAM</b>, mã hóa at rest mặc định.</li>
+          <li><b>Primary key</b>: partition key (hash) hoặc partition + sort key (range). Partition: ≤ <b>3.000 RU/s + 1.000 WU/s</b>; key cardinality cao, write sharding để tránh <b>hot partition</b>. Item ≤ <b>400 KB</b> (lớn hơn ⇒ S3 + lưu key).</li>
+          <li><b>RCU</b> = 1 strongly / 2 eventually read/s cho 4 KB; <b>WCU</b> = 1 write/s cho 1 KB; transactional ×2. Eventually consistent rẻ một nửa.</li>
+          <li><b>On-demand</b> (mặc định): trả theo request, tức thì gấp đôi đỉnh trước; <b>provisioned</b>: trả theo giờ, auto scaling (target 70%), reserved capacity. Provisioned→on-demand ≤ 4 lần/24 h. <b>Standard-IA</b> khi storage chiếm chủ yếu chi phí.</li>
+          <li><b>GSI</b>: khóa bất kỳ, thêm/xóa lúc nào, chỉ eventually consistent, throughput riêng, 20/bảng. <b>LSI</b>: cùng partition key, chỉ tạo lúc tạo bảng, hỗ trợ strongly consistent, ≤ 10 GB/partition key, 5/bảng.</li>
+          <li><b>DAX</b>: cache micro-giây, API-compatible, write-through, item cache TTL 5 phút, ≤ 11 node, production ≥ 3 node / 3 AZ, trong VPC; không cho strongly consistent / write-heavy.</li>
+          <li><b>Streams</b>: CDC 24 giờ, exactly once, thứ tự theo item, 4 view type, Lambda trigger. <b>TTL</b>: epoch seconds kiểu Number, xóa trong vài ngày, không tốn WCU, vào stream như service delete.</li>
+          <li><b>Global Tables</b>: multi-Region <b>multi-active</b>, SLA 99,999%; <b>MREC</b> (mặc định, async ≤ 1 s, last writer wins) vs <b>MRSC</b> (sync, đúng 3 Region, RPO 0, không TTL/LSI/transaction). <b>PITR</b>: từng giây, 1–35 ngày, restore ra bảng mới; on-demand backup + AWS Backup cho lưu lâu dài.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Amazon DynamoDB</dt><dd><b>CSDL NoSQL serverless của AWS</b> – key-value &amp; document, single-digit ms.</dd></div>
+        <div><dt>NoSQL / Key-value / Document</dt><dd><b>CSDL phi quan hệ / Khóa – giá trị / Tài liệu</b> – mô hình dữ liệu không JOIN, schema linh hoạt.</dd></div>
+        <div><dt>Table / Item / Attribute</dt><dd><b>Bảng / Mục / Thuộc tính</b> – tương đương bảng / hàng / cột; item ≤ 400 KB.</dd></div>
+        <div><dt>Partition key (hash attribute)</dt><dd><b>Khóa phân vùng</b> – được băm để chọn partition lưu item.</dd></div>
+        <div><dt>Sort key (range attribute)</dt><dd><b>Khóa sắp xếp</b> – sắp xếp item cùng partition key.</dd></div>
+        <div><dt>Composite primary key</dt><dd><b>Khóa chính tổng hợp</b> – partition key + sort key.</dd></div>
+        <div><dt>Hot partition / Write sharding</dt><dd><b>Phân vùng nóng / Chia nhỏ ghi</b> – tải dồn vào một key / thêm hậu tố để rải tải.</dd></div>
+        <div><dt>Adaptive capacity</dt><dd><b>Năng lực thích ứng</b> – tự cân bằng capacity cho partition nóng.</dd></div>
+        <div><dt>Eventually / Strongly consistent read</dt><dd><b>Đọc nhất quán cuối cùng / Đọc nhất quán mạnh</b> – mặc định, rẻ một nửa / luôn mới nhất (chỉ table, LSI).</dd></div>
+        <div><dt>Read / Write capacity unit (RCU / WCU)</dt><dd><b>Đơn vị năng lực đọc / ghi</b> – 4 KB (1 strongly hoặc 2 eventually) / 1 KB mỗi giây.</dd></div>
+        <div><dt>Read / Write request unit (RRU / WRU)</dt><dd><b>Đơn vị request đọc / ghi</b> – đơn vị tính tiền của on-demand.</dd></div>
+        <div><dt>On-demand / Provisioned capacity mode</dt><dd><b>Chế độ theo nhu cầu / Chế độ cấp phát trước</b> – trả theo request / trả theo giờ cho RCU/WCU.</dd></div>
+        <div><dt>Throttling</dt><dd><b>Bóp băng thông</b> – request bị từ chối khi vượt capacity.</dd></div>
+        <div><dt>Warm throughput</dt><dd><b>Thông lượng “ấm”</b> – mức bảng phục vụ tức thì; pre-warm trước sự kiện lớn.</dd></div>
+        <div><dt>Reserved capacity (DynamoDB)</dt><dd><b>Năng lực đặt trước</b> – cam kết RCU/WCU provisioned để giảm giá.</dd></div>
+        <div><dt>Table class (Standard / Standard-IA)</dt><dd><b>Lớp bảng</b> – Standard-IA rẻ storage, đắt request.</dd></div>
+        <div><dt>Global secondary index (GSI)</dt><dd><b>Chỉ mục phụ toàn cục</b> – khóa bất kỳ, thêm lúc nào, eventually consistent.</dd></div>
+        <div><dt>Local secondary index (LSI)</dt><dd><b>Chỉ mục phụ cục bộ</b> – cùng partition key, tạo cùng bảng, strongly consistent được.</dd></div>
+        <div><dt>Projected attributes</dt><dd><b>Thuộc tính được chiếu</b> – KEYS_ONLY / INCLUDE / ALL.</dd></div>
+        <div><dt>DynamoDB Accelerator (DAX)</dt><dd><b>Bộ tăng tốc DynamoDB</b> – cache in-memory micro-giây.</dd></div>
+        <div><dt>Item cache / Query cache</dt><dd><b>Bộ đệm item / Bộ đệm truy vấn</b> – GetItem / Query-Scan; TTL item mặc định 5 phút.</dd></div>
+        <div><dt>Write-through</dt><dd><b>Ghi xuyên</b> – ghi bảng rồi cập nhật cache trong cùng thao tác.</dd></div>
+        <div><dt>DynamoDB Streams / Stream record</dt><dd><b>Luồng thay đổi / Bản ghi luồng</b> – CDC giữ 24 giờ.</dd></div>
+        <div><dt>StreamViewType</dt><dd><b>Kiểu nội dung luồng</b> – KEYS_ONLY, NEW_IMAGE, OLD_IMAGE, NEW_AND_OLD_IMAGES.</dd></div>
+        <div><dt>Change data capture (CDC)</dt><dd><b>Thu thập dữ liệu thay đổi</b>.</dd></div>
+        <div><dt>Time to Live (TTL – DynamoDB)</dt><dd><b>Thời gian sống của item</b> – epoch giây, tự xóa trong vài ngày, không tốn WCU.</dd></div>
+        <div><dt>Global table / Replica table</dt><dd><b>Bảng toàn cầu / Bảng bản sao</b> – multi-Region, multi-active.</dd></div>
+        <div><dt>MREC / MRSC</dt><dd><b>Nhất quán cuối cùng đa Region / Nhất quán mạnh đa Region</b>.</dd></div>
+        <div><dt>Last writer wins</dt><dd><b>Ghi sau cùng thắng</b> – cách MREC giải quyết xung đột.</dd></div>
+        <div><dt>Witness</dt><dd><b>Nhân chứng</b> – thành phần MRSC giữ dữ liệu, không đọc/ghi được.</dd></div>
+        <div><dt>Fine-grained access control</dt><dd><b>Kiểm soát truy cập chi tiết</b> – IAM tới mức item/attribute.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A startup is launching a mobile game. The number of players is unknown and traffic is expected to be extremely spiky, with long idle periods between events. The company needs a key-value database with single-digit millisecond latency and wants to pay only for the reads and writes that the application actually performs, with the LEAST operational overhead. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon RDS for MySQL with storage autoscaling and a read replica.</li>
+            <li data-k="B">Amazon DynamoDB in provisioned capacity mode with auto scaling and a target utilization of 70%.</li>
+            <li data-k="C">Amazon DynamoDB in on-demand capacity mode.</li>
+            <li data-k="D">Apache Cassandra on an Auto Scaling group of Amazon EC2 instances.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>On-demand</b> là chế độ mặc định, tính tiền <b>theo request</b>, không cần capacity planning, tự scale tức thì tới gấp đôi đỉnh trước đó và <b>không tốn phí throughput khi không có traffic</b> – đúng với workload không dự đoán được. <b>A sai</b>: CSDL quan hệ, phải quản lý instance, trả tiền instance cả khi rảnh. <b>B sai</b>: provisioned trả theo giờ cho capacity cấp phát (kể cả lúc idle), auto scaling phản ứng chậm (vượt target 2 phút liên tiếp) với spike đột ngột. <b>D sai</b>: tự vận hành cluster trên EC2 – overhead cao nhất.</div>
+          <div class="trans">
+            <div class="tq">Một startup sắp ra mắt game di động. Số lượng người chơi chưa biết trước và lưu lượng dự kiến tăng đột biến cực mạnh, với những khoảng nhàn rỗi dài giữa các sự kiện. Công ty cần một cơ sở dữ liệu key-value có độ trễ một chữ số mili-giây và chỉ muốn trả tiền cho các lượt đọc và ghi mà ứng dụng thực sự thực hiện, với LEAST operational overhead (ít công vận hành nhất). Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon RDS for MySQL với storage autoscaling và một read replica.</span><span class="why">Sai: là CSDL quan hệ, phải quản lý instance và trả tiền instance cả khi nhàn rỗi.</span></li>
+              <li data-k="B"><span class="tv">Amazon DynamoDB ở provisioned capacity mode với auto scaling và target utilization 70%.</span><span class="why">Sai: provisioned trả tiền theo giờ cho capacity cấp phát (kể cả lúc idle), và auto scaling phản ứng chậm với spike đột ngột.</span></li>
+              <li data-k="C"><span class="tv">Amazon DynamoDB ở on-demand capacity mode.</span><span class="why">Đúng: on-demand tính tiền theo request, không cần capacity planning, tự scale tức thì và không tốn phí throughput khi không có traffic.</span></li>
+              <li data-k="D"><span class="tv">Apache Cassandra trên một Auto Scaling group gồm các Amazon EC2 instance.</span><span class="why">Sai: tự vận hành cluster trên EC2 – overhead cao nhất và vẫn trả tiền instance khi nhàn rỗi.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">An application reads 100 items per second from an Amazon DynamoDB table that uses provisioned capacity mode. Each item is 6 KB. The application requires strongly consistent reads. How many read capacity units (RCUs) must be provisioned?</div>
+          <ol class="opts">
+            <li data-k="A">200 RCUs</li>
+            <li data-k="B">100 RCUs</li>
+            <li data-k="C">150 RCUs</li>
+            <li data-k="D">600 RCUs</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> 1 RCU = 1 strongly consistent read/giây cho item tới 4 KB. 6 KB / 4 KB = 1,5 ⇒ <b>làm tròn lên 2 RCU</b> mỗi lần đọc ⇒ 2 × 100 = <b>200 RCU</b>. <b>B sai</b>: đó là đáp án nếu đọc <b>eventually consistent</b> (200 / 2). <b>C sai</b>: dùng 1,5 mà không làm tròn lên. <b>D sai</b>: chia theo 1 KB – đó là cách tính WCU, không phải RCU.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng đọc 100 item mỗi giây từ một bảng Amazon DynamoDB dùng provisioned capacity mode. Mỗi item có kích thước 6 KB. Ứng dụng yêu cầu strongly consistent read. Cần cấp phát bao nhiêu read capacity unit (RCU)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">200 RCU</span><span class="why">Đúng: 1 RCU = 1 strongly consistent read/giây cho item tới 4 KB; 6 KB / 4 KB = 1,5 làm tròn lên 2 ⇒ 2 × 100 = 200 RCU.</span></li>
+              <li data-k="B"><span class="tv">100 RCU</span><span class="why">Sai: đây là kết quả nếu đọc eventually consistent (200 / 2), trong khi đề yêu cầu strongly consistent.</span></li>
+              <li data-k="C"><span class="tv">150 RCU</span><span class="why">Sai: dùng 1,5 mà không làm tròn lên – DynamoDB luôn làm tròn kích thước item lên bội số 4 KB.</span></li>
+              <li data-k="D"><span class="tv">600 RCU</span><span class="why">Sai: chia theo đơn vị 1 KB – đó là cách tính WCU, không phải RCU.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An e-commerce company stores product data in an Amazon DynamoDB table. During a one-day flash sale, millions of customers repeatedly read the same few product items, and the application now requires response times in microseconds. The application can tolerate eventually consistent reads and the team wants to make minimal code changes. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Switch the table to on-demand capacity mode.</li>
+            <li data-k="B">Create a global secondary index on the product category attribute.</li>
+            <li data-k="C">Deploy an Amazon ElastiCache cluster and implement lazy-loading logic in the application.</li>
+            <li data-k="D">Deploy a DynamoDB Accelerator (DAX) cluster with at least three nodes across Availability Zones and point the application to the DAX client.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>DAX</b> là cache in-memory <b>tương thích API DynamoDB</b>, giảm độ trễ đọc eventually consistent từ mili-giây xuống <b>micro-giây</b>, rất hợp với <b>hot key</b> (tài liệu nêu đúng ví dụ sale một ngày). Chỉ cần dùng DAX client – ít đổi code; production nên ≥ 3 node ở 3 AZ. <b>A sai</b>: on-demand không đưa latency xuống micro-giây và không giải quyết hot partition. <b>B sai</b>: GSI phục vụ truy vấn theo khóa khác, không phải cache. <b>C sai</b>: ElastiCache dùng được nhưng phải tự viết logic cache – nhiều thay đổi code hơn DAX.</div>
+          <div class="trans">
+            <div class="tq">Một công ty thương mại điện tử lưu dữ liệu sản phẩm trong một bảng Amazon DynamoDB. Trong đợt flash sale kéo dài một ngày, hàng triệu khách hàng liên tục đọc cùng một vài item sản phẩm, và ứng dụng giờ yêu cầu thời gian phản hồi ở mức micro-giây. Ứng dụng chấp nhận eventually consistent read và nhóm muốn thay đổi mã nguồn ít nhất. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển bảng sang on-demand capacity mode.</span><span class="why">Sai: on-demand không đưa độ trễ xuống micro-giây và không giải quyết hot key.</span></li>
+              <li data-k="B"><span class="tv">Tạo một global secondary index trên attribute danh mục sản phẩm.</span><span class="why">Sai: GSI phục vụ truy vấn theo khóa khác, không phải bộ nhớ đệm giảm độ trễ.</span></li>
+              <li data-k="C"><span class="tv">Triển khai một Amazon ElastiCache cluster và viết logic lazy-loading trong ứng dụng.</span><span class="why">Sai: dùng được nhưng phải tự viết logic cache ⇒ thay đổi code nhiều hơn DAX.</span></li>
+              <li data-k="D"><span class="tv">Triển khai một DynamoDB Accelerator (DAX) cluster với ít nhất ba node trải trên các Availability Zone và chuyển ứng dụng sang dùng DAX client.</span><span class="why">Đúng: DAX là cache in-memory tương thích API DynamoDB, đưa độ trễ đọc eventually consistent xuống micro-giây cho hot key, chỉ cần đổi sang DAX client.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company has a production DynamoDB table with the partition key CustomerId and the sort key OrderDate. A new reporting feature must query orders by OrderStatus across all customers. The table is already in production and contains several terabytes of data. Which solution meets this requirement MOST efficiently?</div>
+          <ol class="opts">
+            <li data-k="A">Add a local secondary index with OrderStatus as the sort key.</li>
+            <li data-k="B">Add a global secondary index with OrderStatus as the partition key and OrderDate as the sort key.</li>
+            <li data-k="C">Run a Scan operation with a filter expression on OrderStatus.</li>
+            <li data-k="D">Recreate the table with OrderStatus as the partition key.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>GSI</b> có partition key/sort key khác hẳn bảng gốc, truy vấn trên <b>mọi partition</b> và có thể <b>thêm vào bảng đang tồn tại</b>. <b>A sai</b>: LSI chỉ tạo được <b>lúc tạo bảng</b> và vẫn bị giới hạn trong một CustomerId (cùng partition key). <b>C sai</b>: Scan đọc toàn bộ bảng nhiều TB – chậm và tốn capacity. <b>D sai</b>: tạo lại bảng tốn công, và OrderStatus (ít giá trị) làm partition key chính sẽ gây hot partition.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có bảng DynamoDB production với partition key là CustomerId và sort key là OrderDate. Một tính năng báo cáo mới phải truy vấn đơn hàng theo OrderStatus trên tất cả khách hàng. Bảng đã chạy production và chứa vài terabyte dữ liệu. Giải pháp nào đáp ứng yêu cầu này MOST efficiently (hiệu quả nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một local secondary index với OrderStatus làm sort key.</span><span class="why">Sai: LSI chỉ tạo được lúc tạo bảng và vẫn bị giới hạn trong cùng một CustomerId (cùng partition key).</span></li>
+              <li data-k="B"><span class="tv">Thêm một global secondary index với OrderStatus làm partition key và OrderDate làm sort key.</span><span class="why">Đúng: GSI có khóa khác hẳn bảng gốc, truy vấn trên mọi partition và có thể thêm vào bảng đang tồn tại.</span></li>
+              <li data-k="C"><span class="tv">Chạy thao tác Scan với filter expression trên OrderStatus.</span><span class="why">Sai: Scan đọc toàn bộ bảng nhiều TB – chậm và tốn rất nhiều read capacity.</span></li>
+              <li data-k="D"><span class="tv">Tạo lại bảng với OrderStatus làm partition key.</span><span class="why">Sai: tạo lại bảng tốn công, và OrderStatus (ít giá trị) làm partition key sẽ gây hot partition.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,D">
+          <div class="qh">A company stores user session data in Amazon DynamoDB. Each session must be removed automatically 24 hours after the last activity, without consuming write capacity. In addition, when a session is removed, the session details must be archived to Amazon S3 for auditing. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Schedule an AWS Lambda function every hour to Scan the table and delete sessions older than 24 hours.</li>
+            <li data-k="B">Enable Time to Live (TTL) on the table and store the expiration time as a Number attribute in Unix epoch seconds, updated on each activity.</li>
+            <li data-k="C">Store the expiration time as an ISO 8601 string attribute and enable TTL on that attribute.</li>
+            <li data-k="D">Enable DynamoDB Streams and use an AWS Lambda function that processes TTL service deletion records and writes them to Amazon S3.</li>
+            <li data-k="E">Enable point-in-time recovery and export the table to Amazon S3 every 24 hours.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, D.</b> <b>TTL</b> (B) xóa item hết hạn <b>không tốn write throughput</b>; attribute phải là <b>Number, epoch seconds</b>. Item bị TTL xóa đi vào <b>DynamoDB Streams</b> dưới dạng <i>service deletion</i> ⇒ <b>Lambda</b> (D) đọc record (cần view type có OLD_IMAGE) và ghi sang S3. <b>A sai</b>: Scan + DeleteItem tốn RCU/WCU và tăng overhead. <b>C sai</b>: TTL bỏ qua attribute không phải kiểu Number. <b>E sai</b>: export định kỳ không xóa session và không ghi nhận đúng từng session bị xóa.</div>
+          <div class="trans">
+            <div class="tq">Một công ty lưu dữ liệu phiên người dùng (session) trong Amazon DynamoDB. Mỗi session phải tự động bị xóa sau 24 giờ kể từ lần hoạt động cuối, mà không tiêu tốn write capacity. Ngoài ra, khi một session bị xóa, chi tiết session phải được lưu trữ sang Amazon S3 để phục vụ kiểm toán. Solutions architect nên thực hiện HAI hành động nào? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Lên lịch một AWS Lambda function chạy mỗi giờ để Scan bảng và xóa các session cũ hơn 24 giờ.</span><span class="why">Sai: Scan và DeleteItem tốn RCU/WCU, vi phạm yêu cầu không tiêu tốn write capacity và tăng overhead.</span></li>
+              <li data-k="B"><span class="tv">Bật Time to Live (TTL) trên bảng và lưu thời điểm hết hạn dưới dạng attribute kiểu Number theo Unix epoch seconds, cập nhật ở mỗi lần hoạt động.</span><span class="why">Đúng: TTL tự xóa item hết hạn mà không tốn write throughput; attribute phải là Number theo epoch seconds.</span></li>
+              <li data-k="C"><span class="tv">Lưu thời điểm hết hạn dưới dạng attribute chuỗi ISO 8601 và bật TTL trên attribute đó.</span><span class="why">Sai: TTL bỏ qua attribute không phải kiểu Number, nên item sẽ không bao giờ bị xóa.</span></li>
+              <li data-k="D"><span class="tv">Bật DynamoDB Streams và dùng một AWS Lambda function xử lý các bản ghi xóa của dịch vụ TTL (service deletion) rồi ghi chúng vào Amazon S3.</span><span class="why">Đúng: item bị TTL xóa xuất hiện trong DynamoDB Streams dưới dạng service deletion ⇒ Lambda đọc record (có OLD_IMAGE) và lưu sang S3.</span></li>
+              <li data-k="E"><span class="tv">Bật point-in-time recovery và export bảng sang Amazon S3 mỗi 24 giờ.</span><span class="why">Sai: export định kỳ không xóa session và không ghi nhận chính xác từng session bị xóa.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A global social media application must provide single-digit millisecond read and write latency to users in North America, Europe, and Asia. If an entire AWS Region becomes unavailable, users must be able to continue writing data in another Region without a database promotion step. The company wants the solution with the LEAST operational overhead. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Use Amazon DynamoDB global tables with replicas in a Region on each continent, and route users to the nearest Region.</li>
+            <li data-k="B">Use an Amazon Aurora global database with write forwarding enabled in the secondary Regions.</li>
+            <li data-k="C">Use a DynamoDB table in one Region with DynamoDB Streams and AWS Lambda functions that copy changes to tables in other Regions.</li>
+            <li data-k="D">Use a DynamoDB table in one Region with a DAX cluster in each other Region.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Global tables</b> là kiến trúc <b>multi-active</b>: mọi replica <b>đọc và ghi</b> được với độ trễ local, <b>không có bảng primary</b> nên không cần failover/promote; SLA 99,999%; fully managed. <b>B sai</b>: Aurora Global Database chỉ có <b>một Region ghi</b>; write forwarding vẫn gửi ghi về Region chính (latency cao) và khi Region chính sập cần failover. <b>C sai</b>: tự xây replication – nhiều overhead, phải tự xử lý xung đột. <b>D sai</b>: DAX chỉ phục vụ bảng <b>cùng Region</b> và không giúp ghi.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng mạng xã hội toàn cầu phải cung cấp độ trễ đọc và ghi một chữ số mili-giây cho người dùng ở Bắc Mỹ, châu Âu và châu Á. Nếu cả một AWS Region không khả dụng, người dùng phải có thể tiếp tục ghi dữ liệu ở Region khác mà không cần bước promote cơ sở dữ liệu. Công ty muốn giải pháp có LEAST operational overhead (ít công vận hành nhất). Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng Amazon DynamoDB global tables với replica ở một Region trên mỗi châu lục, và định tuyến người dùng tới Region gần nhất.</span><span class="why">Đúng: global tables là kiến trúc multi-active – mọi replica đọc/ghi được với độ trễ local, không có bảng primary nên không cần promote; fully managed.</span></li>
+              <li data-k="B"><span class="tv">Dùng Amazon Aurora global database với write forwarding bật ở các Region phụ.</span><span class="why">Sai: Aurora Global Database chỉ có một Region ghi; write forwarding vẫn gửi ghi về Region chính (độ trễ cao) và cần failover khi Region chính sập.</span></li>
+              <li data-k="C"><span class="tv">Dùng một bảng DynamoDB ở một Region với DynamoDB Streams và AWS Lambda function sao chép thay đổi sang các bảng ở Region khác.</span><span class="why">Sai: tự xây replication – nhiều công vận hành và phải tự xử lý xung đột ghi.</span></li>
+              <li data-k="D"><span class="tv">Dùng một bảng DynamoDB ở một Region với một DAX cluster ở mỗi Region còn lại.</span><span class="why">Sai: DAX chỉ phục vụ bảng trong cùng Region và không giúp ghi khi Region chính sập.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A financial services company is designing a multi-Region application on Amazon DynamoDB. Regulations require that a read in any Region always returns the most recent committed value and that no committed data is lost if a Region fails (RPO of zero). The company accepts higher write latency. Which configuration should a solutions architect choose?</div>
+          <ol class="opts">
+            <li data-k="A">A global table that uses multi-Region eventual consistency (MREC) with replicas in two Regions.</li>
+            <li data-k="B">A single-Region table with point-in-time recovery and cross-Region restore.</li>
+            <li data-k="C">A global table that uses multi-Region strong consistency (MRSC) deployed across three Regions.</li>
+            <li data-k="D">A global table that uses MREC with strongly consistent reads enabled in every Region.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>MRSC</b> sao chép <b>đồng bộ</b> tới ít nhất một Region khác trước khi trả thành công, strongly consistent read ở <b>mọi replica</b> luôn trả bản mới nhất, hỗ trợ <b>RPO = 0</b>; phải triển khai <b>đúng 3 Region</b> (3 replica hoặc 2 replica + witness) và chấp nhận latency ghi cao hơn. <b>A sai</b>: MREC bất đồng bộ, RPO bằng độ trễ replication (&gt; 0). <b>B sai</b>: restore PITR mất thời gian và mất dữ liệu sau lần sao lưu gần nhất ở Region khác. <b>D sai</b>: với MREC, strongly consistent read có thể trả dữ liệu cũ nếu item được ghi ở Region khác.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dịch vụ tài chính đang thiết kế ứng dụng đa Region trên Amazon DynamoDB. Quy định yêu cầu một lượt đọc ở bất kỳ Region nào luôn trả về giá trị đã commit mới nhất, và không mất dữ liệu đã commit nếu một Region gặp sự cố (RPO bằng 0). Công ty chấp nhận độ trễ ghi cao hơn. Solutions architect nên chọn cấu hình nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một global table dùng multi-Region eventual consistency (MREC) với replica ở hai Region.</span><span class="why">Sai: MREC sao chép bất đồng bộ nên RPO bằng độ trễ replication (&gt; 0) và đọc có thể trả dữ liệu cũ.</span></li>
+              <li data-k="B"><span class="tv">Một bảng ở một Region với point-in-time recovery và cross-Region restore.</span><span class="why">Sai: restore mất thời gian và mất dữ liệu phát sinh sau lần sao lưu gần nhất.</span></li>
+              <li data-k="C"><span class="tv">Một global table dùng multi-Region strong consistency (MRSC) triển khai trên ba Region.</span><span class="why">Đúng: MRSC sao chép đồng bộ trước khi xác nhận ghi, strongly consistent read ở mọi replica luôn trả bản mới nhất và hỗ trợ RPO = 0 (đổi lại độ trễ ghi cao hơn).</span></li>
+              <li data-k="D"><span class="tv">Một global table dùng MREC và bật strongly consistent read ở mọi Region.</span><span class="why">Sai: với MREC, strongly consistent read chỉ nhất quán trong Region đó, có thể trả dữ liệu cũ nếu item được ghi ở Region khác.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A developer accidentally ran a script that overwrote thousands of items in a production DynamoDB table 2 hours ago. The company needs to recover the table data as it existed just before the script ran, with per-second precision. Point-in-time recovery was enabled on the table last month. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Restore the most recent on-demand backup in place over the existing table.</li>
+            <li data-k="B">Use DynamoDB Streams to replay the changes from the last 7 days.</li>
+            <li data-k="C">Use the Backtrack feature to rewind the table by 2 hours.</li>
+            <li data-k="D">Use point-in-time recovery to restore the table to a new table at a time just before the script ran, then point the application to the new table or copy the data back.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>PITR</b> cho phép khôi phục tới <b>bất kỳ giây nào</b> trong cửa sổ tối đa 35 ngày; restore luôn tạo <b>bảng mới</b>. <b>A sai</b>: restore không ghi đè tại chỗ, và backup gần nhất có thể cũ hơn nhiều. <b>B sai</b>: Streams chỉ giữ <b>24 giờ</b>, không phải 7 ngày, và không phải công cụ backup. <b>C sai</b>: Backtrack là tính năng của <b>Aurora MySQL</b> (Bài 27), DynamoDB không có.</div>
+          <div class="trans">
+            <div class="tq">Một developer vô tình chạy một script ghi đè hàng nghìn item trong bảng DynamoDB production cách đây 2 giờ. Công ty cần khôi phục dữ liệu bảng như trạng thái ngay trước khi script chạy, với độ chính xác tới từng giây. Point-in-time recovery đã được bật trên bảng từ tháng trước. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Restore bản on-demand backup gần nhất đè lên bảng hiện có (in place).</span><span class="why">Sai: DynamoDB không restore ghi đè tại chỗ, và backup gần nhất có thể cũ hơn nhiều, không chính xác tới giây.</span></li>
+              <li data-k="B"><span class="tv">Dùng DynamoDB Streams để phát lại các thay đổi trong 7 ngày qua.</span><span class="why">Sai: Streams chỉ giữ dữ liệu 24 giờ và không phải công cụ backup/khôi phục.</span></li>
+              <li data-k="C"><span class="tv">Dùng tính năng Backtrack để tua ngược bảng 2 giờ.</span><span class="why">Sai: Backtrack là tính năng của Aurora MySQL, DynamoDB không có.</span></li>
+              <li data-k="D"><span class="tv">Dùng point-in-time recovery để restore bảng thành một bảng mới tại thời điểm ngay trước khi script chạy, sau đó trỏ ứng dụng sang bảng mới hoặc sao chép dữ liệu về.</span><span class="why">Đúng: PITR khôi phục tới bất kỳ giây nào trong cửa sổ tối đa 35 ngày, và restore luôn tạo bảng mới.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,E">
+          <div class="qh">A company's DynamoDB table uses provisioned capacity mode. The table's total consumed write capacity is well below the provisioned WCUs, but CloudWatch shows frequent write throttling. Investigation shows that most writes use the current date as the partition key. Which TWO actions will MOST effectively reduce throttling? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Redesign the partition key to use a high-cardinality attribute, such as a device ID or user ID.</li>
+            <li data-k="B">Double the provisioned WCUs of the table.</li>
+            <li data-k="C">Add a DAX cluster in front of the table to absorb writes.</li>
+            <li data-k="D">Change the table class to DynamoDB Standard-IA.</li>
+            <li data-k="E">Add a calculated or random suffix to the date partition key value (write sharding) to spread writes across partitions.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, E.</b> Tổng capacity còn dư nhưng vẫn throttle ⇒ <b>hot partition</b>: mọi ghi trong ngày dồn vào một partition key, mà mỗi partition chỉ phục vụ tối đa <b>1.000 write unit/giây</b>. Giải pháp: chọn partition key <b>cardinality cao</b> (A) hoặc <b>write sharding</b> bằng hậu tố (E). <b>B sai</b>: thêm WCU cho bảng không vượt được giới hạn của một partition. <b>C sai</b>: DAX là write-through – ghi vẫn tới DynamoDB, DAX chỉ tăng tốc đọc. <b>D sai</b>: table class chỉ đổi cách tính giá storage/request.</div>
+          <div class="trans">
+            <div class="tq">Bảng DynamoDB của một công ty dùng provisioned capacity mode. Tổng write capacity tiêu thụ của bảng thấp hơn nhiều so với số WCU được cấp phát, nhưng CloudWatch cho thấy ghi bị throttle thường xuyên. Điều tra cho thấy phần lớn thao tác ghi dùng ngày hiện tại làm partition key. HAI hành động nào sẽ MOST effectively (hiệu quả nhất) giảm throttling? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thiết kế lại partition key để dùng attribute có cardinality cao, như device ID hoặc user ID.</span><span class="why">Đúng: partition key nhiều giá trị phân tán ghi đều trên các partition, loại bỏ hot partition do dùng ngày hiện tại.</span></li>
+              <li data-k="B"><span class="tv">Tăng gấp đôi số WCU được cấp phát cho bảng.</span><span class="why">Sai: tổng capacity vốn còn dư; thêm WCU không vượt được giới hạn 1.000 write unit/giây của một partition.</span></li>
+              <li data-k="C"><span class="tv">Thêm một DAX cluster trước bảng để hấp thụ các thao tác ghi.</span><span class="why">Sai: DAX là write-through – ghi vẫn tới DynamoDB, DAX chỉ tăng tốc đọc.</span></li>
+              <li data-k="D"><span class="tv">Đổi table class sang DynamoDB Standard-IA.</span><span class="why">Sai: table class chỉ thay đổi cách tính giá storage/request, không ảnh hưởng throttling.</span></li>
+              <li data-k="E"><span class="tv">Thêm hậu tố tính toán hoặc ngẫu nhiên vào giá trị partition key ngày (write sharding) để phân tán ghi ra nhiều partition.</span><span class="why">Đúng: write sharding chia một key "nóng" thành nhiều key, trải ghi lên nhiều partition và giảm throttle.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">An application running on Amazon EC2 instances in private subnets writes data to an Amazon DynamoDB table. Security policy forbids traffic to DynamoDB from traversing the internet, and the company wants to eliminate NAT gateway data processing charges for this traffic. Which solution meets these requirements MOST cost-effectively?</div>
+          <ol class="opts">
+            <li data-k="A">Deploy a DAX cluster in the private subnets and send all requests through DAX.</li>
+            <li data-k="B">Create a gateway VPC endpoint for DynamoDB and add it to the private subnets' route tables.</li>
+            <li data-k="C">Create an AWS Site-to-Site VPN connection to the DynamoDB service.</li>
+            <li data-k="D">Move the EC2 instances to public subnets and restrict access with security groups.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Gateway endpoint</b> cho DynamoDB (Bài 22) <b>miễn phí</b>, thêm route bằng prefix list vào route table ⇒ traffic tới DynamoDB đi trong mạng AWS, không qua internet/NAT. <b>A sai</b>: DAX vẫn phải gọi DynamoDB, chỉ là cache đọc và tốn phí node. <b>C sai</b>: VPN dùng để nối on-premises, không phải truy cập dịch vụ AWS từ VPC. <b>D sai</b>: traffic vẫn đi ra internet qua IGW, vi phạm chính sách.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng chạy trên các Amazon EC2 instance trong private subnet ghi dữ liệu vào một bảng Amazon DynamoDB. Chính sách bảo mật cấm lưu lượng tới DynamoDB đi qua internet, và công ty muốn loại bỏ phí xử lý dữ liệu của NAT gateway cho lưu lượng này. Giải pháp nào đáp ứng các yêu cầu này MOST cost-effectively (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Triển khai một DAX cluster trong private subnet và gửi mọi request qua DAX.</span><span class="why">Sai: DAX vẫn phải gọi DynamoDB, chỉ là cache đọc và còn tốn phí node.</span></li>
+              <li data-k="B"><span class="tv">Tạo một gateway VPC endpoint cho DynamoDB và thêm nó vào route table của các private subnet.</span><span class="why">Đúng: gateway endpoint cho DynamoDB miễn phí, định tuyến traffic trong mạng AWS ⇒ không qua internet và không tốn phí NAT.</span></li>
+              <li data-k="C"><span class="tv">Tạo một kết nối AWS Site-to-Site VPN tới dịch vụ DynamoDB.</span><span class="why">Sai: Site-to-Site VPN dùng để nối mạng on-premises với VPC, không phải để truy cập dịch vụ AWS từ VPC.</span></li>
+              <li data-k="D"><span class="tv">Chuyển các EC2 instance sang public subnet và giới hạn truy cập bằng security group.</span><span class="why">Sai: traffic vẫn đi ra internet qua internet gateway, vi phạm chính sách bảo mật.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.CoreComponents.html" target="_blank" rel="noopener">Core components of Amazon DynamoDB</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html" target="_blank" rel="noopener">DynamoDB read consistency</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-design.html" target="_blank" rel="noopener">Best practices for designing and using partition keys effectively</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-use-s3-too.html" target="_blank" rel="noopener">Best practices for storing large items and attributes</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/on-demand-capacity-mode.html" target="_blank" rel="noopener">DynamoDB on-demand capacity mode</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/provisioned-capacity-mode.html" target="_blank" rel="noopener">DynamoDB provisioned capacity mode</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-switching-capacity-modes.html" target="_blank" rel="noopener">Considerations when switching capacity modes</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.TableClasses.html" target="_blank" rel="noopener">DynamoDB table classes</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ServiceQuotas.html" target="_blank" rel="noopener">Quotas in Amazon DynamoDB</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/SecondaryIndexes.html" target="_blank" rel="noopener">Improving data access with secondary indexes</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DAX.concepts.html" target="_blank" rel="noopener">DAX: How it works</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DAX.concepts.cluster.html" target="_blank" rel="noopener">DAX cluster components</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Streams.html" target="_blank" rel="noopener">Change data capture for DynamoDB Streams</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html" target="_blank" rel="noopener">Using time to live (TTL) in DynamoDB</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/globaltables-CoreConcepts.html" target="_blank" rel="noopener">Global tables core concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/V2globaltables_HowItWorks.html" target="_blank" rel="noopener">How DynamoDB global tables work (MREC / MRSC)</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Point-in-time-recovery.html" target="_blank" rel="noopener">Point-in-time backups for DynamoDB</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

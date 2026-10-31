@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 27 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Aurora.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="27" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Giải thích <b>Amazon Aurora</b> khác RDS for MySQL/PostgreSQL ở đâu: kiến trúc <b>tách compute và storage</b>, <b>cluster volume</b> giữ <b>6 bản sao dữ liệu trên 3 AZ</b>, tự tăng tới <b>256 TiB</b> và tự thu nhỏ khi xóa dữ liệu.</li>
+          <li>Dùng đúng các loại <b>endpoint</b> của Aurora: <b>cluster (writer) endpoint</b>, <b>reader endpoint</b>, <b>custom endpoint</b>, <b>instance endpoint</b> và <b>global writer endpoint</b>.</li>
+          <li>Thiết kế high availability với <b>Aurora Replicas</b> (tối đa 15, lag thường &lt; 100 ms, failover thường &lt; 30–60 s), <b>promotion tier</b> 0–15 và <b>Aurora Auto Scaling</b>.</li>
+          <li>Chọn <b>Aurora Serverless v2</b> cho workload biến động: đơn vị <b>ACU</b> (~2 GiB RAM), co giãn từng 0,5 ACU, <b>scale to zero</b> với auto-pause.</li>
+          <li>Thiết kế DR đa Region bằng <b>Aurora Global Database</b> (tối đa 10 Region phụ, lag thường &lt; 1 giây, RPO tính bằng giây, RTO tính bằng phút) và phân biệt <b>switchover</b> với <b>failover</b>.</li>
+          <li>Phân biệt <b>PITR</b>, <b>Backtrack</b> (chỉ Aurora MySQL, ≤ 72 giờ, tua ngược tại chỗ) và <b>Cloning</b> (copy-on-write) – ba đáp án đề rất hay đặt cạnh nhau.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 5 – Databases</span>
+        <p><b>Bài 26</b> đã dạy RDS: Multi-AZ DB instance/cluster, read replica, automated backup &amp; PITR, RDS Proxy, IAM DB authentication, mã hóa KMS. Bài này <b>không lặp lại</b> những phần đó mà chỉ nêu điểm <b>khác biệt</b> của Aurora. <b>DynamoDB</b> học ở Bài 28; <b>ElastiCache</b> và các CSDL chuyên dụng (DocumentDB, Neptune, Keyspaces…) ở Bài 29; chiến lược DR tổng thể (backup &amp; restore, pilot light, warm standby, multi-site) ở module Resilience.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-Aurora.svg" alt="">Tổng quan: Amazon Aurora là gì?</h2>
+      <p class="lead">Theo tài liệu AWS, <b>Amazon Aurora</b> là một <span class="t" data-vi="Công cụ CSDL quan hệ được quản lý hoàn toàn">fully managed relational database engine</span> <b>tương thích MySQL và PostgreSQL</b>. Code, công cụ và ứng dụng đang dùng với MySQL/PostgreSQL có thể dùng nguyên với Aurora. Aurora cho <b>thông lượng tới 6 lần</b> MySQL “stock” và <b>tới 6 lần</b> PostgreSQL “stock” trên phần cứng tương đương.</p>
+
+      <p>Bí quyết nằm ở <b>hệ thống lưu trữ phân tán hiệu năng cao</b>: engine MySQL/PostgreSQL của Aurora được tùy biến để tận dụng storage này, storage <b>tự tăng</b> khi cần, đồng thời Aurora <b>tự động hóa clustering và replication</b> – hai việc vốn khó nhất khi tự quản trị CSDL. Aurora là <b>một phần của Amazon RDS</b>: dùng cùng console, CLI, API của RDS cho provisioning, patching, backup, recovery, phát hiện lỗi và sửa chữa. Mô hình <b>shared responsibility</b> giống RDS: AWS host phần mềm và hạ tầng; bạn lo <b>query tuning</b>.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Aurora.svg" alt="">
+          <div><h4>Amazon Aurora</h4><span class="vi">CSDL quan hệ cloud-native</span><p>Tương thích MySQL &amp; PostgreSQL, throughput tới 6×, storage tự tăng tới 256 TiB, quản trị theo <b>cluster</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Aurora-MySQL-Instance.svg" alt="">
+          <div><h4>Aurora MySQL-Compatible</h4><span class="vi">Aurora tương thích MySQL</span><p>Có thêm các tính năng riêng như <b>Backtrack</b>, binlog replication cross-Region.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Aurora-PostgreSQL-Instance.svg" alt="">
+          <div><h4>Aurora PostgreSQL-Compatible</h4><span class="vi">Aurora tương thích PostgreSQL</span><p>Logical replication, quản lý RPO cho Global Database bằng <code>rds.global_db_rpo</code>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Aurora-Instance.svg" alt="">
+          <div><h4>Aurora Serverless v2</h4><span class="vi">Aurora tự co giãn theo nhu cầu</span><p>Instance class <code>db.serverless</code>, đo bằng ACU, scale từng 0,5 ACU, có thể về 0 ACU.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Database.svg" alt="">
+          <div><h4>Aurora Global Database</h4><span class="vi">CSDL toàn cầu đa Region</span><p>1 Region chính + tối đa 10 Region phụ chỉ đọc, sao chép ở tầng storage, thường &lt; 1 giây.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-RDS-Proxy-Instance.svg" alt="">
+          <div><h4>RDS Proxy cho Aurora</h4><span class="vi">Proxy gom kết nối</span><p>Bỏ qua DNS cache, giảm thời gian failover <b>tới 66%</b> cho Aurora Multi-AZ (chi tiết Proxy ở Bài 26).</p></div></div>
+      </div>
+
+      <h3>Aurora khác RDS for MySQL/PostgreSQL ở điểm nào?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>RDS for MySQL / PostgreSQL (Bài 26)</th><th>Amazon Aurora</th></tr></thead>
+        <tbody>
+          <tr><td>Đơn vị quản trị</td><td>DB instance (mỗi instance có EBS riêng)</td><td class="yes"><b>DB cluster</b>: nhiều instance dùng chung <b>một cluster volume</b></td></tr>
+          <tr><td>Sao chép dữ liệu trong Region</td><td>Multi-AZ: standby đồng bộ (EBS riêng)</td><td class="yes">Luôn có <b>6 bản sao trên 3 AZ</b> – kể cả khi chỉ có 1 instance</td></tr>
+          <tr><td>Storage</td><td>Cấp phát trước (tối đa 64 TiB), autoscaling chỉ tăng, <b>không bao giờ giảm</b></td><td class="yes">Tự tăng tới <b>256 TiB</b>, <b>tự giảm</b> khi DROP/TRUNCATE; chỉ trả tiền phần dùng</td></tr>
+          <tr><td>Bản sao đọc</td><td>Read replica: tối đa 15, async, có EBS riêng, lag giây–phút</td><td class="yes"><b>Aurora Replica</b>: tối đa 15, đọc chung volume, lag thường <b>&lt; 100 ms</b></td></tr>
+          <tr><td>Failover</td><td>Multi-AZ DB instance 60–120 s; read replica phải promote thủ công</td><td class="yes">Tự promote Aurora Replica, thường <b>&lt; 60 s, thường &lt; 30 s</b></td></tr>
+          <tr><td>Auto scaling bản sao đọc</td><td class="no">Không có</td><td class="yes"><b>Aurora Auto Scaling</b> (0–15 replica)</td></tr>
+          <tr><td>Automated backup</td><td>Retention 0–35 ngày (0 = tắt)</td><td>Retention <b>1–35 ngày</b>, <b>không tắt được</b>, mặc định 1 ngày</td></tr>
+          <tr><td>Tính năng riêng</td><td>–</td><td>Serverless v2, Global Database, Backtrack (MySQL), Cloning, custom endpoint, I/O-Optimized</td></tr>
+          <tr><td>DB engine</td><td>Db2, MariaDB, SQL Server, MySQL, Oracle, PostgreSQL</td><td><b>Chỉ MySQL và PostgreSQL</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>6×</b><span>throughput tối đa so với MySQL / PostgreSQL “stock”</span></div>
+        <div class="stat"><b>6 bản / 3 AZ</b><span>bản sao dữ liệu trong cluster volume</span></div>
+        <div class="stat"><b>256 TiB</b><span>kích thước tối đa cluster volume (tùy engine version)</span></div>
+        <div class="stat"><b>15</b><span>Aurora Replicas tối đa / cluster</span></div>
+        <div class="stat"><b>&lt; 100 ms</b><span>replica lag thường gặp</span></div>
+        <div class="stat"><b>10</b><span>Region phụ tối đa trong Global Database</span></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>MySQL/PostgreSQL-compatible</i>”, “<i>high performance</i>”, “<i>storage that grows automatically</i>”, “<i>up to 15 low-latency read replicas</i>” ⇒ <b>Amazon Aurora</b>.</li>
+          <li>Đề có Oracle / SQL Server / Db2 / MariaDB ⇒ Aurora <b>không</b> hỗ trợ (dùng RDS – Bài 26). Aurora chỉ có <b>MySQL &amp; PostgreSQL</b>.</li>
+          <li>Migrate RDS for MySQL/PostgreSQL sang Aurora với downtime thấp ⇒ tạo <b>Aurora read replica của RDS instance</b> rồi promote, hoặc restore snapshot RDS thành Aurora cluster (tài liệu nêu cả hai cách).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: CLUSTER & STORAGE ===================== -->
+      <h2 id="cluster-storage"><img src="../assets/icons/res/Amazon-Aurora-Instance.svg" alt="">Aurora DB cluster và cluster volume</h2>
+      <p class="lead">Một <span class="t" data-vi="Cụm CSDL Aurora">Aurora DB cluster</span> gồm <b>một hoặc nhiều DB instance</b> và <b>một</b> <span class="t" data-vi="Ổ đĩa ảo dùng chung của cụm">cluster volume</span>. Kiến trúc Aurora <b>tách compute (instance) khỏi storage (volume)</b>: dữ liệu an toàn ngay cả khi một vài hoặc toàn bộ instance gặp sự cố.</p>
+
+      <ul>
+        <li><b>Primary (writer) DB instance</b>: mỗi cluster có <b>đúng một</b> writer, xử lý mọi lệnh <b>DDL</b> (<code>CREATE/ALTER/DROP TABLE</code>) và <b>DML</b> (<code>INSERT/UPDATE/DELETE</code>), đồng thời cũng đọc được.</li>
+        <li><b>Aurora Replica (reader DB instance)</b>: tối đa <b>15</b>, chỉ đọc, có thể rải trên các AZ của Region; vừa <b>scale đọc</b> vừa là <b>đích failover</b>.</li>
+        <li><b>Cluster volume</b>: một ổ ảo duy nhất trên <b>SSD</b>, chứa <b>toàn bộ</b> dữ liệu người dùng, schema, metadata (system table, binary log…). Mọi instance trong cluster nhìn volume như <b>một logical volume</b>.</li>
+      </ul>
+
+      <h3>6 bản sao trên 3 AZ – độc lập với số instance</h3>
+      <p>Khi dữ liệu được ghi vào writer, Aurora <b>sao chép đồng bộ qua các AZ tới 6 storage node</b> gắn với cluster volume. Tài liệu nhấn mạnh: <b>mức sao chép này không phụ thuộc vào số DB instance</b> – một cluster chỉ có 1 instance vẫn có 6 bản sao dữ liệu ở 3 AZ. Lợi ích: dư thừa dữ liệu, <b>loại bỏ I/O freeze</b>, giảm latency spike khi backup, và khi failover dữ liệu đã sẵn ở các AZ khác.</p>
+      <p>Theo kiến thức thi phổ biến (whitepaper/blog AWS, không có trong các trang tài liệu đã đọc): volume chia thành các segment nhỏ; Aurora dùng cơ chế <b>quorum</b> – ghi thành công khi <b>4/6</b> bản xác nhận, đọc cần <b>3/6</b> ⇒ chịu được mất <b>2 bản</b> mà vẫn ghi được và mất <b>3 bản</b> mà vẫn đọc được (tức mất cả một AZ cộng thêm một node).</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Database.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region: ap-southeast-1 – Aurora DB cluster</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC – DB subnet group (3 AZ)</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">Availability Zone A</span>
+                  <div class="grp priv"><span class="lbl">Private DB subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Aurora-MySQL-Instance.svg" alt="">Writer<small>DDL + DML + đọc</small></div></div></div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone B</span>
+                  <div class="grp priv"><span class="lbl">Private DB subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Aurora-MySQL-Instance-Alternate.svg" alt="">Aurora Replica 1<small>tier 0 – chỉ đọc</small></div></div></div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone C</span>
+                  <div class="grp priv"><span class="lbl">Private DB subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Aurora-MySQL-Instance-Alternate.svg" alt="">Aurora Replica 2<small>tier 1 – chỉ đọc</small></div></div></div>
+                </div>
+              </div>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-Aurora-MySQL-Instance.svg" alt="">Writer ghi log</div>
+                <span class="arrow">đồng bộ tới 6 storage node</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">Cluster volume<small>2 bản AZ A · 2 bản AZ B · 2 bản AZ C</small></div>
+                <span class="arrow dashed">replica đọc chung volume</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-Aurora-MySQL-Instance-Alternate.svg" alt="">Aurora Replicas<small>lag thường &lt; 100 ms</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Kiến trúc Aurora DB cluster: compute (writer + Aurora Replicas) tách khỏi storage. Cluster volume <b>dùng chung</b> giữ 6 bản sao dữ liệu ở 3 AZ; thêm reader <b>không cần copy dữ liệu</b> nên tạo rất nhanh, xóa instance không xóa dữ liệu – chỉ khi xóa cả cluster dữ liệu mới bị xóa.</figcaption>
+      </figure>
+
+      <h3>Storage tự co giãn và tính phí</h3>
+      <ul>
+        <li>Cluster volume <b>tự tăng</b> khi dữ liệu tăng, tối đa <b>256 TiB</b> (tùy engine version) – <b>không cần cấp phát trước</b>, không có “storage full” như RDS.</li>
+        <li>Khi <b>DROP/TRUNCATE</b> bảng hoặc xóa database, dung lượng cấp phát <b>giảm tương ứng</b> (dynamic resizing ở các version mới) ⇒ chỉ trả tiền cho phần đang dùng. (Version cũ chỉ tái sử dụng không gian trống, không giảm.)</li>
+        <li>Theo dõi bằng metric CloudWatch <code>VolumeBytesUsed</code> và <code>AuroraVolumeBytesLeftTotal</code>.</li>
+        <li>File tạm (sort, build index) dùng <b>local storage</b> của instance, giới hạn theo instance class.</li>
+        <li>Thêm reader nhanh vì <b>không copy table data</b>: instance mới chỉ “gắn” vào volume dùng chung.</li>
+      </ul>
+
+      <h3>Hai cấu hình storage: Aurora Standard vs Aurora I/O-Optimized</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/Amazon-Aurora.svg" alt="">Aurora Standard</h4>
+          <ul>
+            <li>Trả tiền instance + storage <b>+ phí theo mỗi 1 triệu request I/O</b>.</li>
+            <li>Tiết kiệm cho ứng dụng có I/O <b>vừa phải</b>.</li>
+            <li>Lựa chọn tốt nhất khi chi phí I/O <b>&lt; 25%</b> tổng chi phí Aurora.</li>
+            <li>Đổi sang I/O-Optimized được <b>mỗi 30 ngày một lần</b>.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-Aurora-PIOPS-Instance.svg" alt="">Aurora I/O-Optimized</h4>
+          <ul>
+            <li>Trả tiền instance + storage, <b>không tính phí I/O đọc/ghi</b>.</li>
+            <li>Giá/hiệu năng tốt hơn, <b>chi phí dễ dự đoán</b> cho ứng dụng I/O-intensive.</li>
+            <li>Lựa chọn tốt nhất khi chi phí I/O <b>≥ 25%</b> tổng chi phí Aurora.</li>
+            <li>Đổi về Standard <b>bất cứ lúc nào</b>; instance không-NVMe đổi không downtime.</li>
+          </ul></div>
+      </div>
+
+      <h3>Độ tin cậy tự động (Aurora reliability)</h3>
+      <ul>
+        <li><span class="t" data-vi="Tự sửa chữa lưu trữ">Storage auto-repair</span>: Aurora tự phát hiện lỗi đĩa; khi một segment hỏng, Aurora <b>sửa ngay</b> bằng dữ liệu từ các bản sao khác ⇒ tránh mất dữ liệu, ít phải PITR vì lỗi đĩa.</li>
+        <li><span class="t" data-vi="Bộ nhớ đệm trang sống sót qua khởi động lại">Survivable page cache</span>: page cache (InnoDB buffer pool / PostgreSQL buffer cache) chạy ở <b>process tách khỏi DB</b>, nên khi DB khởi động lại cache vẫn “ấm”, không cần warm-up.</li>
+        <li><b>Khôi phục sau restart gần như tức thì</b>: Aurora recover bất đồng bộ trên nhiều luồng song song, không cần binary log; DB mở ngay sau unplanned restart. (Bật binlog làm recovery chậm hơn – nếu không cần replication ra ngoài, nên tắt.)</li>
+      </ul>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – thư viện có kho sách dùng chung</span>
+        <p>RDS giống mỗi chi nhánh thư viện có <b>kho sách riêng</b>: mở thêm chi nhánh đọc (read replica) phải <b>photo toàn bộ kho</b> rồi gửi bản cập nhật liên tục. Aurora giống <b>một kho sách trung tâm</b> được sao lưu ở 3 tòa nhà (6 bản), mọi quầy đọc (instance) đều mượn từ kho đó. Mở thêm quầy đọc chỉ cần kê bàn – <b>không photo gì cả</b>; quầy hỏng thì sách vẫn còn nguyên trong kho.</p></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“Cluster Aurora chỉ có 1 instance nên dữ liệu chỉ nằm ở 1 AZ” – <b>sai</b>: dữ liệu luôn có 6 bản / 3 AZ. Nhưng <b>compute</b> chỉ ở 1 AZ ⇒ nếu AZ đó sập, phải <b>tạo instance mới</b> ở AZ khác (thường &lt; 10 phút). Muốn HA compute ⇒ thêm Aurora Replica ở AZ khác.</li>
+          <li>“Aurora cần bật storage autoscaling và đặt maximum storage threshold” – <b>sai</b>: đó là tính năng RDS; Aurora volume tự tăng sẵn.</li>
+          <li>Không thể tạo Aurora Replica <b>mã hóa</b> cho cluster <b>không mã hóa</b> (và ngược lại) – mã hóa là thuộc tính của cả cluster.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: ENDPOINTS ===================== -->
+      <h2 id="endpoints"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Endpoint của Aurora – kết nối đúng instance</h2>
+      <p class="lead">Mỗi kết nối được xử lý bởi một DB instance cụ thể. Thay vì hard-code hostname từng instance và tự viết logic cân bằng/định tuyến lại, Aurora cung cấp các <span class="t" data-vi="Điểm cuối kết nối">endpoint</span> – URL gồm host và port – làm “trung gian” trỏ tới đúng instance hoặc nhóm instance.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại endpoint</th><th>Trỏ tới</th><th>Dùng cho</th><th>Ví dụ hostname</th></tr></thead>
+        <tbody>
+          <tr><td><b>Cluster endpoint</b> (writer endpoint)</td><td>Writer hiện tại – <b>tự đổi</b> khi failover</td><td>Đọc/ghi, DDL, DML, ETL</td><td><code>mydb.cluster-abc123.us-east-1.rds.amazonaws.com</code></td></tr>
+          <tr><td><b>Reader endpoint</b></td><td>Tất cả Aurora Replicas, <b>cân bằng kết nối</b></td><td>Query chỉ đọc</td><td><code>mydb.cluster-ro-abc123…</code></td></tr>
+          <tr><td><b>Custom endpoint</b></td><td>Nhóm instance bạn chọn (tối đa <b>5</b> / cluster)</td><td>Tách workload: báo cáo vào instance nhỏ, production vào instance lớn</td><td><code>myendpoint.cluster-custom-abc123…</code></td></tr>
+          <tr><td><b>Instance endpoint</b></td><td>Đúng một instance</td><td>Chẩn đoán, tuning; logic kết nối tự viết</td><td><code>mydb-instance-1.abc123…</code></td></tr>
+          <tr><td><b>Global writer endpoint</b></td><td>Writer của cluster chính trong Global Database – <b>tự đổi Region</b> khi switchover/failover</td><td>Ghi cho ứng dụng đa Region, không cần mã hóa Region vào connection string</td><td>(tạo khi <b>Add Region</b>)</td></tr>
+        </tbody>
+      </table></div>
+
+      <ul>
+        <li>Với hệ thống cần HA: dùng <b>cluster endpoint</b> cho đọc/ghi và <b>reader endpoint</b> cho chỉ đọc. Hai endpoint này <b>tự chuyển instance</b> khi có instance không khả dụng; instance endpoint thì không.</li>
+        <li>Reader endpoint cân bằng ở mức <b>kết nối</b> (DNS), không phải từng câu query (kiến thức phổ biến). Ngay sau failover, reader endpoint có thể tạm trỏ tới writer mới.</li>
+        <li>Cluster chỉ có 1 instance: reader endpoint trỏ về writer.</li>
+        <li><b>Custom endpoint</b> phân phối kết nối “thụ động” bằng DNS trả IP ngẫu nhiên trong nhóm; dành cho cluster có <b>instance khác cấu hình/kích thước</b>. Dùng custom endpoint thì thường <b>không</b> dùng reader endpoint nữa. Thay thế cách cũ là tự tạo CNAME.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Analytics/reporting queries must run on larger instances without affecting the production read traffic</i>” ⇒ tạo <b>custom endpoint</b> gồm các replica lớn dành cho analytics.</li>
+          <li>“<i>The application must not change its connection string after a failover</i>” ⇒ dùng <b>cluster endpoint</b> (trong Region) hoặc <b>global writer endpoint</b> (đa Region), <b>không</b> dùng instance endpoint.</li>
+          <li>“<i>Distribute read-only connections across all replicas</i>” ⇒ <b>reader endpoint</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: AURORA REPLICAS & FAILOVER ===================== -->
+      <h2 id="replicas"><img src="../assets/icons/res/Amazon-Aurora-MySQL-Instance-Alternate.svg" alt="">Aurora Replicas, failover và Aurora Auto Scaling</h2>
+      <p class="lead">Khi bạn tạo instance thứ 2, thứ 3… trong một cluster, Aurora <b>tự thiết lập sao chép</b> từ writer tới chúng. Các instance chỉ đọc này là <span class="t" data-vi="Bản sao Aurora (instance đọc)">Aurora Replicas</span> (còn gọi reader instance). Chúng có <b>hai mục đích</b>: <b>scale đọc</b> và <b>tăng availability</b> (đích failover).</p>
+
+      <h3>Đặc điểm Aurora Replica</h3>
+      <ul>
+        <li>Tối đa <b>15</b> Aurora Replicas / cluster, rải trên các AZ của Region.</li>
+        <li>Vì đọc chung cluster volume, replica trả về cùng dữ liệu với <b>replica lag thường thấp hơn nhiều so với 100 ms</b>; lag có thể tăng khi ghi rất nhiều.</li>
+        <li>Replica <b>dành hoàn toàn cho đọc</b>, sao chép <b>gần như không tốn thêm công</b> cho writer (không phải ship toàn bộ dữ liệu như replica của RDS).</li>
+        <li>AWS khuyên: tạo ≥ 1 replica <b>cùng instance class</b> với writer, ở <b>AZ khác</b>, để làm đích failover.</li>
+        <li>Mã hóa: replica và cluster phải cùng trạng thái mã hóa.</li>
+      </ul>
+
+      <h3>Failover hoạt động thế nào?</h3>
+      <ol class="steps">
+        <li>Aurora phát hiện sự cố trên writer và <b>tự kích hoạt failover</b> (hoặc bạn bấm <i>Failover</i> để thử nghiệm).</li>
+        <li><b>Có Aurora Replica</b>: replica có <span class="t" data-vi="Bậc ưu tiên nâng cấp">promotion tier</span> ưu tiên cao nhất (số nhỏ nhất, 0 → 15) được promote thành writer. Cùng tier ⇒ chọn replica <b>lớn nhất</b>; cùng tier và cùng size ⇒ chọn ngẫu nhiên. Sau 5 lần thất bại, tier không còn được xét.</li>
+        <li>Trong lúc chuyển, đọc/ghi tới writer lỗi tạm thời; dịch vụ <b>thường khôi phục trong &lt; 60 giây, thường &lt; 30 giây</b>.</li>
+        <li><b>Cluster endpoint</b> tự trỏ sang writer mới – ứng dụng chỉ cần kết nối lại. Với Aurora MySQL, chỉ writer và replica được chọn bị restart; các reader khác vẫn phục vụ qua reader endpoint.</li>
+        <li><b>Không có Aurora Replica</b>: Aurora <b>tạo lại writer</b> trong cùng AZ, thường <b>&lt; 10 phút</b> – trong thời gian đó cluster <b>không khả dụng</b>.</li>
+      </ol>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 300" width="800" role="img" aria-label="Failover Aurora theo promotion tier">
+          <defs><marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="10" y="10" width="780" height="280" rx="8" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+          <text x="22" y="30" font-size="12" font-weight="700" style="fill:#147EBA">Region – Aurora DB cluster: failover theo promotion tier</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="35" y="110" width="44" height="44"/>
+          <text x="57" y="170" font-size="11" text-anchor="middle" font-weight="600">Ứng dụng</text>
+          <text x="180" y="78" font-size="11" text-anchor="middle" font-weight="600">Cluster endpoint</text>
+          <path class="line-o" d="M85 125 L280 85" marker-end="url(#ah1)"/>
+          <path class="line-o" d="M85 140 L280 200" stroke-dasharray="6 4" marker-end="url(#ah1)"/>
+          <text x="170" y="196" font-size="10" text-anchor="middle" class="muted">sau failover: DNS trỏ sang</text>
+          <text x="170" y="210" font-size="10" text-anchor="middle" class="muted">writer mới, kết nối lại</text>
+          <rect x="285" y="45" width="150" height="100" rx="6" fill="rgba(221,52,76,.06)" stroke="#DD344C" stroke-dasharray="6 4"/>
+          <text x="297" y="62" font-size="11" font-weight="700" style="fill:#DD344C">AZ A</text>
+          <image href="../assets/icons/res/Amazon-Aurora-Instance.svg" x="338" y="66" width="44" height="44"/>
+          <text x="360" y="126" font-size="11" text-anchor="middle" font-weight="700">Writer cũ ✗</text>
+          <rect x="285" y="165" width="150" height="110" rx="6" fill="rgba(122,161,22,.08)" stroke="#7AA116" stroke-dasharray="6 4"/>
+          <text x="297" y="182" font-size="11" font-weight="700" style="fill:#7AA116">AZ B</text>
+          <image href="../assets/icons/res/Amazon-Aurora_Amazon-Aurora-Instance-alternate.svg" x="338" y="186" width="44" height="44"/>
+          <text x="360" y="246" font-size="11" text-anchor="middle" font-weight="700">Replica tier 0</text>
+          <text x="360" y="262" font-size="10" text-anchor="middle" style="fill:#7AA116">⇒ promote thành writer</text>
+          <rect x="475" y="45" width="150" height="100" rx="6" fill="rgba(20,126,186,.06)" stroke="#147EBA" stroke-dasharray="6 4"/>
+          <text x="487" y="62" font-size="11" font-weight="700" style="fill:#147EBA">AZ C</text>
+          <image href="../assets/icons/res/Amazon-Aurora_Amazon-Aurora-Instance-alternate.svg" x="528" y="66" width="44" height="44"/>
+          <text x="550" y="126" font-size="11" text-anchor="middle" font-weight="700">Replica tier 1</text>
+          <rect x="475" y="165" width="150" height="110" rx="6" fill="rgba(20,126,186,.06)" stroke="#147EBA" stroke-dasharray="6 4"/>
+          <text x="487" y="182" font-size="11" font-weight="700" style="fill:#147EBA">AZ C</text>
+          <image href="../assets/icons/res/Amazon-Aurora_Amazon-Aurora-Instance-alternate.svg" x="528" y="186" width="44" height="44"/>
+          <text x="550" y="246" font-size="11" text-anchor="middle" font-weight="700">Replica tier 15</text>
+          <text x="550" y="262" font-size="10" text-anchor="middle" class="muted">(do Auto Scaling tạo)</text>
+          <text x="710" y="100" font-size="11" text-anchor="middle" font-weight="700">Thứ tự promote</text>
+          <text x="710" y="120" font-size="10" text-anchor="middle">1. tier nhỏ nhất</text>
+          <text x="710" y="136" font-size="10" text-anchor="middle">2. cùng tier ⇒ lớn nhất</text>
+          <text x="710" y="152" font-size="10" text-anchor="middle">3. cùng size ⇒ ngẫu nhiên</text>
+          <text x="710" y="190" font-size="11" text-anchor="middle" font-weight="700" style="fill:#7AA116">thường &lt; 30–60 s</text>
+          <text x="710" y="208" font-size="10" text-anchor="middle" class="muted">không có replica:</text>
+          <text x="710" y="222" font-size="10" text-anchor="middle" class="muted">tạo lại writer &lt; 10 phút</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Khi writer ở AZ A hỏng, Aurora promote replica có promotion tier ưu tiên cao nhất (tier 0 ở AZ B). Cluster endpoint tự trỏ sang writer mới. Replica do Aurora Auto Scaling tạo luôn có tier 15 nên ít được chọn hơn replica bạn tạo thủ công.</figcaption>
+      </figure>
+
+      <h3>Aurora Auto Scaling – tự thêm/bớt Aurora Replicas</h3>
+      <p><span class="t" data-vi="Tự động co giãn số bản sao Aurora">Aurora Auto Scaling</span> (dựa trên Application Auto Scaling) điều chỉnh <b>số lượng Aurora Replicas</b> theo tải thực tế; có cho cả Aurora MySQL và Aurora PostgreSQL.</p>
+      <ul>
+        <li><b>Scaling policy</b> kiểu <b>target tracking</b>: metric định sẵn (vd <b>trung bình CPU của reader</b>, hoặc <b>số kết nối trung bình</b>) hoặc metric tùy chỉnh + giá trị mục tiêu (vd CPU 40%). Aurora tự tạo CloudWatch alarm.</li>
+        <li>Metric tính bằng <b>trung bình của mọi reader</b> (kể cả reader tạo thủ công), <b>không</b> tính writer ⇒ Auto Scaling <b>không giúp tải ghi</b>.</li>
+        <li><b>Min/Max capacity</b>: 0–15 replica. Cần <b>ít nhất 1 reader</b> có sẵn thì policy mới hoạt động.</li>
+        <li><b>Cooldown</b> scale-in / scale-out mặc định <b>300 giây</b>; có thể tắt scale-in.</li>
+        <li>Replica mới có <b>cùng instance class với writer</b>, promotion tier <b>15</b>, ID bắt đầu bằng <code>application-autoscaling-</code>; Auto Scaling chỉ xóa replica do nó tạo.</li>
+        <li>Ứng dụng nên dùng <b>reader endpoint</b> để tự động dùng replica mới. Global Database <b>không</b> hỗ trợ Auto Scaling cho cluster phụ.</li>
+      </ul>
+
+      <h3>Read replica (RDS) vs Aurora Replica</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" alt="">RDS read replica (Bài 26)</h4>
+          <ul>
+            <li>Bản sao <b>có storage riêng</b>, async bằng replication của engine.</li>
+            <li>Lag giây – phút; cùng/khác AZ/<b>khác Region</b>.</li>
+            <li><b>Không tự failover</b> – promote thủ công.</li>
+            <li>Không có auto scaling; endpoint riêng từng replica.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-Aurora_Amazon-Aurora-Instance-alternate.svg" alt="">Aurora Replica</h4>
+          <ul>
+            <li><b>Đọc chung cluster volume</b>, không có storage riêng.</li>
+            <li>Lag thường <b>&lt; 100 ms</b>; chỉ trong <b>cùng Region</b> (đa Region ⇒ Global Database).</li>
+            <li><b>Tự động failover</b> theo promotion tier.</li>
+            <li><b>Aurora Auto Scaling</b>; một <b>reader endpoint</b> cho tất cả.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Read traffic is unpredictable; automatically add/remove read capacity</i>” với Aurora provisioned ⇒ <b>Aurora Auto Scaling</b> cho Aurora Replicas + <b>reader endpoint</b>.</li>
+          <li>“<i>Ensure a specific replica (same size as the writer) becomes the new writer</i>” ⇒ đặt <b>promotion tier 0</b> cho replica đó.</li>
+          <li>“<i>Reduce failover time / app không bị ảnh hưởng bởi DNS cache</i>” ⇒ thêm <b>RDS Proxy</b> (giảm failover tới 66%).</li>
+          <li>Đề nói Aurora chỉ có <b>một instance</b> và hỏi cách đạt HA ⇒ <b>thêm Aurora Replica ở AZ khác</b> (tài liệu: biến cluster thành Multi-AZ bằng cách thêm reader ở AZ khác).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: SERVERLESS V2 ===================== -->
+      <h2 id="serverless-v2"><img src="../assets/icons/res/Amazon-Aurora-Instance.svg" alt="">Aurora Serverless v2 – co giãn tự động theo nhu cầu</h2>
+      <p class="lead">Theo tài liệu, <span class="t" data-vi="Aurora không máy chủ phiên bản 2">Aurora Serverless v2</span> (tài liệu mới gọi là “Aurora serverless”) là cấu hình <b>on-demand, tự động co giãn</b> của Aurora: tự theo dõi workload và điều chỉnh <b>năng lực compute</b>; bạn chỉ trả tiền cho tài nguyên thực sự dùng. Đặc biệt giá trị cho database <b>multitenant</b>, môi trường <b>dev/test</b>, và workload <b>biến động, khó dự đoán</b>.</p>
+
+      <h3>ACU – đơn vị đo năng lực</h3>
+      <ul>
+        <li><span class="t" data-vi="Đơn vị năng lực Aurora">Aurora capacity unit (ACU)</span> ≈ <b>2 GiB bộ nhớ</b> + CPU và network tương ứng. Năng lực serverless <b>không gắn với instance class</b> provisioned; instance serverless dùng class <code>db.serverless</code>.</li>
+        <li>Bạn đặt <b>capacity range</b> (min – max ACU) ở mức <b>cluster</b>; mỗi writer/reader serverless tự co giãn <b>trong khoảng đó</b>, mỗi instance có capacity riêng.</li>
+        <li>Khoảng hỗ trợ: <b>0 – 256 ACU</b> với Aurora MySQL và tới <b>384 ACU</b> với Aurora PostgreSQL (version mới); version cũ hơn: 0,5–128 hoặc 0,5–256 ACU.</li>
+        <li>Scale theo bước nhỏ tới <b>0,5 ACU</b> (capacity càng lớn bước càng lớn, scale càng nhanh), thay vì nhân đôi/chia đôi. Scale diễn ra <b>khi đang có kết nối, transaction mở, bảng đang lock</b> – không chờ “thời điểm yên tĩnh”, không gián đoạn.</li>
+        <li>Tính phí theo <b>ACU-hour</b>, đo <b>theo giây</b>. Cluster có <i>n</i> instance tiêu thụ khoảng <i>n</i> × min ACU khi rảnh và tối đa <i>n</i> × max ACU khi tải đỉnh.</li>
+        <li>Storage và compute vẫn tách rời: compute xuống thấp nhưng dữ liệu vẫn có thể nhiều TB; storage vẫn <b>6 bản sao trên 3 AZ</b>.</li>
+        <li>Theo dõi bằng metric <code>ServerlessDatabaseCapacity</code> và <code>ACUUtilization</code>. Nếu luôn chạm max ⇒ tăng max hoặc thêm reader.</li>
+      </ul>
+
+      <h3>Serverless v2 có đầy đủ tính năng như provisioned</h3>
+      <p>Tài liệu nêu: dùng được <b>reader instance</b> (scale ngang + failover tức thì), <b>Multi-AZ</b> (tối đa 15 reader serverless trải 3 AZ), <b>Global Database</b>, <b>RDS Proxy</b>, IAM DB authentication, Performance Insights. Có thể <b>trộn</b> instance serverless và provisioned trong cùng cluster (<span class="t" data-vi="Cụm cấu hình hỗn hợp">mixed-configuration cluster</span>) – ví dụ writer provisioned rất lớn + reader serverless, hoặc writer serverless + reader provisioned. Đổi instance từ provisioned ⇄ serverless <b>không cần tạo cluster mới</b>.</p>
+
+      <h3>Promotion tier quyết định cách reader co giãn</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Promotion tier của reader serverless</th><th>Cách co giãn</th><th>Dùng khi</th></tr></thead>
+        <tbody>
+          <tr><td><b>0 và 1</b></td><td>Min capacity = <b>capacity hiện tại của writer</b> (hoặc tương đương bộ nhớ của writer provisioned); max = max ACU của cluster. Pause/resume <b>cùng writer</b>.</td><td><b>High availability</b> – reader luôn ít nhất bằng writer, sẵn sàng thay thế khi failover.</td></tr>
+          <tr><td><b>2 – 15</b></td><td>Co giãn <b>độc lập</b> với writer trong khoảng min–max của cluster; có thể rảnh và scale xuống khi writer bận.</td><td>Báo cáo/analytics định kỳ, đọc không nhạy độ trễ; vẫn là đích failover nếu không còn reader tier thấp hơn (nhưng có thể phải scale up sau khi promote).</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Scale to zero – auto-pause và resume</h3>
+      <ul>
+        <li>Đặt <b>min capacity = 0 ACU</b> ⇒ instance serverless <b>tự pause</b> khi không có kết nối do người dùng khởi tạo trong khoảng thời gian chỉ định, và <b>tự resume</b> khi có kết nối mới.</li>
+        <li>Khoảng chờ <code>SecondsUntilAutoPause</code>: tối thiểu và mặc định <b>300 giây (5 phút)</b>, tối đa <b>86.400 giây (1 ngày)</b>.</li>
+        <li>Khi pause: <b>không tính phí instance</b> (vẫn trả storage và các phần khác); status vẫn hiển thị <i>available</i>.</li>
+        <li>Resume thường mất khoảng <b>15 giây</b> (nên đặt client timeout &gt; 15 s); pause hơn <b>24 giờ</b> có thể vào “ngủ sâu”, resume <b>≥ 30 giây</b>. Nên có <b>retry logic</b> cho kết nối.</li>
+        <li>Thích hợp hệ thống <b>không có SLO khắt khe</b>: dev/test, ứng dụng nội bộ chấp nhận chờ ngắn.</li>
+        <li><b>Không auto-pause</b> khi: min &gt; 0; còn kết nối người dùng mở; cluster gắn <b>RDS Proxy</b> (proxy luôn giữ kết nối); writer của <b>cluster chính Global Database</b>; mọi instance trong <b>cluster phụ Global Database</b>; bật binlog/logical replication (writer và reader tier 0–1); cluster có zero-ETL integration tới Redshift; cluster có instance provisioned (writer serverless không pause).</li>
+        <li>So với <b>stop/start cluster</b> (áp dụng cho mọi loại cluster, stop tối đa 7 ngày – kiến thức phổ biến): auto-pause <b>resume nhanh hơn</b> và tự động quyết định thời điểm.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Aurora provisioned</th><th>Aurora Serverless v2</th></tr></thead>
+        <tbody>
+          <tr><td>Đơn vị năng lực</td><td>DB instance class cố định (vd <code>db.r6g.2xlarge</code>)</td><td><b>ACU</b> (~2 GiB RAM), class <code>db.serverless</code></td></tr>
+          <tr><td>Thay đổi năng lực</td><td>Thủ công đổi class (có gián đoạn ngắn) hoặc thêm instance</td><td class="yes">Tự động, bước 0,5 ACU, không gián đoạn</td></tr>
+          <tr><td>Workload phù hợp</td><td><b>Ổn định, dự đoán được</b>; chi phí dễ dự báo</td><td><b>Biến động, đột biến, không dự đoán được</b>; ứng dụng mới; multitenant; dev/test</td></tr>
+          <tr><td>Tính phí</td><td>Theo giờ instance chạy</td><td>ACU-hour đo theo giây; 0 khi auto-pause</td></tr>
+          <tr><td>Reader / Multi-AZ / Global DB / RDS Proxy</td><td>Có</td><td>Có</td></tr>
+          <tr><td>Scale to zero</td><td class="no">Không (chỉ stop cluster)</td><td class="yes">Có (min 0 ACU)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>Aurora Serverless v1</b> là sản phẩm cũ, kiến trúc khác và <b>đã deprecated</b> (tài liệu nêu rõ). Đáp án mới nên chọn <b>Serverless v2</b>. “Platform version” của serverless không phải v1/v2.</li>
+          <li>Serverless v2 scale <b>compute</b>, không phải storage – storage Aurora vốn tự tăng.</li>
+          <li>Muốn tiết kiệm bằng auto-pause nhưng lại gắn RDS Proxy ⇒ instance <b>không bao giờ pause</b>.</li>
+          <li>Đặt min ACU quá thấp có thể làm mất working set trong buffer pool; tài liệu khuyên đặt min đủ giữ working set.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Unpredictable / spiky / intermittent workload</i>”, “<i>new application with unknown capacity</i>”, “<i>MySQL/PostgreSQL-compatible, pay only for capacity consumed</i>” ⇒ <b>Aurora Serverless v2</b>.</li>
+          <li>“<i>Dev/test database used only a few hours a day, minimize cost, can tolerate a short delay on first connection</i>” ⇒ Serverless v2 với <b>min 0 ACU (auto-pause)</b>.</li>
+          <li>“<i>Secondary Region in a global database should cost little but scale up when promoted</i>” ⇒ dùng instance <b>Serverless v2 trong cluster phụ</b> của Global Database (tài liệu nêu đúng use case này).</li>
+          <li>Workload ổn định 24/7 và cần tối ưu chi phí ⇒ <b>Aurora provisioned + Reserved Instances</b> thường rẻ hơn serverless.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: GLOBAL DATABASE ===================== -->
+      <h2 id="global-database"><img src="../assets/icons/cat/Database.svg" alt="">Aurora Global Database – CSDL đa Region</h2>
+      <p class="lead"><span class="t" data-vi="CSDL toàn cầu Aurora">Aurora Global Database</span> gồm nhiều Aurora DB cluster trải trên nhiều Region: <b>một cluster chính (primary)</b> ở một Region nơi dữ liệu được ghi, và <b>tối đa 10 cluster phụ (secondary) chỉ đọc</b> ở các Region khác. Aurora tự đồng bộ mọi thay đổi bằng <b>hạ tầng chuyên dụng ở tầng storage</b> (không qua engine), độ trễ <b>thường dưới 1 giây</b>.</p>
+
+      <h3>Lợi ích (theo tài liệu)</h3>
+      <ul>
+        <li><b>Global reads with local latency</b>: văn phòng/người dùng ở Region khác đọc dữ liệu ngay tại Region của mình.</li>
+        <li><b>Cluster phụ mở rộng được</b>: vì chỉ đọc, mỗi cluster phụ hỗ trợ tới <b>16 instance chỉ đọc</b> (thay vì 15 như cluster thường); có thể dùng reader Serverless v2.</li>
+        <li><b>Replication nhanh, ít ảnh hưởng</b> hiệu năng cluster chính – tài nguyên instance dành trọn cho workload.</li>
+        <li><b>Phục hồi sau sự cố toàn Region</b> với <b>RTO thấp hơn</b> và <b>RPO thấp hơn</b> các giải pháp sao chép truyền thống: <b>RPO thường tính bằng giây</b>, <b>RTO cỡ phút</b>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 330" width="800" role="img" aria-label="Aurora Global Database: primary Region và secondary Regions">
+          <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="15" y="20" width="340" height="290" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="28" y="42" font-size="12" font-weight="700" style="fill:#147EBA">Primary Region: us-east-1 (đọc + ghi)</text>
+          <image href="../assets/icons/res/Users.svg" x="35" y="70" width="40" height="40"/>
+          <text x="55" y="124" font-size="10" text-anchor="middle">App Mỹ</text>
+          <image href="../assets/icons/res/Amazon-Aurora-PostgreSQL-Instance.svg" x="150" y="62" width="50" height="50"/>
+          <text x="175" y="126" font-size="11" text-anchor="middle" font-weight="700">Writer</text>
+          <image href="../assets/icons/res/Amazon-Aurora-PostgreSQL-Instance-Alternate.svg" x="250" y="62" width="44" height="44"/>
+          <text x="272" y="122" font-size="10" text-anchor="middle">Replicas (≤ 15)</text>
+          <path class="line-o" d="M80 90 L146 88" marker-end="url(#ah2)"/>
+          <text x="112" y="80" font-size="9" text-anchor="middle" class="muted">global writer</text>
+          <rect x="60" y="160" width="250" height="60" rx="6" fill="rgba(20,126,186,.06)" stroke="#147EBA"/>
+          <text x="185" y="185" font-size="11" text-anchor="middle" font-weight="700">Cluster volume (6 bản / 3 AZ)</text>
+          <text x="185" y="203" font-size="10" text-anchor="middle" class="muted">nguồn sao chép ở tầng storage</text>
+          <path class="line-o" d="M175 130 L175 156" marker-end="url(#ah2)"/>
+          <text x="185" y="250" font-size="10" text-anchor="middle" class="muted">Global writer endpoint luôn trỏ tới writer</text>
+          <text x="185" y="265" font-size="10" text-anchor="middle" class="muted">của cluster chính – kể cả sau switchover/failover</text>
+          <rect x="445" y="20" width="340" height="135" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="458" y="42" font-size="12" font-weight="700" style="fill:#7AA116">Secondary Region: eu-west-1 (chỉ đọc)</text>
+          <image href="../assets/icons/res/Amazon-Aurora-PostgreSQL-Instance-Alternate.svg" x="490" y="60" width="44" height="44"/>
+          <text x="512" y="120" font-size="10" text-anchor="middle">Readers (≤ 16)</text>
+          <rect x="580" y="62" width="190" height="44" rx="6" fill="rgba(122,161,22,.08)" stroke="#7AA116"/>
+          <text x="675" y="88" font-size="10" text-anchor="middle">Cluster volume bản sao</text>
+          <image href="../assets/icons/res/Users.svg" x="640" y="112" width="30" height="30"/>
+          <text x="700" y="132" font-size="10" text-anchor="middle">App EU đọc local</text>
+          <rect x="445" y="175" width="340" height="135" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="458" y="197" font-size="12" font-weight="700" style="fill:#7AA116">Secondary Region: ap-southeast-1 (chỉ đọc)</text>
+          <image href="../assets/icons/res/Amazon-Aurora-Instance.svg" x="490" y="215" width="44" height="44"/>
+          <text x="512" y="275" font-size="10" text-anchor="middle">Reader Serverless v2</text>
+          <rect x="580" y="217" width="190" height="44" rx="6" fill="rgba(122,161,22,.08)" stroke="#7AA116"/>
+          <text x="675" y="243" font-size="10" text-anchor="middle">Cluster volume bản sao</text>
+          <text x="615" y="295" font-size="10" text-anchor="middle" class="muted">có thể bật write forwarding</text>
+          <path class="line-o" d="M312 185 C 400 150, 430 90, 576 84" marker-end="url(#ah2)"/>
+          <path class="line-o" d="M312 195 C 420 220, 470 240, 576 239" marker-end="url(#ah2)"/>
+          <text x="400" y="138" font-size="11" text-anchor="middle" font-weight="600">async, thường &lt; 1 s</text>
+          <text x="400" y="240" font-size="10" text-anchor="middle" class="muted">hạ tầng chuyên dụng</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Aurora Global Database: chỉ cluster chính nhận ghi; dữ liệu được sao chép <b>bất đồng bộ ở tầng storage</b> tới tối đa 10 Region phụ (thường &lt; 1 giây). Ứng dụng ở mỗi Region đọc tại chỗ; ghi đi qua <b>global writer endpoint</b> hoặc <b>write forwarding</b> từ cluster phụ.</figcaption>
+      </figure>
+
+      <h3>Write forwarding</h3>
+      <p>Bật <span class="t" data-vi="Chuyển tiếp ghi">write forwarding</span>, cluster phụ <b>chuyển các câu SQL ghi</b> tới cluster chính; cluster chính cập nhật rồi sao chép thay đổi về mọi Region phụ. Aurora lo phần mạng liên Region và truyền ngữ cảnh session/transaction. Cluster chính luôn là <b>nguồn sự thật (source of truth)</b>. Lợi ích: ứng dụng ở Region phụ <b>dùng một endpoint</b> cho cả đọc và ghi, không cần tự xây cơ chế gửi ghi về Region chính.</p>
+
+      <h3>Switchover vs Failover – hai cách đổi Region chính</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Switchover (trước gọi “managed planned failover”)</th><th>Managed failover (“allow data loss”)</th><th>Manual failover (detach &amp; promote)</th></tr></thead>
+        <tbody>
+          <tr><td>Khi nào dùng</td><td><b>Có kế hoạch</b>, mọi cluster khỏe: xoay vòng Region theo quy định, “follow-the-sun”, fail back sau sự cố</td><td><b>Sự cố ngoài kế hoạch</b> ở Region chính – cách <b>khuyến nghị</b> cho DR</td><td>Khi managed failover không dùng được (vd engine version không tương thích)</td></tr>
+          <tr><td>RPO</td><td class="yes"><b>0</b> – chờ cluster phụ đồng bộ hoàn toàn trước</td><td>Thường vài <b>giây</b> (tùy replication lag)</td><td>Thường vài giây</td></tr>
+          <tr><td>Thời gian</td><td>Thường <b>&lt; 30 giây</b> trên engine version mới</td><td>Cluster phụ nhận vai trò chính trong <b>vài phút</b></td><td>Tùy thao tác</td></tr>
+          <tr><td>Topology sau đó</td><td>Giữ nguyên số cluster và Region</td><td>Region cũ <b>tự được thêm lại</b> làm Region phụ khi khỏe; Aurora cố chụp snapshot volume cũ để cứu dữ liệu chưa sao chép</td><td>Cluster tách ra thành standalone; phải <b>tự tạo lại</b> global database và thêm Region</td></tr>
+          <tr><td>API / CLI</td><td><code>switchover-global-cluster</code></td><td><code>failover-global-cluster --allow-data-loss</code></td><td>Remove cluster khỏi global database</td></tr>
+        </tbody>
+      </table></div>
+
+      <ul>
+        <li>Managed failover cố gắng <b>“write fencing”</b> – chặn ghi ở Region cũ để tránh <b>split-brain</b>; tài liệu khuyên dùng <b>global writer endpoint</b> và giảm <b>DNS TTL</b> ứng dụng xuống thấp (vd 5 giây).</li>
+        <li>Chọn Region phụ có lag thấp nhất (metric <code>AuroraGlobalDBRPOLag</code> hoặc <code>AuroraGlobalDBReplicationLag</code>).</li>
+        <li>Cluster phụ được promote <b>không kế thừa</b> parameter group, alarm, tích hợp (Secrets Manager, IAM, S3, Lambda) của cluster chính ⇒ cấu hình sẵn cho nhất quán.</li>
+        <li>Aurora PostgreSQL: tham số <code>rds.global_db_rpo</code> (20 giây trở lên) đặt <b>giới hạn RPO</b> – nếu mọi cluster phụ đều trễ quá ngưỡng, Aurora <b>chặn commit</b> trên cluster chính cho tới khi một cluster phụ bắt kịp.</li>
+        <li>Cluster phụ có thể là <b>headless</b> (không có instance, chỉ có storage – rẻ hơn); phải thêm instance trước khi switchover/failover sang nó.</li>
+      </ul>
+
+      <h3>Giới hạn quan trọng của Global Database</h3>
+      <ul>
+        <li><b>Không hỗ trợ Backtrack</b>.</li>
+        <li><b>Không hỗ trợ Aurora Auto Scaling</b> cho cluster phụ.</li>
+        <li>Không stop/start từng cluster riêng lẻ; automatic minor version upgrade không có hiệu lực.</li>
+        <li>Switchover/failover managed yêu cầu primary và secondary <b>cùng major và minor engine version</b>.</li>
+        <li>Secrets Manager integration (managed master password) không hỗ trợ – phải tắt trước khi thêm Region.</li>
+        <li>Chỉ có ở một số Region và engine version nhất định; instance class phải đáp ứng yêu cầu cấu hình.</li>
+      </ul>
+
+      <h3>Các lựa chọn sao chép xuyên Region cho Aurora</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Phương án</th><th>Engine</th><th>Cơ chế</th><th>Đặc điểm</th></tr></thead>
+        <tbody>
+          <tr><td><b>Aurora Global Database</b></td><td>MySQL &amp; PostgreSQL</td><td>Tầng storage, hạ tầng chuyên dụng</td><td class="yes">≤ 10 Region phụ, lag thường &lt; 1 s, RPO giây, RTO phút, switchover RPO 0</td></tr>
+          <tr><td>Cross-Region Aurora read replica (binlog)</td><td>Chỉ Aurora MySQL</td><td>MySQL binary log replication</td><td>≤ 5 replica, mỗi cái một Region khác; lag cao hơn; không tạo được từ cluster bật Backtrack</td></tr>
+          <tr><td>Logical replication / binlog giữa cluster</td><td>PostgreSQL logical / MySQL binlog</td><td>Engine</td><td>Tự quản lý nhiều hơn</td></tr>
+          <tr><td>Copy snapshot sang Region khác / AWS Backup</td><td>Cả hai</td><td>Backup &amp; restore</td><td>RPO giờ, RTO giờ – rẻ nhất (Bài 19)</td></tr>
+        </tbody>
+      </table></div>
+      <p>Lưu ý: <b>Aurora PostgreSQL không hỗ trợ cross-Region Aurora Replicas</b> – muốn đọc/DR đa Region thì dùng Global Database.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Globally distributed application, low-latency reads in multiple Regions</i>”, “<i>RPO of seconds and RTO of minutes (hoặc “under 1 minute”) for a Region failure</i>”, “<i>replication lag under 1 second</i>” ⇒ <b>Aurora Global Database</b>.</li>
+          <li>“<i>Planned Region rotation with no data loss</i>” ⇒ <b>switchover</b>. “<i>Primary Region outage, recover quickly</i>” ⇒ <b>failover (allow data loss)</b> sang Region phụ có lag thấp nhất.</li>
+          <li>“<i>Applications in secondary Regions must also write without managing another endpoint</i>” ⇒ bật <b>write forwarding</b>.</li>
+          <li>Đáp án “Multi-AZ” hay “thêm Aurora Replica” cho yêu cầu chống <b>sự cố cả Region</b> ⇒ <b>sai</b> – mọi AZ/replica đều trong một Region.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: BACKUP, BACKTRACK, CLONING ===================== -->
+      <h2 id="backtrack-cloning"><img src="../assets/icons/res/AWS-Backup_Backup-Restore.svg" alt="">Backup, Backtrack và Cloning</h2>
+      <p class="lead">Aurora có ba cơ chế “quay về quá khứ / tạo bản sao” mà đề thi rất hay đặt cạnh nhau: <b>automated backup + PITR</b> (tạo cluster mới), <span class="t" data-vi="Tua ngược cụm CSDL">Backtrack</span> (tua ngược <b>tại chỗ</b>, chỉ Aurora MySQL) và <span class="t" data-vi="Nhân bản cụm CSDL">Aurora cloning</span> (bản sao copy-on-write tức thì).</p>
+
+      <h3>Automated backup của Aurora (khác RDS ở đâu)</h3>
+      <ul>
+        <li>Backup <b>liên tục và incremental</b> của cluster volume, lưu trên <b>Amazon S3</b>; <b>không ảnh hưởng hiệu năng</b>, không gián đoạn dịch vụ khi ghi backup.</li>
+        <li>Backup retention period <b>1–35 ngày</b>, <b>mặc định 1 ngày</b> bất kể tạo bằng cách nào, và <b>không thể tắt</b> automated backup (khác RDS cho phép 0).</li>
+        <li>Backup window: mặc định 30 phút chọn ngẫu nhiên trong khối 8 giờ của Region; không được trùng maintenance window. Console không cho chọn backup window khi tạo cluster (CLI/API thì được).</li>
+        <li><b>PITR</b> về bất kỳ thời điểm nào trong retention; <i>latest restorable time</i> thường cách hiện tại <b>≤ 5 phút</b>. Restore luôn tạo <b>DB cluster mới</b> – có thể mất hàng giờ với dữ liệu lớn.</li>
+        <li>Giữ lâu hơn 35 ngày ⇒ <b>DB cluster snapshot</b> thủ công (không hết hạn) hoặc <b>AWS Backup</b> (Bài 19).</li>
+      </ul>
+
+      <h3>Backtrack – “tua ngược” cluster tại chỗ</h3>
+      <ul>
+        <li>Chỉ có cho <b>Aurora MySQL</b> (version 2, 3, 8.4); <b>không có cho Aurora PostgreSQL</b>; chỉ ở một số Region.</li>
+        <li>“Rewind” cluster về thời điểm chỉ định <b>mà không restore từ backup</b> và <b>không tạo cluster mới</b> – hoàn tất trong <b>vài phút</b> (PITR có thể mất hàng giờ).</li>
+        <li><b>Target backtrack window</b> tối đa <b>72 giờ</b>; <i>actual backtrack window</i> có thể nhỏ hơn nếu workload ghi rất nặng (giới hạn bởi <span class="t" data-vi="Bản ghi thay đổi">change records</span>, tính phí theo giờ). Có event thông báo khi actual &lt; target.</li>
+        <li>Có thể tua <b>tới lui nhiều lần</b> để tìm thời điểm một thay đổi xảy ra (vd lùi 3 giờ rồi tiến 1 giờ).</li>
+        <li>Chỉ bật được khi <b>tạo cluster mới, restore snapshot hoặc clone</b> – <b>không Modify</b> cluster đang chạy để bật.</li>
+        <li>Áp dụng cho <b>toàn bộ cluster</b> – không chọn từng bảng; gây <b>gián đoạn ngắn</b> (đóng kết nối, bỏ đọc/ghi chưa commit) ⇒ nên dừng ứng dụng trước.</li>
+        <li><b>Không thay thế backup</b>. Không dùng với Global Database; không tạo được cross-Region read replica từ cluster bật Backtrack.</li>
+      </ul>
+
+      <h3>Aurora cloning – bản sao copy-on-write</h3>
+      <ul>
+        <li>Clone là cluster mới, ban đầu <b>dùng chung data page</b> với cluster nguồn nhưng là <b>volume độc lập</b>. Cơ chế <span class="t" data-vi="Sao chép khi ghi">copy-on-write</span>: chỉ khi nguồn hoặc clone <b>thay đổi một page</b> thì page mới được tạo riêng.</li>
+        <li><b>Nhanh và tiết kiệm</b> hơn restore snapshot; gần như không tốn thêm dung lượng lúc tạo. Ví dụ tài liệu: nguồn có 1000 page, clone sửa 100 page ⇒ nguồn trả 1000, clone chỉ trả 100.</li>
+        <li>Use case: <b>tạo môi trường test/dev từ dữ liệu production</b> mà không rủi ro làm hỏng dữ liệu; thử schema/parameter change; chạy export hoặc query analytics nặng trên clone.</li>
+        <li>Giới hạn: tối đa <b>15 clone copy-on-write</b> (từ clone thứ 16 là full copy, giống PITR); <b>cùng Region</b> với nguồn (không clone cross-Region); được <b>khác VPC</b> (subnet phải map cùng AZ); <b>cross-account</b> qua <b>AWS RAM</b>; nguồn phải có ≥ 1 DB instance.</li>
+        <li>Clone có thể cấu hình khác nguồn (vd chỉ 1 instance, hoặc Serverless v2). Xóa cluster nguồn không ảnh hưởng dữ liệu của clone.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 260" width="800" role="img" aria-label="Copy-on-write của Aurora cloning">
+          <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Amazon-Aurora-MySQL-Instance.svg" x="60" y="20" width="44" height="44"/>
+          <text x="82" y="80" font-size="11" text-anchor="middle" font-weight="700">Cluster nguồn A</text>
+          <text x="82" y="94" font-size="10" text-anchor="middle" class="muted">(production)</text>
+          <image href="../assets/icons/res/Amazon-Aurora-MySQL-Instance-Alternate.svg" x="680" y="20" width="44" height="44"/>
+          <text x="702" y="80" font-size="11" text-anchor="middle" font-weight="700">Clone B</text>
+          <text x="702" y="94" font-size="10" text-anchor="middle" class="muted">(test/dev)</text>
+          <rect x="180" y="150" width="70" height="44" rx="4" fill="rgba(122,161,22,.15)" stroke="#7AA116"/>
+          <text x="215" y="177" font-size="12" text-anchor="middle" font-weight="700">1[A]</text>
+          <rect x="270" y="150" width="70" height="44" rx="4" fill="rgba(140,140,140,.12)" stroke="#8C8C8C"/>
+          <text x="305" y="177" font-size="12" text-anchor="middle" font-weight="700">1</text>
+          <rect x="360" y="150" width="70" height="44" rx="4" fill="rgba(20,126,186,.08)" stroke="#147EBA"/>
+          <text x="395" y="177" font-size="12" text-anchor="middle" font-weight="700">2</text>
+          <rect x="450" y="150" width="70" height="44" rx="4" fill="rgba(20,126,186,.08)" stroke="#147EBA"/>
+          <text x="485" y="177" font-size="12" text-anchor="middle" font-weight="700">3</text>
+          <rect x="540" y="150" width="70" height="44" rx="4" fill="rgba(140,140,140,.12)" stroke="#8C8C8C"/>
+          <text x="575" y="177" font-size="12" text-anchor="middle" font-weight="700">4</text>
+          <rect x="630" y="150" width="70" height="44" rx="4" fill="rgba(236,114,17,.12)" stroke="#EC7211"/>
+          <text x="665" y="177" font-size="12" text-anchor="middle" font-weight="700">4[B]</text>
+          <path class="line-o" d="M90 100 L210 146" marker-end="url(#ah3)"/>
+          <path class="line-o" d="M100 100 L390 146" marker-end="url(#ah3)"/>
+          <path class="line-o" d="M110 100 L480 146" marker-end="url(#ah3)"/>
+          <path class="line-o" d="M115 98 L570 146" marker-end="url(#ah3)"/>
+          <path d="M690 100 L310 146" stroke="#147EBA" stroke-width="1.5" fill="none" stroke-dasharray="5 3" marker-end="url(#ah3)"/>
+          <path d="M695 100 L400 146" stroke="#147EBA" stroke-width="1.5" fill="none" stroke-dasharray="5 3" marker-end="url(#ah3)"/>
+          <path d="M698 100 L490 146" stroke="#147EBA" stroke-width="1.5" fill="none" stroke-dasharray="5 3" marker-end="url(#ah3)"/>
+          <path d="M702 100 L668 146" stroke="#147EBA" stroke-width="1.5" fill="none" stroke-dasharray="5 3" marker-end="url(#ah3)"/>
+          <text x="400" y="222" font-size="11" text-anchor="middle">Page 2, 3 <tspan font-weight="700">dùng chung</tspan> (chỉ tính phí cho nguồn). A sửa page 1 ⇒ tạo 1[A]; B sửa page 4 ⇒ tạo 4[B].</text>
+          <text x="400" y="242" font-size="10" text-anchor="middle" class="muted">Mũi tên cam liền: cluster A trỏ tới 1[A], 2, 3, 4 · Mũi tên xanh đứt: clone B trỏ tới 1, 2, 3, 4[B]</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> Copy-on-write (theo ví dụ trong tài liệu Aurora): lúc tạo, clone không copy dữ liệu mà trỏ tới cùng page với nguồn. Chỉ page bị thay đổi mới được tạo bản riêng cho bên thay đổi – nên clone tạo nhanh và gần như không tốn thêm storage.</figcaption>
+      </figure>
+
+      <h3>So sánh các cách khôi phục / sao chép dữ liệu Aurora</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>PITR (automated backup)</th><th>Backtrack</th><th>Cloning</th><th>DB cluster snapshot</th></tr></thead>
+        <tbody>
+          <tr><td>Kết quả</td><td><b>Cluster mới</b></td><td class="yes"><b>Cùng cluster</b>, tua ngược tại chỗ</td><td><b>Cluster mới</b> dùng chung page</td><td>Cluster mới khi restore</td></tr>
+          <tr><td>Tốc độ</td><td>Có thể hàng giờ</td><td class="yes">Vài phút</td><td class="yes">Nhanh</td><td>Có thể hàng giờ</td></tr>
+          <tr><td>Khoảng thời gian</td><td>1–35 ngày</td><td>≤ 72 giờ</td><td>Trạng thái hiện tại (latest restorable time)</td><td>Không hết hạn</td></tr>
+          <tr><td>Engine</td><td>MySQL &amp; PostgreSQL</td><td><b>Chỉ Aurora MySQL</b></td><td>MySQL &amp; PostgreSQL</td><td>MySQL &amp; PostgreSQL</td></tr>
+          <tr><td>Bật khi nào</td><td>Luôn bật</td><td>Chỉ khi tạo / restore / clone</td><td>Bất cứ lúc nào</td><td>Thủ công hoặc AWS Backup</td></tr>
+          <tr><td>Use case điển hình</td><td>Khôi phục sau lỗi, giữ cluster gốc để điều tra</td><td><b>Hoàn tác nhanh</b> lỗi người dùng (DELETE thiếu WHERE)</td><td><b>Test/dev từ production</b>, analytics</td><td>Lưu trữ dài hạn, copy sang Region/account khác</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>A developer accidentally deleted rows in Aurora MySQL; restore the database to a few minutes before the mistake <b>as quickly as possible</b>, without creating a new cluster</i>” ⇒ <b>Backtrack</b> (nếu cluster đã bật). Aurora PostgreSQL ⇒ chỉ có <b>PITR</b>.</li>
+          <li>“<i>Create a copy of the production Aurora database for testing quickly and cost-effectively</i>” ⇒ <b>Aurora cloning</b>, không phải snapshot + restore hay mysqldump.</li>
+          <li>“<i>Keep backups for 1 year / 7 years</i>” ⇒ retention tối đa 35 ngày ⇒ <b>snapshot thủ công</b> hoặc <b>AWS Backup</b>.</li>
+          <li>Clone sang <b>Region khác</b> ⇒ không được; dùng <b>copy snapshot</b> hoặc Global Database.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>Aurora</b> = CSDL quan hệ managed tương thích <b>MySQL &amp; PostgreSQL</b>, throughput tới <b>6×</b>, quản trị theo <b>cluster</b>: 1 writer + tối đa <b>15 Aurora Replicas</b> dùng chung <b>cluster volume</b>.</li>
+          <li><b>Cluster volume</b>: <b>6 bản sao / 3 AZ</b> bất kể số instance, tự tăng tới <b>256 TiB</b>, tự giảm khi xóa dữ liệu, auto-repair; Standard vs <b>I/O-Optimized</b> (chọn I/O-Optimized khi I/O ≥ 25% chi phí).</li>
+          <li><b>Endpoint</b>: cluster (writer, tự đổi khi failover) · reader (cân bằng kết nối giữa replica) · custom (≤ 5, nhóm instance tự chọn) · instance · global writer endpoint.</li>
+          <li><b>Failover</b>: promote replica theo <b>promotion tier 0–15</b> (cùng tier ⇒ lớn nhất), thường <b>&lt; 30–60 s</b>; không có replica ⇒ tạo lại writer &lt; 10 phút. <b>Aurora Auto Scaling</b> 0–15 replica, target tracking CPU/kết nối, replica mới tier 15.</li>
+          <li><b>Serverless v2</b>: ACU ≈ 2 GiB, 0/0,5 → 256 (MySQL) / 384 (PostgreSQL) ACU, bước 0,5 ACU, tính theo giây; reader tier 0–1 theo writer, tier 2–15 độc lập; <b>min 0 ACU = auto-pause</b> (mặc định 5 phút, resume ~15 s; không pause nếu có RDS Proxy / Global DB).</li>
+          <li><b>Global Database</b>: 1 primary + <b>≤ 10 secondary</b> Region, lag thường <b>&lt; 1 s</b>, RPO giây, RTO phút; <b>switchover</b> RPO 0 (có kế hoạch), <b>failover</b> có thể mất dữ liệu (sự cố); write forwarding; global writer endpoint; không Backtrack, không Auto Scaling cho cluster phụ.</li>
+          <li><b>Backup</b> 1–35 ngày, không tắt được, PITR ⇒ cluster mới. <b>Backtrack</b> (chỉ MySQL, ≤ 72 h, tại chỗ, bật lúc tạo). <b>Cloning</b> copy-on-write, nhanh, rẻ, cùng Region, ≤ 15 clone COW.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Amazon Aurora</dt><dd><b>CSDL quan hệ cloud-native của AWS</b> – tương thích MySQL/PostgreSQL, storage phân tán.</dd></div>
+        <div><dt>Aurora DB cluster</dt><dd><b>Cụm CSDL Aurora</b> – 1 writer + 0–15 Aurora Replicas + 1 cluster volume.</dd></div>
+        <div><dt>Cluster volume</dt><dd><b>Ổ đĩa ảo dùng chung của cụm</b> – SSD, 6 bản sao / 3 AZ, tối đa 256 TiB.</dd></div>
+        <div><dt>Primary (writer) DB instance</dt><dd><b>Instance ghi chính</b> – xử lý mọi DDL/DML; mỗi cluster có một.</dd></div>
+        <div><dt>Aurora Replica (reader instance)</dt><dd><b>Bản sao Aurora</b> – instance chỉ đọc dùng chung volume, đích failover; lag thường &lt; 100 ms.</dd></div>
+        <div><dt>Cluster endpoint / Reader endpoint</dt><dd><b>Điểm cuối ghi / Điểm cuối đọc</b> – trỏ tới writer hiện tại / cân bằng kết nối giữa replica.</dd></div>
+        <div><dt>Custom endpoint</dt><dd><b>Điểm cuối tùy chỉnh</b> – nhóm instance tự chọn; tối đa 5 / cluster.</dd></div>
+        <div><dt>Instance endpoint</dt><dd><b>Điểm cuối của từng instance</b> – chẩn đoán, tuning.</dd></div>
+        <div><dt>Promotion tier (failover priority)</dt><dd><b>Bậc ưu tiên nâng cấp</b> – 0 (cao nhất) tới 15; quyết định replica nào thành writer.</dd></div>
+        <div><dt>Aurora Auto Scaling</dt><dd><b>Tự co giãn số Aurora Replica</b> – target tracking, 0–15 replica, cooldown 300 s.</dd></div>
+        <div><dt>Aurora Standard / Aurora I/O-Optimized</dt><dd><b>Cấu hình lưu trữ tiêu chuẩn / tối ưu I/O</b> – trả phí I/O theo request / không phí I/O.</dd></div>
+        <div><dt>Storage auto-repair</dt><dd><b>Tự sửa chữa lưu trữ</b> – sửa segment hỏng từ các bản sao khác.</dd></div>
+        <div><dt>Survivable page cache</dt><dd><b>Bộ đệm trang sống sót qua khởi động lại</b> – cache vẫn “ấm” sau restart.</dd></div>
+        <div><dt>Aurora Serverless v2</dt><dd><b>Aurora không máy chủ</b> – compute tự co giãn theo ACU, class db.serverless.</dd></div>
+        <div><dt>Aurora capacity unit (ACU)</dt><dd><b>Đơn vị năng lực Aurora</b> – ≈ 2 GiB RAM + CPU, mạng tương ứng.</dd></div>
+        <div><dt>Mixed-configuration cluster</dt><dd><b>Cụm cấu hình hỗn hợp</b> – trộn instance provisioned và serverless.</dd></div>
+        <div><dt>Auto-pause (scale to zero)</dt><dd><b>Tự tạm dừng / co về 0</b> – min 0 ACU, pause sau 300 s–1 ngày không kết nối.</dd></div>
+        <div><dt>Aurora Global Database</dt><dd><b>CSDL toàn cầu Aurora</b> – 1 primary + ≤ 10 secondary Region, lag &lt; 1 s.</dd></div>
+        <div><dt>Primary / Secondary cluster</dt><dd><b>Cụm chính / Cụm phụ</b> – nhận ghi / chỉ đọc (≤ 16 instance).</dd></div>
+        <div><dt>Global writer endpoint</dt><dd><b>Điểm cuối ghi toàn cầu</b> – luôn trỏ writer của cluster chính, kể cả sau đổi Region.</dd></div>
+        <div><dt>Write forwarding</dt><dd><b>Chuyển tiếp ghi</b> – cluster phụ gửi lệnh ghi về cluster chính.</dd></div>
+        <div><dt>Switchover / Failover (Global Database)</dt><dd><b>Chuyển vai trò có kế hoạch / Chuyển dự phòng khi sự cố</b> – RPO 0 / có thể mất dữ liệu.</dd></div>
+        <div><dt>Split-brain / Write fencing</dt><dd><b>Hai nơi cùng nhận ghi / Rào chặn ghi</b> – rủi ro và biện pháp khi failover.</dd></div>
+        <div><dt>Headless secondary cluster</dt><dd><b>Cụm phụ không instance</b> – chỉ có storage, rẻ; thêm instance trước khi promote.</dd></div>
+        <div><dt>Backtrack</dt><dd><b>Tua ngược cụm CSDL</b> – Aurora MySQL, ≤ 72 giờ, tại chỗ, không tạo cluster mới.</dd></div>
+        <div><dt>Target / Actual backtrack window</dt><dd><b>Cửa sổ tua ngược mục tiêu / thực tế</b> – thực tế có thể nhỏ hơn khi ghi nhiều.</dd></div>
+        <div><dt>Aurora cloning / Copy-on-write</dt><dd><b>Nhân bản cụm / Sao chép khi ghi</b> – clone dùng chung page, chỉ tách page khi thay đổi.</dd></div>
+        <div><dt>DB cluster snapshot</dt><dd><b>Bản chụp cụm CSDL</b> – thủ công, không hết hạn.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs a MySQL-compatible OLTP database on Amazon Aurora with a single DB instance. The company requires the database to continue serving reads and writes within about one minute if the Availability Zone that hosts the DB instance fails. The solution must be the MOST operationally efficient. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Do nothing, because the Aurora cluster volume already stores six copies of the data across three Availability Zones.</li>
+            <li data-k="B">Add an Aurora Replica of the same instance class in a different Availability Zone.</li>
+            <li data-k="C">Enable Backtrack with a 72-hour target window.</li>
+            <li data-k="D">Configure a cross-Region read replica by using MySQL binary log replication.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Dữ liệu Aurora đã có 6 bản / 3 AZ nhưng <b>compute</b> chỉ ở 1 AZ. Thêm <b>Aurora Replica ở AZ khác</b> ⇒ khi writer hỏng, Aurora tự promote replica, thường khôi phục <b>&lt; 60 s (thường &lt; 30 s)</b>; tài liệu khuyên replica cùng instance class. <b>A sai</b>: không có replica thì Aurora phải tạo lại writer (thường &lt; 10 phút) và nếu cả AZ sập phải tự tạo instance ở AZ khác. <b>C sai</b>: Backtrack để hoàn tác lỗi dữ liệu, không phải HA. <b>D sai</b>: replica cross-Region không tự failover, phức tạp hơn và vượt quá yêu cầu (chỉ cần chống sự cố AZ).</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy cơ sở dữ liệu OLTP tương thích MySQL trên Amazon Aurora với một DB instance duy nhất. Công ty yêu cầu cơ sở dữ liệu tiếp tục phục vụ đọc và ghi trong khoảng một phút nếu Availability Zone chứa DB instance gặp sự cố. Giải pháp phải MOST operationally efficient (hiệu quả vận hành nhất). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Không làm gì, vì Aurora cluster volume đã lưu sáu bản sao dữ liệu trên ba Availability Zone.</span><span class="why">Sai: dữ liệu có 6 bản nhưng compute chỉ ở 1 AZ; không có replica thì Aurora phải tạo lại writer (thường &lt; 10 phút), và nếu cả AZ sập phải tự tạo instance ở AZ khác.</span></li>
+              <li data-k="B"><span class="tv">Thêm một Aurora Replica cùng instance class ở một Availability Zone khác.</span><span class="why">Đúng: khi writer hỏng, Aurora tự promote Aurora Replica ở AZ khác làm writer, thường khôi phục dưới 60 giây (thường &lt; 30 giây).</span></li>
+              <li data-k="C"><span class="tv">Bật Backtrack với target window 72 giờ.</span><span class="why">Sai: Backtrack dùng để hoàn tác lỗi dữ liệu, không cung cấp high availability.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình một cross-Region read replica bằng MySQL binary log replication.</span><span class="why">Sai: replica cross-Region không tự failover, phức tạp hơn và vượt quá yêu cầu chỉ cần chống sự cố AZ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A media company is launching a new MySQL-compatible application. Traffic is expected to be highly unpredictable, with sudden spikes during live events and long idle periods overnight. The company wants the database to scale compute capacity automatically without disrupting open transactions and to pay only for the capacity consumed. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon RDS for MySQL with storage autoscaling enabled.</li>
+            <li data-k="B">An Aurora provisioned cluster with the largest available DB instance class.</li>
+            <li data-k="C">An Aurora provisioned cluster with Aurora Auto Scaling configured for the writer instance.</li>
+            <li data-k="D">An Aurora cluster that uses Aurora Serverless v2 DB instances with an appropriate minimum and maximum ACU range.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Aurora Serverless v2</b> tự co giãn compute theo bước 0,5 ACU, scale ngay cả khi transaction đang mở, tính phí theo ACU-hour đo từng giây – đúng use case “variable workloads” và “new applications” trong tài liệu. <b>A sai</b>: storage autoscaling chỉ tăng dung lượng đĩa, không tăng CPU/RAM. <b>B sai</b>: trả tiền cho năng lực đỉnh suốt ngày đêm. <b>C sai</b>: Aurora Auto Scaling chỉ thêm/bớt <b>reader</b>, không áp dụng cho workload của writer.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền thông sắp ra mắt ứng dụng mới tương thích MySQL. Lưu lượng dự kiến rất khó đoán, có các đợt tăng đột biến trong sự kiện trực tiếp và những khoảng nhàn rỗi dài vào ban đêm. Công ty muốn cơ sở dữ liệu tự động co giãn năng lực compute mà không làm gián đoạn các transaction đang mở và chỉ trả tiền cho năng lực đã dùng. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon RDS for MySQL có bật storage autoscaling.</span><span class="why">Sai: storage autoscaling chỉ tăng dung lượng đĩa, không tăng CPU/RAM.</span></li>
+              <li data-k="B"><span class="tv">Một Aurora provisioned cluster dùng DB instance class lớn nhất hiện có.</span><span class="why">Sai: phải trả tiền cho năng lực đỉnh suốt ngày đêm, kể cả lúc nhàn rỗi.</span></li>
+              <li data-k="C"><span class="tv">Một Aurora provisioned cluster với Aurora Auto Scaling được cấu hình cho writer instance.</span><span class="why">Sai: Aurora Auto Scaling chỉ thêm/bớt reader (Aurora Replicas), không co giãn writer.</span></li>
+              <li data-k="D"><span class="tv">Một Aurora cluster dùng các DB instance Aurora Serverless v2 với dải ACU tối thiểu và tối đa phù hợp.</span><span class="why">Đúng: Aurora Serverless v2 tự co giãn compute theo bước 0,5 ACU, kể cả khi transaction đang mở, và tính phí theo ACU-hour đã dùng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A global retail company runs its product catalog on Amazon Aurora PostgreSQL in us-east-1. Customers in Europe and Asia experience high read latency. The company also needs a disaster recovery plan that provides an RPO measured in seconds and an RTO measured in minutes if us-east-1 becomes unavailable. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Convert the cluster to an Aurora Global Database with secondary clusters in eu-west-1 and ap-southeast-1, and direct reads in each Region to the local secondary cluster.</li>
+            <li data-k="B">Create cross-Region Aurora Replicas of the Aurora PostgreSQL cluster in eu-west-1 and ap-southeast-1.</li>
+            <li data-k="C">During a Regional outage, perform a managed cross-Region failover of the global database to the secondary cluster with the lowest replication lag.</li>
+            <li data-k="D">Copy automated snapshots to eu-west-1 every day and restore them during an outage.</li>
+            <li data-k="E">Add 15 Aurora Replicas in us-east-1 and enable Aurora Auto Scaling.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> <b>Aurora Global Database</b> sao chép ở tầng storage tới tối đa 10 Region phụ, lag thường &lt; 1 s ⇒ đọc với độ trễ local (A); khi Region chính sập, <b>managed failover</b> (“allow data loss”) sang Region phụ có lag thấp nhất cho RPO giây, RTO phút (C). <b>B sai</b>: tài liệu nêu Aurora PostgreSQL <b>không hỗ trợ cross-Region Aurora Replicas</b>. <b>D sai</b>: RPO tới 24 giờ, RTO hàng giờ, không giải quyết độ trễ đọc. <b>E sai</b>: mọi replica vẫn ở us-east-1 – không giảm latency cho EU/Asia và không chống sự cố Region.</div>
+          <div class="trans">
+            <div class="tq">Một công ty bán lẻ toàn cầu chạy danh mục sản phẩm trên Amazon Aurora PostgreSQL ở us-east-1. Khách hàng ở châu Âu và châu Á gặp độ trễ đọc cao. Công ty cũng cần một kế hoạch disaster recovery có RPO tính bằng giây và RTO tính bằng phút nếu us-east-1 không khả dụng. Solutions architect nên thực hiện HAI hành động nào? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển cluster thành Aurora Global Database với các secondary cluster ở eu-west-1 và ap-southeast-1, và chuyển lưu lượng đọc ở mỗi Region tới secondary cluster tại chỗ.</span><span class="why">Đúng: Global Database sao chép ở tầng storage với lag thường &lt; 1 giây ⇒ người dùng EU/Asia đọc với độ trễ local.</span></li>
+              <li data-k="B"><span class="tv">Tạo các cross-Region Aurora Replica của Aurora PostgreSQL cluster ở eu-west-1 và ap-southeast-1.</span><span class="why">Sai: Aurora PostgreSQL không hỗ trợ cross-Region Aurora Replicas.</span></li>
+              <li data-k="C"><span class="tv">Khi xảy ra sự cố Region, thực hiện managed cross-Region failover của global database sang secondary cluster có replication lag thấp nhất.</span><span class="why">Đúng: managed failover sang Region phụ có lag thấp nhất đạt RPO tính bằng giây và RTO tính bằng phút.</span></li>
+              <li data-k="D"><span class="tv">Copy automated snapshot sang eu-west-1 mỗi ngày và restore khi có sự cố.</span><span class="why">Sai: RPO tới 24 giờ, RTO hàng giờ, và không giải quyết độ trễ đọc.</span></li>
+              <li data-k="E"><span class="tv">Thêm 15 Aurora Replica ở us-east-1 và bật Aurora Auto Scaling.</span><span class="why">Sai: mọi replica vẫn ở us-east-1 – không giảm độ trễ cho EU/Asia và không chống được sự cố Region.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A developer accidentally ran a DELETE statement without a WHERE clause on a production Amazon Aurora MySQL DB cluster 20 minutes ago. The cluster was created with Backtrack enabled and a 24-hour target window. The company must recover the data as quickly as possible and keep using the same cluster endpoint. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Restore the DB cluster to a point in time 21 minutes ago and update the application connection string.</li>
+            <li data-k="B">Restore the most recent DB cluster snapshot to a new cluster.</li>
+            <li data-k="C">Pause the application and backtrack the DB cluster to a time just before the DELETE statement ran.</li>
+            <li data-k="D">Promote an Aurora Replica to be the new writer, because the replica has not applied the DELETE yet.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Backtrack</b> “tua ngược” <b>chính cluster đó</b> về thời điểm chỉ định trong <b>vài phút</b>, không tạo cluster mới ⇒ giữ nguyên endpoint; tài liệu dùng chính ví dụ “DELETE without a WHERE clause”. Cần dừng ứng dụng vì backtrack gây gián đoạn ngắn. <b>A sai</b>: PITR tạo <b>cluster mới</b> (endpoint mới) và có thể mất hàng giờ. <b>B sai</b>: snapshot có thể cũ hơn nhiều, cũng tạo cluster mới. <b>D sai</b>: replica đọc chung cluster volume, lag &lt; 100 ms – DELETE đã có ở mọi replica.</div>
+          <div class="trans">
+            <div class="tq">Một developer vô tình chạy câu lệnh DELETE không có mệnh đề WHERE trên một Amazon Aurora MySQL DB cluster production cách đây 20 phút. Cluster được tạo với Backtrack được bật và target window 24 giờ. Công ty phải khôi phục dữ liệu nhanh nhất có thể và tiếp tục dùng cùng cluster endpoint. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Restore DB cluster về thời điểm 21 phút trước và cập nhật connection string của ứng dụng.</span><span class="why">Sai: point-in-time restore tạo cluster mới (endpoint mới) và có thể mất hàng giờ.</span></li>
+              <li data-k="B"><span class="tv">Restore DB cluster snapshot gần nhất thành một cluster mới.</span><span class="why">Sai: snapshot có thể cũ hơn nhiều (mất dữ liệu) và cũng tạo cluster mới với endpoint khác.</span></li>
+              <li data-k="C"><span class="tv">Tạm dừng ứng dụng và backtrack DB cluster về thời điểm ngay trước khi câu lệnh DELETE chạy.</span><span class="why">Đúng: Backtrack "tua ngược" chính cluster đó trong vài phút, không tạo cluster mới ⇒ giữ nguyên endpoint; dừng ứng dụng vì backtrack gây gián đoạn ngắn.</span></li>
+              <li data-k="D"><span class="tv">Promote một Aurora Replica thành writer mới, vì replica chưa áp dụng lệnh DELETE.</span><span class="why">Sai: replica đọc chung cluster volume với lag &lt; 100 ms – lệnh DELETE đã có ở mọi replica.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company wants its QA team to run destructive tests every week against a full copy of a 5 TB production Amazon Aurora PostgreSQL database. Each copy must be available within minutes, must not affect production, and must minimize storage costs. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create an Aurora clone of the production DB cluster for each test cycle and delete it after testing.</li>
+            <li data-k="B">Take a manual DB cluster snapshot each week and restore it to a new DB cluster.</li>
+            <li data-k="C">Use Backtrack on the production cluster after each test cycle.</li>
+            <li data-k="D">Use pg_dump to export the database to Amazon S3 and import it into a new cluster.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Aurora cloning</b> dùng <b>copy-on-write</b>: clone ban đầu dùng chung page với nguồn, chỉ page bị thay đổi mới tốn thêm storage ⇒ tạo nhanh, rẻ, và là volume độc lập nên test phá hoại không ảnh hưởng production. <b>B sai</b>: restore 5 TB chậm hơn và trả tiền storage đầy đủ. <b>C sai</b>: chạy test trên production là rủi ro, và Backtrack <b>không có cho Aurora PostgreSQL</b>. <b>D sai</b>: export/import 5 TB rất chậm, nhiều công vận hành.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn nhóm QA chạy các bài kiểm thử phá hoại (destructive test) mỗi tuần trên một bản sao đầy đủ của cơ sở dữ liệu Amazon Aurora PostgreSQL production dung lượng 5 TB. Mỗi bản sao phải sẵn sàng trong vài phút, không được ảnh hưởng production, và phải giảm thiểu chi phí lưu trữ. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Aurora clone của DB cluster production cho mỗi chu kỳ kiểm thử và xóa nó sau khi kiểm thử xong.</span><span class="why">Đúng: Aurora cloning dùng copy-on-write – tạo nhanh, chỉ tốn storage cho page bị thay đổi, và là volume độc lập nên không ảnh hưởng production.</span></li>
+              <li data-k="B"><span class="tv">Chụp một manual DB cluster snapshot mỗi tuần và restore thành DB cluster mới.</span><span class="why">Sai: restore 5 TB chậm hơn và phải trả tiền cho toàn bộ storage của bản sao.</span></li>
+              <li data-k="C"><span class="tv">Dùng Backtrack trên cluster production sau mỗi chu kỳ kiểm thử.</span><span class="why">Sai: chạy test phá hoại trên production là rủi ro, và Backtrack không có cho Aurora PostgreSQL.</span></li>
+              <li data-k="D"><span class="tv">Dùng pg_dump để xuất cơ sở dữ liệu ra Amazon S3 rồi nhập vào cluster mới.</span><span class="why">Sai: export/import 5 TB rất chậm và tốn nhiều công vận hành.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An Aurora MySQL DB cluster has one writer and four Aurora Replicas. The business intelligence team runs heavy ad hoc queries that slow down read requests from the customer-facing application, which uses the reader endpoint. The company wants to isolate the BI workload on two larger replicas while the application continues to use the other replicas. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Point the BI tool to the cluster endpoint.</li>
+            <li data-k="B">Set the promotion tier of the two larger replicas to 0.</li>
+            <li data-k="C">Enable Aurora Auto Scaling with a target CPU utilization of 40%.</li>
+            <li data-k="D">Create a custom endpoint that contains the two larger replicas for the BI team, and create another custom endpoint that contains the remaining replicas for the application.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Custom endpoint</b> (tối đa 5 / cluster) cân bằng kết nối trên <b>nhóm instance bạn chọn</b> – đúng use case tài liệu: báo cáo/ad hoc vào nhóm riêng, production vào nhóm khác. Khi dùng custom endpoint thường không dùng reader endpoint nữa (reader endpoint gửi tới mọi replica). <b>A sai</b>: đẩy tải BI lên writer, ảnh hưởng ghi. <b>B sai</b>: promotion tier chỉ quyết định thứ tự failover. <b>C sai</b>: thêm replica nhưng reader endpoint vẫn trộn BI với ứng dụng.</div>
+          <div class="trans">
+            <div class="tq">Một Aurora MySQL DB cluster có một writer và bốn Aurora Replica. Nhóm business intelligence chạy các truy vấn ad hoc nặng làm chậm các request đọc của ứng dụng phục vụ khách hàng, vốn dùng reader endpoint. Công ty muốn cô lập workload BI trên hai replica lớn hơn trong khi ứng dụng tiếp tục dùng các replica còn lại. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Trỏ công cụ BI tới cluster endpoint.</span><span class="why">Sai: cluster endpoint trỏ tới writer ⇒ đẩy tải BI lên writer, ảnh hưởng hoạt động ghi.</span></li>
+              <li data-k="B"><span class="tv">Đặt promotion tier của hai replica lớn hơn là 0.</span><span class="why">Sai: promotion tier chỉ quyết định thứ tự ưu tiên khi failover, không định tuyến lưu lượng.</span></li>
+              <li data-k="C"><span class="tv">Bật Aurora Auto Scaling với mục tiêu CPU utilization 40%.</span><span class="why">Sai: chỉ thêm replica, còn reader endpoint vẫn trộn lẫn tải BI với ứng dụng.</span></li>
+              <li data-k="D"><span class="tv">Tạo một custom endpoint chứa hai replica lớn hơn cho nhóm BI, và tạo một custom endpoint khác chứa các replica còn lại cho ứng dụng.</span><span class="why">Đúng: custom endpoint cân bằng kết nối trên nhóm instance bạn chọn ⇒ tách riêng tải BI và tải ứng dụng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A financial services company uses an Aurora Global Database with a primary cluster in us-east-1 and a secondary cluster in us-west-2. Regulations require the company to move the primary Region to us-west-2 for several months each year to prove its disaster recovery capability. All clusters are healthy, and no data loss is acceptable. Which approach should the company use?</div>
+          <ol class="opts">
+            <li data-k="A">Run failover-global-cluster with the --allow-data-loss option.</li>
+            <li data-k="B">Perform an Aurora Global Database switchover to the secondary cluster in us-west-2.</li>
+            <li data-k="C">Detach the secondary cluster from the global database and point the application to its cluster endpoint.</li>
+            <li data-k="D">Restore the latest snapshot of the primary cluster in us-west-2.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Switchover</b> (trước gọi managed planned failover) dành cho tình huống <b>có kế hoạch</b> như “regional rotation” – tài liệu nêu đúng ví dụ quy định ngành tài chính. Aurora chờ cluster phụ <b>đồng bộ hoàn toàn</b> rồi mới đổi vai ⇒ <b>RPO = 0</b>, topology giữ nguyên. <b>A sai</b>: failover “allow data loss” dành cho sự cố ngoài kế hoạch, có thể mất dữ liệu. <b>C sai</b>: detach phá vỡ global database, phải dựng lại, có thể mất dữ liệu chưa sao chép. <b>D sai</b>: mất dữ liệu sau snapshot và RTO dài.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dịch vụ tài chính dùng Aurora Global Database với primary cluster ở us-east-1 và secondary cluster ở us-west-2. Quy định yêu cầu công ty chuyển Region chính sang us-west-2 trong vài tháng mỗi năm để chứng minh năng lực disaster recovery. Mọi cluster đều khỏe mạnh và không chấp nhận mất dữ liệu. Công ty nên dùng cách nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chạy failover-global-cluster với tùy chọn --allow-data-loss.</span><span class="why">Sai: failover "allow data loss" dành cho sự cố ngoài kế hoạch và có thể mất dữ liệu.</span></li>
+              <li data-k="B"><span class="tv">Thực hiện Aurora Global Database switchover sang secondary cluster ở us-west-2.</span><span class="why">Đúng: switchover dành cho tình huống có kế hoạch như luân chuyển Region; Aurora chờ cluster phụ đồng bộ hoàn toàn rồi mới đổi vai ⇒ RPO = 0, giữ nguyên topology.</span></li>
+              <li data-k="C"><span class="tv">Tách (detach) secondary cluster khỏi global database và trỏ ứng dụng tới cluster endpoint của nó.</span><span class="why">Sai: detach phá vỡ global database, phải dựng lại và có thể mất dữ liệu chưa sao chép.</span></li>
+              <li data-k="D"><span class="tv">Restore snapshot mới nhất của primary cluster ở us-west-2.</span><span class="why">Sai: mất dữ liệu phát sinh sau snapshot và RTO dài.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company runs a development Aurora PostgreSQL database that is used only during business hours. The company wants to minimize compute costs when the database is idle, and developers can tolerate a delay of about 15 seconds when they first connect in the morning. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Place an Amazon RDS Proxy in front of the cluster to keep connections warm.</li>
+            <li data-k="B">Use Aurora Serverless v2 DB instances in the cluster.</li>
+            <li data-k="C">Use Aurora I/O-Optimized storage configuration.</li>
+            <li data-k="D">Set the minimum capacity to 0.5 ACU and the maximum capacity to 128 ACUs.</li>
+            <li data-k="E">Set the minimum capacity to 0 ACUs so that idle instances automatically pause.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Instance <b>Serverless v2</b> (B) với <b>min capacity 0 ACU</b> (E) bật <b>auto-pause</b>: sau khoảng không có kết nối (mặc định 5 phút) instance pause, <b>không tính phí instance</b>; kết nối mới làm resume trong khoảng <b>15 giây</b>. <b>A sai</b>: RDS Proxy luôn giữ kết nối mở ⇒ instance <b>không bao giờ auto-pause</b>. <b>C sai</b>: I/O-Optimized chỉ thay đổi cách tính phí I/O, không giảm chi phí compute khi rảnh. <b>D sai</b>: min 0,5 ACU vẫn tính phí liên tục, không pause.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy cơ sở dữ liệu Aurora PostgreSQL cho môi trường phát triển, chỉ dùng trong giờ làm việc. Công ty muốn giảm thiểu chi phí compute khi cơ sở dữ liệu nhàn rỗi, và developer chấp nhận độ trễ khoảng 15 giây khi kết nối lần đầu vào buổi sáng. Solutions architect nên thực hiện HAI hành động nào? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt một Amazon RDS Proxy trước cluster để giữ kết nối luôn "ấm".</span><span class="why">Sai: RDS Proxy luôn giữ kết nối mở ⇒ instance không bao giờ auto-pause, không tiết kiệm được.</span></li>
+              <li data-k="B"><span class="tv">Dùng các DB instance Aurora Serverless v2 trong cluster.</span><span class="why">Đúng: Aurora Serverless v2 là điều kiện để co giãn theo ACU và hỗ trợ auto-pause.</span></li>
+              <li data-k="C"><span class="tv">Dùng cấu hình lưu trữ Aurora I/O-Optimized.</span><span class="why">Sai: I/O-Optimized chỉ thay đổi cách tính phí I/O, không giảm chi phí compute khi nhàn rỗi.</span></li>
+              <li data-k="D"><span class="tv">Đặt capacity tối thiểu 0.5 ACU và tối đa 128 ACU.</span><span class="why">Sai: min 0,5 ACU vẫn bị tính phí liên tục, instance không pause.</span></li>
+              <li data-k="E"><span class="tv">Đặt capacity tối thiểu 0 ACU để instance nhàn rỗi tự động pause.</span><span class="why">Đúng: min 0 ACU bật auto-pause – không có kết nối thì instance pause và không tính phí, kết nối mới làm resume trong khoảng 15 giây.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs an I/O-intensive workload on an Aurora MySQL cluster that uses the Aurora Standard storage configuration. A cost analysis shows that I/O charges account for about 40% of the total Aurora bill and vary significantly from month to month. The company wants more predictable costs without changing the application. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Migrate the database to Amazon RDS for MySQL with Provisioned IOPS SSD storage.</li>
+            <li data-k="B">Add more Aurora Replicas to spread the I/O load.</li>
+            <li data-k="C">Modify the DB cluster to use the Aurora I/O-Optimized storage configuration.</li>
+            <li data-k="D">Enable Backtrack to reduce the number of write I/O operations.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Aurora I/O-Optimized</b> không tính phí I/O đọc/ghi, cho giá/hiệu năng tốt hơn và chi phí <b>dễ dự đoán</b>; tài liệu khuyên chọn khi chi phí I/O <b>≥ 25%</b> tổng chi phí Aurora (ở đây 40%). Chỉ cần Modify cluster. <b>A sai</b>: migrate tốn công và mất các lợi ích Aurora. <b>B sai</b>: replica không giảm tổng phí I/O và còn tăng phí instance. <b>D sai</b>: Backtrack tạo thêm change records (tính phí), không giảm I/O.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy workload I/O lớn trên một Aurora MySQL cluster dùng cấu hình lưu trữ Aurora Standard. Phân tích chi phí cho thấy phí I/O chiếm khoảng 40% tổng hóa đơn Aurora và biến động mạnh giữa các tháng. Công ty muốn chi phí dễ dự đoán hơn mà không thay đổi ứng dụng. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Di chuyển cơ sở dữ liệu sang Amazon RDS for MySQL với lưu trữ Provisioned IOPS SSD.</span><span class="why">Sai: migrate tốn công, mất các lợi ích của Aurora và có thể phải điều chỉnh ứng dụng.</span></li>
+              <li data-k="B"><span class="tv">Thêm Aurora Replica để phân tán tải I/O.</span><span class="why">Sai: replica không giảm tổng phí I/O mà còn tăng thêm phí instance.</span></li>
+              <li data-k="C"><span class="tv">Sửa DB cluster để dùng cấu hình lưu trữ Aurora I/O-Optimized.</span><span class="why">Đúng: I/O-Optimized không tính phí I/O đọc/ghi, chi phí dễ dự đoán; nên chọn khi phí I/O ≥ 25% tổng chi phí Aurora (ở đây 40%), chỉ cần Modify cluster.</span></li>
+              <li data-k="D"><span class="tv">Bật Backtrack để giảm số thao tác I/O ghi.</span><span class="why">Sai: Backtrack tạo thêm change record (có tính phí), không giảm I/O.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">An application uses an Aurora MySQL DB cluster with Aurora Replicas. During peak hours, read traffic increases sharply and the replicas reach 90% CPU utilization, but at night the replicas are mostly idle. The company wants to automatically adjust read capacity to keep average replica CPU near 50% while minimizing cost. The application already connects to the reader endpoint. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Configure Aurora Auto Scaling with a target tracking policy on the average CPU utilization of Aurora Replicas, with appropriate minimum and maximum replica counts.</li>
+            <li data-k="B">Create an Amazon EC2 Auto Scaling group that launches MySQL read replicas on EC2 instances.</li>
+            <li data-k="C">Schedule an AWS Lambda function to modify the writer DB instance class every morning and evening.</li>
+            <li data-k="D">Convert the cluster to an Aurora Global Database and add a secondary Region.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Aurora Auto Scaling</b> dùng <b>target tracking</b> trên metric định sẵn như CPU trung bình của các reader để tự thêm/bớt Aurora Replicas (0–15). Replica mới tự được reader endpoint phân phối kết nối, và Auto Scaling xóa replica khi tải giảm ⇒ tiết kiệm. <b>B sai</b>: tự quản lý MySQL trên EC2, không tích hợp cluster volume. <b>C sai</b>: đổi class của writer không thêm năng lực đọc cho replica và gây gián đoạn. <b>D sai</b>: Global Database dùng cho đa Region, không phải co giãn đọc trong Region (và không hỗ trợ Auto Scaling cho cluster phụ).</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng dùng Aurora MySQL DB cluster có các Aurora Replica. Trong giờ cao điểm, lưu lượng đọc tăng mạnh và các replica đạt 90% CPU utilization, nhưng ban đêm các replica gần như nhàn rỗi. Công ty muốn tự động điều chỉnh năng lực đọc để giữ CPU trung bình của replica gần 50% đồng thời giảm thiểu chi phí. Ứng dụng đã kết nối qua reader endpoint. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình Aurora Auto Scaling với target tracking policy dựa trên CPU utilization trung bình của các Aurora Replica, với số replica tối thiểu và tối đa phù hợp.</span><span class="why">Đúng: Aurora Auto Scaling tự thêm/bớt Aurora Replica theo CPU trung bình; replica mới tự được reader endpoint phân phối kết nối và bị xóa khi tải giảm ⇒ tiết kiệm.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Amazon EC2 Auto Scaling group khởi chạy MySQL read replica trên EC2 instance.</span><span class="why">Sai: tự quản lý MySQL trên EC2, không tích hợp với Aurora cluster volume, tốn công vận hành.</span></li>
+              <li data-k="C"><span class="tv">Lên lịch một AWS Lambda function sửa DB instance class của writer mỗi sáng và tối.</span><span class="why">Sai: đổi class của writer không thêm năng lực đọc cho replica và còn gây gián đoạn.</span></li>
+              <li data-k="D"><span class="tv">Chuyển cluster thành Aurora Global Database và thêm một Region phụ.</span><span class="why">Sai: Global Database phục vụ đa Region, không phải co giãn năng lực đọc trong cùng Region.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Overview.StorageReliability.html" target="_blank" rel="noopener">Amazon Aurora storage</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Overview.Reliability.html" target="_blank" rel="noopener">Amazon Aurora reliability</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Concepts.AuroraHighAvailability.html" target="_blank" rel="noopener">High availability for Amazon Aurora</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Overview.Endpoints.html" target="_blank" rel="noopener">Amazon Aurora endpoint connections</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Endpoints.Custom.html" target="_blank" rel="noopener">Custom endpoints for Amazon Aurora</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Replication.html" target="_blank" rel="noopener">Replication with Amazon Aurora</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Integrating.AutoScaling.html" target="_blank" rel="noopener">Amazon Aurora Auto Scaling with Aurora Replicas</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2.how-it-works.html" target="_blank" rel="noopener">How Aurora serverless works</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2-auto-pause.html" target="_blank" rel="noopener">Scaling to zero ACUs with automatic pause and resume</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-global-database-disaster-recovery.html" target="_blank" rel="noopener">Using switchover or failover in Aurora Global Database</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-global-database-write-forwarding.html" target="_blank" rel="noopener">Using write forwarding in an Aurora global database</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Managing.Backups.html" target="_blank" rel="noopener">Overview of backing up and restoring an Aurora DB cluster</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/AuroraMySQL.Managing.Backtrack.html" target="_blank" rel="noopener">Backtracking an Aurora DB cluster</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Managing.Clone.html" target="_blank" rel="noopener">Cloning a volume for an Amazon Aurora DB cluster</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

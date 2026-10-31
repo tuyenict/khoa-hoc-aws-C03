@@ -1,0 +1,862 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 2 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/cat/Customer-Enablement.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="2" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <b>AWS Well-Architected Framework</b> là gì, dùng để làm gì và các khái niệm nền: <span class="t" data-vi="Thành phần">component</span>, <span class="t" data-vi="Khối lượng công việc / hệ thống nghiệp vụ">workload</span>, <span class="t" data-vi="Cột mốc">milestone</span>, <span class="t" data-vi="Danh mục công nghệ">technology portfolio</span>.</li>
+          <li>Thuộc <b>6 trụ cột (pillars)</b> và định nghĩa của từng trụ cột – nền tảng của toàn bộ đề thi SAA-C03.</li>
+          <li>Nắm <b>6 general design principles</b> và các design principles riêng của mỗi trụ cột để nhận ra “đáp án đúng tinh thần AWS”.</li>
+          <li>Hiểu cách đánh đổi (<span class="t" data-vi="Sự đánh đổi">trade-off</span>) giữa các trụ cột và quy trình review kiến trúc.</li>
+          <li>Phân biệt <b>AWS Well-Architected Tool</b> với <b>AWS Trusted Advisor</b>; biết lens, HRI/MRI, milestone, improvement plan.</li>
+          <li>Ánh xạ trụ cột ⇒ domain thi ⇒ từ khóa trong đề ⇒ dịch vụ AWS tương ứng.</li>
+        </ul>
+      </div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/AWS-Well-Architected-Tool.svg" alt="">Well-Architected Framework là gì?</h2>
+      <p class="lead"><b>AWS Well-Architected Framework</b> <i>(Khung kiến trúc tối ưu của AWS)</i> giúp bạn hiểu <b>ưu và nhược điểm của các quyết định</b> khi xây dựng hệ thống trên AWS. Framework đúc kết các <span class="t" data-vi="Thực hành tốt nhất">best practices</span> để thiết kế và vận hành các workload <i>secure, reliable, efficient, cost-effective</i> và <i>sustainable</i> trên AWS Cloud.</p>
+      <p>Theo tài liệu AWS (bản phát hành ngày <b>6/11/2024</b>), Framework cung cấp:</p>
+      <ul>
+        <li>Một cách <b>đo lường nhất quán</b> kiến trúc của bạn so với best practices và xác định chỗ cần cải thiện.</li>
+        <li>Một bộ <b>câu hỏi nền tảng</b> (foundational questions) để kiểm tra một kiến trúc có phù hợp với best practices trên cloud hay không, kèm hướng khắc phục (<span class="t" data-vi="Biện pháp khắc phục">remediation</span>).</li>
+        <li>Nguồn gốc: kinh nghiệm của các AWS Solutions Architects đã thiết kế và review <b>hàng nghìn</b> kiến trúc khách hàng.</li>
+      </ul>
+      <p>Đối tượng sử dụng: các vai trò công nghệ như CTO, kiến trúc sư, lập trình viên và đội vận hành.</p>
+
+      <div class="callout note"><span class="ttl">Lưu ý quan trọng</span>
+        <p>Quy trình review kiến trúc theo Well-Architected là <b>một cuộc trao đổi mang tính xây dựng</b> về các quyết định kiến trúc, <b>không phải cơ chế kiểm toán (not an audit mechanism)</b>. Đề thi có thể dùng chi tiết này làm phương án gây nhiễu.</p></div>
+
+      <h3>Các thuật ngữ cơ bản trong Framework</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thuật ngữ</th><th>Định nghĩa (theo AWS)</th></tr></thead>
+        <tbody>
+          <tr><td><b><span class="t" data-vi="Thành phần">Component</span></b></td><td>Code, cấu hình và tài nguyên AWS cùng nhau đáp ứng một yêu cầu. Component thường là <b>đơn vị sở hữu kỹ thuật</b> và được <i>decouple</i> (tách rời) khỏi các component khác.</td></tr>
+          <tr><td><b><span class="t" data-vi="Khối lượng công việc">Workload</span></b></td><td>Tập hợp các component cùng nhau <b>mang lại giá trị kinh doanh</b>. Đây là mức chi tiết mà lãnh đạo kinh doanh và công nghệ thường trao đổi với nhau.</td></tr>
+          <tr><td><b><span class="t" data-vi="Kiến trúc">Architecture</span></b></td><td>Cách các component <b>làm việc cùng nhau</b> trong một workload – cách chúng giao tiếp và tương tác (thường thể hiện bằng sơ đồ kiến trúc).</td></tr>
+          <tr><td><b><span class="t" data-vi="Cột mốc">Milestones</span></b></td><td>Đánh dấu các thay đổi quan trọng của kiến trúc trong vòng đời sản phẩm: <i>design, implementation, testing, go live, in production</i>.</td></tr>
+          <tr><td><b><span class="t" data-vi="Danh mục công nghệ">Technology portfolio</span></b></td><td>Tập hợp các workload cần thiết để doanh nghiệp vận hành.</td></tr>
+          <tr><td><b><span class="t" data-vi="Mức độ nỗ lực">Level of effort</span></b></td><td>Phân loại thời gian, công sức, độ phức tạp để triển khai một việc: <b>High</b> (nhiều tuần – nhiều tháng), <b>Medium</b> (nhiều ngày – nhiều tuần), <b>Low</b> (nhiều giờ – nhiều ngày).</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">Technology portfolio – Danh mục công nghệ của doanh nghiệp</span>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">Workload: Website thương mại điện tử</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">Component<small>CDN / frontend</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">Component<small>App tier</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Aurora.svg" alt="">Component<small>Database</small></div>
+              </div></div>
+            <div class="grp plain"><span class="lbl">Workload: Xử lý đơn hàng (backend)</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">Component<small>Event bus</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Component<small>Functions</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">Component<small>Data store</small></div>
+              </div></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Quan hệ Technology portfolio ⊃ Workload ⊃ Component. “Architecture” là cách các component trong một workload tương tác với nhau.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>AWS so sánh: <i>xây hệ thống phần mềm giống xây một tòa nhà</i>. Nếu móng không vững, các vấn đề kết cấu sẽ làm suy yếu cả tòa nhà. 6 trụ cột chính là phần móng – bỏ qua chúng thì rất khó xây được hệ thống đáp ứng kỳ vọng, dù tính năng (functional requirements) có hay đến đâu.</p></div>
+
+      <h3>Cách AWS tiếp cận kiến trúc (On architecture)</h3>
+      <ul>
+        <li>Ở on-premises, doanh nghiệp thường có <b>một đội kiến trúc tập trung</b> (Technical/Solutions/Data/Network/Security Architect) đứng trên các đội sản phẩm, hay dùng TOGAF hoặc Zachman Framework.</li>
+        <li>AWS lại <b>phân tán năng lực kiến trúc vào từng đội</b>. Rủi ro của cách phân tán được giảm bằng 2 cách: <b>practices</b> (cách làm, quy trình, tiêu chuẩn) và <b>mechanisms</b> (cơ chế kiểm tra tự động).</li>
+        <li>Câu nói nổi tiếng được trích: <i>“Good intentions never work, you need good mechanisms to make anything happen” – Jeff Bezos</i>.</li>
+        <li>Cộng đồng <span class="t" data-vi="Kỹ sư chính / kỹ sư trưởng">principal engineers</span> review thiết kế và lan tỏa best practices. Well-Architected Framework chính là <b>phiên bản dành cho khách hàng</b> của quy trình review nội bộ AWS.</li>
+      </ul>
+
+      <!-- ===================== PHẦN 2: 6 TRỤ CỘT ===================== -->
+      <h2 id="sau-tru-cot"><img src="../assets/icons/cat/Management-Governance.svg" alt="">Sáu trụ cột (The six pillars)</h2>
+      <p class="lead">Framework dựa trên <b>6 <span class="t" data-vi="Trụ cột">pillars</span></b>. Sustainability là trụ cột được bổ sung muộn nhất (năm 2021) – các tài liệu cũ chỉ nói “5 pillars”, đề SAA-C03 hiện tại dùng <b>6 pillars</b>.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-CloudFormation.svg" alt="">
+          <div><h4>Operational Excellence</h4><span class="vi">Vận hành xuất sắc</span><p>Hỗ trợ phát triển và vận hành workload hiệu quả, có cái nhìn sâu vào hoạt động, liên tục cải tiến quy trình để mang lại giá trị kinh doanh.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Security-Identity-Compliance.svg" alt="">
+          <div><h4>Security</h4><span class="vi">Bảo mật</span><p>Tận dụng công nghệ cloud để bảo vệ dữ liệu, hệ thống và tài sản, cải thiện tư thế bảo mật (security posture).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">
+          <div><h4>Reliability</h4><span class="vi">Độ tin cậy</span><p>Khả năng workload thực hiện đúng chức năng, nhất quán, khi được kỳ vọng – trong suốt vòng đời của nó.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Compute.svg" alt="">
+          <div><h4>Performance Efficiency</h4><span class="vi">Hiệu quả hiệu năng</span><p>Dùng tài nguyên tính toán hiệu quả để đáp ứng yêu cầu, và duy trì hiệu quả đó khi nhu cầu thay đổi, công nghệ phát triển.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/AWS-Cost-Management.svg" alt="">
+          <div><h4>Cost Optimization</h4><span class="vi">Tối ưu chi phí</span><p>Vận hành hệ thống mang lại giá trị kinh doanh ở <b>mức giá thấp nhất</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Backup_Compliance-Reporting.svg" alt="">
+          <div><h4>Sustainability</h4><span class="vi">Tính bền vững</span><p>Liên tục giảm tác động môi trường: giảm tiêu thụ năng lượng, tăng hiệu quả, tối đa lợi ích từ tài nguyên đã cấp và tối thiểu tổng tài nguyên cần dùng.</p></div></div>
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 720 300" width="720" role="img" aria-label="Sáu trụ cột đỡ mái Well-Architected trên nền móng general design principles">
+          <polygon points="360,18 690,78 30,78" fill="none" stroke="#EC7211" stroke-width="2.5"/>
+          <text x="360" y="64" font-size="16" font-weight="700" text-anchor="middle">AWS Well-Architected Workload</text>
+          <g font-size="12" font-weight="600" text-anchor="middle">
+            <rect x="48"  y="92" width="96" height="150" rx="6" fill="none" stroke="#147EBA" stroke-width="2"/>
+            <image href="../assets/icons/svc/AWS-CloudFormation.svg" x="72" y="104" width="48" height="48"/>
+            <text x="96" y="178">Operational</text><text x="96" y="194">Excellence</text><text x="96" y="226" class="muted" font-weight="400">OPS</text>
+            <rect x="154" y="92" width="96" height="150" rx="6" fill="none" stroke="#DD344C" stroke-width="2"/>
+            <image href="../assets/icons/cat/Security-Identity-Compliance.svg" x="178" y="104" width="48" height="48"/>
+            <text x="202" y="178">Security</text><text x="202" y="226" class="muted" font-weight="400">SEC → D1</text>
+            <rect x="260" y="92" width="96" height="150" rx="6" fill="none" stroke="#7AA116" stroke-width="2"/>
+            <image href="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" x="284" y="104" width="48" height="48"/>
+            <text x="308" y="178">Reliability</text><text x="308" y="226" class="muted" font-weight="400">REL → D2</text>
+            <rect x="366" y="92" width="96" height="150" rx="6" fill="none" stroke="#ED7100" stroke-width="2"/>
+            <image href="../assets/icons/cat/Compute.svg" x="390" y="104" width="48" height="48"/>
+            <text x="414" y="178">Performance</text><text x="414" y="194">Efficiency</text><text x="414" y="226" class="muted" font-weight="400">PERF → D3</text>
+            <rect x="472" y="92" width="96" height="150" rx="6" fill="none" stroke="#01A88D" stroke-width="2"/>
+            <image href="../assets/icons/cat/AWS-Cost-Management.svg" x="496" y="104" width="48" height="48"/>
+            <text x="520" y="178">Cost</text><text x="520" y="194">Optimization</text><text x="520" y="226" class="muted" font-weight="400">COST → D4</text>
+            <rect x="578" y="92" width="96" height="150" rx="6" fill="none" stroke="#3F8624" stroke-width="2"/>
+            <image href="../assets/icons/res/AWS-Backup_Compliance-Reporting.svg" x="602" y="104" width="48" height="48"/>
+            <text x="626" y="178">Sustainability</text><text x="626" y="226" class="muted" font-weight="400">SUS</text>
+          </g>
+          <rect x="30" y="252" width="660" height="34" rx="4" fill="none" stroke="#EC7211" stroke-width="2.5"/>
+          <text x="360" y="274" font-size="13" font-weight="700" text-anchor="middle">Nền móng: General design principles + câu hỏi review + lenses</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Sáu trụ cột “đỡ” một workload Well-Architected; 4 trụ cột ở giữa khớp trực tiếp với 4 domain của đề SAA-C03.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Trụ cột ⇔ Domain</span>
+        <p>Bốn domain của SAA-C03 gần như là 4 trụ cột: <b>Security ⇒ D1 (30%)</b>, <b>Reliability ⇒ D2 (26%)</b>, <b>Performance Efficiency ⇒ D3 (24%)</b>, <b>Cost Optimization ⇒ D4 (20%)</b>. Operational Excellence và Sustainability xuất hiện “lồng” trong các câu hỏi dưới dạng cụm từ <i>“LEAST operational overhead”</i>, <i>“automate”</i>, <i>“managed service”</i>, <i>“reduce idle resources”</i>.</p></div>
+
+      <!-- ===================== PHẦN 3: GENERAL DESIGN PRINCIPLES ===================== -->
+      <h2 id="nguyen-tac-chung"><img src="../assets/icons/svc/AWS-Auto-Scaling.svg" alt="">Sáu nguyên tắc thiết kế chung (General design principles)</h2>
+      <p class="lead">Ngoài nguyên tắc riêng của từng trụ cột, Framework nêu <b>6 <span class="t" data-vi="Nguyên tắc thiết kế chung">general design principles</span></b> giúp thiết kế tốt trên cloud. Đây là “tư duy cloud” – khác hẳn tư duy data center truyền thống.</p>
+
+      <ol class="steps">
+        <li><b>Stop guessing your capacity needs</b> <i>(Ngừng phỏng đoán nhu cầu năng lực)</i> – quyết định capacity sai thì hoặc ngồi trên đống tài nguyên nhàn rỗi đắt đỏ, hoặc chịu hiệu năng kém vì thiếu capacity. Trên cloud, dùng bao nhiêu tùy ý và <b>scale in/out tự động</b>.</li>
+        <li><b>Test systems at production scale</b> <i>(Kiểm thử ở quy mô production)</i> – tạo môi trường test quy mô production theo yêu cầu, test xong thì xóa. Chỉ trả tiền khi môi trường đang chạy ⇒ mô phỏng môi trường thật với chi phí chỉ bằng một phần so với on-premises.</li>
+        <li><b>Automate with architectural experimentation in mind</b> <i>(Tự động hóa để dễ thử nghiệm kiến trúc)</i> – tự động hóa giúp tạo/nhân bản workload với chi phí thấp, tránh công sức thủ công; theo dõi thay đổi, kiểm tra tác động và quay lại tham số cũ khi cần.</li>
+        <li><b>Consider evolutionary architectures</b> <i>(Kiến trúc tiến hóa)</i> – truyền thống: quyết định kiến trúc là sự kiện tĩnh, một lần. Cloud: tự động hóa và test theo yêu cầu làm giảm rủi ro khi thay đổi thiết kế ⇒ hệ thống tiến hóa theo thời gian, đón nhận đổi mới.</li>
+        <li><b>Drive architectures using data</b> <i>(Ra quyết định kiến trúc dựa trên dữ liệu)</i> – thu thập dữ liệu về tác động của lựa chọn kiến trúc lên hành vi workload để quyết định dựa trên thực tế. Hạ tầng là code nên dữ liệu đó định hướng cải tiến.</li>
+        <li><b>Improve through game days</b> <i>(Cải thiện qua các buổi diễn tập)</i> – định kỳ tổ chức <span class="t" data-vi="Buổi diễn tập sự cố">game days</span> mô phỏng sự kiện trong production để tìm điểm cần cải thiện và tích lũy kinh nghiệm xử lý sự cố.</li>
+      </ol>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Vấn đề</th><th>Môi trường truyền thống (on-premises)</th><th>Trên AWS Cloud</th></tr></thead>
+        <tbody>
+          <tr><td>Capacity</td><td class="no">Mua dư phòng đỉnh tải hoặc thiếu khi đột biến</td><td class="yes">Auto Scaling theo nhu cầu thực</td></tr>
+          <tr><td>Môi trường test</td><td class="no">Nhỏ hơn production, đắt nếu làm giống thật</td><td class="yes">Tạo bản sao quy mô thật, xóa khi xong</td></tr>
+          <tr><td>Thay đổi kiến trúc</td><td class="no">Hiếm, rủi ro cao, vài phiên bản lớn trong đời hệ thống</td><td class="yes">Thường xuyên, nhỏ, có thể đảo ngược nhờ Infrastructure as Code</td></tr>
+          <tr><td>Ra quyết định</td><td class="no">Dựa trên phỏng đoán, kinh nghiệm</td><td class="yes">Dựa trên dữ liệu đo được (metrics, logs)</td></tr>
+          <tr><td>Kiểm tra khả năng chịu lỗi</td><td class="no">Ít khi kiểm thử chiến lược khôi phục</td><td class="yes">Game days, chủ động gây lỗi (AWS Fault Injection Service)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>Đáp án đề xuất “mua thêm server lớn hơn để đề phòng đỉnh tải” hoặc “dự trữ capacity cho cả năm” thường <b>sai</b> vì đi ngược nguyên tắc <i>Stop guessing your capacity needs</i>. Đề nói tải “<i>unpredictable</i>”, “<i>spiky</i>”, “<i>varies throughout the day</i>” ⇒ nghĩ ngay <b>Auto Scaling</b>, <b>serverless</b> (Lambda, DynamoDB on-demand, Aurora Serverless).</p></div>
+
+      <!-- ===================== PHẦN 4: OPERATIONAL EXCELLENCE ===================== -->
+      <h2 id="ops"><img src="../assets/icons/svc/AWS-CloudFormation.svg" alt="">Trụ cột 1 – Operational Excellence</h2>
+      <p class="lead"><span class="t" data-vi="Vận hành xuất sắc">Operational Excellence (OE)</span> là cam kết <b>xây dựng phần mềm đúng cách</b> trong khi <b>liên tục mang lại trải nghiệm khách hàng tuyệt vời</b>. Trụ cột gồm best practices về tổ chức đội ngũ, thiết kế workload, vận hành ở quy mô lớn và phát triển nó theo thời gian. Câu hỏi của trụ cột có tiền tố <b>OPS</b>.</p>
+
+      <h3>8 design principles</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nguyên tắc</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><b>Organize teams around business outcomes</b></td><td>Tổ chức đội ngũ xoay quanh kết quả kinh doanh; lãnh đạo cam kết chuyển đổi CloudOps; mục tiêu và KPI vận hành thống nhất ở mọi cấp.</td></tr>
+          <tr><td><b>Implement <span class="t" data-vi="Khả năng quan sát">observability</span> for actionable insights</b></td><td>Hiểu toàn diện hành vi, hiệu năng, độ tin cậy, chi phí và sức khỏe workload; đặt KPI và dùng telemetry để hành động kịp thời.</td></tr>
+          <tr><td><b>Safely automate where possible</b></td><td>Định nghĩa toàn bộ workload và vận hành (ứng dụng, hạ tầng, cấu hình, quy trình) <b>dưới dạng code</b>; tự động phản ứng theo sự kiện; đặt <span class="t" data-vi="Rào chắn an toàn">guardrails</span> như rate control, ngưỡng lỗi, phê duyệt. Giảm lỗi con người.</td></tr>
+          <tr><td><b>Make frequent, small, reversible changes</b></td><td>Thiết kế scalable, <i>loosely coupled</i>; thay đổi nhỏ, tăng dần, triển khai tự động giúp giảm <span class="t" data-vi="Phạm vi ảnh hưởng khi có lỗi">blast radius</span> và rollback nhanh.</td></tr>
+          <tr><td><b>Refine operations procedures frequently</b></td><td>Thường xuyên review, cập nhật quy trình vận hành; “game hóa” vận hành để chia sẻ best practices.</td></tr>
+          <tr><td><b>Anticipate failure</b></td><td>Chủ động diễn tập kịch bản lỗi để hiểu hồ sơ rủi ro; kiểm tra hiệu quả quy trình và phản ứng của đội.</td></tr>
+          <tr><td><b>Learn from all operational events and metrics</b></td><td>Rút bài học từ mọi sự kiện và lỗi vận hành, chia sẻ toàn tổ chức.</td></tr>
+          <tr><td><b>Use managed services</b></td><td>Giảm gánh nặng vận hành bằng cách dùng AWS managed services khi có thể.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>4 best practice areas</h3>
+      <p><b>Organization</b> (tổ chức) → <b>Prepare</b> (chuẩn bị) → <b>Operate</b> (vận hành) → <b>Evolve</b> (phát triển/cải tiến). Lãnh đạo xác định mục tiêu kinh doanh; workload phải phát ra đủ thông tin để hỗ trợ vận hành; hiểu rủi ro trước khi đưa vào production; dùng metrics kinh doanh và vận hành để phản ứng sự cố; dùng thay đổi ưu tiên làm vòng phản hồi cải tiến liên tục.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-CloudFormation.svg" alt="">
+          <div><h4>AWS CloudFormation</h4><span class="vi">Infrastructure as Code</span><p>Định nghĩa hạ tầng bằng template, triển khai lặp lại, nhất quán, rollback được.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">
+          <div><h4>Amazon CloudWatch</h4><span class="vi">Giám sát & observability</span><p>Metrics, logs, alarms, dashboards – nền tảng của “implement observability”.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Systems-Manager.svg" alt="">
+          <div><h4>AWS Systems Manager</h4><span class="vi">Tự động hóa vận hành</span><p>Runbook Automation, Patch Manager, Run Command, OpsCenter.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-X-Ray.svg" alt="">
+          <div><h4>AWS X-Ray</h4><span class="vi">Truy vết phân tán</span><p>Theo dõi request xuyên qua các component để tìm điểm nghẽn, lỗi.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-CodePipeline.svg" alt="">
+          <div><h4>AWS CodePipeline</h4><span class="vi">CI/CD</span><p>Triển khai tự động các thay đổi nhỏ, thường xuyên, dễ đảo ngược.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Config.svg" alt="">
+          <div><h4>AWS Config</h4><span class="vi">Theo dõi cấu hình</span><p>Ghi lại lịch sử cấu hình, đánh giá tuân thủ bằng rules.</p></div></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>Từ khóa “<i>LEAST operational overhead</i>”, “<i>automate</i>”, “<i>repeatable deployments across accounts/Regions</i>”, “<i>reduce human error</i>” ⇒ chọn <b>managed service</b> + <b>Infrastructure as Code (CloudFormation)</b> + tự động hóa (Systems Manager, EventBridge, Lambda), thay vì script tay chạy trên EC2 hoặc thao tác console thủ công.</p></div>
+
+      <!-- ===================== PHẦN 5: SECURITY ===================== -->
+      <h2 id="security"><img src="../assets/icons/cat/Security-Identity-Compliance.svg" alt="">Trụ cột 2 – Security</h2>
+      <p class="lead">Trụ cột <span class="t" data-vi="Bảo mật">Security</span> bao gồm khả năng bảo vệ dữ liệu, hệ thống và tài sản, tận dụng công nghệ cloud để cải thiện bảo mật. Nền tảng là <b>Shared Responsibility Model</b> <i>(mô hình trách nhiệm chia sẻ – học kỹ ở Bài 3)</i>: AWS bảo vệ vật lý hạ tầng, khách hàng tập trung dùng dịch vụ để đạt mục tiêu bảo mật.</p>
+
+      <h3>7 design principles</h3>
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">Định danh & truy vết</h4>
+          <ul>
+            <li><b>Implement a strong identity foundation</b> – áp dụng <span class="t" data-vi="Đặc quyền tối thiểu">least privilege</span>, <span class="t" data-vi="Phân tách nhiệm vụ">separation of duties</span>; quản lý định danh tập trung; hướng tới <b>loại bỏ long-term static credentials</b> (access key lâu dài).</li>
+            <li><b>Maintain traceability</b> – giám sát, cảnh báo, audit hành động và thay đổi <b>real time</b>; tích hợp logs/metrics để tự động điều tra và hành động.</li>
+            <li><b>Apply security at all layers</b> – <span class="t" data-vi="Phòng thủ nhiều lớp">defense in depth</span>: edge of network, VPC, load balancing, mọi instance/compute, OS, ứng dụng, code.</li>
+          </ul></div>
+        <div style="--accent:#7D3C98"><h4><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">Tự động hóa & dữ liệu</h4>
+          <ul>
+            <li><b>Automate security best practices</b> – cơ chế bảo mật bằng phần mềm, control định nghĩa <b>as code</b> trong template có version control.</li>
+            <li><b>Protect data in transit and at rest</b> – phân loại dữ liệu theo độ nhạy cảm; dùng encryption, tokenization, access control.</li>
+            <li><b>Keep people away from data</b> – giảm/loại bỏ truy cập trực tiếp hoặc xử lý thủ công dữ liệu ⇒ giảm rủi ro sai sót, sửa đổi.</li>
+            <li><b>Prepare for security events</b> – có quy trình quản lý sự cố, chạy mô phỏng incident response, dùng công cụ tự động để phát hiện – điều tra – khôi phục nhanh.</li>
+          </ul></div>
+      </div>
+
+      <h3>7 best practice areas</h3>
+      <p><b>Security foundations</b> · <b>Identity and access management</b> · <b>Detection</b> · <b>Infrastructure protection</b> · <b>Data protection</b> · <b>Incident response</b> · <b>Application security</b>.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Users<small>Internet</small></div>
+          <span class="arrow">HTTPS (TLS)</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Shield.svg" alt="">AWS Shield<small>Chống DDoS</small></div>
+          <span class="arrow">edge</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-WAF.svg" alt="">AWS WAF<small>Lọc lớp 7</small></div>
+          <span class="arrow">edge</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">CloudFront<small>Edge of network</small></div>
+          <span class="arrow">Security group</span>
+          <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB<small>Load balancing</small></div>
+          <span class="arrow">IAM role</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2<small>OS + app</small></div>
+          <span class="arrow dashed">KMS encryption</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS<small>Encrypted at rest</small></div>
+        </div>
+        <figcaption><b>Hình 3.</b> “Apply security at all layers” – mỗi lớp (edge, network, load balancer, compute, data) đều có lớp kiểm soát riêng.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Best practice area</th><th>Dịch vụ AWS điển hình (học chi tiết ở Module 1 &amp; 8)</th></tr></thead>
+        <tbody>
+          <tr><td>Security foundations</td><td>AWS Organizations, SCP, AWS Control Tower, tách account theo môi trường</td></tr>
+          <tr><td>Identity and access management</td><td>IAM (roles, policies), IAM Identity Center, MFA, AWS STS</td></tr>
+          <tr><td>Detection</td><td>AWS CloudTrail, AWS Config, Amazon GuardDuty, AWS Security Hub, Amazon CloudWatch</td></tr>
+          <tr><td>Infrastructure protection</td><td>VPC, security groups, NACL, AWS WAF, AWS Shield, AWS Network Firewall</td></tr>
+          <tr><td>Data protection</td><td>AWS KMS, AWS CloudHSM, ACM, Amazon Macie, S3 Object Lock, AWS Backup</td></tr>
+          <tr><td>Incident response</td><td>Systems Manager Incident Manager, EventBridge + Lambda tự động khắc phục, Amazon Detective</td></tr>
+          <tr><td>Application security</td><td>Amazon Inspector, Secrets Manager, CodePipeline có bước quét bảo mật</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Ứng dụng trên EC2/Lambda cần gọi AWS API ⇒ <b>IAM role</b>, <b>không</b> nhúng access key vào code/AMI (vi phạm “eliminate long-term static credentials”).</li>
+          <li>Mật khẩu database cần xoay vòng tự động ⇒ <b>AWS Secrets Manager</b>.</li>
+          <li>“<i>Who made this change?</i>” ⇒ <b>CloudTrail</b>; “<i>What did the configuration look like?</i>” ⇒ <b>AWS Config</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: RELIABILITY ===================== -->
+      <h2 id="reliability"><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">Trụ cột 3 – Reliability</h2>
+      <p class="lead">Trụ cột <span class="t" data-vi="Độ tin cậy">Reliability</span> bao gồm khả năng của workload <b>thực hiện đúng chức năng dự định, một cách chính xác và nhất quán, khi được kỳ vọng</b> – bao gồm cả khả năng vận hành và kiểm thử workload trong suốt vòng đời.</p>
+
+      <h3>5 design principles</h3>
+      <ol class="steps">
+        <li><b>Automatically recover from failure</b> – giám sát <b>KPI</b> (nên đo <i>giá trị kinh doanh</i>, không phải khía cạnh kỹ thuật) và kích hoạt tự động hóa khi vượt ngưỡng: tự thông báo, theo dõi lỗi, tự động khôi phục. Tự động hóa tinh vi còn có thể <b>dự đoán và khắc phục lỗi trước khi xảy ra</b>.</li>
+        <li><b>Test recovery procedures</b> – on-premises thường chỉ test để chứng minh hệ thống chạy được; trên cloud bạn có thể test <i>cách workload hỏng</i> và <b>xác thực quy trình khôi phục</b>, dùng tự động hóa để mô phỏng lỗi.</li>
+        <li><b>Scale horizontally to increase aggregate workload availability</b> – thay <b>một tài nguyên lớn</b> bằng <b>nhiều tài nguyên nhỏ</b> để giảm ảnh hưởng của một lỗi đơn lẻ; phân tán request để chúng <b>không chung một điểm lỗi</b>.</li>
+        <li><b>Stop guessing capacity</b> – nguyên nhân lỗi phổ biến on-premises là <span class="t" data-vi="Bão hòa tài nguyên">resource saturation</span> (thường là mục tiêu của tấn công DoS). Trên cloud, giám sát nhu cầu và tự động thêm/bớt tài nguyên. Vẫn có giới hạn: cần quản lý <b>Service Quotas</b>.</li>
+        <li><b>Manage change through automation</b> – thay đổi hạ tầng phải qua tự động hóa; bản thân thay đổi tự động hóa cũng được theo dõi và review.</li>
+      </ol>
+
+      <h3>4 best practice areas</h3>
+      <p><b>Foundations</b> (Service Quotas và network topology đủ cho workload) · <b>Workload architecture</b> (thiết kế hệ phân tán ngăn chặn và giảm thiểu lỗi) · <b>Change management</b> (xử lý thay đổi về nhu cầu/yêu cầu) · <b>Failure management</b> (phát hiện lỗi và <b>tự chữa lành</b> – <i>self-heal</i>).</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region</span>
+            <div class="row center"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Application Load Balancer<small>phân phối qua nhiều AZ</small></div>
+              <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">CloudWatch alarm<small>KPI vượt ngưỡng ⇒ scale</small></div></div>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC – Auto Scaling group (min 2, trải trên 3 AZ)</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">Availability Zone A</span>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 (nhỏ)</div></div></div>
+                  <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS Primary</div></div></div>
+                <div class="grp az"><span class="lbl">Availability Zone B</span>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 (nhỏ)</div></div></div>
+                  <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS Standby</div></div></div>
+                <div class="grp az"><span class="lbl">Availability Zone C</span>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 (nhỏ)</div></div></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> “Scale horizontally” + “Automatically recover from failure”: nhiều instance nhỏ trải trên nhiều AZ thay vì một instance lớn; Auto Scaling thay instance hỏng, RDS Multi-AZ tự failover.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <p>Đáp án “nâng EC2 lên instance type lớn hơn” (<i>scale vertically</i>) giải quyết được hiệu năng nhưng <b>không tăng availability</b> – vẫn là <span class="t" data-vi="Điểm lỗi đơn lẻ">single point of failure</span>. Đề hỏi <i>highly available / fault tolerant</i> ⇒ chọn <b>nhiều instance trên nhiều AZ</b> sau load balancer.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>Test recovery procedures</i>”, “<i>simulate failures</i>”, “<i>chaos engineering</i>” ⇒ <b>AWS Fault Injection Service</b> (tên cũ: Fault Injection Simulator). “<i>Automatically replace unhealthy instances</i>” ⇒ <b>EC2 Auto Scaling + ELB health checks</b>. “<i>Application reaches service limit</i>” ⇒ theo dõi <b>Service Quotas</b> / Trusted Advisor.</p></div>
+
+      <!-- ===================== PHẦN 7: PERFORMANCE EFFICIENCY ===================== -->
+      <h2 id="performance"><img src="../assets/icons/cat/Compute.svg" alt="">Trụ cột 4 – Performance Efficiency</h2>
+      <p class="lead">Trụ cột <span class="t" data-vi="Hiệu quả hiệu năng">Performance Efficiency</span> là khả năng <b>dùng tài nguyên cloud hiệu quả để đáp ứng yêu cầu hiệu năng</b>, và <b>duy trì hiệu quả đó</b> khi nhu cầu thay đổi và công nghệ phát triển.</p>
+
+      <h3>5 design principles</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nguyên tắc</th><th>Giải thích</th><th>Ví dụ trong đề</th></tr></thead>
+        <tbody>
+          <tr><td><b>Democratize advanced technologies</b><br><small>Phổ cập công nghệ tiên tiến</small></td><td>Giao việc phức tạp cho nhà cung cấp cloud; dùng công nghệ <b>dưới dạng dịch vụ</b> thay vì bắt đội IT học cách host và vận hành (NoSQL, media transcoding, machine learning…).</td><td>Dùng DynamoDB thay vì tự dựng Cassandra; dùng Amazon Rekognition thay vì tự train model nhận diện ảnh.</td></tr>
+          <tr><td><b>Go global in minutes</b><br><small>Toàn cầu hóa trong vài phút</small></td><td>Triển khai workload ở nhiều AWS Regions để có độ trễ thấp hơn, trải nghiệm tốt hơn với chi phí tối thiểu.</td><td>CloudFront, Global Accelerator, DynamoDB global tables, Aurora Global Database.</td></tr>
+          <tr><td><b>Use serverless architectures</b><br><small>Dùng kiến trúc serverless</small></td><td>Không phải chạy và bảo trì server; ví dụ storage serverless làm static website (bỏ web server), dịch vụ sự kiện chạy code. Giảm gánh nặng vận hành và có thể giảm chi phí giao dịch.</td><td>S3 static website, Lambda, API Gateway, Fargate.</td></tr>
+          <tr><td><b>Experiment more often</b><br><small>Thử nghiệm thường xuyên hơn</small></td><td>Tài nguyên ảo, tự động hóa được ⇒ nhanh chóng so sánh các loại instance, storage, cấu hình khác nhau.</td><td>Benchmark nhiều instance family; A/B test cấu hình.</td></tr>
+          <tr><td><b>Consider <span class="t" data-vi="Thấu hiểu cơ chế máy móc">mechanical sympathy</span></b></td><td>Hiểu cách dịch vụ cloud được sử dụng và luôn chọn cách tiếp cận phù hợp mục tiêu workload, ví dụ xem xét <b>data access patterns</b> khi chọn database/storage.</td><td>Truy vấn key-value ⇒ DynamoDB; join phức tạp ⇒ RDS/Aurora; phân tích cột ⇒ Redshift.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>5 best practice areas</h3>
+      <p><b>Architecture selection</b> · <b>Compute and hardware</b> · <b>Data management</b> · <b>Networking and content delivery</b> · <b>Process and culture</b>. AWS nhấn mạnh tiếp cận <b>data-driven</b>: thu thập dữ liệu về mọi khía cạnh kiến trúc, review lựa chọn định kỳ, giám sát độ lệch hiệu năng, và đánh đổi để tăng hiệu năng như <b>compression</b>, <b>caching</b> hoặc <b>nới lỏng yêu cầu consistency</b>.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Users toàn cầu</div>
+          <span class="arrow">Go global</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">CloudFront<small>cache ở edge</small></div>
+          <span class="arrow">serverless</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda<small>không quản lý server</small></div>
+          <span class="arrow">caching</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-ElastiCache.svg" alt="">ElastiCache<small>giảm tải DB</small></div>
+          <span class="arrow dashed">access pattern</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">DynamoDB<small>key-value, ms latency</small></div>
+        </div>
+        <figcaption><b>Hình 5.</b> Áp dụng các nguyên tắc Performance Efficiency: đưa nội dung tới gần người dùng, serverless, caching và chọn database theo access pattern.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>Read-heavy</i>”, “<i>same queries repeated</i>” ⇒ <b>caching</b> (ElastiCache, DAX, CloudFront) hoặc <b>read replicas</b>. “<i>Team has no expertise in…</i>” + “<i>LEAST operational overhead</i>” ⇒ dịch vụ managed/serverless (đúng tinh thần <i>Democratize advanced technologies</i>).</p></div>
+
+      <!-- ===================== PHẦN 8: COST OPTIMIZATION ===================== -->
+      <h2 id="cost"><img src="../assets/icons/cat/AWS-Cost-Management.svg" alt="">Trụ cột 5 – Cost Optimization</h2>
+      <p class="lead">Trụ cột <span class="t" data-vi="Tối ưu chi phí">Cost Optimization</span> là khả năng vận hành hệ thống <b>mang lại giá trị kinh doanh ở mức giá thấp nhất</b>.</p>
+
+      <h3>5 design principles</h3>
+      <ul>
+        <li><b>Implement <span class="t" data-vi="Quản lý tài chính đám mây">Cloud Financial Management</span></b> – đầu tư thời gian, nguồn lực xây dựng năng lực quản lý tài chính cloud (giống như năng lực Security hay OE).</li>
+        <li><b>Adopt a consumption model</b> – chỉ trả cho tài nguyên cần dùng, tăng/giảm theo yêu cầu kinh doanh thay vì dự báo phức tạp. Ví dụ AWS đưa ra: môi trường dev/test thường chỉ dùng <b>8 giờ/ngày trong tuần làm việc</b> ⇒ tắt khi không dùng tiết kiệm <b>tới 75%</b> (40 giờ so với 168 giờ).</li>
+        <li><b>Measure overall efficiency</b> – đo đầu ra kinh doanh của workload và chi phí tạo ra nó để biết lợi ích đạt được.</li>
+        <li><b>Stop spending money on <span class="t" data-vi="Việc nặng nhọc không tạo khác biệt">undifferentiated heavy lifting</span></b> – AWS lo racking, stacking, cấp điện cho server; managed services bỏ gánh nặng quản lý OS và ứng dụng ⇒ bạn tập trung vào khách hàng.</li>
+        <li><b>Analyze and attribute expenditure</b> – xác định chính xác chi phí và mức sử dụng, phân bổ minh bạch cho từng chủ sở hữu workload (ví dụ bằng <i>cost allocation tags</i>) để đo ROI.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>168 h</b><span>số giờ trong 1 tuần (chạy 24/7)</span></div>
+        <div class="stat"><b>40 h</b><span>giờ làm việc thực tế của môi trường dev/test</span></div>
+        <div class="stat"><b>~75%</b><span>tiết kiệm khi tắt tài nguyên ngoài giờ làm việc</span></div>
+      </div>
+
+      <h3>5 best practice areas</h3>
+      <p><b>Practice Cloud Financial Management</b> · <b>Expenditure and usage awareness</b> · <b>Cost-effective resources</b> · <b>Manage demand and supply resources</b> · <b>Optimize over time</b>.</p>
+      <p>AWS cũng nêu đánh đổi: đôi khi tối ưu cho <b>tốc độ ra thị trường</b> (speed-to-market) hợp lý hơn đầu tư tối ưu chi phí từ đầu – ví dụ “<i>lift and shift</i>” từ on-premises lên cloud trước, tối ưu sau. Nhưng đầu tư đúng mức từ đầu giúp tránh <span class="t" data-vi="Cấp phát dư thừa">over-provisioning</span>.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">
+          <div><h4>AWS Cost Explorer</h4><span class="vi">Phân tích chi phí</span><p>Xem, phân tích chi phí và mức sử dụng theo thời gian, dự báo.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Budgets.svg" alt="">
+          <div><h4>AWS Budgets</h4><span class="vi">Ngân sách & cảnh báo</span><p>Đặt ngân sách, cảnh báo khi chi phí/usage vượt ngưỡng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Cost-and-Usage-Report.svg" alt="">
+          <div><h4>AWS Cost and Usage Report</h4><span class="vi">Báo cáo chi tiết</span><p>Dữ liệu chi phí chi tiết nhất, kết hợp tags để phân bổ chi phí.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Compute-Optimizer.svg" alt="">
+          <div><h4>AWS Compute Optimizer</h4><span class="vi">Đề xuất right-sizing</span><p>Gợi ý loại/kích thước tài nguyên phù hợp dựa trên metrics sử dụng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Savings-Plans.svg" alt="">
+          <div><h4>Savings Plans / Reserved Instances</h4><span class="vi">Cam kết sử dụng</span><p>Giảm giá đổi lấy cam kết 1 hoặc 3 năm cho tải ổn định.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" alt="">
+          <div><h4>EC2 Spot Instances</h4><span class="vi">Capacity dư giá rẻ</span><p>Giảm sâu chi phí cho tải chịu được gián đoạn (batch, xử lý linh hoạt).</p></div></div>
+      </div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <p>Môi trường dev/test chỉ chạy giờ hành chính mà đáp án đề xuất <b>Reserved Instances 3 năm</b> ⇒ <b>sai</b>: RI/Savings Plans tính phí cam kết cả 24/7. Đúng tinh thần “<i>Adopt a consumption model</i>” là <b>lên lịch tắt/bật</b> (ví dụ EventBridge Scheduler + Lambda / Systems Manager, hoặc AWS Instance Scheduler) hoặc dùng serverless.</p></div>
+
+      <!-- ===================== PHẦN 9: SUSTAINABILITY ===================== -->
+      <h2 id="sustainability"><img src="../assets/icons/res/AWS-Backup_Compliance-Reporting.svg" alt="">Trụ cột 6 – Sustainability</h2>
+      <p class="lead">Trụ cột <span class="t" data-vi="Tính bền vững">Sustainability</span> tập trung vào <b>tác động môi trường</b>, đặc biệt là <b>tiêu thụ năng lượng và hiệu quả năng lượng</b> – đòn bẩy quan trọng để kiến trúc sư giảm lượng tài nguyên sử dụng. Đây là nỗ lực <b>gần như liên tục</b>: từ chọn ngôn ngữ lập trình hiệu quả, thuật toán hiện đại, kỹ thuật lưu trữ dữ liệu hiệu quả, compute đúng kích cỡ đến giảm yêu cầu phần cứng mạnh phía người dùng cuối.</p>
+
+      <h3>6 design principles</h3>
+      <ol class="steps">
+        <li><b>Understand your impact</b> – đo tác động của workload, mô hình hóa tác động tương lai (kể cả việc khách hàng dùng sản phẩm và khi ngừng sử dụng); so sánh đầu ra với tài nguyên/phát thải <b>trên mỗi đơn vị công việc</b> để đặt KPI.</li>
+        <li><b>Establish sustainability goals</b> – đặt mục tiêu dài hạn như giảm compute/storage <b>trên mỗi giao dịch</b>; thiết kế để tăng trưởng làm <b>giảm cường độ tác động</b> trên mỗi user/giao dịch.</li>
+        <li><b>Maximize utilization</b> – right-size và thiết kế hiệu quả để đạt mức sử dụng cao. Ví dụ AWS: <b>2 host chạy 30% kém hiệu quả hơn 1 host chạy 60%</b> do mỗi host có mức điện năng nền cố định. Giảm tài nguyên nhàn rỗi.</li>
+        <li><b>Anticipate and adopt new, more efficient hardware and software offerings</b> – theo dõi và nhanh chóng áp dụng phần cứng/phần mềm mới hiệu quả hơn (ví dụ instance thế hệ mới, AWS Graviton).</li>
+        <li><b>Use managed services</b> – chia sẻ dịch vụ trên nhiều khách hàng giúp tối đa mức sử dụng hạ tầng. Ví dụ AWS nêu: <b>AWS Fargate</b> cho container serverless, <b>Amazon S3 Lifecycle</b> tự chuyển dữ liệu ít truy cập sang cold storage, <b>EC2 Auto Scaling</b> điều chỉnh capacity theo nhu cầu.</li>
+        <li><b>Reduce the downstream impact of your cloud workloads</b> – giảm năng lượng/tài nguyên khách hàng cần để dùng dịch vụ, giảm việc họ phải nâng cấp thiết bị; test bằng device farms.</li>
+      </ol>
+
+      <h3>6 best practice areas</h3>
+      <p><b>Region selection</b> · <b>Alignment to demand</b> · <b>Software and architecture</b> · <b>Data management</b> · <b>Hardware and services</b> · <b>Process and culture</b>.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 680 230" width="680" role="img" aria-label="Gộp hai host 30% thành một host 60%">
+          <defs><marker id="ah5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <text x="150" y="24" font-size="14" font-weight="700" text-anchor="middle">Trước: 2 host × 30%</text>
+          <rect x="30" y="40" width="110" height="150" rx="6" fill="none" stroke="#7D8998" stroke-width="2"/>
+          <rect x="30" y="145" width="110" height="45" rx="0" fill="#7AA116" fill-opacity=".35"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="61" y="60" width="48" height="48"/>
+          <text x="85" y="172" font-size="13" font-weight="700" text-anchor="middle">30%</text>
+          <rect x="160" y="40" width="110" height="150" rx="6" fill="none" stroke="#7D8998" stroke-width="2"/>
+          <rect x="160" y="145" width="110" height="45" rx="0" fill="#7AA116" fill-opacity=".35"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="191" y="60" width="48" height="48"/>
+          <text x="215" y="172" font-size="13" font-weight="700" text-anchor="middle">30%</text>
+          <text x="150" y="214" font-size="12" text-anchor="middle" class="muted">2 × điện năng nền (baseline power)</text>
+          <path class="line-o" d="M300 115 H400" marker-end="url(#ah5)"/>
+          <text x="350" y="104" font-size="12" text-anchor="middle" class="muted">right-size / consolidate</text>
+          <text x="520" y="24" font-size="14" font-weight="700" text-anchor="middle">Sau: 1 host × 60%</text>
+          <rect x="465" y="40" width="110" height="150" rx="6" fill="none" stroke="#7D8998" stroke-width="2"/>
+          <rect x="465" y="100" width="110" height="90" rx="0" fill="#7AA116" fill-opacity=".35"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="496" y="48" width="48" height="48"/>
+          <text x="520" y="150" font-size="13" font-weight="700" text-anchor="middle">60%</text>
+          <text x="520" y="214" font-size="12" text-anchor="middle" class="muted">1 × điện năng nền ⇒ hiệu quả hơn</text>
+        </svg>
+        <figcaption><b>Hình 6.</b> Nguyên tắc “Maximize utilization”: cùng khối lượng công việc, một host chạy 60% tiết kiệm năng lượng hơn hai host chạy 30%.</figcaption>
+      </figure>
+
+      <div class="callout note"><span class="ttl">Shared responsibility cho Sustainability</span>
+        <p>Theo Sustainability Pillar whitepaper: <b>AWS chịu trách nhiệm sustainability <i>OF</i> the cloud</b> (hạ tầng hiệu quả năng lượng, data center, nguồn điện), còn <b>khách hàng chịu trách nhiệm sustainability <i>IN</i> the cloud</b> (tối ưu workload, dữ liệu, mức sử dụng tài nguyên). Công cụ tham khảo: <b>AWS Customer Carbon Footprint Tool</b> trong Billing console.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>Đề nhắc “<i>reduce carbon footprint</i>”, “<i>environmental impact</i>”, “<i>energy efficiency</i>” ⇒ chọn: right-sizing, Auto Scaling, serverless/managed services, instance Graviton, S3 Lifecycle/Intelligent-Tiering, xóa dữ liệu và tài nguyên không dùng, chọn Region gần người dùng/có năng lượng tái tạo. Các giải pháp này thường <b>vừa xanh vừa rẻ</b>.</p></div>
+
+      <!-- ===================== PHẦN 10: TRADE-OFFS & REVIEW ===================== -->
+      <h2 id="trade-off"><img src="../assets/icons/svc/AWS-Well-Architected-Tool.svg" alt="">Đánh đổi giữa các trụ cột &amp; quy trình review</h2>
+      <p class="lead">Khi thiết kế, bạn <span class="t" data-vi="Đánh đổi">trade off</span> giữa các trụ cột dựa trên <b>bối cảnh kinh doanh</b>. Các quyết định kinh doanh định hướng ưu tiên kỹ thuật.</p>
+
+      <div class="compare">
+        <div style="--accent:#01A88D"><h4><img src="../assets/icons/cat/AWS-Cost-Management.svg" alt="">Môi trường development</h4>
+          <ul><li>Có thể ưu tiên <b>sustainability</b> và <b>giảm chi phí</b>, đánh đổi bằng <b>reliability</b>.</li>
+          <li>Ví dụ: single-AZ, instance nhỏ, Spot, tắt ngoài giờ.</li></ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">Giải pháp mission-critical</h4>
+          <ul><li>Ưu tiên <b>reliability</b>, chấp nhận <b>tăng chi phí</b> và tác động môi trường.</li>
+          <li>Ví dụ: Multi-AZ, Multi-Region, dư capacity dự phòng.</li></ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/cat/Compute.svg" alt="">Thương mại điện tử</h4>
+          <ul><li><b>Performance</b> ảnh hưởng trực tiếp doanh thu và xu hướng mua hàng của khách.</li>
+          <li>Ví dụ: CloudFront, caching, auto scaling mạnh tay.</li></ul></div>
+      </div>
+
+      <div class="callout key"><span class="ttl">Câu then chốt từ tài liệu AWS</span>
+        <p><b>“Security and operational excellence are generally not traded-off against the other pillars.”</b> – Security và Operational Excellence <b>thường không bị đem ra đánh đổi</b> với các trụ cột khác.</p></div>
+
+      <h3>Quy trình review kiến trúc (The review process)</h3>
+      <ul>
+        <li>Thực hiện <b>nhất quán</b>, theo tinh thần <span class="t" data-vi="Không đổ lỗi">blame-free</span>, khuyến khích đào sâu.</li>
+        <li><b>Gọn nhẹ</b> – tính bằng <b>giờ chứ không phải ngày</b>; là <b>cuộc trò chuyện, không phải kiểm toán</b>.</li>
+        <li>Kết quả review là <b>danh sách hành động</b> cải thiện trải nghiệm khách hàng; ưu tiên theo bối cảnh kinh doanh.</li>
+        <li>AWS khuyến nghị đội xây dựng kiến trúc <b>tự review liên tục</b> thay vì chỉ họp review chính thức.</li>
+        <li>Các câu hỏi giúp không bỏ sót những vùng thường xuất hiện trong <span class="t" data-vi="Phân tích nguyên nhân gốc rễ">Root Cause Analysis (RCA)</span>.</li>
+        <li>Câu hỏi của Framework <b>không tiết lộ</b> thông tin độc quyền thương mại/kỹ thuật.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Template.svg" alt="">Design<small>review sớm – tránh one-way doors</small></div>
+          <span class="arrow">milestone</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-CodePipeline.svg" alt="">Implementation &amp; Testing</div>
+          <span class="arrow">milestone</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Well-Architected-Tool.svg" alt="">Go live<small>review trước ngày ra mắt</small></div>
+          <span class="arrow">milestone</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">In production<small>review khi thay đổi lớn</small></div>
+        </div>
+        <figcaption><b>Hình 7.</b> Thời điểm nên review theo Framework: sớm ở giai đoạn thiết kế, trước go-live, và mỗi khi có thay đổi kiến trúc đáng kể trong production.</figcaption>
+      </figure>
+
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4>One-way door <small>(cửa một chiều)</small></h4>
+          <ul><li>Quyết định <b>khó hoặc không thể đảo ngược</b>.</li><li>Cần xem xét kỹ hơn trước khi làm ⇒ lý do phải review <b>sớm</b> ở giai đoạn thiết kế.</li></ul></div>
+        <div style="--accent:#147EBA"><h4>Two-way door <small>(cửa hai chiều)</small></h4>
+          <ul><li>Phần lớn quyết định <b>có thể đảo ngược</b>.</li><li>Dùng quy trình gọn nhẹ, ra quyết định nhanh.</li></ul></div>
+      </div>
+
+      <!-- ===================== PHẦN 11: WA TOOL & TRUSTED ADVISOR ===================== -->
+      <h2 id="wa-tool"><img src="../assets/icons/svc/AWS-Trusted-Advisor.svg" alt="">AWS Well-Architected Tool &amp; AWS Trusted Advisor</h2>
+      <p class="lead"><b>AWS Well-Architected Tool</b> <i>(AWS WA Tool)</i> là dịch vụ <b>miễn phí (no charge)</b> trên console, cung cấp quy trình nhất quán để <b>review và đo lường</b> workload theo Well-Architected Framework, kèm khuyến nghị làm workload tin cậy, bảo mật, hiệu quả và tiết kiệm hơn.</p>
+
+      <h3>Các khái niệm trong WA Tool</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khái niệm</th><th>Giải thích</th></tr></thead>
+        <tbody>
+          <tr><td><b>Workload</b></td><td>Tập tài nguyên và code mang lại giá trị kinh doanh; có thể nằm trong một phần của 1 account hoặc trải trên nhiều account. Có thể <b>share</b> workload cho account, user, AWS Organizations hoặc OU khác. Chỉ owner mới xóa được workload (xóa là <b>không thể hoàn tác</b>, mất cả milestones).</td></tr>
+          <tr><td><b><span class="t" data-vi="Lăng kính / bộ câu hỏi chuyên biệt">Lens</span></b></td><td>Bộ câu hỏi, best practices, ghi chú và improvement plan riêng. <b>AWS Well-Architected Framework Lens</b> được áp dụng <b>tự động</b> khi tạo workload. Hai loại: <b>Lens Catalog</b> (lens chính thức do AWS tạo và duy trì) và <b>Custom lenses</b> (tự tạo với pillar, câu hỏi, best practice riêng; có thể share cho account khác).</td></tr>
+          <tr><td><b>High risk issues (HRIs)</b></td><td>Lựa chọn kiến trúc/vận hành mà AWS thấy <b>có thể gây tác động tiêu cực đáng kể</b> tới doanh nghiệp.</td></tr>
+          <tr><td><b>Medium risk issues (MRIs)</b></td><td>Cũng có thể gây tác động tiêu cực, nhưng <b>ở mức thấp hơn</b>.</td></tr>
+          <tr><td><b>Improvement plan</b></td><td>Danh sách best practices cần thực hiện để xử lý HRI/MRI. Trạng thái cải thiện của workload: <i>None, Not Started, In Progress, Complete, Risk Acknowledged</i>.</td></tr>
+          <tr><td><b>Milestone</b></td><td>Ghi lại <b>trạng thái của workload tại một thời điểm</b>. Lưu milestone sau khi trả lời xong lần đầu, và mỗi lần cải tiến để đo tiến độ.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>0 USD</b><span>chi phí dùng AWS WA Tool</span></div>
+        <div class="stat"><b>6</b><span>pillars trong Framework Lens mặc định</span></div>
+        <div class="stat"><b>5</b><span>lens thêm được mỗi lần vào 1 workload</span></div>
+        <div class="stat"><b>20</b><span>lens tối đa áp dụng cho 1 workload</span></div>
+      </div>
+
+      <p><b>Một số lens trong Lens Catalog</b>: Serverless Applications, SaaS, Data Analytics, Machine Learning, Generative AI, IoT, Container Build, DevOps, Migration, SAP, Financial Services Industry, Healthcare Industry, Government, Connected Mobility, Mergers and Acquisitions. Gỡ một lens khỏi workload thì dữ liệu của lens <b>vẫn được giữ lại</b> và khôi phục khi thêm lại.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/svc/AWS-Well-Architected-Tool.svg" alt="">1. Define workload</div>
+          <span class="arrow">apply</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Trusted-Advisor_Checklist.svg" alt="">2. Lenses<small>Framework + Catalog/Custom</small></div>
+          <span class="arrow">answer</span>
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">3. Trả lời câu hỏi<small>theo từng pillar</small></div>
+          <span class="arrow">identify</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Security-Hub_Finding.svg" alt="">4. HRIs / MRIs</div>
+          <span class="arrow">prioritize</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Systems-Manager_OpsCenter.svg" alt="">5. Improvement plan</div>
+          <span class="arrow dashed">save</span>
+          <div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Change-Set.svg" alt="">6. Milestone<small>đo tiến độ</small></div>
+        </div>
+        <figcaption><b>Hình 8.</b> Quy trình review một workload trong AWS Well-Architected Tool.</figcaption>
+      </figure>
+
+      <h3>AWS Trusted Advisor – kiểm tra tự động môi trường AWS</h3>
+      <p><b>AWS Trusted Advisor</b> <i>kiểm tra môi trường AWS thực tế</i> của bạn và đưa khuyến nghị khi có cơ hội <b>tiết kiệm tiền</b>, <b>cải thiện availability và hiệu năng</b>, hoặc <b>vá lỗ hổng bảo mật</b>. Các nhóm check: <b>Cost optimization</b>, <b>Performance</b>, <b>Security</b>, <b>Fault tolerance</b>, <b>Service limits</b> (quotas) và <b>Operational excellence</b>.</p>
+      <ul>
+        <li><b>Basic Support</b>: truy cập <b>tất cả check nhóm Service Limits</b> và <b>một số check chọn lọc</b> trong nhóm <b>Security</b> và <b>Fault tolerance</b>; không có cập nhật tự động (phải bấm Refresh thủ công với các check Security).</li>
+        <li><b>Toàn bộ check + Trusted Advisor API</b>: dành cho các gói hỗ trợ cao hơn (hiện là Business Support+, Enterprise Support, Unified Operations; trước đây đề thi hay ghi “Business hoặc Enterprise Support”). Có thể theo dõi trạng thái check bằng <b>Amazon EventBridge</b>.</li>
+        <li>Có <b>organizational view</b> để xem kết quả cho mọi account trong AWS Organizations.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>AWS Well-Architected Tool</th><th>AWS Trusted Advisor</th></tr></thead>
+        <tbody>
+          <tr><td>Cách hoạt động</td><td>Bạn <b>trả lời câu hỏi</b> về kiến trúc, quy trình, con người</td><td><b>Tự động quét</b> tài nguyên trong account</td></tr>
+          <tr><td>Phạm vi</td><td>Toàn bộ workload, cả khía cạnh tổ chức và vận hành</td><td>Cấu hình tài nguyên cụ thể (SG mở 0.0.0.0/0, EBS không dùng, MFA root…)</td></tr>
+          <tr><td>Đầu ra</td><td>HRI/MRI, improvement plan, milestones</td><td>Check status (đỏ/vàng/xanh) và khuyến nghị</td></tr>
+          <tr><td>Chi phí</td><td class="yes">Miễn phí</td><td>Check cơ bản miễn phí; đầy đủ cần gói Support cao hơn</td></tr>
+          <tr><td>Dùng khi đề hỏi</td><td>“<i>review architecture against AWS best practices</i>”, “<i>track improvements over time</i>”</td><td>“<i>identify idle resources</i>”, “<i>check service quotas</i>”, “<i>security groups unrestricted access</i>”</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>Evaluate workloads against the AWS Well-Architected Framework / identify high-risk issues / save milestones</i>” ⇒ <b>AWS Well-Architected Tool</b>. “<i>Automated recommendations about cost savings, service limits, unrestricted security group ports</i>” ⇒ <b>AWS Trusted Advisor</b>. Đánh giá tuân thủ cấu hình liên tục bằng rules ⇒ <b>AWS Config</b>; tổng hợp findings bảo mật ⇒ <b>AWS Security Hub</b>.</p></div>
+
+      <!-- ===================== PHẦN 12: TỪ KHÓA ĐỀ THI ===================== -->
+      <h2 id="tu-khoa"><img src="../assets/icons/svc/AWS-Training-Certification.svg" alt="">Từ khóa trong đề ⇒ trụ cột ⇒ hướng giải</h2>
+      <p class="lead">Hầu hết câu hỏi SAA-C03 đều “ẩn” một trụ cột. Nhận ra trụ cột từ <span class="t" data-vi="Câu hỏi chốt">key phrase</span> giúp loại nhanh distractors.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cụm từ trong đề</th><th>Trụ cột</th><th>Hướng đáp án thường đúng</th></tr></thead>
+        <tbody>
+          <tr><td><i>LEAST operational overhead, automate, minimal management</i></td><td>Operational Excellence</td><td>Managed/serverless, IaC (CloudFormation), Systems Manager, EventBridge</td></tr>
+          <tr><td><i>least privilege, encrypt, audit, compliance, protect from attacks</i></td><td>Security</td><td>IAM role, KMS, CloudTrail, Config, WAF/Shield, Secrets Manager</td></tr>
+          <tr><td><i>highly available, fault tolerant, recover automatically, decouple</i></td><td>Reliability</td><td>Multi-AZ, Auto Scaling, ELB, SQS, Route 53 failover, AWS Backup</td></tr>
+          <tr><td><i>low latency, high throughput, global users, read-heavy</i></td><td>Performance Efficiency</td><td>CloudFront, Global Accelerator, caching, read replicas, đúng instance family</td></tr>
+          <tr><td><i>MOST cost-effective, reduce cost, idle resources</i></td><td>Cost Optimization</td><td>Right-sizing, Spot, Savings Plans, S3 storage classes, tắt tài nguyên ngoài giờ</td></tr>
+          <tr><td><i>reduce environmental impact, carbon footprint, energy</i></td><td>Sustainability</td><td>Maximize utilization, Graviton, managed services, Lifecycle policies</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <p>Đề có thể có <b>nhiều ràng buộc thuộc nhiều trụ cột</b> cùng lúc (ví dụ: “<i>highly available</i> AND <i>MOST cost-effective</i>”). Đáp án đúng phải thỏa <b>cả hai</b>: ví dụ Multi-AZ (reliability) nhưng dùng Auto Scaling + Savings Plans thay vì chạy dư capacity cố định ở Multi-Region.</p></div>
+
+      <!-- 3. TÓM TẮT -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li>Well-Architected Framework giúp hiểu <b>ưu/nhược của quyết định kiến trúc</b>; review là <b>cuộc trò chuyện, không phải audit</b>, gọn nhẹ (giờ, không phải ngày), blame-free.</li>
+          <li><b>6 pillars</b>: Operational Excellence · Security · Reliability · Performance Efficiency · Cost Optimization · Sustainability.</li>
+          <li><b>6 general design principles</b>: stop guessing capacity · test at production scale · automate for experimentation · evolutionary architectures · data-driven · game days.</li>
+          <li>Số design principles / best practice areas: OE <b>8 / 4</b> · Security <b>7 / 7</b> · Reliability <b>5 / 4</b> · Performance <b>5 / 5</b> · Cost <b>5 / 5</b> · Sustainability <b>6 / 6</b>.</li>
+          <li>Security: least privilege, bỏ long-term credentials, traceability, defense in depth, encrypt in transit &amp; at rest, keep people away from data.</li>
+          <li>Reliability: auto recover, test recovery, <b>scale horizontally</b>, stop guessing capacity, change through automation.</li>
+          <li>Cost: consumption model (dev/test tắt ngoài giờ tiết kiệm ~75%), ngừng chi cho undifferentiated heavy lifting, phân bổ chi phí.</li>
+          <li>Sustainability: 1 host 60% hiệu quả hơn 2 host 30%; AWS lo sustainability <i>of</i> the cloud, khách hàng lo <i>in</i> the cloud.</li>
+          <li><b>Security và Operational Excellence thường không bị đánh đổi</b>; các trụ cột khác đánh đổi theo bối cảnh (dev vs mission-critical).</li>
+          <li><b>WA Tool</b>: miễn phí, review bằng câu hỏi, lenses (tối đa 20/workload), HRI/MRI, improvement plan, milestones. <b>Trusted Advisor</b>: tự động quét account theo nhóm cost, performance, security, fault tolerance, service limits, operational excellence.</li>
+        </ul></div>
+
+      <!-- 4. THUẬT NGỮ -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Well-Architected Framework</dt><dd><b>Khung kiến trúc tối ưu</b> – tập best practices và câu hỏi để đánh giá kiến trúc trên AWS.</dd></div>
+        <div><dt>Pillar</dt><dd><b>Trụ cột</b> – một trong 6 khía cạnh của Framework.</dd></div>
+        <div><dt>Design principle</dt><dd><b>Nguyên tắc thiết kế</b> – định hướng tư duy cho mỗi trụ cột hoặc chung cho cloud.</dd></div>
+        <div><dt>Best practice area</dt><dd><b>Nhóm thực hành tốt nhất</b> – các nhóm câu hỏi/best practices trong mỗi trụ cột.</dd></div>
+        <div><dt>Component</dt><dd><b>Thành phần</b> – code, cấu hình, tài nguyên AWS cùng đáp ứng một yêu cầu; đơn vị sở hữu kỹ thuật.</dd></div>
+        <div><dt>Workload</dt><dd><b>Khối lượng công việc / hệ thống nghiệp vụ</b> – tập component cùng tạo giá trị kinh doanh.</dd></div>
+        <div><dt>Technology portfolio</dt><dd><b>Danh mục công nghệ</b> – tập workload cần để doanh nghiệp vận hành.</dd></div>
+        <div><dt>Milestone</dt><dd><b>Cột mốc</b> – thay đổi quan trọng của kiến trúc; trong WA Tool là ảnh chụp trạng thái workload tại một thời điểm.</dd></div>
+        <div><dt>Level of effort</dt><dd><b>Mức độ nỗ lực</b> – High / Medium / Low theo thời gian và độ phức tạp.</dd></div>
+        <div><dt>Trade-off</dt><dd><b>Sự đánh đổi</b> – ưu tiên trụ cột này với cái giá ở trụ cột khác.</dd></div>
+        <div><dt>Game day</dt><dd><b>Buổi diễn tập sự cố</b> – mô phỏng sự kiện production để kiểm tra kiến trúc và quy trình.</dd></div>
+        <div><dt>Observability</dt><dd><b>Khả năng quan sát</b> – hiểu hành vi hệ thống qua metrics, logs, traces.</dd></div>
+        <div><dt>Guardrails</dt><dd><b>Rào chắn an toàn</b> – giới hạn tự động (rate control, ngưỡng lỗi, phê duyệt) để tự động hóa an toàn.</dd></div>
+        <div><dt>Blast radius</dt><dd><b>Phạm vi ảnh hưởng khi có lỗi</b> – thay đổi nhỏ giúp thu hẹp phạm vi này.</dd></div>
+        <div><dt>Separation of duties</dt><dd><b>Phân tách nhiệm vụ</b> – không để một người nắm toàn quyền một quy trình nhạy cảm.</dd></div>
+        <div><dt>Defense in depth</dt><dd><b>Phòng thủ nhiều lớp</b> – kiểm soát bảo mật ở mọi lớp.</dd></div>
+        <div><dt>Long-term static credentials</dt><dd><b>Thông tin xác thực tĩnh dài hạn</b> – ví dụ access key IAM user; nên thay bằng role/credential tạm thời.</dd></div>
+        <div><dt>Resource saturation</dt><dd><b>Bão hòa tài nguyên</b> – nhu cầu vượt capacity của workload.</dd></div>
+        <div><dt>Single point of failure (SPOF)</dt><dd><b>Điểm lỗi đơn lẻ</b> – thành phần hỏng làm sập toàn hệ thống.</dd></div>
+        <div><dt>Mechanical sympathy</dt><dd><b>Thấu hiểu cơ chế máy móc</b> – chọn công nghệ phù hợp đặc tính workload (ví dụ access pattern).</dd></div>
+        <div><dt>Cloud Financial Management (CFM)</dt><dd><b>Quản lý tài chính đám mây</b> – năng lực tổ chức để kiểm soát và tối ưu chi phí cloud.</dd></div>
+        <div><dt>Undifferentiated heavy lifting</dt><dd><b>Việc nặng nhọc không tạo khác biệt</b> – vận hành data center, quản lý OS… để AWS lo.</dd></div>
+        <div><dt>Over-provisioning</dt><dd><b>Cấp phát dư thừa</b> – dùng tài nguyên nhiều hơn nhu cầu.</dd></div>
+        <div><dt>Right-sizing</dt><dd><b>Chọn đúng kích cỡ</b> – khớp loại/kích thước tài nguyên với nhu cầu thực.</dd></div>
+        <div><dt>One-way door / Two-way door</dt><dd><b>Quyết định một chiều / hai chiều</b> – khó đảo ngược / có thể đảo ngược.</dd></div>
+        <div><dt>Root Cause Analysis (RCA)</dt><dd><b>Phân tích nguyên nhân gốc rễ</b> của sự cố.</dd></div>
+        <div><dt>Lens / Lens Catalog / Custom lens</dt><dd><b>Lăng kính</b> – bộ câu hỏi chuyên biệt; Catalog do AWS duy trì, custom do bạn tạo.</dd></div>
+        <div><dt>High risk issue (HRI) / Medium risk issue (MRI)</dt><dd><b>Vấn đề rủi ro cao / trung bình</b> được WA Tool xác định từ câu trả lời.</dd></div>
+        <div><dt>Improvement plan</dt><dd><b>Kế hoạch cải thiện</b> – danh sách best practices cần làm để xử lý HRI/MRI.</dd></div>
+        <div><dt>AWS Trusted Advisor</dt><dd><b>Cố vấn tin cậy</b> – dịch vụ tự kiểm tra account và đưa khuyến nghị theo best practices.</dd></div>
+      </dl>
+
+      <!-- 5. CÂU HỎI ÔN TẬP -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs dozens of workloads on AWS. The CTO wants a consistent, no-cost process to review each workload against AWS architectural best practices, identify high risk issues, and track improvements over time by saving point-in-time snapshots. Which AWS service meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">AWS Trusted Advisor</li>
+            <li data-k="B">AWS Config with conformance packs</li>
+            <li data-k="C">AWS Well-Architected Tool</li>
+            <li data-k="D">AWS Security Hub</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> AWS Well-Architected Tool miễn phí, review workload theo Framework bằng câu hỏi, xác định HRI/MRI, tạo improvement plan và lưu <b>milestones</b> (ảnh chụp trạng thái tại một thời điểm) để đo tiến độ. <b>A sai</b>: Trusted Advisor tự quét tài nguyên và khuyến nghị, không có quy trình review workload/milestones. <b>B sai</b>: AWS Config đánh giá tuân thủ cấu hình tài nguyên bằng rules, không review toàn bộ kiến trúc theo 6 pillars. <b>D sai</b>: Security Hub chỉ tổng hợp findings bảo mật, không bao phủ reliability, cost…</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy hàng chục workload trên AWS. CTO muốn có một quy trình nhất quán, miễn phí để review từng workload theo các best practice kiến trúc của AWS, xác định các vấn đề rủi ro cao (high risk issues) và theo dõi cải tiến theo thời gian bằng cách lưu các ảnh chụp trạng thái tại từng thời điểm (point-in-time snapshot). Dịch vụ AWS nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">AWS Trusted Advisor</span><span class="why">Sai: Trusted Advisor tự quét tài nguyên và đưa khuyến nghị, không có quy trình review workload theo câu hỏi và không lưu milestone.</span></li>
+              <li data-k="B"><span class="tv">AWS Config với conformance pack</span><span class="why">Sai: AWS Config đánh giá tuân thủ cấu hình tài nguyên bằng rule, không review toàn bộ kiến trúc theo 6 pillar.</span></li>
+              <li data-k="C"><span class="tv">AWS Well-Architected Tool</span><span class="why">Đúng: công cụ miễn phí review workload theo Framework, xác định HRI/MRI, tạo improvement plan và lưu milestone để theo dõi tiến độ.</span></li>
+              <li data-k="D"><span class="tv">AWS Security Hub</span><span class="why">Sai: Security Hub chỉ tổng hợp finding bảo mật, không bao phủ các pillar khác như reliability, cost.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company's development and test environments run on Amazon EC2 instances 24 hours a day, 7 days a week. The developers only use the environments from 8 AM to 6 PM on weekdays. The company wants to reduce costs for these environments with the LEAST operational overhead. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Use a scheduled automation (for example, Amazon EventBridge Scheduler invoking AWS Systems Manager Automation) to stop the instances outside business hours and start them before the workday.</li>
+            <li data-k="B">Purchase 3-year All Upfront Reserved Instances for all development and test instances.</li>
+            <li data-k="C">Replace the instances with larger instance types so that tasks finish faster.</li>
+            <li data-k="D">Ask developers to manually stop their instances at the end of each day through the AWS Management Console.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Đúng nguyên tắc Cost Optimization “<i>Adopt a consumption model</i>”: chỉ trả tiền khi dùng; AWS nêu ví dụ tắt dev/test ngoài giờ tiết kiệm tới ~75%. Lên lịch tự động là <i>least operational overhead</i>. <b>B sai</b>: RI tính phí cam kết cả 24/7 dù instance chỉ dùng ~25% thời gian. <b>C sai</b>: instance lớn hơn tăng chi phí và vẫn chạy 24/7. <b>D sai</b>: thao tác thủ công dễ quên, tăng gánh nặng vận hành, đi ngược “safely automate where possible”.</div>
+          <div class="trans">
+            <div class="tq">Môi trường development và test của một công ty chạy trên các Amazon EC2 instance 24 giờ mỗi ngày, 7 ngày mỗi tuần. Lập trình viên chỉ dùng các môi trường này từ 8 giờ sáng đến 6 giờ chiều các ngày trong tuần. Công ty muốn giảm chi phí cho các môi trường này với LEAST operational overhead (ít gánh nặng vận hành nhất). Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng một cơ chế tự động theo lịch (ví dụ Amazon EventBridge Scheduler gọi AWS Systems Manager Automation) để dừng các instance ngoài giờ làm việc và khởi động lại trước ngày làm việc.</span><span class="why">Đúng: chỉ trả tiền khi dùng (consumption model), tiết kiệm khoảng 70–75% thời gian chạy, và lên lịch tự động nên ít gánh nặng vận hành nhất.</span></li>
+              <li data-k="B"><span class="tv">Mua Reserved Instances 3 năm, trả trước toàn bộ (All Upfront) cho tất cả instance dev và test.</span><span class="why">Sai: RI tính phí cam kết cho cả 24/7 trong khi instance chỉ được dùng khoảng 25% thời gian.</span></li>
+              <li data-k="C"><span class="tv">Thay các instance bằng loại instance lớn hơn để công việc hoàn thành nhanh hơn.</span><span class="why">Sai: instance lớn hơn đắt hơn và vẫn chạy 24/7, làm tăng chứ không giảm chi phí.</span></li>
+              <li data-k="D"><span class="tv">Yêu cầu lập trình viên tự dừng instance cuối mỗi ngày qua AWS Management Console.</span><span class="why">Sai: thao tác thủ công dễ quên, tăng gánh nặng vận hành, ngược với nguyên tắc tự động hóa.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A solutions architect is presenting the design principles of the Reliability pillar of the AWS Well-Architected Framework. Which TWO principles belong to the Reliability pillar? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Democratize advanced technologies</li>
+            <li data-k="B">Automatically recover from failure</li>
+            <li data-k="C">Keep people away from data</li>
+            <li data-k="D">Go global in minutes</li>
+            <li data-k="E">Scale horizontally to increase aggregate workload availability</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Reliability có 5 design principles: automatically recover from failure, test recovery procedures, scale horizontally to increase aggregate workload availability, stop guessing capacity, manage change through automation. <b>A và D sai</b>: thuộc Performance Efficiency. <b>C sai</b>: thuộc Security.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect đang trình bày các nguyên tắc thiết kế (design principles) của pillar Reliability trong AWS Well-Architected Framework. HAI nguyên tắc nào thuộc pillar Reliability? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Phổ cập các công nghệ tiên tiến (Democratize advanced technologies)</span><span class="why">Sai: đây là design principle của pillar Performance Efficiency.</span></li>
+              <li data-k="B"><span class="tv">Tự động phục hồi sau sự cố (Automatically recover from failure)</span><span class="why">Đúng: là một trong 5 design principle của Reliability – giám sát KPI và tự động kích hoạt phục hồi khi vượt ngưỡng.</span></li>
+              <li data-k="C"><span class="tv">Giữ con người tránh xa dữ liệu (Keep people away from data)</span><span class="why">Sai: đây là design principle của pillar Security.</span></li>
+              <li data-k="D"><span class="tv">Vươn ra toàn cầu trong vài phút (Go global in minutes)</span><span class="why">Sai: đây là design principle của pillar Performance Efficiency.</span></li>
+              <li data-k="E"><span class="tv">Mở rộng theo chiều ngang để tăng tính sẵn sàng tổng thể của workload (Scale horizontally to increase aggregate workload availability)</span><span class="why">Đúng: là design principle của Reliability – thay một tài nguyên lớn bằng nhiều tài nguyên nhỏ để giảm ảnh hưởng khi một tài nguyên hỏng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An application running on Amazon EC2 instances reads objects from an Amazon S3 bucket. During a review, the security team discovers that an IAM user access key and secret key are stored in the application's configuration file on each instance. The company wants to follow the AWS Well-Architected Security pillar guidance. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Encrypt the configuration file with AWS KMS and keep the same access keys.</li>
+            <li data-k="B">Rotate the IAM user access keys every 90 days by using a cron job on each instance.</li>
+            <li data-k="C">Store the access keys in the instance user data so they are not written to disk.</li>
+            <li data-k="D">Create an IAM role with least-privilege S3 permissions, attach it to the instances through an instance profile, and remove the stored access keys.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Nguyên tắc “<i>Implement a strong identity foundation</i>”: least privilege và <b>loại bỏ long-term static credentials</b>. IAM role cấp credentials tạm thời, tự xoay vòng. <b>A sai</b>: vẫn là long-term credentials, chỉ che giấu chúng. <b>B sai</b>: xoay vòng giảm rủi ro nhưng vẫn là static credentials, thêm gánh nặng vận hành. <b>C sai</b>: user data đọc được qua instance metadata, không an toàn hơn và vẫn là long-term key.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng chạy trên các Amazon EC2 instance đọc object từ một bucket Amazon S3. Trong một đợt review, nhóm bảo mật phát hiện access key và secret key của một IAM user được lưu trong file cấu hình của ứng dụng trên từng instance. Công ty muốn tuân theo hướng dẫn của pillar Security trong AWS Well-Architected. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Mã hóa file cấu hình bằng AWS KMS và giữ nguyên các access key đó.</span><span class="why">Sai: vẫn là long-term static credentials, chỉ che giấu chứ không loại bỏ rủi ro lộ key.</span></li>
+              <li data-k="B"><span class="tv">Xoay vòng (rotate) access key của IAM user mỗi 90 ngày bằng một cron job trên từng instance.</span><span class="why">Sai: xoay vòng giảm rủi ro nhưng vẫn là static credentials và thêm gánh nặng vận hành.</span></li>
+              <li data-k="C"><span class="tv">Lưu access key trong user data của instance để chúng không bị ghi ra đĩa.</span><span class="why">Sai: user data đọc được qua instance metadata, không an toàn hơn và vẫn là long-term key.</span></li>
+              <li data-k="D"><span class="tv">Tạo một IAM role với quyền S3 tối thiểu (least privilege), gắn vào các instance qua instance profile, và xóa các access key đang lưu.</span><span class="why">Đúng: IAM role cấp credentials tạm thời, tự xoay vòng, loại bỏ long-term key – đúng nguyên tắc "Implement a strong identity foundation".</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company deploys large application releases once every quarter. Failed releases often cause extended outages because rollbacks are slow and manual. The company wants to reduce the impact of failed deployments and recover faster. Which approach aligns BEST with the Operational Excellence pillar?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the testing period before each quarterly release to two months.</li>
+            <li data-k="B">Make frequent, small, reversible changes by using an automated CI/CD pipeline (AWS CodePipeline) and infrastructure as code (AWS CloudFormation) with automated rollback.</li>
+            <li data-k="C">Require approval from a central architecture board for every change and perform deployments manually during maintenance windows.</li>
+            <li data-k="D">Deploy each release to a single large EC2 instance to simplify rollback.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> OE design principles “<i>Make frequent, small, reversible changes</i>” và “<i>Safely automate where possible</i>”: thay đổi nhỏ + triển khai tự động giảm <b>blast radius</b> và đảo ngược nhanh. <b>A sai</b>: vẫn là bản phát hành lớn, rủi ro cao, chậm. <b>C sai</b>: triển khai thủ công tăng lỗi con người; AWS ưu tiên mechanisms tự động hơn hội đồng tập trung. <b>D sai</b>: tạo single point of failure, không giải quyết vấn đề rollback.</div>
+          <div class="trans">
+            <div class="tq">Một công ty triển khai các bản phát hành ứng dụng lớn mỗi quý một lần. Các bản phát hành lỗi thường gây gián đoạn kéo dài vì việc rollback chậm và thủ công. Công ty muốn giảm tác động của các lần triển khai lỗi và phục hồi nhanh hơn. Cách tiếp cận nào phù hợp BEST (nhất) với pillar Operational Excellence?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Kéo dài thời gian kiểm thử trước mỗi bản phát hành hàng quý lên hai tháng.</span><span class="why">Sai: vẫn là bản phát hành lớn, rủi ro cao và chậm; không cải thiện tốc độ rollback.</span></li>
+              <li data-k="B"><span class="tv">Thực hiện các thay đổi thường xuyên, nhỏ, có thể đảo ngược bằng pipeline CI/CD tự động (AWS CodePipeline) và infrastructure as code (AWS CloudFormation) với rollback tự động.</span><span class="why">Đúng: thay đổi nhỏ giảm blast radius, tự động hóa giúp rollback nhanh – đúng các design principle "frequent, small, reversible changes" và "safely automate".</span></li>
+              <li data-k="C"><span class="tv">Yêu cầu hội đồng kiến trúc trung tâm phê duyệt mọi thay đổi và triển khai thủ công trong các khung giờ bảo trì.</span><span class="why">Sai: triển khai thủ công tăng lỗi con người và làm chậm; AWS ưu tiên cơ chế tự động hơn phê duyệt tập trung.</span></li>
+              <li data-k="D"><span class="tv">Triển khai mỗi bản phát hành lên một EC2 instance lớn duy nhất để đơn giản hóa rollback.</span><span class="why">Sai: tạo single point of failure và không giải quyết vấn đề rollback chậm.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company wants to reduce the environmental impact of its AWS workloads, in line with the Sustainability pillar. The current fleet consists of many Amazon EC2 instances that average 15% CPU utilization, and terabytes of rarely accessed log data stored in Amazon S3 Standard. Which solution meets this goal?</div>
+          <ol class="opts">
+            <li data-k="A">Right-size and consolidate the instances behind an EC2 Auto Scaling group, and configure S3 Lifecycle rules to transition old logs to colder storage classes and expire unneeded data.</li>
+            <li data-k="B">Provision additional instances in a second Region to keep spare capacity available at all times.</li>
+            <li data-k="C">Copy all log data to every Region where the company operates to improve availability.</li>
+            <li data-k="D">Move the instances to the largest available instance types to finish workloads faster.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Nguyên tắc “<i>Maximize utilization</i>” (1 host 60% hiệu quả hơn 2 host 30%) và “<i>Use managed services</i>” – AWS nêu chính S3 Lifecycle và EC2 Auto Scaling làm ví dụ. <b>B sai</b>: thêm tài nguyên nhàn rỗi, tăng năng lượng tiêu thụ. <b>C sai</b>: nhân bản dữ liệu ít dùng làm tăng storage và tác động môi trường. <b>D sai</b>: mức sử dụng vốn đã thấp; instance lớn hơn càng lãng phí.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn giảm tác động môi trường của các workload trên AWS, theo pillar Sustainability. Hệ thống hiện tại gồm nhiều Amazon EC2 instance có mức sử dụng CPU trung bình 15%, và hàng terabyte dữ liệu log hiếm khi truy cập được lưu trong Amazon S3 Standard. Giải pháp nào đáp ứng mục tiêu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Điều chỉnh kích thước phù hợp (right-size) và gộp các instance vào sau một EC2 Auto Scaling group, đồng thời cấu hình S3 Lifecycle rule để chuyển log cũ sang storage class lạnh hơn và xóa dữ liệu không cần thiết.</span><span class="why">Đúng: tăng mức sử dụng tài nguyên (maximize utilization) và dùng managed service như Auto Scaling, S3 Lifecycle – chính các ví dụ AWS nêu cho Sustainability.</span></li>
+              <li data-k="B"><span class="tv">Cấp thêm instance ở Region thứ hai để luôn có sẵn dung lượng dự phòng.</span><span class="why">Sai: thêm tài nguyên nhàn rỗi làm tăng năng lượng tiêu thụ, ngược mục tiêu bền vững.</span></li>
+              <li data-k="C"><span class="tv">Sao chép toàn bộ dữ liệu log tới mọi Region mà công ty hoạt động để tăng tính sẵn sàng.</span><span class="why">Sai: nhân bản dữ liệu ít dùng làm tăng lưu trữ và tác động môi trường.</span></li>
+              <li data-k="D"><span class="tv">Chuyển các instance sang loại instance lớn nhất hiện có để hoàn thành workload nhanh hơn.</span><span class="why">Sai: mức sử dụng vốn đã thấp (15%); instance lớn hơn còn lãng phí hơn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A startup needs a database for a new mobile application. The access pattern is simple key-value lookups that require single-digit millisecond latency at any scale. The team has no database administration experience and wants the LEAST operational overhead. Which solution should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Install Apache Cassandra on a cluster of Amazon EC2 instances.</li>
+            <li data-k="B">Use Amazon RDS for MySQL on the largest available instance class.</li>
+            <li data-k="C">Use Amazon DynamoDB.</li>
+            <li data-k="D">Use Amazon ElastiCache (Memcached) as the primary persistent database.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Performance Efficiency: “<i>Democratize advanced technologies</i>” (dùng NoSQL dưới dạng dịch vụ) và “<i>Consider mechanical sympathy</i>” (chọn theo access pattern key-value). DynamoDB là serverless, độ trễ mili-giây một chữ số ở mọi quy mô. <b>A sai</b>: tự vận hành cluster, gánh nặng lớn. <b>B sai</b>: quan hệ, scale dọc, không tối ưu cho key-value quy mô lớn và vẫn cần quản trị. <b>D sai</b>: Memcached không bền vững (không persistence, không replication) – không thể làm database chính.</div>
+          <div class="trans">
+            <div class="tq">Một startup cần database cho một ứng dụng di động mới. Mẫu truy cập là các truy vấn key-value đơn giản, yêu cầu độ trễ mili-giây một chữ số ở mọi quy mô. Nhóm không có kinh nghiệm quản trị database và muốn LEAST operational overhead (ít gánh nặng vận hành nhất). Solutions architect nên đề xuất giải pháp nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cài Apache Cassandra trên một cluster Amazon EC2 instance.</span><span class="why">Sai: phải tự vận hành cluster (vá, scale, sao lưu) – gánh nặng lớn với nhóm không có kinh nghiệm DBA.</span></li>
+              <li data-k="B"><span class="tv">Dùng Amazon RDS for MySQL trên instance class lớn nhất hiện có.</span><span class="why">Sai: database quan hệ scale theo chiều dọc, không tối ưu cho key-value ở quy mô lớn và vẫn cần quản trị.</span></li>
+              <li data-k="C"><span class="tv">Dùng Amazon DynamoDB.</span><span class="why">Đúng: DynamoDB là NoSQL serverless, tối ưu cho key-value, độ trễ mili-giây một chữ số ở mọi quy mô và không cần quản trị server.</span></li>
+              <li data-k="D"><span class="tv">Dùng Amazon ElastiCache (Memcached) làm database chính lưu trữ bền vững.</span><span class="why">Sai: Memcached không có persistence hay replication, mất dữ liệu khi node hỏng nên không thể làm database chính.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">According to the AWS Well-Architected Framework, architects make trade-offs between pillars based on business context. Which pillars are generally NOT traded off against the other pillars?</div>
+          <ol class="opts">
+            <li data-k="A">Reliability and Performance Efficiency</li>
+            <li data-k="B">Cost Optimization and Sustainability</li>
+            <li data-k="C">Reliability and Cost Optimization</li>
+            <li data-k="D">Security and Operational Excellence</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Tài liệu AWS: “<i>Security and operational excellence are generally not traded-off against the other pillars.</i>” <b>A, B, C sai</b>: đây là các trụ cột thường được đánh đổi – ví dụ dev environment ưu tiên cost/sustainability đổi lấy reliability; mission-critical ưu tiên reliability chấp nhận tăng chi phí; e-commerce ưu tiên performance vì ảnh hưởng doanh thu.</div>
+          <div class="trans">
+            <div class="tq">Theo AWS Well-Architected Framework, các architect đánh đổi (trade-off) giữa các pillar dựa trên bối cảnh kinh doanh. Những pillar nào nhìn chung KHÔNG bị đánh đổi với các pillar khác?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Reliability và Performance Efficiency</span><span class="why">Sai: đây là các pillar thường được đánh đổi tùy bối cảnh (ví dụ e-commerce ưu tiên performance).</span></li>
+              <li data-k="B"><span class="tv">Cost Optimization và Sustainability</span><span class="why">Sai: có thể đánh đổi – ví dụ môi trường dev ưu tiên cost/sustainability, chấp nhận giảm reliability.</span></li>
+              <li data-k="C"><span class="tv">Reliability và Cost Optimization</span><span class="why">Sai: đây là cặp đánh đổi điển hình – hệ thống mission-critical chấp nhận tốn chi phí hơn để tăng reliability.</span></li>
+              <li data-k="D"><span class="tv">Security và Operational Excellence</span><span class="why">Đúng: tài liệu AWS nêu rõ security và operational excellence nhìn chung không bị đánh đổi với các pillar khác.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A small company has an AWS account on the Basic Support plan. The operations team wants to use AWS Trusted Advisor. Which TWO capabilities are available to the company without upgrading its support plan? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">All checks in the Service Limits category</li>
+            <li data-k="B">All checks in the Cost Optimization category</li>
+            <li data-k="C">Selected checks in the Security category</li>
+            <li data-k="D">Programmatic access to all checks through the AWS Trusted Advisor API</li>
+            <li data-k="E">All checks in the Performance category with automatic refresh</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> Với Basic Support, Trusted Advisor cho truy cập <b>tất cả check Service Limits</b> và <b>một số check chọn lọc</b> nhóm <b>Security</b> và <b>Fault tolerance</b> (phải refresh thủ công). <b>B, E sai</b>: đầy đủ check Cost Optimization, Performance cần gói Support cao hơn (Business Support+/Enterprise). <b>D sai</b>: Trusted Advisor API chỉ có ở các gói Support cao hơn.</div>
+          <div class="trans">
+            <div class="tq">Một công ty nhỏ có tài khoản AWS dùng gói Basic Support. Nhóm vận hành muốn sử dụng AWS Trusted Advisor. HAI khả năng nào công ty dùng được mà không cần nâng cấp gói hỗ trợ? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tất cả các check trong nhóm Service Limits</span><span class="why">Đúng: với Basic Support, Trusted Advisor cho truy cập toàn bộ check Service Limits.</span></li>
+              <li data-k="B"><span class="tv">Tất cả các check trong nhóm Cost Optimization</span><span class="why">Sai: bộ check Cost Optimization đầy đủ chỉ có với gói Support cao hơn (Business/Enterprise).</span></li>
+              <li data-k="C"><span class="tv">Một số check chọn lọc trong nhóm Security</span><span class="why">Đúng: Basic Support có một số check Security (và Fault tolerance) chọn lọc, phải refresh thủ công.</span></li>
+              <li data-k="D"><span class="tv">Truy cập lập trình (programmatic) tới mọi check qua AWS Trusted Advisor API</span><span class="why">Sai: Trusted Advisor API chỉ có ở các gói Support cao hơn.</span></li>
+              <li data-k="E"><span class="tv">Tất cả các check trong nhóm Performance với tự động làm mới (automatic refresh)</span><span class="why">Sai: bộ check Performance đầy đủ và tự động refresh cần gói Support cao hơn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A product team is designing a new customer-facing workload that will launch in six months. The team wants to follow the AWS guidance on when to perform Well-Architected reviews. When should the team perform reviews?</div>
+          <ol class="opts">
+            <li data-k="A">Only once, after the workload has been running in production for one year, as a formal audit by an external party.</li>
+            <li data-k="B">Early in the design phase to avoid one-way door decisions, before the go-live date, and again whenever significant architecture changes are made.</li>
+            <li data-k="C">Only after a major production incident, as part of the root cause analysis.</li>
+            <li data-k="D">Only immediately before go-live, because reviewing earlier wastes time while the design is still changing.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> AWS khuyến nghị review tại các milestone quan trọng: <b>sớm ở giai đoạn thiết kế</b> để tránh <i>one-way doors</i> (quyết định khó đảo ngược), <b>trước go-live</b>, và tiếp tục khi có thay đổi kiến trúc đáng kể trong production; tốt nhất đội tự review gần như liên tục. <b>A sai</b>: review là cuộc trò chuyện, <i>không phải audit</i>, và không chỉ làm một lần. <b>C sai</b>: chờ sự cố mới review là quá muộn. <b>D sai</b>: review muộn khiến quyết định một chiều đã khó sửa.</div>
+          <div class="trans">
+            <div class="tq">Một nhóm sản phẩm đang thiết kế một workload mới phục vụ khách hàng, sẽ ra mắt sau sáu tháng. Nhóm muốn tuân theo hướng dẫn của AWS về thời điểm thực hiện Well-Architected review. Nhóm nên thực hiện review khi nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chỉ một lần, sau khi workload chạy production được một năm, dưới dạng một cuộc kiểm toán (audit) chính thức do bên ngoài thực hiện.</span><span class="why">Sai: Well-Architected review là cuộc trao đổi, không phải audit, và không chỉ làm một lần.</span></li>
+              <li data-k="B"><span class="tv">Sớm trong giai đoạn thiết kế để tránh các quyết định "cửa một chiều" (one-way door), trước ngày go-live, và lặp lại mỗi khi có thay đổi kiến trúc đáng kể.</span><span class="why">Đúng: AWS khuyến nghị review sớm để tránh quyết định khó đảo ngược, trước go-live và tiếp tục suốt vòng đời khi kiến trúc thay đổi.</span></li>
+              <li data-k="C"><span class="tv">Chỉ sau một sự cố production lớn, như một phần của phân tích nguyên nhân gốc (root cause analysis).</span><span class="why">Sai: chờ có sự cố mới review là quá muộn, rủi ro đã xảy ra.</span></li>
+              <li data-k="D"><span class="tv">Chỉ ngay trước go-live, vì review sớm hơn là lãng phí thời gian khi thiết kế còn đang thay đổi.</span><span class="why">Sai: review muộn khiến các quyết định một chiều đã được đưa ra và khó sửa.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- 6. NGUỒN -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/framework/definitions.html" target="_blank" rel="noopener">Definitions – Well-Architected Framework</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/framework/on-architecture.html" target="_blank" rel="noopener">On architecture</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/framework/the-review-process.html" target="_blank" rel="noopener">The review process</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/framework/oe-design-principles.html" target="_blank" rel="noopener">Operational excellence – Design principles</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/framework/sec-design.html" target="_blank" rel="noopener">Security – Design principles</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/framework/rel-dp.html" target="_blank" rel="noopener">Reliability – Design principles</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/framework/perf-dp.html" target="_blank" rel="noopener">Performance efficiency – Design principles</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/framework/cost-dp.html" target="_blank" rel="noopener">Cost optimization – Design principles</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/framework/sus-design-principles.html" target="_blank" rel="noopener">Sustainability – Design principles</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/userguide/workloads.html" target="_blank" rel="noopener">AWS WA Tool – Workloads, HRIs and MRIs</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/userguide/lenses.html" target="_blank" rel="noopener">AWS WA Tool – Using lenses</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/userguide/lens-catalog.html" target="_blank" rel="noopener">AWS WA Tool – Lens Catalog</a></li>
+        <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/userguide/milestones.html" target="_blank" rel="noopener">AWS WA Tool – Milestones</a></li>
+        <li><a href="https://docs.aws.amazon.com/awssupport/latest/user/trusted-advisor.html" target="_blank" rel="noopener">AWS Trusted Advisor</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

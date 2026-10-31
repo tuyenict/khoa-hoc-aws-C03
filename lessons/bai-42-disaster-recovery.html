@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 42 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/CloudEndure-Disaster-Recovery.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="42" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Định nghĩa chính xác <b>RPO</b> và <b>RTO</b>, biết chúng sinh ra từ <b>business impact analysis</b> và <b>risk assessment</b>, và đọc được yêu cầu RPO/RTO trong đề để chọn chiến lược.</li>
+          <li>Phân biệt rạch ròi 4 chiến lược DR của AWS: <b>Backup &amp; Restore</b>, <b>Pilot Light</b>, <b>Warm Standby</b>, <b>Multi-site active/active</b> (và biến thể <b>hot standby</b>) theo chi phí, độ phức tạp, RPO/RTO.</li>
+          <li>Chọn đúng dịch vụ cho từng mảnh ghép: sao lưu point-in-time, <b>sao chép liên tục cross-Region</b> (S3 Replication, Aurora Global Database, DynamoDB global tables…), dựng lại hạ tầng bằng <b>IaC</b>, chuyển traffic bằng <b>Route 53 / ARC / Global Accelerator / CloudFront</b>.</li>
+          <li>Hiểu vì sao khi failover nên dựa vào <b>data plane</b> thay vì <b>control plane</b>, và các chiến lược ghi dữ liệu trong active/active: <b>write global, write local, write partitioned</b>.</li>
+          <li>Nắm cách <b>AWS Elastic Disaster Recovery (DRS)</b> hoạt động: replication agent, staging area, port 443/1500, <b>point-in-time snapshot</b>, RPO giây – RTO phút, drill và failback.</li>
+          <li>Biết cách <b>kiểm thử DR</b> và chống <b>configuration drift</b> ở Region dự phòng.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 10</span>
+        <p>Bài này “ghép” lại nhiều mảnh đã học: <b>Bài 19</b> đã dạy chi tiết <b>AWS Backup</b> (backup plan, vault, Vault Lock, cross-Region/cross-account copy); <b>Bài 15</b> dạy S3 Replication &amp; RTC; <b>Bài 24</b> dạy routing policy và health check của Route 53; <b>Bài 25</b> dạy Global Accelerator &amp; CloudFront origin failover; <b>Bài 26–28</b> dạy RDS read replica, Aurora Global Database, DynamoDB global tables; <b>Bài 41</b> dạy CloudFormation/StackSets. Ở đây ta <b>không học lại cách cấu hình từng dịch vụ</b> mà học <b>cách chọn và kết hợp</b> chúng thành chiến lược DR. Dịch chuyển máy chủ lên AWS bằng <b>AWS MGN</b>, DMS và 7 Rs học ở <b>Bài 43</b>.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/CloudEndure-Disaster-Recovery.svg" alt="">Disaster recovery là gì và vì sao “khác” trên cloud</h2>
+      <p class="lead"><span class="t" data-vi="Khôi phục sau thảm họa">Disaster recovery (DR)</span> là khả năng đưa workload hoạt động trở lại sau một sự kiện gây gián đoạn lớn: thiên tai (động đất, lũ lụt), sự cố kỹ thuật (mất điện, đứt mạng ở cả một vùng), hay <b>lỗi do con người</b> (xóa nhầm dữ liệu, bị tấn công ransomware, lộ credential). DR khác với <span class="t" data-vi="Tính sẵn sàng cao">high availability</span>: HA giúp workload chịu được hỏng hóc thường ngày của một thành phần (một instance, một AZ), còn DR là kế hoạch khi <b>cả một phạm vi lớn bị mất</b> – thường là cả một Region hoặc toàn bộ dữ liệu bị hỏng.</p>
+
+      <h3>DR là một phần của kế hoạch kinh doanh liên tục (BCP)</h3>
+      <p>Theo whitepaper của AWS, kế hoạch DR phải là <b>tập con</b> của <span class="t" data-vi="Kế hoạch kinh doanh liên tục">business continuity plan (BCP)</span>, không phải tài liệu đứng riêng. Ví dụ tài liệu đưa ra: động đất có thể khiến bạn <b>không vận chuyển được hàng</b> cho đơn đặt trên website thương mại điện tử – dù DR giữ website chạy, BCP vẫn phải tính đến khâu vận chuyển. Chiến lược DR phải dựa trên yêu cầu, ưu tiên và bối cảnh kinh doanh.</p>
+      <ol class="steps">
+        <li><span class="t" data-vi="Phân tích tác động kinh doanh">Business impact analysis (BIA)</span> – định lượng tác động khi workload bị gián đoạn: ảnh hưởng tới khách hàng nội bộ/bên ngoài, từ đó xác định workload phải sẵn sàng lại <b>nhanh đến mức nào</b> và <b>chấp nhận mất bao nhiêu dữ liệu</b>. Tác động có thể <b>phụ thuộc thời điểm</b>: hệ thống trả lương sập ngay trước ngày trả lương thì rất nghiêm trọng, ngay sau đó thì nhẹ hơn nhiều.</li>
+        <li><span class="t" data-vi="Đánh giá rủi ro">Risk assessment</span> – loại thảm họa nào, phạm vi địa lý ra sao, xác suất xảy ra với kiến trúc hiện tại là bao nhiêu.</li>
+        <li><b>Chi phí của phương án khôi phục</b> – so sánh với giá trị kinh doanh. Tài liệu nhấn mạnh: <b>nếu chi phí khôi phục cao hơn chi phí của sự cố/mất mát, không nên triển khai</b> – trừ khi có lý do phụ như <b>yêu cầu pháp lý</b>. Với workload ít quan trọng, <b>không có DR</b> cũng là quyết định hợp lệ nếu được cân nhắc có hiểu biết.</li>
+        <li>Từ đó đặt <b>mục tiêu khôi phục (RTO, RPO) cho từng workload</b>, rồi mới chọn chiến lược.</li>
+      </ol>
+
+      <h3>DR trên AWS khác gì DR truyền thống?</h3>
+      <p>On-premises, DR thường là chở <b>băng từ</b> ra kho khác hoặc duy trì <b>một data center thứ hai</b> nằm không. Trên AWS, theo tài liệu, bạn được: khôi phục nhanh với độ phức tạp thấp hơn; kiểm thử <b>đơn giản, lặp lại được, thường xuyên hơn</b>; giảm gánh nặng quản lý; tự động hóa để giảm lỗi và rút ngắn thời gian khôi phục; và <b>đổi chi phí vốn cố định</b> của data center dự phòng thành <b>chi phí vận hành biến đổi</b> của một môi trường vừa đủ dùng.</p>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/cat/Management-Governance.svg" alt="">Một Region, nhiều AZ</h4>
+          <ul>
+            <li>Mỗi Region gồm nhiều AZ cách nhau một khoảng có ý nghĩa, mỗi AZ là 1+ data center tách biệt ⇒ <b>đa số thảm họa thông thường chỉ ảnh hưởng một AZ</b>.</li>
+            <li>Workload Multi-AZ chịu được mất một (thậm chí nhiều) data center. Thêm <b>continuous backup</b> trong Region để chống lỗi con người.</li>
+            <li>Tài liệu: với thảm họa “mất một data center” cho workload Multi-AZ được thiết kế tốt, có thể <b>chỉ cần Backup &amp; Restore</b>.</li>
+            <li>Yêu cầu <b>data residency</b> ở nơi chỉ có một Region ⇒ dùng các AZ như những “địa điểm” tách biệt; các chiến lược DR cũng làm được giữa các AZ thay vì giữa Region.</li>
+          </ul></div>
+        <div style="--accent:#E7157B"><h4><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Nhiều Region</h4>
+          <ul>
+            <li>Dành cho thảm họa có nguy cơ làm mất <b>nhiều data center cách xa nhau</b> – tức cả một Region – hoặc khi <b>quy định pháp lý</b> yêu cầu.</li>
+            <li>Cả 4 chiến lược đều triển khai được theo kiểu multi-Region.</li>
+            <li>Cách rẻ nhất: chỉ <b>sao lưu dữ liệu + cấu hình sang Region khác</b>. Dữ liệu cần lấy về chậm (phút–giờ) ⇒ lưu ở <b>S3 Glacier / Glacier Deep Archive</b> để giảm mạnh chi phí.</li>
+          </ul></div>
+      </div>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Backup.svg" alt="">
+          <div><h4>AWS Backup</h4><span class="vi">Sao lưu tập trung</span><p>Lập lịch, giám sát backup nhiều dịch vụ; <b>copy backup sang Region / account khác</b> – nền tảng của Backup &amp; Restore (chi tiết ở Bài 19).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/CloudEndure-Disaster-Recovery.svg" alt="">
+          <div><h4>AWS Elastic Disaster Recovery</h4><span class="vi">DR cho máy chủ</span><p>Sao chép <b>block-level liên tục</b> máy chủ on-premises/cloud khác/EC2 vào staging area chi phí thấp; khôi phục trong vài phút, RPO tính bằng giây.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-CloudFormation.svg" alt="">
+          <div><h4>AWS CloudFormation / CDK</h4><span class="vi">Hạ tầng dưới dạng mã</span><p>Dựng lại hạ tầng <b>nhanh và không sai sót</b> ở Region khôi phục; StackSets triển khai đa account, đa Region.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">
+          <div><h4>Amazon Route 53 &amp; ARC</h4><span class="vi">Chuyển hướng traffic</span><p>Health check + DNS failover tự động; <b>Application Recovery Controller</b> cho failover thủ công qua “công tắc” trên data plane.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Global-Accelerator.svg" alt="">
+          <div><h4>AWS Global Accelerator</h4><span class="vi">IP tĩnh anycast</span><p>Một bộ IP tĩnh trỏ tới endpoint ở nhiều Region; tự chuyển sang endpoint khỏe, <b>không bị ảnh hưởng bởi DNS cache</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Aurora.svg" alt="">
+          <div><h4>Dịch vụ sao chép liên tục</h4><span class="vi">Cross-Region replication</span><p>S3 Replication, RDS cross-Region read replica, Aurora Global Database, DynamoDB global tables, DocumentDB global clusters, ElastiCache Global Datastore.</p></div></div>
+      </div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Một nhà hàng lo chuyện cháy bếp. <b>Backup &amp; Restore</b>: cất công thức nấu ăn và sổ sách ở két nhà riêng – cháy thì thuê mặt bằng mới, mua bếp, nấu lại từ đầu (rẻ nhưng nghỉ bán lâu). <b>Pilot Light</b>: thuê sẵn một mặt bằng thứ hai, kho nguyên liệu luôn đầy (dữ liệu được cập nhật liên tục), bếp đã lắp nhưng <b>chưa bật lửa</b> – chỉ có ngọn lửa mồi. <b>Warm Standby</b>: mặt bằng thứ hai đang mở cửa với <b>một đầu bếp</b>, nấu được nhưng ít món – cháy bếp chính thì gọi thêm đầu bếp. <b>Active/active</b>: hai chi nhánh cùng phục vụ khách mỗi ngày – một nơi cháy, khách sang nơi kia ngay.</p></div>
+
+      <!-- ===================== PHẦN 2: RPO / RTO ===================== -->
+      <h2 id="rpo-rto"><img src="../assets/icons/res/AWS-Backup_Recovery-Point-Objective.svg" alt="">RPO và RTO: hai con số quyết định mọi thứ</h2>
+      <p class="lead">Khi xây dựng chiến lược DR, tổ chức thường lập kế hoạch theo hai mục tiêu khôi phục. Cả hai đều <b>do tổ chức tự định nghĩa</b> (từ BIA), không phải thông số AWS áp đặt.</p>
+
+      <div class="compare">
+        <div style="--accent:#E7157B"><h4><img src="../assets/icons/res/AWS-Backup_Recovery-Point-Objective.svg" alt=""><span class="t" data-vi="Mục tiêu điểm khôi phục">Recovery Point Objective (RPO)</span></h4>
+          <ul>
+            <li>Định nghĩa của AWS: <b>khoảng thời gian tối đa chấp nhận được kể từ điểm khôi phục dữ liệu gần nhất</b>.</li>
+            <li>Trả lời câu hỏi: “<b>Được phép mất bao nhiêu dữ liệu?</b>” – lượng dữ liệu mất giữa điểm khôi phục cuối và lúc gián đoạn.</li>
+            <li>Nhìn <b>về quá khứ</b> tính từ thời điểm sự cố.</li>
+            <li>Quyết định bởi <b>tần suất backup</b> hoặc <b>độ trễ sao chép</b>: backup mỗi 24 giờ ⇒ RPO tối đa ~24 giờ; sao chép liên tục ⇒ RPO giây.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/AWS-Backup_Recovery-Time-Objective.svg" alt=""><span class="t" data-vi="Mục tiêu thời gian khôi phục">Recovery Time Objective (RTO)</span></h4>
+          <ul>
+            <li>Định nghĩa của AWS: <b>độ trễ tối đa chấp nhận được giữa lúc dịch vụ bị gián đoạn và lúc dịch vụ được khôi phục</b>.</li>
+            <li>Trả lời câu hỏi: “<b>Được phép ngừng hoạt động bao lâu?</b>”</li>
+            <li>Nhìn <b>về tương lai</b> tính từ thời điểm sự cố.</li>
+            <li>Quyết định bởi lượng hạ tầng <b>đã chạy sẵn</b> ở nơi khôi phục, mức tự động hóa, thời gian restore dữ liệu, thời gian chuyển DNS/traffic.</li>
+          </ul></div>
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 230" width="800" role="img" aria-label="Trục thời gian RPO và RTO">
+          <defs><marker id="a42t" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <line x1="20" y1="120" x2="780" y2="120" stroke="#545B64" stroke-width="2" marker-end="url(#a42t)"/>
+          <text x="770" y="145" font-size="12" text-anchor="end">thời gian</text>
+          <circle cx="200" cy="120" r="8" fill="#7AA116"/>
+          <text x="200" y="98" font-size="12" font-weight="700" text-anchor="middle">Điểm khôi phục gần nhất</text>
+          <text x="200" y="84" font-size="11" text-anchor="middle">(backup / bản sao cuối)</text>
+          <circle cx="400" cy="120" r="10" fill="#DD344C"/>
+          <text x="400" y="98" font-size="13" font-weight="700" text-anchor="middle" fill="#DD344C">THẢM HỌA</text>
+          <circle cx="640" cy="120" r="8" fill="#147EBA"/>
+          <text x="640" y="98" font-size="12" font-weight="700" text-anchor="middle">Dịch vụ hoạt động lại</text>
+          <rect x="200" y="150" width="200" height="34" rx="6" fill="#E7157B" fill-opacity="0.15" stroke="#E7157B"/>
+          <text x="300" y="172" font-size="13" font-weight="700" text-anchor="middle">RPO – dữ liệu bị mất</text>
+          <rect x="400" y="150" width="240" height="34" rx="6" fill="#147EBA" fill-opacity="0.15" stroke="#147EBA"/>
+          <text x="520" y="172" font-size="13" font-weight="700" text-anchor="middle">RTO – thời gian ngừng dịch vụ</text>
+          <text x="300" y="210" font-size="11" text-anchor="middle">↓ giảm bằng backup dày hơn / sao chép liên tục</text>
+          <text x="520" y="210" font-size="11" text-anchor="middle">↓ giảm bằng hạ tầng chạy sẵn + tự động hóa</text>
+          <image href="../assets/icons/res/AWS-Backup_Recovery-Point-Objective.svg" x="20" y="20" width="36" height="36"/>
+          <image href="../assets/icons/res/AWS-Backup_Recovery-Time-Objective.svg" x="740" y="20" width="36" height="36"/>
+        </svg>
+        <figcaption><b>Hình 1.</b> RPO đo <b>ngược về quá khứ</b> từ lúc thảm họa tới điểm khôi phục cuối (dữ liệu sinh ra trong khoảng này bị mất). RTO đo <b>về tương lai</b> từ lúc thảm họa tới khi dịch vụ chạy lại. Hai mục tiêu độc lập: một hệ thống có thể cần RPO gần 0 (không mất giao dịch) nhưng chấp nhận RTO vài giờ, hoặc ngược lại.</figcaption>
+      </figure>
+
+      <h3>Đánh đổi chi phí – độ phức tạp</h3>
+      <p>Tài liệu AWS minh họa: RTO/RPO <b>càng nhỏ</b> thì chi phí và độ phức tạp <b>càng tăng</b>. Doanh nghiệp xác định <b>RTO (hoặc RPO) tối đa cho phép</b> và <b>mức chi tối đa</b> cho chiến lược khôi phục; chiến lược phù hợp là chiến lược nằm trong cả hai giới hạn. Trong ví dụ của whitepaper, <b>Pilot Light hoặc Warm Standby</b> thỏa cả RTO lẫn ngân sách – Backup &amp; Restore quá chậm, Multi-site quá đắt.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Ví dụ yêu cầu trong đề</th><th>Cách đọc</th><th>Gợi ý chiến lược</th></tr></thead>
+        <tbody>
+          <tr><td>“<i>RPO of 24 hours and RTO of 24 hours… most cost-effective</i>”</td><td>Mất 1 ngày dữ liệu, nghỉ 1 ngày vẫn chấp nhận</td><td><b>Backup &amp; Restore</b> (backup hằng ngày copy sang Region khác + IaC)</td></tr>
+          <tr><td>“<i>RPO of minutes, RTO of hours… minimize cost</i>”</td><td>Dữ liệu phải gần như liên tục; hạ tầng có thể dựng sau</td><td><b>Pilot Light</b> (DB replica chạy sẵn, app server tắt/chưa tạo)</td></tr>
+          <tr><td>“<i>RTO of minutes… DR site must be able to serve traffic immediately at reduced capacity</i>”</td><td>Môi trường DR phải chạy sẵn</td><td><b>Warm Standby</b></td></tr>
+          <tr><td>“<i>Near-zero downtime… users served from multiple Regions</i>”</td><td>RTO ~0, chấp nhận chi phí cao nhất</td><td><b>Multi-site active/active</b> (hoặc hot standby)</td></tr>
+          <tr><td>“<i>On-premises servers… RPO of seconds, RTO of minutes… minimal compute cost in AWS</i>”</td><td>DR máy chủ vào AWS, chi phí staging thấp</td><td><b>AWS Elastic Disaster Recovery</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>Nhầm RPO với RTO</b>: “<i>the company can tolerate losing at most 15 minutes of data</i>” là <b>RPO</b> = 15 phút; “<i>the application must be back online within 15 minutes</i>” là <b>RTO</b>.</li>
+          <li><b>Sao chép liên tục ≠ backup</b>: replication đưa RPO về gần 0 cho sự cố hạ tầng, nhưng <b>cũng sao chép luôn dữ liệu bị hỏng / bị xóa / bị mã hóa bởi ransomware</b>. Thảm họa dữ liệu (corruption, xóa nhầm) vẫn cần <b>point-in-time backup</b> – và khi đó RPO luôn &gt; 0, điểm khôi phục là <b>trước lúc phát hiện</b> sự cố.</li>
+          <li>Multi-AZ là <b>high availability</b>, không phải DR cấp Region. Đề nói “<i>Region-wide outage</i>” ⇒ cần thành phần ở <b>Region thứ hai</b>.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Đọc đề theo thứ tự: <b>(1) RPO, (2) RTO, (3) “cost-effective / least operational overhead”</b>. Chiến lược đúng là chiến lược <b>rẻ nhất vẫn đạt</b> RPO/RTO – không phải chiến lược mạnh nhất.</li>
+          <li>RPO giờ/ngày + RTO giờ ⇒ Backup &amp; Restore. RPO phút/giây + RTO chục phút–giờ ⇒ Pilot Light. RTO phút + phải phục vụ ngay ⇒ Warm Standby. RTO/RPO gần 0 ⇒ Active/active.</li>
+          <li>“<i>Continuously validate whether workloads meet RTO and RPO targets</i>” ⇒ <b>AWS Resilience Hub</b> (tài liệu DR khuyến nghị dùng để theo dõi khả năng đạt RTO/RPO).</li>
+        </ul></div>
+
+
+      <!-- ===================== PHẦN 3: 4 CHIẾN LƯỢC ===================== -->
+      <h2 id="bon-chien-luoc"><img src="../assets/icons/res/AWS-Backup_Recovery-Time-Objective.svg" alt="">Bốn chiến lược DR: từ rẻ – chậm đến đắt – nhanh</h2>
+      <p class="lead">AWS chia chiến lược DR thành <b>bốn nhóm</b>, đi từ chi phí và độ phức tạp thấp của việc sao lưu tới các chiến lược phức tạp dùng nhiều Region cùng hoạt động. Ba chiến lược đầu là <span class="t" data-vi="Chủ động – thụ động">active/passive</span>: một site chủ động (vd một Region) chạy workload và phục vụ traffic, site thụ động (Region khác) dùng để khôi phục và <b>không phục vụ traffic cho đến khi có sự kiện failover</b>.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 300" width="800" role="img" aria-label="Phổ bốn chiến lược DR">
+          <defs><marker id="a42s" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <rect x="10" y="40" width="185" height="170" rx="10" fill="#7AA116" fill-opacity="0.10" stroke="#7AA116"/>
+          <image href="../assets/icons/svc/AWS-Backup.svg" x="78" y="52" width="48" height="48"/>
+          <text x="102" y="122" font-size="14" font-weight="700" text-anchor="middle">Backup &amp; Restore</text>
+          <text x="102" y="145" font-size="11" text-anchor="middle">RPO / RTO: giờ</text>
+          <text x="102" y="163" font-size="11" text-anchor="middle">Chi phí thấp nhất</text>
+          <text x="102" y="181" font-size="11" text-anchor="middle">Dựng mọi thứ khi có sự cố</text>
+          <text x="102" y="199" font-size="11" text-anchor="middle">Active/passive</text>
+          <rect x="207" y="40" width="185" height="170" rx="10" fill="#147EBA" fill-opacity="0.10" stroke="#147EBA"/>
+          <image href="../assets/icons/res/Amazon-Aurora-Instance.svg" x="275" y="52" width="48" height="48"/>
+          <text x="299" y="122" font-size="14" font-weight="700" text-anchor="middle">Pilot Light</text>
+          <text x="299" y="145" font-size="11" text-anchor="middle">RPO / RTO: chục phút</text>
+          <text x="299" y="163" font-size="11" text-anchor="middle">Chi phí thấp – vừa</text>
+          <text x="299" y="181" font-size="11" text-anchor="middle">Data live, app “tắt”</text>
+          <text x="299" y="199" font-size="11" text-anchor="middle">Active/passive</text>
+          <rect x="404" y="40" width="185" height="170" rx="10" fill="#ED7100" fill-opacity="0.10" stroke="#ED7100"/>
+          <image href="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" x="472" y="52" width="48" height="48"/>
+          <text x="496" y="122" font-size="14" font-weight="700" text-anchor="middle">Warm Standby</text>
+          <text x="496" y="145" font-size="11" text-anchor="middle">RPO giây / RTO phút</text>
+          <text x="496" y="163" font-size="11" text-anchor="middle">Chi phí vừa – cao</text>
+          <text x="496" y="181" font-size="11" text-anchor="middle">Bản thu nhỏ luôn chạy</text>
+          <text x="496" y="199" font-size="11" text-anchor="middle">Active/passive</text>
+          <rect x="601" y="40" width="189" height="170" rx="10" fill="#DD344C" fill-opacity="0.10" stroke="#DD344C"/>
+          <image href="../assets/icons/svc/Amazon-Route-53.svg" x="671" y="52" width="48" height="48"/>
+          <text x="695" y="122" font-size="14" font-weight="700" text-anchor="middle">Multi-site active/active</text>
+          <text x="695" y="145" font-size="11" text-anchor="middle">RPO gần 0 / RTO ~0</text>
+          <text x="695" y="163" font-size="11" text-anchor="middle">Chi phí cao nhất</text>
+          <text x="695" y="181" font-size="11" text-anchor="middle">Full scale nhiều Region</text>
+          <text x="695" y="199" font-size="11" text-anchor="middle">Active/active</text>
+          <line x1="20" y1="240" x2="780" y2="240" stroke="#545B64" stroke-width="2" marker-end="url(#a42s)"/>
+          <text x="20" y="262" font-size="12">Rẻ hơn, đơn giản hơn, RTO/RPO dài hơn</text>
+          <text x="780" y="262" font-size="12" text-anchor="end">Đắt hơn, phức tạp hơn, RTO/RPO ngắn hơn</text>
+          <text x="400" y="288" font-size="11" text-anchor="middle">Mức RPO/RTO là định hướng tương đối theo hình “Disaster recovery strategies” của AWS; con số thực tế tùy thiết kế.</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Phổ chiến lược DR. Đi từ trái sang phải, ngày càng nhiều tài nguyên <b>đã chạy sẵn</b> ở Region khôi phục ⇒ RTO ngắn hơn nhưng tốn tiền hơn. Cả bốn chiến lược đều <b>vẫn cần point-in-time backup</b> để chống thảm họa dữ liệu.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Backup &amp; Restore</th><th>Pilot Light</th><th>Warm Standby</th><th>Multi-site active/active</th></tr></thead>
+        <tbody>
+          <tr><td>Dữ liệu ở Region DR</td><td>Bản backup (snapshot, AMI, S3) – phải <b>restore</b> khi failover</td><td><b>Bản sao live</b> (DB, S3) luôn chạy, sao chép liên tục</td><td>Bản sao live</td><td>Bản sao live, có thể nhận ghi</td></tr>
+          <tr><td>Hạ tầng ở Region DR</td><td><b>Không có</b> – dựng lại bằng IaC</td><td>Hạ tầng lõi; app server <b>“tắt”</b> (tốt nhất là chưa deploy)</td><td>Bản <b>thu nhỏ nhưng đầy đủ chức năng</b>, đang chạy</td><td><b>Full scale</b>, đang phục vụ người dùng</td></tr>
+          <tr><td>Nhận traffic ngay khi failover?</td><td class="no">Không</td><td class="no">Không – phải bật/deploy rồi scale</td><td class="yes">Có (ở capacity thấp), chỉ cần scale up</td><td class="yes">Đang nhận sẵn – không có khái niệm failover</td></tr>
+          <tr><td>Việc phải làm khi thảm họa</td><td>Restore dữ liệu, deploy hạ tầng, deploy code, chuyển traffic</td><td>Promote DB, “bật” app server, scale out, chuyển traffic</td><td>Promote DB, scale out, chuyển traffic</td><td>Định tuyến traffic khỏi Region lỗi</td></tr>
+          <tr><td>Chi phí thường trực</td><td>Thấp nhất (lưu trữ backup)</td><td>Thấp (chủ yếu data store)</td><td>Vừa – cao</td><td>Cao nhất (≈ hai môi trường đầy đủ)</td></tr>
+          <tr><td>Kiểm thử DR</td><td>Restore định kỳ</td><td>Bật thử môi trường</td><td><b>Dễ test liên tục</b> vì luôn chạy</td><td>Test mất một Region + test thảm họa dữ liệu</td></tr>
+        </tbody>
+      </table></div>
+
+      <!-- ===================== PHẦN 4: BACKUP & RESTORE ===================== -->
+      <h2 id="backup-restore"><img src="../assets/icons/svc/AWS-Backup.svg" alt="">Chiến lược 1 – Backup &amp; Restore</h2>
+      <p class="lead"><span class="t" data-vi="Sao lưu và khôi phục">Backup and restore</span> phù hợp để chống <b>mất hoặc hỏng dữ liệu</b>. Nó cũng dùng được cho thảm họa cấp Region bằng cách <b>sao chép dữ liệu sang Region khác</b>, hoặc bù cho workload chỉ chạy <b>trong một AZ</b>. Điểm mấu chốt: ngoài dữ liệu, bạn phải <b>deploy lại hạ tầng, cấu hình và code</b> ở Region khôi phục.</p>
+
+      <h3>Ba thứ phải sao lưu</h3>
+      <ol class="steps">
+        <li><b>Dữ liệu</b> – backup định kỳ hoặc liên tục, <b>có khả năng khôi phục về đúng thời điểm</b> đã backup. <b>Tần suất backup quyết định recovery point</b> đạt được (phải khớp RPO).</li>
+        <li><b>Hạ tầng</b> – luôn deploy bằng <span class="t" data-vi="Hạ tầng dưới dạng mã">infrastructure as code (IaC)</span> (AWS CloudFormation, AWS CDK). Tài liệu cảnh báo: <b>không có IaC</b>, việc khôi phục ở Region mới sẽ phức tạp, kéo dài thời gian và <b>có thể vượt RTO</b>.</li>
+        <li><b>Code và cấu hình</b> – gồm cả <b>AMI</b> dùng để tạo EC2 instance. Dùng <b>AWS CodePipeline</b> để tự động deploy lại code và cấu hình.</li>
+      </ol>
+
+      <h3>Dịch vụ hỗ trợ backup point-in-time</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại dữ liệu</th><th>Cơ chế backup point-in-time (theo whitepaper)</th></tr></thead>
+        <tbody>
+          <tr><td>Block storage</td><td>Amazon EBS snapshot</td></tr>
+          <tr><td>Cơ sở dữ liệu</td><td>DynamoDB backup (PITR), RDS snapshot, Aurora DB snapshot, Redshift snapshot, Neptune snapshot, DocumentDB backup</td></tr>
+          <tr><td>File storage</td><td>Amazon EFS backup (qua AWS Backup), FSx for Windows File Server / Lustre / NetApp ONTAP / OpenZFS backup</td></tr>
+          <tr><td>Object storage</td><td>S3: <b>Cross-Region Replication (CRR)</b> sao chép bất đồng bộ liên tục + <b>versioning</b> để chọn điểm khôi phục</td></tr>
+          <tr><td>Máy chủ EC2</td><td><b>AMI</b> (tạo từ snapshot root volume + các EBS volume gắn kèm), <b>copy AMI</b> trong hoặc giữa các Region</td></tr>
+          <tr><td>Tập trung hóa</td><td><b>AWS Backup</b>: EBS, EC2, RDS/Aurora, DynamoDB, EFS, Storage Gateway volume, các loại FSx… và <b>copy backup cross-Region, cross-account</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <ul>
+        <li><b>Cross-account backup</b> giúp chống thảm họa kiểu <b>insider threat</b> hoặc <b>account bị chiếm quyền</b> – kẻ tấn công xóa được backup trong account bị lộ nhưng không với tới account khác.</li>
+        <li>Với backup EC2, AWS Backup lưu thêm <b>metadata</b>: instance type, VPC, security group, IAM role, cấu hình monitoring, tag. Nhưng metadata này <b>chỉ dùng khi restore trong cùng Region</b>.</li>
+        <li><b>S3 versioning</b> giữ phiên bản gốc trước thao tác xóa/sửa ⇒ hữu ích cho thảm họa do <b>lỗi con người</b>. Khi dùng S3 replication sang Region DR, theo mặc định xóa object ở bucket nguồn <b>chỉ thêm delete marker ở bucket nguồn</b> ⇒ dữ liệu ở Region DR được bảo vệ khỏi việc xóa có chủ đích ở Region nguồn.</li>
+        <li>Sao chép liên tục (CRR) cho thời gian “backup” gần như bằng 0, nhưng <b>không bảo vệ tốt</b> trước corruption hay xóa trái phép bằng backup point-in-time.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp region"><span class="lbl">Region chính (us-east-1) – đang phục vụ</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng</div>
+              <span class="arrow">HTTPS</span>
+              <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB</div>
+              <div class="node"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">EC2 ASG</div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS</div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">S3</div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/svc/AWS-Backup.svg" alt="">AWS Backup<small>backup plan hằng ngày</small></div>
+              <span class="arrow">copy cross-Region</span>
+            </div>
+          </div>
+          <div class="grp region"><span class="lbl">Region DR (us-west-2) – không có hạ tầng chạy</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/AWS-Backup_Backup-Vault.svg" alt="">Backup vault<small>recovery point</small></div>
+              <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">AMI đã copy</div>
+              <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Replication.svg" alt="">S3 bucket CRR<small>versioning</small></div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/AWS-CloudFormation_Template.svg" alt="">Template IaC<small>sẵn sàng deploy</small></div>
+              <span class="arrow dashed">khi thảm họa</span>
+              <div class="node"><img src="../assets/icons/res/AWS-Backup_Backup-Restore.svg" alt="">Restore + deploy<small>→ đổi DNS</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Backup &amp; Restore đa Region. Ở Region DR chỉ có <b>dữ liệu đã sao lưu</b> (vault, AMI, bucket replica) và <b>template IaC</b>. Khi thảm họa: restore DB từ recovery point, deploy stack CloudFormation, deploy code qua pipeline, rồi trỏ DNS sang. RTO = tổng thời gian của tất cả các bước này ⇒ thường tính bằng <b>giờ</b>.</figcaption>
+      </figure>
+
+      <h3>Tự động restore và kiểm thử backup</h3>
+      <p>Mọi dữ liệu nằm ở Region DR dưới dạng backup <b>phải được restore lúc failover</b>. Theo whitepaper, AWS Backup có chức năng restore nhưng <b>chưa hỗ trợ restore theo lịch hay tự động</b>. Bạn có thể tự làm bằng AWS SDK gọi API AWS Backup – chạy định kỳ hoặc kích hoạt mỗi khi một backup hoàn tất. Ví dụ trong tài liệu: <b>AWS Backup → Amazon SNS (thông báo backup xong) → AWS Lambda</b> gọi API restore, sau đó kiểm tra dữ liệu.</p>
+      <p>Tài liệu khuyên nên <b>restore định kỳ theo lịch</b> vì <b>restore từ backup là thao tác control plane</b>: nếu thao tác này không khả dụng đúng lúc thảm họa, bạn vẫn có sẵn các data store chạy được từ một backup gần đây. Và: <b>chiến lược backup phải bao gồm việc test backup</b>.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Lowest cost DR, RTO/RPO of hours is acceptable</i>” ⇒ <b>Backup &amp; Restore</b>: AWS Backup copy cross-Region + AMI copy + CloudFormation template.</li>
+          <li>“<i>Protect backups from a compromised account / insider</i>” ⇒ <b>copy backup sang account khác</b> (cross-account) – kết hợp Vault Lock đã học ở Bài 19.</li>
+          <li>“<i>Recover quickly in another Region without manual configuration errors</i>” ⇒ <b>IaC (CloudFormation/CDK)</b>, không phải runbook làm tay.</li>
+          <li>Dữ liệu backup chỉ cần lấy trong vài giờ ⇒ lưu ở <b>S3 Glacier / Glacier Deep Archive</b> để giảm chi phí.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: PILOT LIGHT ===================== -->
+      <h2 id="pilot-light"><img src="../assets/icons/res/Amazon-Aurora-Instance.svg" alt="">Chiến lược 2 – Pilot Light</h2>
+      <p class="lead">Với <span class="t" data-vi="Ngọn lửa mồi">pilot light</span>, bạn <b>sao chép dữ liệu</b> từ Region này sang Region khác và <b>cấp phát một bản sao hạ tầng lõi</b>. Những tài nguyên cần để nhận dữ liệu sao chép và backup – <b>cơ sở dữ liệu, object storage</b> – <b>luôn bật</b>. Các thành phần khác như <b>application server</b> đã có sẵn code và cấu hình nhưng ở trạng thái <b>“tắt”</b>, chỉ dùng khi test hoặc khi kích hoạt failover.</p>
+
+      <div class="callout note"><span class="ttl">“Tắt” nghĩa là gì?</span>
+        <p>Theo best practice của AWS, “switched off” tốt nhất là <b>không deploy tài nguyên đó</b>, mà chuẩn bị sẵn cấu hình và khả năng để deploy (“switch on”) khi cần – vd Auto Scaling group với desired capacity = 0, hoặc template CloudFormation có điều kiện. Khác với Backup &amp; Restore: <b>hạ tầng lõi luôn sẵn sàng</b>, bạn có thể nhanh chóng dựng môi trường production đầy đủ bằng cách bật và scale out app server.</p></div>
+
+      <h3>Sao chép dữ liệu liên tục, bất đồng bộ, cross-Region</h3>
+      <p>Với pilot light, <b>sao chép liên tục vào data store đang chạy ở Region DR</b> là cách tốt nhất để có RPO thấp (dùng <b>kèm</b> backup point-in-time). Các dịch vụ AWS hỗ trợ (theo whitepaper):</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Dịch vụ</th><th>Cơ chế cross-Region</th><th>Ghi chú DR</th></tr></thead>
+        <tbody>
+          <tr><td>Amazon S3</td><td><b>S3 Replication</b> (CRR)</td><td>Theo dõi thời gian sao chép bằng <b>S3 Replication Time Control (RTC)</b></td></tr>
+          <tr><td>Amazon RDS</td><td><b>Cross-Region read replica</b></td><td>Failover = <b>promote</b> replica thành primary; với engine không phải Aurora mất <b>vài phút</b> và có reboot</td></tr>
+          <tr><td>Amazon Aurora</td><td><b>Aurora Global Database</b></td><td>Hạ tầng sao chép riêng, độ trễ sang Region phụ thường <b>dưới 1 giây</b>; promote Region phụ nhận đọc/ghi trong <b>dưới 1 phút</b> kể cả khi mất toàn bộ Region; theo dõi được <b>RPO lag</b> của các cluster phụ</td></tr>
+          <tr><td>Amazon DynamoDB</td><td><b>Global tables</b></td><td>Đọc/ghi ở mọi Region (dùng nhiều trong active/active)</td></tr>
+          <tr><td>Amazon DocumentDB</td><td><b>Global clusters</b></td><td>Tương tự Aurora Global Database cho DocumentDB</td></tr>
+          <tr><td>Amazon ElastiCache</td><td><b>Global Datastore</b> (Redis OSS)</td><td>Cache cross-Region</td></tr>
+        </tbody>
+      </table></div>
+      <p>Sao chép liên tục chống được nhiều loại thảm họa, nhưng <b>không chống được corruption/xóa dữ liệu</b> nếu không kèm versioning hoặc point-in-time recovery. Bạn có thể backup dữ liệu đã sao chép <b>ngay tại Region DR</b> để có backup point-in-time ở đó.</p>
+
+      <h3>Hạ tầng thu nhỏ bằng IaC và golden AMI</h3>
+      <ul>
+        <li>Pilot light đòi hỏi <b>thay đổi cách deploy</b>: mọi thay đổi hạ tầng lõi và workload (cấu hình, code) phải deploy <b>đồng thời tới mỗi Region</b> ⇒ tự động hóa bằng IaC (deploy đầy đủ ở Region chính, bản thu nhỏ/tắt ở Region DR).</li>
+        <li>CloudFormation có <b>pseudo parameter</b> (<code>AWS::Region</code>, <code>AWS::AccountId</code>) ⇒ dùng <b>Conditions</b> để chỉ deploy bản thu nhỏ khi template chạy ở Region DR.</li>
+        <li>Dùng pipeline <b>EC2 Image Builder</b> tạo <span class="t" data-vi="AMI chuẩn cài sẵn">golden AMI</span> và copy sang cả Region chính lẫn Region DR ⇒ có đủ mọi thứ để deploy/scale out ở Region mới.</li>
+        <li>AWS khuyến nghị dùng <b>account khác nhau cho mỗi Region</b> để cô lập tài nguyên và bảo mật ở mức cao nhất (phòng trường hợp credential bị lộ cũng là một kịch bản DR).</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp region"><span class="lbl">Region chính – active</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB</div>
+              <div class="node"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">App servers<small>full scale</small></div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Amazon-Aurora-Instance.svg" alt="">Aurora primary<small>đọc + ghi</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">S3 bucket</div>
+            </div>
+          </div>
+          <div class="grp region"><span class="lbl">Region DR – passive (pilot light)</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB<small>có thể tạo sẵn</small></div>
+              <div class="node"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">ASG desired = 0<small>“tắt” – golden AMI sẵn</small></div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Amazon-Aurora-Instance.svg" alt="">Aurora secondary<small>LUÔN CHẠY, chỉ đọc</small></div>
+              <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Replication.svg" alt="">S3 replica<small>LUÔN CHẠY</small></div>
+            </div>
+          </div>
+        </div>
+        <div class="flow">
+          <span class="arrow">Aurora Global Database: lag &lt; 1 s</span>
+          <span class="arrow">S3 CRR (+ RTC)</span>
+        </div>
+        <figcaption><b>Hình 4.</b> Pilot light: <b>tầng dữ liệu luôn chạy</b> ở Region DR và được sao chép liên tục ⇒ RPO thấp. Tầng ứng dụng “tắt” (ASG = 0 hoặc chưa deploy). Khi failover: promote Aurora secondary, tăng desired capacity của ASG (hoặc deploy stack), rồi chuyển traffic. Môi trường DR <b>không xử lý được request</b> cho tới khi làm các bước đó.</figcaption>
+      </figure>
+
+      <h3>Chuyển traffic khi failover (dùng cho mọi chiến lược active/passive)</h3>
+      <p>Với cấu hình active/passive, ban đầu mọi traffic vào Region chính và chuyển sang Region DR khi Region chính không còn khả dụng. Failover có thể kích hoạt <b>tự động hoặc thủ công</b>. Tài liệu lưu ý: <b>failover tự động dựa trên health check/alarm cần dùng thận trọng</b> – RTO và RPO luôn &gt; 0, nếu failover khi không cần (báo động giả) bạn chịu mất mát vô ích. Vì vậy failover <b>khởi động thủ công</b> thường được dùng, nhưng <b>các bước bên trong vẫn phải tự động hóa</b>, để việc khởi động chỉ như bấm một nút.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Lựa chọn</th><th>Cách hoạt động</th><th>Data plane hay control plane?</th></tr></thead>
+        <tbody>
+          <tr><td><b>Route 53 health check + DNS failover</b></td><td>Gắn nhiều endpoint ở nhiều Region với một tên miền; health check giám sát endpoint, tự động chỉ trả về endpoint khỏe</td><td class="yes">Data plane – rất tin cậy</td></tr>
+          <tr><td><b>Amazon Application Recovery Controller (ARC)</b></td><td>Tạo Route 53 health check <b>không thật sự kiểm tra sức khỏe</b> mà đóng vai trò <b>công tắc bật/tắt</b> bạn kiểm soát hoàn toàn; script (CLI/SDK) bật công tắc để Route 53 gửi traffic sang Region DR</td><td class="yes">Data plane API có tính sẵn sàng cao – cách tốt nhất cho <b>failover thủ công</b></td></tr>
+          <tr><td>Route 53 <b>weighted</b> – đổi trọng số</td><td>Đổi weight để 100% traffic sang Region DR</td><td class="no">Control plane – kém bền vững hơn ARC</td></tr>
+          <tr><td><b>AWS Global Accelerator</b></td><td>IP anycast tĩnh gắn với endpoint ở nhiều Region; health check tự định tuyến sang endpoint khỏe; failover thủ công bằng <b>traffic dial</b></td><td>Health check tự động: data plane; traffic dial: <b>control plane</b></td></tr>
+          <tr><td><b>Amazon CloudFront origin failover</b></td><td>Request tới origin chính lỗi ⇒ CloudFront gửi request đó tới origin phụ</td><td>Failover <b>theo từng request</b>; request sau vẫn tới origin chính trước</td></tr>
+        </tbody>
+      </table></div>
+      <p>Ưu điểm của Global Accelerator theo tài liệu: <b>độ trễ thấp hơn</b> (đưa traffic vào backbone AWS sớm nhất tại edge) và <b>tránh vấn đề cache của DNS</b> mà Route 53 có thể gặp (client giữ IP cũ cho tới hết TTL).</p>
+
+      <div class="callout key"><span class="ttl">Data plane vs control plane khi failover</span>
+        <p>AWS chia dịch vụ thành <span class="t" data-vi="Mặt phẳng dữ liệu">data plane</span> (phục vụ thời gian thực – vd Route 53 trả lời DNS, health check) và <span class="t" data-vi="Mặt phẳng điều khiển">control plane</span> (cấu hình môi trường – vd tạo/sửa record, tạo instance, đổi desired capacity, restore backup). Data plane thường có <b>mục tiêu thiết kế sẵn sàng cao hơn</b>. Để bền vững tối đa, <b>thao tác failover chỉ nên dùng data plane</b>. Đây là lý do tài liệu ưu tiên ARC routing control hơn việc sửa weight, và khuyên restore định kỳ từ trước thay vì đợi lúc thảm họa mới restore.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Database replicated to the DR Region, application servers launched only during a disaster</i>”, “<i>minimal core infrastructure always running</i>” ⇒ <b>Pilot Light</b>.</li>
+          <li>“<i>Cross-Region relational DR with RPO of seconds and RTO under a minute</i>” ⇒ <b>Aurora Global Database</b> (promote &lt; 1 phút), tốt hơn RDS cross-Region read replica (promote vài phút, có reboot).</li>
+          <li>“<i>Static IP addresses, fast regional failover not affected by DNS caching</i>” ⇒ <b>Global Accelerator</b>. “<i>Highly reliable manual failover controlled by operators</i>” ⇒ <b>Route 53 ARC routing control</b>.</li>
+          <li>Ở Region DR, kiểm tra <b>service quotas</b> đủ cao để scale lên production – một lỗi kinh điển khi failover.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: WARM STANDBY ===================== -->
+      <h2 id="warm-standby"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">Chiến lược 3 – Warm Standby (và hot standby)</h2>
+      <p class="lead"><span class="t" data-vi="Dự phòng ấm">Warm standby</span> bảo đảm có một bản sao <b>thu nhỏ nhưng đầy đủ chức năng</b> của môi trường production ở Region khác. Nó mở rộng ý tưởng pilot light và <b>rút ngắn thời gian khôi phục</b> vì workload <b>luôn chạy</b> ở Region kia. Nhờ luôn chạy, bạn cũng dễ <b>kiểm thử thường xuyên hoặc liên tục</b> khả năng khôi phục.</p>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Aurora-Instance.svg" alt="">Pilot Light</h4>
+          <ul>
+            <li>Region DR có bản sao tài sản của Region chính.</li>
+            <li><b>Không xử lý được request</b> nếu chưa có hành động bổ sung.</li>
+            <li>Khi failover phải: <b>“bật” server</b>, có thể <b>deploy thêm hạ tầng không lõi</b>, rồi <b>scale up</b>.</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">Warm Standby</h4>
+          <ul>
+            <li>Region DR có bản sao tài sản của Region chính.</li>
+            <li><b>Xử lý được traffic ngay lập tức</b> (ở capacity giảm).</li>
+            <li>Khi failover <b>chỉ cần scale up</b> – mọi thứ đã deploy và đang chạy.</li>
+          </ul></div>
+      </div>
+      <p>Tài liệu AWS thừa nhận sự khác biệt này “đôi khi khó hiểu” và khuyên dùng <b>nhu cầu RTO và RPO</b> để chọn giữa hai cách.</p>
+
+      <h3>Scale out ở Region DR</h3>
+      <ul>
+        <li><b>Amazon EC2 Auto Scaling</b> (và Application Auto Scaling) scale EC2 instance, ECS task, throughput DynamoDB, Aurora replica trong Region. Để lên full production: tăng <b>desired capacity</b> của Auto Scaling group – thủ công trên console, tự động qua SDK, hoặc <b>redeploy template CloudFormation</b> với giá trị mới (dùng <b>Parameters</b> cho dễ).</li>
+        <li>Bảo đảm <b>service quotas</b> ở Region DR đủ cao để không bị chặn khi scale lên production.</li>
+        <li><b>Auto Scaling là hoạt động control plane</b> ⇒ phụ thuộc vào nó làm giảm độ bền của chiến lược. Đây là một <b>đánh đổi</b>:
+          <ul>
+            <li>Cấp phát <b>đủ capacity để chịu toàn bộ tải production ngay khi deploy</b> ⇒ cấu hình <b>statically stable</b> này gọi là <span class="t" data-vi="Dự phòng nóng">hot standby</span>.</li>
+            <li>Hoặc cấp phát ít hơn (rẻ hơn) nhưng phụ thuộc Auto Scaling.</li>
+            <li>Kiểu lai: deploy đủ để chịu <b>traffic ban đầu</b> (RTO thấp), rồi để Auto Scaling tăng dần cho traffic sau đó.</li>
+          </ul></li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Route 53 failover routing (active-passive)</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng</div>
+            <span class="arrow">DNS</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Route 53<small>Primary / Secondary + health check</small></div>
+          </div>
+          <div class="row">
+            <div class="grp region"><span class="lbl">Region chính – PRIMARY (100% traffic)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB</div>
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">ASG<small>10 instance</small></div>
+                <div class="node"><img src="../assets/icons/res/Amazon-Aurora-Instance.svg" alt="">Aurora primary</div>
+              </div></div>
+            <div class="grp region"><span class="lbl">Region DR – SECONDARY (warm, đang chạy)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB</div>
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">ASG<small>2 instance → scale 10</small></div>
+                <div class="node"><img src="../assets/icons/res/Amazon-Aurora-Instance.svg" alt="">Aurora secondary<small>promote khi failover</small></div>
+              </div></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> Warm standby: Region DR chạy <b>đầy đủ các tầng</b> nhưng nhỏ hơn (2 so với 10 instance). Health check của Route 53 phát hiện primary hỏng ⇒ trả về record secondary; môi trường DR <b>phục vụ ngay</b> ở capacity thấp trong lúc ASG scale lên và Aurora secondary được promote. Nếu Region DR chạy sẵn đủ 10 instance (không phụ thuộc scale) ⇒ đó là <b>hot standby</b>.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>A scaled-down but fully functional copy of the production environment is always running in another Region</i>”, “<i>can handle traffic immediately at reduced capacity</i>” ⇒ <b>Warm Standby</b>.</li>
+          <li>“<i>RTO of minutes… minimize cost</i>” và pilot light không đủ nhanh vì phải khởi động server ⇒ chọn <b>Warm Standby</b>; nếu đề cho RTO hàng chục phút–giờ và nhấn mạnh chi phí ⇒ quay về <b>Pilot Light</b>.</li>
+          <li>Route 53 <b>failover routing policy</b> (Primary/Secondary) = mô hình <b>active-passive</b>; mọi policy khác (weighted, latency…) kèm health check = <b>active-active</b> (Bài 24).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: MULTI-SITE ACTIVE/ACTIVE ===================== -->
+      <h2 id="active-active"><img src="../assets/icons/svc/AWS-Global-Accelerator.svg" alt="">Chiến lược 4 – Multi-site active/active</h2>
+      <p class="lead">Bạn chạy workload <b>đồng thời ở nhiều Region</b> theo kiểu <span class="t" data-vi="Đa địa điểm cùng hoạt động">multi-site active/active</span> hoặc <b>hot standby active/passive</b>. Active/active <b>phục vụ traffic từ mọi Region</b> đã triển khai; hot standby chỉ phục vụ từ <b>một Region</b>, các Region khác chỉ dùng cho DR. Đây là cách <b>phức tạp và tốn kém nhất</b>, nhưng có thể đưa thời gian khôi phục <b>gần về 0</b> cho hầu hết thảm họa (riêng corruption dữ liệu vẫn phải dựa vào backup ⇒ recovery point khác 0).</p>
+      <ul>
+        <li>Theo tài liệu, đa số khách hàng thấy: đã dựng một môi trường <b>đầy đủ</b> ở Region thứ hai thì nên dùng nó <b>active/active</b>. Nếu không muốn cả hai Region phục vụ người dùng, <b>Warm Standby</b> kinh tế và đơn giản vận hành hơn.</li>
+        <li>Với active/active, <b>không có khái niệm “failover”</b>. Kiểm thử DR tập trung vào: traffic có được định tuyến khỏi Region lỗi không? Các Region còn lại có <b>chịu nổi toàn bộ traffic</b> không? Đồng thời vẫn phải test thảm họa dữ liệu bằng backup.</li>
+        <li>Điều hướng người dùng tới Region nào: <b>Global Accelerator traffic dial</b> (tỷ lệ % traffic tới mỗi endpoint group), hoặc <b>Route 53</b> với weighted, <b>latency</b>, <b>geoproximity</b>… </li>
+      </ul>
+
+      <h3>Bài toán khó nhất: ghi dữ liệu ở đâu?</h3>
+      <p>Sao chép bất đồng bộ cho phép RPO gần 0. Với active/passive, mọi lệnh ghi chỉ vào Region chính. Với active/active, phải thiết kế cách xử lý <b>tính nhất quán khi ghi ở nhiều Region</b>. Đọc thường phục vụ từ Region gần người dùng nhất – gọi là <span class="t" data-vi="Đọc tại chỗ">read local</span>. Với ghi, có ba lựa chọn:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Chiến lược ghi</th><th>Cách làm</th><th>Dịch vụ phù hợp (theo whitepaper)</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Ghi tập trung một Region">Write global</span></td><td>Mọi lệnh ghi về <b>một Region</b>; Region đó lỗi ⇒ promote Region khác nhận ghi</td><td><b>Aurora Global Database</b>: promote Region phụ trong &lt; 1 phút; <b>write forwarding</b> cho cluster phụ chuyển câu lệnh ghi SQL về cluster chính</td></tr>
+          <tr><td><span class="t" data-vi="Ghi tại Region gần nhất">Write local</span></td><td>Ghi vào Region <b>gần nhất</b> (như đọc)</td><td><b>DynamoDB global tables</b>: đọc/ghi ở mọi Region; xung đột ghi đồng thời giải quyết bằng <b>last writer wins</b></td></tr>
+          <tr><td><span class="t" data-vi="Ghi phân vùng theo khóa">Write partitioned</span></td><td>Gán ghi vào một Region cụ thể theo <b>partition key</b> (vd user ID) để tránh xung đột</td><td><b>S3 replication hai chiều</b> (giữa hai Region); bật <b>replica modification sync</b> để đồng bộ ACL, tag, object lock; tùy chọn có sao chép delete marker hay không</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 330" width="800" role="img" aria-label="Kiến trúc multi-site active/active">
+          <defs><marker id="a42a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <image href="../assets/icons/res/Users.svg" x="160" y="8" width="40" height="40"/>
+          <text x="180" y="62" font-size="11" text-anchor="middle">Người dùng châu Mỹ</text>
+          <image href="../assets/icons/res/Users.svg" x="600" y="8" width="40" height="40"/>
+          <text x="620" y="62" font-size="11" text-anchor="middle">Người dùng châu Âu</text>
+          <rect x="300" y="10" width="200" height="56" rx="8" fill="#8C4FFF" fill-opacity="0.10" stroke="#8C4FFF"/>
+          <image href="../assets/icons/svc/AWS-Global-Accelerator.svg" x="310" y="18" width="40" height="40"/>
+          <text x="356" y="36" font-size="12" font-weight="700">Global Accelerator</text>
+          <text x="356" y="54" font-size="11">hoặc Route 53 latency</text>
+          <path d="M200 40 H298" stroke="#545B64" stroke-width="1.5" marker-end="url(#a42a)"/>
+          <path d="M600 40 H502" stroke="#545B64" stroke-width="1.5" marker-end="url(#a42a)"/>
+          <path d="M350 66 L200 100" stroke="#545B64" stroke-width="1.5" marker-end="url(#a42a)"/>
+          <path d="M450 66 L600 100" stroke="#545B64" stroke-width="1.5" marker-end="url(#a42a)"/>
+          <rect x="20" y="100" width="340" height="190" rx="10" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="32" y="122" font-size="13" font-weight="700" fill="#147EBA">Region us-east-1 – ACTIVE</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" x="40" y="140" width="44" height="44"/>
+          <text x="62" y="200" font-size="11" text-anchor="middle">ALB</text>
+          <image href="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" x="130" y="140" width="44" height="44"/>
+          <text x="152" y="200" font-size="11" text-anchor="middle">Full-scale ASG</text>
+          <image href="../assets/icons/res/Amazon-DynamoDB_Table.svg" x="240" y="140" width="44" height="44"/>
+          <text x="262" y="200" font-size="11" text-anchor="middle">DynamoDB</text>
+          <text x="262" y="214" font-size="11" text-anchor="middle">global table</text>
+          <text x="190" y="250" font-size="11" text-anchor="middle">read local + write local</text>
+          <text x="190" y="270" font-size="11" text-anchor="middle">+ point-in-time backup (PITR)</text>
+          <rect x="440" y="100" width="340" height="190" rx="10" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="452" y="122" font-size="13" font-weight="700" fill="#147EBA">Region eu-west-1 – ACTIVE</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" x="460" y="140" width="44" height="44"/>
+          <text x="482" y="200" font-size="11" text-anchor="middle">ALB</text>
+          <image href="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" x="550" y="140" width="44" height="44"/>
+          <text x="572" y="200" font-size="11" text-anchor="middle">Full-scale ASG</text>
+          <image href="../assets/icons/res/Amazon-DynamoDB_Table.svg" x="660" y="140" width="44" height="44"/>
+          <text x="682" y="200" font-size="11" text-anchor="middle">DynamoDB</text>
+          <text x="682" y="214" font-size="11" text-anchor="middle">replica table</text>
+          <text x="610" y="250" font-size="11" text-anchor="middle">read local + write local</text>
+          <text x="610" y="270" font-size="11" text-anchor="middle">+ point-in-time backup (PITR)</text>
+          <path d="M290 162 C 400 130, 400 130, 656 162" fill="none" stroke="#E7157B" stroke-width="2" marker-start="url(#a42a)" marker-end="url(#a42a)"/>
+          <text x="400" y="128" font-size="11" text-anchor="middle" fill="#E7157B">sao chép hai chiều bất đồng bộ</text>
+          <text x="400" y="320" font-size="11" text-anchor="middle">Một Region sập ⇒ health check đưa toàn bộ traffic sang Region còn lại (phải đủ capacity).</text>
+        </svg>
+        <figcaption><b>Hình 6.</b> Multi-site active/active với <b>write local</b>: cả hai Region đều nhận đọc và ghi, DynamoDB global tables sao chép hai chiều và giải quyết xung đột bằng <b>last writer wins</b>. Global Accelerator (traffic dial) hoặc Route 53 (latency/geoproximity) đưa người dùng tới Region gần nhất. Đổi một nhánh thành “Inactive” ⇒ trở thành <b>hot standby</b>.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Active/active <b>không thay thế backup</b>: corruption, xóa, mã hóa dữ liệu được sao chép sang mọi Region. Thời gian khôi phục cho thảm họa dữ liệu luôn &gt; 0, điểm khôi phục luôn <b>trước lúc phát hiện</b>. Tài liệu khuyên đầu tư thêm vào <b>bảo mật và chống lỗi con người</b> khi chọn chiến lược này.</li>
+          <li>RDS cross-Region read replica và Aurora Global Database (không bật write forwarding) chỉ <b>ghi ở một Region</b> ⇒ đó là <b>write global</b>. Đề yêu cầu “<i>users in every Region can write with low latency</i>” ⇒ <b>DynamoDB global tables</b>.</li>
+          <li>Hot standby và active/active tốn chi phí tương đương; khác nhau ở chỗ Region thứ hai <b>có phục vụ người dùng</b> hay không.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: ELASTIC DISASTER RECOVERY ===================== -->
+      <h2 id="drs"><img src="../assets/icons/svc/CloudEndure-Disaster-Recovery.svg" alt="">AWS Elastic Disaster Recovery (AWS DRS)</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ khôi phục thảm họa đàn hồi">AWS Elastic Disaster Recovery</span> giảm thiểu downtime và mất dữ liệu bằng cách khôi phục nhanh, tin cậy các ứng dụng <b>on-premises và trên cloud</b>, dùng <b>lưu trữ giá rẻ, compute tối thiểu</b> và <b>point-in-time recovery</b>. DRS sao chép <b>liên tục ở mức block</b> các ứng dụng và database <b>chạy trên máy chủ</b> từ <b>bất kỳ nguồn nào</b> vào AWS. Đây là dịch vụ kế thừa CloudEndure Disaster Recovery (icon dịch vụ vẫn mang tên CloudEndure).</p>
+
+      <div class="callout note"><span class="ttl">DRS dùng cho nguồn nào?</span>
+        <ul>
+          <li>Workload <b>on-premises</b> hoặc trên <b>cloud provider khác</b> ⇒ dùng một Region AWS làm đích DR.</li>
+          <li>Workload <b>đã ở trên AWS</b> ⇒ dùng được nếu chỉ gồm ứng dụng và database <b>chạy trên EC2</b> (tức <b>không phải RDS</b>) – vd DR cross-Region hoặc cross-AZ cho EC2.</li>
+          <li>Theo whitepaper, DRS áp dụng chiến lược <b>Pilot Light</b>: duy trì bản sao dữ liệu và tài nguyên “tắt” trong một VPC làm <b>staging area</b>; khi failover, tài nguyên staging được dùng để <b>tự động tạo bản triển khai full capacity</b> ở VPC đích.</li>
+        </ul></div>
+
+      <h3>Cách DRS hoạt động</h3>
+      <ol class="steps">
+        <li><b>Cài AWS Replication Agent</b> lên mỗi <span class="t" data-vi="Máy chủ nguồn">source server</span> (hệ điều hành được hỗ trợ). Agent theo dõi <b>các block được ghi</b> lên volume và lập tức gửi qua mạng.</li>
+        <li>Dữ liệu được sao chép vào <span class="t" data-vi="Subnet vùng trung chuyển">staging area subnet</span> trong account của bạn, ở Region bạn chọn. Tại đó, <b>replication server</b> (EC2 nhỏ) nhận dữ liệu và ghi vào <b>EBS volume</b> staging. Thiết kế staging dùng <b>lưu trữ rẻ + compute tối thiểu</b> để giảm chi phí.</li>
+        <li>Sau khi hoàn tất <b>Initial Sync</b> và replication ở trạng thái <b>Healthy</b>, DRS tự tạo <span class="t" data-vi="Ảnh chụp tại một thời điểm">point-in-time (PIT) snapshot</span> theo chính sách lưu giữ.</li>
+        <li>Định kỳ chạy <span class="t" data-vi="Diễn tập khôi phục">drill</span> <b>không gây gián đoạn</b> để xác nhận sẵn sàng. Khi launch cho drill hoặc recovery, DRS <b>tự chuyển đổi (convert)</b> máy chủ để boot và chạy native trên AWS (kể cả volume có nguồn gốc ngoài AWS).</li>
+        <li>Khi cần khôi phục: launch <span class="t" data-vi="Instance khôi phục">recovery instance</span> trên AWS <b>trong vài phút</b>, chọn trạng thái <b>mới nhất</b> hoặc <b>một thời điểm trước đó</b> (vd trước khi bị ransomware).</li>
+        <li>Sự cố đã xử lý xong: giữ ứng dụng trên AWS, hoặc khởi động <b>sao chép ngược</b> về site chính và <span class="t" data-vi="Quay về hệ thống chính">failback</span> khi sẵn sàng.</li>
+      </ol>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Traditional-server.svg" alt="">Data center on-premises / cloud khác</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">Source server<small>App + DB, có Replication Agent</small></div>
+              <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">Source server<small>Windows / Linux</small></div>
+            </div></div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/CloudEndure-Disaster-Recovery.svg" alt="">AWS Region đích</span>
+            <div class="grp priv"><span class="lbl">Staging area subnet (chi phí thấp)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Replication server<small>EC2 nhỏ</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Elastic-Block-Store.svg" alt="">Staging EBS volumes</div>
+                <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">PIT snapshots</div>
+              </div></div>
+            <div class="grp vpc"><span class="lbl">VPC khôi phục (chỉ tạo khi drill / recovery)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Recovery instances<small>đã convert, full capacity</small></div>
+              </div></div>
+          </div>
+        </div>
+        <div class="flow">
+          <span class="arrow">TCP 1500: dữ liệu block (TLS 1.2, nén, mã hóa)</span>
+          <span class="arrow">TCP 443: điều khiển tới drs.&lt;region&gt;.amazonaws.com + S3</span>
+          <span class="arrow dashed">failback: Failback Client sao chép ngược</span>
+        </div>
+        <figcaption><b>Hình 7.</b> Kiến trúc AWS DRS. Agent trên source server gửi dữ liệu block <b>qua TCP 1500</b> tới replication server trong staging area subnet; agent và replication server liên lạc với dịch vụ DRS <b>qua TCP 443</b>. Staging subnet cần truy cập <b>S3</b> và <b>EC2 endpoint</b> của Region (qua IGW + public IP, NAT, hoặc VPC endpoint). Recovery instance chỉ được tạo khi drill/recovery ⇒ bình thường chỉ trả tiền staging.</figcaption>
+      </figure>
+
+      <h3>Yêu cầu mạng (theo tài liệu)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Luồng</th><th>Port</th><th>Mục đích</th></tr></thead>
+        <tbody>
+          <tr><td>Source server → dịch vụ DRS (<code>drs.&lt;region&gt;.amazonaws.com</code>)</td><td><b>TCP 443</b></td><td>Tải/nâng cấp agent, hiển thị trạng thái replication, gửi metric &amp; thông tin phần cứng/ứng dụng, chuẩn bị drill/recovery</td></tr>
+          <tr><td>Staging area subnet → dịch vụ DRS, S3, EC2 endpoint</td><td><b>TCP 443</b></td><td>Replication server tải phần mềm, báo trạng thái và sự kiện</td></tr>
+          <tr><td>Source server → staging area subnet</td><td><b>TCP 1500</b></td><td>Truyền <b>dữ liệu sao chép</b>; mã hóa tại nguồn, nén, <b>TLS 1.2 end-to-end</b>; giải mã ở staging trước khi ghi vào volume</td></tr>
+        </tbody>
+      </table></div>
+      <p><b>Băng thông</b>: băng thông trung bình phải <b>lớn hơn tốc độ ghi</b> của source server; server ghi nhiều trên đường truyền yếu sẽ bị trễ (lag). Ví dụ tài liệu: 10 server, mỗi server ghi trung bình 10 MB/s ⇒ cần ít nhất <b>100 MB/s</b> để giữ RPO tính bằng giây.</p>
+
+      <h3>RPO, RTO và point-in-time snapshot</h3>
+      <div class="stats">
+        <div class="stat"><b>Giây</b><span>RPO điển hình (crash-consistent, thường dưới 1 giây)</span></div>
+        <div class="stat"><b>5–20 phút</b><span>RTO điển hình, phụ thuộc thời gian boot OS</span></div>
+        <div class="stat"><b>~5 / ~20 phút</b><span>thời gian boot trung bình server Linux / Windows được khôi phục</span></div>
+        <div class="stat"><b>1–365 ngày</b><span>giữ PIT snapshot theo ngày (mặc định 7)</span></div>
+      </div>
+      <ul>
+        <li><b>RPO</b> đo bằng thời điểm gần nhất mà block được ghi lên source volume <b>đã được copy ở trạng thái crash-consistent</b> vào staging. Nếu ghi “bùng nổ” nhanh hơn mạng/staging chịu được, RPO <b>tăng tạm thời</b> rồi trở lại mức giây khi bắt kịp.</li>
+        <li><b>Crash-consistent</b>: khôi phục được ứng dụng chịu crash như database; nhưng dữ liệu <b>chỉ nằm trong bộ nhớ</b> (chưa ghi xuống volume) thì <b>không được sao chép</b>.</li>
+        <li><b>RTO</b> phụ thuộc: loại OS, cấu hình OS/ứng dụng, <b>hiệu năng instance type</b> và <b>volume type</b> đích (chọn thấp hơn ⇒ boot chậm hơn).</li>
+        <li><b>Lịch PIT snapshot cố định</b>: 1 snapshot / <b>10 phút</b> cho 1 giờ gần nhất; 1 / <b>giờ</b> cho 24 giờ gần nhất; 1 / <b>ngày</b> cho 7 ngày (mặc định). Chỉ điều chỉnh được <b>số ngày</b> (1–365); tần suất không đổi được. Giữ lâu hơn ⇒ nhiều EBS snapshot ⇒ <b>tốn thêm chi phí</b>.</li>
+        <li><b>“Use most recent data”</b>: DRS cố tạo PIT snapshot on-demand ngay lúc chạy job (RPO dưới 1 giây) – cần kết nối tới source server, chờ tối đa <b>10 phút</b>; không được thì dùng trạng thái nhất quán cuối trên replication server. Nếu source đã offline, chọn sẵn một PIT snapshot giúp <b>rút ngắn RTO</b>.</li>
+      </ul>
+
+      <h3>Failback</h3>
+      <p>Failback là việc <b>chuyển traffic từ hệ thống khôi phục về hệ thống chính</b> – thao tác này nằm <b>ngoài</b> DRS; DRS giúp bằng cách bảo đảm trạng thái hệ thống chính <b>được cập nhật theo</b> hệ thống khôi phục. Trước khi failback, phải sao chép ngược mọi dữ liệu đã ghi trên recovery instance về site gốc – dùng <b>Failback Client</b> (chỉ hỗ trợ <code>x86_64</code>). Failback được hỗ trợ tới AWS và môi trường ngoài AWS <b>boot được từ ISO</b>. Với workload trên AWS, DRS hỗ trợ <b>reverse replication</b> về EC2 gốc.</p>
+
+      <div class="compare">
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/svc/CloudEndure-Disaster-Recovery.svg" alt="">AWS Elastic Disaster Recovery</h4>
+          <ul>
+            <li>Mục đích: <b>DR liên tục</b> – máy chủ vẫn chạy ở nguồn, AWS chỉ là site dự phòng.</li>
+            <li>Sao chép block-level <b>liên tục, lâu dài</b>; PIT snapshot; drill; failback.</li>
+            <li>Từ khóa: “<i>disaster recovery for on-premises servers</i>”, “<i>RPO of seconds, RTO of minutes</i>”, “<i>ransomware – recover to a previous point in time</i>”.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/AWS-Backup.svg" alt="">AWS Backup</h4>
+          <ul>
+            <li>Mục đích: <b>sao lưu theo lịch</b>, lưu giữ dài hạn, tuân thủ.</li>
+            <li>RPO = chu kỳ backup (giờ); RTO = thời gian restore + dựng hạ tầng.</li>
+            <li>Từ khóa: “<i>centralized backup policy</i>”, “<i>retention / compliance</i>”, “<i>immutable backups</i>”.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>On-premises VMware / physical servers… use AWS as the DR site… RPO in seconds, RTO in minutes… minimize cost of idle resources</i>” ⇒ <b>AWS Elastic Disaster Recovery</b>.</li>
+          <li>“<i>Recover servers to a point in time before a ransomware attack</i>” ⇒ DRS <b>point-in-time snapshot</b> (hoặc AWS Backup cho dịch vụ được hỗ trợ).</li>
+          <li>“<i>Test DR without affecting production</i>” ⇒ DRS <b>drill</b> (non-disruptive).</li>
+          <li>Đề nói <b>di chuyển hẳn</b> (migrate, rehost) máy chủ lên AWS ⇒ <b>AWS Application Migration Service (MGN)</b> – Bài 43, không phải DRS. Database chạy trên <b>RDS</b> ⇒ DRS không áp dụng; dùng read replica / Aurora Global Database / AWS Backup.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: KIỂM THỬ ===================== -->
+      <h2 id="kiem-thu"><img src="../assets/icons/svc/AWS-Fault-Injection-Simulator.svg" alt="">Kiểm thử DR và chống configuration drift</h2>
+      <p class="lead">Kế hoạch DR chưa từng chạy thử thì chỉ là giả định. Tài liệu AWS: <b>“cách khôi phục lỗi duy nhất hoạt động được là con đường bạn kiểm thử thường xuyên”</b> – vì thế nên có <b>ít con đường khôi phục</b> và test chúng đều đặn để chắc chắn đạt RTO và RPO.</p>
+      <ul>
+        <li><b>Tránh các đường khôi phục hiếm khi chạy</b>. Ví dụ tài liệu: một data store phụ chỉ dùng cho truy vấn đọc, giả định sẽ failover sang khi primary hỏng – nếu không test thường xuyên, capacity của nó (đủ lúc test lần trước) có thể <b>không còn chịu nổi tải</b>, hoặc <b>service quotas</b> ở Region phụ không đủ.</li>
+        <li>Với đường khôi phục phức tạp hoặc quan trọng, vẫn cần <b>thực sự gây lỗi trong production</b> định kỳ để xác nhận (chaos engineering – <b>AWS Fault Injection Service</b> là dịch vụ tạo lỗi có kiểm soát, <i>kiến thức phổ biến</i>).</li>
+        <li><b>Quản lý configuration drift ở Region DR</b>: bảo đảm hạ tầng, dữ liệu, cấu hình đúng như cần – vd <b>AMI</b> và <b>service quotas</b> luôn cập nhật.</li>
+        <li><b>AWS Config</b> giám sát và ghi nhận cấu hình liên tục, phát hiện drift và kích hoạt <b>Systems Manager Automation</b> để sửa + bật cảnh báo; <b>CloudFormation drift detection</b> phát hiện drift của stack đã deploy (Bài 40, 41).</li>
+        <li><b>AWS Resilience Hub</b>: liên tục <b>đánh giá và theo dõi</b> độ bền của workload trên AWS, kể cả khả năng <b>đạt mục tiêu RTO/RPO</b>.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Validate the DR plan regularly / prove that RTO is met</i>” ⇒ chạy <b>DR drill / game day</b> định kỳ, tự động hóa runbook; với DRS dùng <b>drill</b>; với Backup &amp; Restore dùng <b>restore testing</b> định kỳ.</li>
+          <li>“<i>Ensure the DR Region configuration does not drift from production</i>” ⇒ deploy cả hai Region bằng <b>cùng template IaC / StackSets</b> + <b>AWS Config</b> rules.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>RPO</b> = lượng dữ liệu tối đa được mất (khoảng thời gian từ điểm khôi phục cuối) – giảm bằng backup dày hơn / sao chép liên tục. <b>RTO</b> = thời gian ngừng dịch vụ tối đa – giảm bằng hạ tầng chạy sẵn và tự động hóa. Cả hai do <b>doanh nghiệp</b> đặt từ BIA + risk assessment; chi phí DR không nên vượt chi phí của sự cố.</li>
+          <li><b>Backup &amp; Restore</b>: rẻ nhất, RPO/RTO giờ; cần backup dữ liệu + <b>IaC</b> + AMI/code; copy backup <b>cross-Region, cross-account</b>.</li>
+          <li><b>Pilot Light</b>: <b>dữ liệu live</b> được sao chép liên tục ở Region DR, app server “tắt” (tốt nhất là chưa deploy) ⇒ phải bật + scale khi failover.</li>
+          <li><b>Warm Standby</b>: bản thu nhỏ <b>đầy đủ chức năng, đang chạy</b> ⇒ nhận traffic ngay, chỉ cần scale up. Đủ capacity sẵn (statically stable) ⇒ <b>hot standby</b>.</li>
+          <li><b>Multi-site active/active</b>: mọi Region phục vụ người dùng, RTO gần 0, đắt nhất; ghi theo <b>write global</b> (Aurora Global DB), <b>write local</b> (DynamoDB global tables, last writer wins) hoặc <b>write partitioned</b> (S3 replication hai chiều).</li>
+          <li>Sao chép liên tục <b>không thay backup</b>: corruption/xóa/ransomware cũng được sao chép ⇒ mọi chiến lược đều cần <b>point-in-time backup</b>.</li>
+          <li>Failover nên dựa vào <b>data plane</b>: Route 53 health check, <b>ARC routing control</b> (failover thủ công tin cậy), Global Accelerator health check. Đổi weight, traffic dial, Auto Scaling, restore là <b>control plane</b>. Failover tự động cần thận trọng (báo động giả).</li>
+          <li><b>Aurora Global Database</b>: lag &lt; 1 giây, promote Region phụ &lt; 1 phút. RDS cross-Region read replica: promote vài phút, có reboot.</li>
+          <li><b>AWS Elastic Disaster Recovery</b>: agent sao chép block-level liên tục (TCP 1500) vào <b>staging area</b> giá rẻ; RPO giây, RTO 5–20 phút; PIT snapshot (10 phút/1 giờ, giờ/24 giờ, ngày/1–365 ngày); drill không gián đoạn; failback bằng Failback Client. Dùng cho on-prem, cloud khác, EC2 (không cho RDS).</li>
+          <li><b>Test DR thường xuyên</b>, kiểm tra service quotas và AMI ở Region DR, chống drift bằng AWS Config / IaC; dùng <b>AWS Resilience Hub</b> theo dõi khả năng đạt RTO/RPO.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Disaster recovery (DR)</dt><dd><b>Khôi phục sau thảm họa</b> – đưa workload hoạt động lại sau sự kiện gián đoạn lớn (thiên tai, sự cố kỹ thuật, lỗi con người).</dd></div>
+        <div><dt>Business continuity plan (BCP)</dt><dd><b>Kế hoạch kinh doanh liên tục</b> – kế hoạch DR là tập con của BCP.</dd></div>
+        <div><dt>Business impact analysis (BIA)</dt><dd><b>Phân tích tác động kinh doanh</b> – định lượng tác động khi workload gián đoạn để đặt RTO/RPO.</dd></div>
+        <div><dt>Risk assessment</dt><dd><b>Đánh giá rủi ro</b> – loại thảm họa, phạm vi địa lý, xác suất xảy ra.</dd></div>
+        <div><dt>Recovery Point Objective (RPO)</dt><dd><b>Mục tiêu điểm khôi phục</b> – khoảng thời gian tối đa chấp nhận được kể từ điểm khôi phục dữ liệu gần nhất (lượng dữ liệu được phép mất).</dd></div>
+        <div><dt>Recovery Time Objective (RTO)</dt><dd><b>Mục tiêu thời gian khôi phục</b> – độ trễ tối đa chấp nhận được từ lúc gián đoạn tới lúc khôi phục dịch vụ.</dd></div>
+        <div><dt>Active/passive</dt><dd><b>Chủ động – thụ động</b> – một site phục vụ traffic, site kia chỉ dùng khi failover.</dd></div>
+        <div><dt>Backup and restore</dt><dd><b>Sao lưu và khôi phục</b> – chiến lược DR rẻ nhất: chỉ lưu backup, dựng lại mọi thứ khi thảm họa.</dd></div>
+        <div><dt>Pilot light</dt><dd><b>Ngọn lửa mồi</b> – dữ liệu live + hạ tầng lõi ở Region DR, app server “tắt”.</dd></div>
+        <div><dt>Warm standby</dt><dd><b>Dự phòng ấm</b> – bản thu nhỏ đầy đủ chức năng luôn chạy, nhận traffic ngay ở capacity thấp.</dd></div>
+        <div><dt>Hot standby</dt><dd><b>Dự phòng nóng</b> – Region DR chạy đủ capacity production (statically stable) nhưng không nhận traffic.</dd></div>
+        <div><dt>Multi-site active/active</dt><dd><b>Đa địa điểm cùng hoạt động</b> – mọi Region đều phục vụ người dùng.</dd></div>
+        <div><dt>Statically stable</dt><dd><b>Ổn định tĩnh</b> – vẫn chịu được tải khi sự cố mà không cần thao tác control plane (không phụ thuộc scale).</dd></div>
+        <div><dt>Failover / Failback</dt><dd><b>Chuyển sang hệ thống dự phòng</b> / <b>quay về hệ thống chính</b> sau khi sự cố được khắc phục.</dd></div>
+        <div><dt>Read local</dt><dd><b>Đọc tại chỗ</b> – phục vụ đọc từ Region gần người dùng nhất.</dd></div>
+        <div><dt>Write global / Write local / Write partitioned</dt><dd><b>Ghi tập trung một Region</b> / <b>ghi tại Region gần nhất</b> / <b>ghi phân vùng theo khóa</b> – ba chiến lược ghi trong active/active.</dd></div>
+        <div><dt>Last writer wins</dt><dd><b>Bản ghi sau cùng thắng</b> – cách DynamoDB global tables giải quyết xung đột ghi đồng thời.</dd></div>
+        <div><dt>Amazon Application Recovery Controller (ARC)</dt><dd><b>Bộ điều khiển khôi phục ứng dụng</b> – routing control như công tắc bật/tắt trên data plane để failover thủ công.</dd></div>
+        <div><dt>Traffic dial (Global Accelerator)</dt><dd><b>Núm điều chỉnh lưu lượng</b> – % traffic tới mỗi endpoint group.</dd></div>
+        <div><dt>AWS Resilience Hub</dt><dd><b>Trung tâm đánh giá khả năng phục hồi</b> – theo dõi workload có đạt RTO/RPO không.</dd></div>
+        <div><dt>AWS Elastic Disaster Recovery (AWS DRS)</dt><dd><b>Dịch vụ khôi phục thảm họa đàn hồi</b> – sao chép block-level liên tục máy chủ vào AWS.</dd></div>
+        <div><dt>Source server</dt><dd><b>Máy chủ nguồn</b> – máy chủ được bảo vệ, cài AWS Replication Agent.</dd></div>
+        <div><dt>Staging area subnet / Replication server</dt><dd><b>Subnet vùng trung chuyển</b> / <b>máy chủ sao chép</b> – EC2 nhỏ + EBS giá rẻ nhận dữ liệu sao chép.</dd></div>
+        <div><dt>Recovery instance</dt><dd><b>Instance khôi phục</b> – EC2 được launch từ dữ liệu sao chép khi drill/recovery.</dd></div>
+        <div><dt>Drill</dt><dd><b>Diễn tập khôi phục</b> – launch thử không gián đoạn production.</dd></div>
+        <div><dt>Point-in-time (PIT) snapshot</dt><dd><b>Ảnh chụp tại một thời điểm</b> – điểm khôi phục crash-consistent của source server.</dd></div>
+        <div><dt>Crash-consistent</dt><dd><b>Nhất quán như sau sự cố mất điện</b> – có mọi dữ liệu đã ghi xuống đĩa, không có dữ liệu chỉ nằm trong RAM.</dd></div>
+        <div><dt>Failback Client</dt><dd><b>Trình khách quay về</b> – công cụ của DRS sao chép ngược dữ liệu về site gốc.</dd></div>
+        <div><dt>Configuration drift</dt><dd><b>Trôi lệch cấu hình</b> – Region DR khác dần cấu hình production.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="cau-hoi">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs an internal reporting application on Amazon EC2 instances with an Amazon RDS for MySQL database in a single AWS Region. The business has determined that the application can tolerate an RPO of 24 hours and an RTO of 12 hours in the event of a Regional outage. The company wants the MOST cost-effective disaster recovery solution. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Deploy a scaled-down copy of the application in a second Region with an RDS cross-Region read replica, and use Route 53 failover routing.</li>
+            <li data-k="B">Deploy the full application in two Regions behind AWS Global Accelerator and use Amazon Aurora Global Database.</li>
+            <li data-k="C">Use AWS Backup to take daily backups of the EC2 instances and the RDS database and copy them to a second Region. Store the infrastructure as an AWS CloudFormation template to redeploy in the second Region when needed.</li>
+            <li data-k="D">Create an RDS cross-Region read replica and keep an Auto Scaling group with a desired capacity of zero in the second Region.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> RPO 24 giờ và RTO 12 giờ là yêu cầu lỏng ⇒ <b>Backup &amp; Restore</b> rẻ nhất vẫn đạt: backup hằng ngày (RPO ≤ 24 giờ), copy cross-Region, dựng lại bằng IaC trong vài giờ. <b>A sai</b>: warm standby chạy thường trực – tốn tiền hơn mức cần. <b>B sai</b>: active/active là đắt nhất. <b>D sai</b>: pilot light chạy read replica thường trực, vẫn tốn hơn backup trong khi yêu cầu không cần RPO thấp.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng báo cáo nội bộ trên các Amazon EC2 instance với cơ sở dữ liệu Amazon RDS for MySQL trong một AWS Region duy nhất. Doanh nghiệp đã xác định rằng ứng dụng có thể chấp nhận RPO 24 giờ và RTO 12 giờ khi xảy ra sự cố cấp Region. Công ty muốn giải pháp khôi phục thảm họa MOST cost-effective (tiết kiệm chi phí nhất). Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Triển khai một bản sao thu nhỏ của ứng dụng ở Region thứ hai với RDS cross-Region read replica, và dùng Route 53 failover routing.</span><span class="why">Sai: Đây là warm standby, tài nguyên chạy thường trực ở Region thứ hai nên tốn tiền hơn nhiều so với mức cần cho RPO 24 giờ/RTO 12 giờ.</span></li>
+              <li data-k="B"><span class="tv">Triển khai toàn bộ ứng dụng ở hai Region phía sau AWS Global Accelerator và dùng Amazon Aurora Global Database.</span><span class="why">Sai: Đây là multi-site active/active – chiến lược đắt nhất, hoàn toàn thừa với yêu cầu RPO/RTO lỏng như đề.</span></li>
+              <li data-k="C"><span class="tv">Dùng AWS Backup để sao lưu hằng ngày các EC2 instance và cơ sở dữ liệu RDS rồi copy sang Region thứ hai. Lưu hạ tầng dưới dạng AWS CloudFormation template để triển khai lại ở Region thứ hai khi cần.</span><span class="why">Đúng: Backup &amp; Restore là chiến lược rẻ nhất; backup hằng ngày đáp ứng RPO 24 giờ và dựng lại bằng IaC trong vài giờ đáp ứng RTO 12 giờ.</span></li>
+              <li data-k="D"><span class="tv">Tạo RDS cross-Region read replica và giữ một Auto Scaling group với desired capacity bằng 0 ở Region thứ hai.</span><span class="why">Sai: Đây là pilot light – read replica chạy thường trực vẫn tốn tiền hơn backup, trong khi đề không cần RPO thấp.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">An e-commerce company uses Amazon Aurora MySQL in us-east-1. The company needs a disaster recovery plan for a Regional outage with an RPO of 1 second or less and an RTO of less than 1 minute for the database tier. The application tier can be deployed in the DR Region only when a disaster occurs. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Configure an Aurora global database with a secondary cluster in another Region. During a disaster, promote the secondary cluster and launch the application tier from a CloudFormation template.</li>
+            <li data-k="B">Take Aurora snapshots every hour and copy them to another Region with AWS Backup.</li>
+            <li data-k="C">Create a Multi-AZ Aurora cluster with two Aurora Replicas in different Availability Zones.</li>
+            <li data-k="D">Use AWS Database Migration Service to replicate the data to an Amazon RDS for MySQL instance in another Region.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Aurora Global Database</b> sao chép sang Region phụ với độ trễ thường <b>dưới 1 giây</b> và cho phép promote Region phụ trong <b>dưới 1 phút</b>; tầng ứng dụng chỉ deploy khi thảm họa ⇒ đây là <b>pilot light</b>. <b>B sai</b>: snapshot mỗi giờ ⇒ RPO tới 1 giờ, restore mất lâu. <b>C sai</b>: Multi-AZ chỉ bảo vệ trong một Region, không chịu được sự cố cấp Region. <b>D sai</b>: DMS là công cụ migration, không bảo đảm RPO 1 giây và việc chuyển đổi chậm hơn.</div>
+          <div class="trans">
+            <div class="tq">Một công ty thương mại điện tử dùng Amazon Aurora MySQL ở us-east-1. Công ty cần một kế hoạch khôi phục thảm họa cho sự cố cấp Region với RPO từ 1 giây trở xuống và RTO dưới 1 phút cho tầng cơ sở dữ liệu. Tầng ứng dụng chỉ cần được triển khai ở Region DR khi thảm họa xảy ra. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình Aurora global database với một secondary cluster ở Region khác. Khi có thảm họa, promote secondary cluster và khởi chạy tầng ứng dụng từ CloudFormation template.</span><span class="why">Đúng: Aurora Global Database sao chép sang Region phụ với độ trễ thường dưới 1 giây và cho phép promote dưới 1 phút; tầng ứng dụng chỉ dựng khi cần – đúng mô hình pilot light.</span></li>
+              <li data-k="B"><span class="tv">Chụp Aurora snapshot mỗi giờ và copy sang Region khác bằng AWS Backup.</span><span class="why">Sai: Snapshot mỗi giờ cho RPO tới 1 giờ, và restore từ snapshot mất lâu hơn nhiều so với 1 phút.</span></li>
+              <li data-k="C"><span class="tv">Tạo Aurora cluster Multi-AZ với hai Aurora Replica ở các Availability Zone khác nhau.</span><span class="why">Sai: Multi-AZ chỉ bảo vệ trong phạm vi một Region, không chịu được sự cố toàn Region.</span></li>
+              <li data-k="D"><span class="tv">Dùng AWS Database Migration Service để sao chép dữ liệu sang một Amazon RDS for MySQL instance ở Region khác.</span><span class="why">Sai: DMS là công cụ migration, không bảo đảm RPO 1 giây và việc chuyển đổi sang instance đích chậm hơn yêu cầu RTO.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company's web application runs in us-west-2 behind an Application Load Balancer. For disaster recovery, the company requires that a fully functional copy of the application is always running in us-east-1 and can serve requests immediately if the primary Region fails, while keeping costs lower than a full duplicate deployment. Which DR strategy is this?</div>
+          <ol class="opts">
+            <li data-k="A">Backup and restore</li>
+            <li data-k="B">Pilot light</li>
+            <li data-k="C">Multi-site active/active</li>
+            <li data-k="D">Warm standby</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Warm standby</b> = bản sao <b>thu nhỏ nhưng đầy đủ chức năng, luôn chạy</b>, nhận traffic ngay ở capacity thấp rồi scale up. <b>A sai</b>: không có môi trường chạy sẵn. <b>B sai</b>: pilot light không xử lý được request nếu chưa bật server. <b>C sai</b>: active/active là triển khai đầy đủ phục vụ đồng thời – đúng là “full duplicate”, đắt hơn yêu cầu.</div>
+          <div class="trans">
+            <div class="tq">Ứng dụng web của một công ty chạy ở us-west-2 phía sau một Application Load Balancer. Để khôi phục thảm họa, công ty yêu cầu một bản sao đầy đủ chức năng của ứng dụng luôn chạy ở us-east-1 và có thể phục vụ request ngay lập tức nếu Region chính gặp sự cố, đồng thời giữ chi phí thấp hơn so với một bản triển khai trùng lặp đầy đủ. Đây là chiến lược DR nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Backup and restore (sao lưu và khôi phục)</span><span class="why">Sai: Backup and restore không có môi trường nào chạy sẵn, nên không thể phục vụ request ngay lập tức.</span></li>
+              <li data-k="B"><span class="tv">Pilot light</span><span class="why">Sai: Pilot light chỉ giữ tầng dữ liệu chạy, server ứng dụng tắt nên chưa xử lý được request cho đến khi được bật lên.</span></li>
+              <li data-k="C"><span class="tv">Multi-site active/active</span><span class="why">Sai: Active/active là triển khai đầy đủ ở cả hai Region – chính là "full duplicate", đắt hơn mức đề yêu cầu.</span></li>
+              <li data-k="D"><span class="tv">Warm standby</span><span class="why">Đúng: Warm standby là bản sao thu nhỏ nhưng đầy đủ chức năng, luôn chạy, nhận traffic ngay ở capacity thấp rồi scale up – rẻ hơn bản trùng lặp đầy đủ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company has 150 VMware virtual machines in its on-premises data center that run line-of-business applications and self-managed databases. The company wants to use AWS as a disaster recovery site. Requirements include an RPO measured in seconds, an RTO measured in minutes, the ability to recover to a point in time before a ransomware attack, and minimal compute costs while the site is idle. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Use AWS Backup with a backup plan that copies VMware backups to Amazon S3 Glacier Deep Archive daily.</li>
+            <li data-k="B">Install the AWS Replication Agent on the servers and use AWS Elastic Disaster Recovery with a point-in-time snapshot retention policy. Perform periodic drills.</li>
+            <li data-k="C">Use AWS Application Migration Service to rehost the servers to Amazon EC2 and shut down the on-premises data center.</li>
+            <li data-k="D">Create AMIs from exported VM images every hour and launch EC2 instances in a warm standby Auto Scaling group.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>AWS DRS</b> sao chép block-level liên tục (RPO giây), launch recovery instance trong vài phút (RTO phút), staging area dùng <b>lưu trữ rẻ + compute tối thiểu</b>, và <b>PIT snapshot</b> cho phép khôi phục về thời điểm trước ransomware; drill kiểm thử không gián đoạn. <b>A sai</b>: backup hằng ngày ⇒ RPO tới 24 giờ, Deep Archive lấy dữ liệu mất nhiều giờ. <b>C sai</b>: MGN dùng để <b>migrate</b> hẳn, đề muốn AWS làm site DR. <b>D sai</b>: RPO 1 giờ và chạy instance thường trực tốn tiền.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 150 máy ảo VMware trong data center on-premises chạy các ứng dụng nghiệp vụ và cơ sở dữ liệu tự quản lý. Công ty muốn dùng AWS làm site khôi phục thảm họa. Yêu cầu gồm RPO tính bằng giây, RTO tính bằng phút, khả năng khôi phục về một thời điểm trước cuộc tấn công ransomware, và chi phí compute tối thiểu khi site ở trạng thái nhàn rỗi. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng AWS Backup với một backup plan copy các bản backup VMware sang Amazon S3 Glacier Deep Archive hằng ngày.</span><span class="why">Sai: Backup hằng ngày cho RPO tới 24 giờ, và lấy dữ liệu từ Deep Archive mất nhiều giờ – không đạt RPO giây/RTO phút.</span></li>
+              <li data-k="B"><span class="tv">Cài AWS Replication Agent lên các server và dùng AWS Elastic Disaster Recovery với chính sách lưu giữ point-in-time snapshot. Thực hiện diễn tập định kỳ.</span><span class="why">Đúng: AWS DRS sao chép block-level liên tục (RPO giây), launch recovery instance trong vài phút, staging area dùng lưu trữ rẻ + compute tối thiểu, và PIT snapshot cho phép quay về trước thời điểm ransomware.</span></li>
+              <li data-k="C"><span class="tv">Dùng AWS Application Migration Service để rehost các server lên Amazon EC2 và đóng cửa data center on-premises.</span><span class="why">Sai: MGN dùng để migrate hẳn lên AWS, trong khi đề muốn giữ on-premises và dùng AWS làm site DR.</span></li>
+              <li data-k="D"><span class="tv">Tạo AMI từ các VM image được export mỗi giờ và khởi chạy EC2 instance trong một Auto Scaling group warm standby.</span><span class="why">Sai: RPO tới 1 giờ (không phải giây) và instance chạy thường trực làm tăng chi phí compute khi nhàn rỗi.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A global gaming company runs its application in three AWS Regions. Players must be able to read and write their profile data with low latency in the Region closest to them, and the application must continue operating with near-zero downtime if one Region becomes unavailable. Which TWO components should a solutions architect use? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Amazon DynamoDB global tables for the player profile data</li>
+            <li data-k="B">Amazon RDS for PostgreSQL with cross-Region read replicas</li>
+            <li data-k="C">Amazon Route 53 failover routing policy with a primary and secondary record</li>
+            <li data-k="D">AWS Global Accelerator with endpoint groups in each Region and health checks</li>
+            <li data-k="E">AWS Backup with cross-Region copy every hour</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> Ghi ở Region gần nhất = <b>write local</b> ⇒ <b>DynamoDB global tables</b> cho phép đọc/ghi ở mọi Region (A). <b>Global Accelerator</b> đưa người chơi vào Region gần nhất qua edge, health check tự chuyển khỏi Region lỗi, không bị DNS cache (D). <b>B sai</b>: read replica chỉ đọc – chỉ một Region ghi. <b>C sai</b>: failover routing là <b>active-passive</b>, không phục vụ từ cả ba Region. <b>E sai</b>: backup cần thiết cho thảm họa dữ liệu nhưng không cho downtime gần 0.</div>
+          <div class="trans">
+            <div class="tq">Một công ty game toàn cầu chạy ứng dụng ở ba AWS Region. Người chơi phải đọc và ghi dữ liệu hồ sơ của mình với độ trễ thấp tại Region gần họ nhất, và ứng dụng phải tiếp tục hoạt động với downtime gần như bằng 0 nếu một Region không khả dụng. Solutions architect nên dùng HAI thành phần nào? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon DynamoDB global tables cho dữ liệu hồ sơ người chơi</span><span class="why">Đúng: DynamoDB global tables là multi-active, cho phép đọc và ghi ở mọi Region với độ trễ thấp, và các Region còn lại vẫn hoạt động khi một Region lỗi.</span></li>
+              <li data-k="B"><span class="tv">Amazon RDS for PostgreSQL với cross-Region read replica</span><span class="why">Sai: Read replica chỉ cho đọc – chỉ một Region nhận ghi, không đáp ứng yêu cầu ghi tại Region gần nhất.</span></li>
+              <li data-k="C"><span class="tv">Amazon Route 53 failover routing policy với một record primary và một record secondary</span><span class="why">Sai: Failover routing là active-passive, chỉ phục vụ từ một Region tại một thời điểm, không phân phối người chơi tới cả ba Region.</span></li>
+              <li data-k="D"><span class="tv">AWS Global Accelerator với endpoint group ở mỗi Region và health check</span><span class="why">Đúng: Global Accelerator đưa người chơi tới Region gần nhất qua mạng edge của AWS và tự chuyển khỏi Region lỗi nhờ health check, không bị ảnh hưởng bởi DNS cache.</span></li>
+              <li data-k="E"><span class="tv">AWS Backup với cross-Region copy mỗi giờ</span><span class="why">Sai: Backup hữu ích khi dữ liệu bị hỏng nhưng khôi phục mất thời gian, không thể cho downtime gần bằng 0.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company uses a warm standby DR strategy across two Regions. The operations team wants failover to be initiated manually by an operator after confirming a real disaster, to avoid failing over on false alarms. The failover mechanism itself must be highly reliable and must not depend on control plane operations during the event. What should the solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Configure Route 53 weighted records and have the operator change the weights to send 100% of traffic to the DR Region.</li>
+            <li data-k="B">Configure an Amazon CloudWatch alarm that invokes an AWS Lambda function to update the Route 53 records automatically.</li>
+            <li data-k="C">Use Amazon Application Recovery Controller (ARC) routing controls with Route 53 so that the operator can toggle traffic to the DR Region through the data plane API.</li>
+            <li data-k="D">Use AWS Global Accelerator and have the operator adjust the traffic dials for each endpoint group.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>ARC routing control</b> là các Route 53 health check đóng vai trò <b>công tắc bật/tắt</b>, điều khiển bằng <b>data plane API</b> có tính sẵn sàng cao – đúng khuyến nghị cho failover <b>khởi động thủ công</b>. <b>A sai</b>: sửa weight là thao tác <b>control plane</b>, kém bền vững hơn. <b>B sai</b>: tự động, trái yêu cầu tránh báo động giả; và vẫn sửa record (control plane). <b>D sai</b>: traffic dial cũng là thao tác control plane theo tài liệu.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng chiến lược DR warm standby trên hai Region. Đội vận hành muốn failover được khởi động thủ công bởi người vận hành sau khi xác nhận đó là thảm họa thật, để tránh failover do báo động giả. Bản thân cơ chế failover phải có độ tin cậy cao và không được phụ thuộc vào các thao tác control plane trong lúc sự cố. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình Route 53 weighted record và để người vận hành thay đổi weight để gửi 100% traffic sang Region DR.</span><span class="why">Sai: Sửa weight của record là thao tác control plane của Route 53, kém bền vững hơn trong lúc sự cố – trái yêu cầu.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình một Amazon CloudWatch alarm gọi AWS Lambda function để tự động cập nhật các record Route 53.</span><span class="why">Sai: Cơ chế tự động trái yêu cầu failover thủ công để tránh báo động giả, và việc sửa record vẫn là thao tác control plane.</span></li>
+              <li data-k="C"><span class="tv">Dùng routing control của Amazon Application Recovery Controller (ARC) cùng Route 53 để người vận hành có thể bật/tắt chuyển traffic sang Region DR thông qua data plane API.</span><span class="why">Đúng: ARC routing control hoạt động như công tắc bật/tắt dựa trên Route 53 health check, được điều khiển qua data plane API có tính sẵn sàng cao – đúng khuyến nghị cho failover thủ công.</span></li>
+              <li data-k="D"><span class="tv">Dùng AWS Global Accelerator và để người vận hành điều chỉnh traffic dial cho từng endpoint group.</span><span class="why">Sai: Điều chỉnh traffic dial cũng là thao tác control plane theo tài liệu AWS, không đáp ứng yêu cầu không phụ thuộc control plane.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company replicates its Amazon S3 data to a bucket in a DR Region by using S3 Cross-Region Replication, and replicates its database by using continuous cross-Region replication. A security review points out that the DR design does not protect against a ransomware attack that encrypts or deletes data in the primary Region. What should the company add?</div>
+          <ol class="opts">
+            <li data-k="A">Increase replication frequency by enabling S3 Replication Time Control.</li>
+            <li data-k="B">Enable S3 Versioning and point-in-time backups for the database, and copy the backups to a separate AWS account.</li>
+            <li data-k="C">Convert the architecture to multi-site active/active.</li>
+            <li data-k="D">Configure delete marker replication so that deletions are replicated to the DR bucket.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Sao chép liên tục <b>sao chép luôn</b> dữ liệu bị mã hóa/hỏng. Phải có <b>versioning</b> và <b>point-in-time backup</b>; copy sang <b>account khác</b> chống trường hợp account bị chiếm quyền. <b>A sai</b>: RTC chỉ làm sao chép nhanh hơn – sao chép dữ liệu hỏng nhanh hơn. <b>C sai</b>: active/active cũng sao chép dữ liệu hỏng sang mọi Region. <b>D sai</b>: ngược lại – mặc định <b>không</b> sao chép delete marker chính là để bảo vệ bucket DR khỏi việc xóa ở nguồn.</div>
+          <div class="trans">
+            <div class="tq">Một công ty sao chép dữ liệu Amazon S3 sang một bucket ở Region DR bằng S3 Cross-Region Replication, và sao chép cơ sở dữ liệu bằng cơ chế sao chép cross-Region liên tục. Một đợt rà soát bảo mật chỉ ra rằng thiết kế DR này không bảo vệ được trước cuộc tấn công ransomware mã hóa hoặc xóa dữ liệu ở Region chính. Công ty nên bổ sung gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng tần suất sao chép bằng cách bật S3 Replication Time Control.</span><span class="why">Sai: RTC chỉ làm sao chép nhanh hơn – tức là dữ liệu bị mã hóa/hỏng cũng được sao chép sang Region DR nhanh hơn.</span></li>
+              <li data-k="B"><span class="tv">Bật S3 Versioning và point-in-time backup cho cơ sở dữ liệu, rồi copy các bản backup sang một AWS account riêng.</span><span class="why">Đúng: Versioning và point-in-time backup cho phép quay về phiên bản trước khi bị tấn công; lưu ở account riêng bảo vệ cả khi account chính bị chiếm quyền.</span></li>
+              <li data-k="C"><span class="tv">Chuyển kiến trúc sang multi-site active/active.</span><span class="why">Sai: Active/active cũng sao chép liên tục, nên dữ liệu hỏng vẫn lan sang mọi Region; không giải quyết ransomware.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình delete marker replication để các thao tác xóa được sao chép sang bucket DR.</span><span class="why">Sai: Làm vậy là ngược lại – việc xóa ở nguồn sẽ lan sang bucket DR; mặc định không sao chép delete marker chính là để bảo vệ bucket DR.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company implemented a pilot light DR strategy. During the last DR test, failover took much longer than the RTO because the Auto Scaling group in the DR Region could not launch the required number of instances, and several application settings were outdated compared to production. Which actions should the company take to prevent this? </div>
+          <ol class="opts">
+            <li data-k="A">Switch to a backup and restore strategy and restore from the latest backup during each test.</li>
+            <li data-k="B">Increase the Route 53 health check frequency for the primary Region.</li>
+            <li data-k="C">Use Amazon RDS Multi-AZ in the DR Region.</li>
+            <li data-k="D">Request service quota increases in the DR Region, deploy both Regions from the same infrastructure as code templates through an automated pipeline, and use AWS Config to detect configuration drift. Test failover regularly.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Tài liệu nhấn mạnh: bảo đảm <b>service quotas</b> ở Region DR đủ để scale lên production, deploy đồng thời tới mỗi Region bằng <b>IaC</b>, quản lý <b>configuration drift</b> (AWS Config) và <b>test thường xuyên</b>. <b>A sai</b>: Backup &amp; Restore còn chậm hơn. <b>B sai</b>: health check nhanh hơn không giải quyết quota hay cấu hình cũ. <b>C sai</b>: Multi-AZ không liên quan đến hai vấn đề này.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đã triển khai chiến lược DR pilot light. Trong lần kiểm thử DR gần nhất, failover mất thời gian lâu hơn nhiều so với RTO vì Auto Scaling group ở Region DR không thể khởi chạy đủ số instance cần thiết, và một số cấu hình ứng dụng đã lỗi thời so với production. Công ty nên thực hiện những hành động nào để ngăn chặn điều này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển sang chiến lược backup and restore và khôi phục từ bản backup mới nhất trong mỗi lần kiểm thử.</span><span class="why">Sai: Backup &amp; Restore còn chậm hơn pilot light, làm RTO tệ hơn và không xử lý được quota hay cấu hình lỗi thời.</span></li>
+              <li data-k="B"><span class="tv">Tăng tần suất Route 53 health check cho Region chính.</span><span class="why">Sai: Health check nhanh hơn chỉ phát hiện sự cố sớm hơn, không giải quyết giới hạn quota hay cấu hình cũ ở Region DR.</span></li>
+              <li data-k="C"><span class="tv">Dùng Amazon RDS Multi-AZ ở Region DR.</span><span class="why">Sai: Multi-AZ tăng tính sẵn sàng cho database, không liên quan đến việc thiếu instance hay cấu hình lệch.</span></li>
+              <li data-k="D"><span class="tv">Yêu cầu tăng service quota ở Region DR, triển khai cả hai Region từ cùng các template infrastructure as code thông qua pipeline tự động, và dùng AWS Config để phát hiện configuration drift. Kiểm thử failover thường xuyên.</span><span class="why">Đúng: Tăng service quota giúp ASG scale đủ instance; IaC cho cả hai Region cùng AWS Config chống lệch cấu hình; kiểm thử thường xuyên phát hiện vấn đề sớm.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,C">
+          <div class="qh">A company is designing a pilot light DR environment in a second AWS Region for an application that runs on Amazon EC2 instances in an Auto Scaling group and uses Amazon Aurora PostgreSQL. The company wants to minimize the cost of the DR Region while ensuring that the instances can be launched quickly with all required software. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Run the Auto Scaling group in the DR Region at the same desired capacity as production.</li>
+            <li data-k="B">Use an EC2 Image Builder pipeline to create golden AMIs and copy them to both Regions.</li>
+            <li data-k="C">Use a CloudFormation template with conditions so that only a scaled-down or switched-off application tier is deployed in the DR Region, while the Aurora secondary cluster is always running.</li>
+            <li data-k="D">Store the application installation scripts in an S3 bucket in the primary Region only.</li>
+            <li data-k="E">Use AWS Elastic Disaster Recovery to replicate the Aurora database.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, C.</b> <b>Golden AMI</b> từ Image Builder copy sang cả hai Region giúp launch nhanh với đủ phần mềm (B). <b>CloudFormation Conditions</b> (dựa trên pseudo parameter <code>AWS::Region</code>) deploy bản thu nhỏ/tắt ở Region DR, còn tầng dữ liệu luôn chạy – đúng pilot light (C). <b>A sai</b>: đó là hot standby, tốn tiền. <b>D sai</b>: script chỉ ở Region chính sẽ không truy cập được khi Region chính sập. <b>E sai</b>: DRS dành cho máy chủ (EC2/on-prem), không cho dịch vụ database được quản lý như Aurora/RDS.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang thiết kế môi trường DR pilot light ở AWS Region thứ hai cho một ứng dụng chạy trên các Amazon EC2 instance trong Auto Scaling group và dùng Amazon Aurora PostgreSQL. Công ty muốn giảm thiểu chi phí của Region DR đồng thời bảo đảm các instance có thể được khởi chạy nhanh với đầy đủ phần mềm cần thiết. Solutions architect nên thực hiện HAI hành động nào? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chạy Auto Scaling group ở Region DR với cùng desired capacity như production.</span><span class="why">Sai: Chạy đủ capacity như production là hot standby, rất tốn tiền – trái mục tiêu giảm chi phí Region DR.</span></li>
+              <li data-k="B"><span class="tv">Dùng pipeline EC2 Image Builder để tạo golden AMI và copy sang cả hai Region.</span><span class="why">Đúng: Golden AMI đã cài sẵn phần mềm và có mặt ở cả hai Region giúp instance khởi chạy nhanh, sẵn sàng phục vụ ngay.</span></li>
+              <li data-k="C"><span class="tv">Dùng CloudFormation template với conditions để chỉ triển khai tầng ứng dụng thu nhỏ hoặc tắt ở Region DR, trong khi Aurora secondary cluster luôn chạy.</span><span class="why">Đúng: Conditions (dựa trên AWS::Region) cho phép cùng một template triển khai bản thu nhỏ/tắt ở Region DR, còn tầng dữ liệu luôn chạy – đúng mô hình pilot light, tiết kiệm chi phí.</span></li>
+              <li data-k="D"><span class="tv">Chỉ lưu các script cài đặt ứng dụng trong một S3 bucket ở Region chính.</span><span class="why">Sai: Khi Region chính sập thì không truy cập được script, khiến việc dựng instance ở Region DR thất bại.</span></li>
+              <li data-k="E"><span class="tv">Dùng AWS Elastic Disaster Recovery để sao chép cơ sở dữ liệu Aurora.</span><span class="why">Sai: DRS dành cho máy chủ (EC2/on-premises), không hỗ trợ dịch vụ database được quản lý như Aurora/RDS.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A solutions architect is reviewing a business impact analysis for several workloads. For one low-criticality internal tool, the estimated cost of implementing a multi-Region warm standby is higher than the estimated business loss from a multi-day outage, and there are no regulatory requirements. The tool is already deployed across multiple Availability Zones. According to AWS guidance, what is the MOST appropriate decision?</div>
+          <ol class="opts">
+            <li data-k="A">Do not implement the multi-Region warm standby; rely on the Multi-AZ design and, if needed, inexpensive backups copied to another Region.</li>
+            <li data-k="B">Implement multi-site active/active because it provides the lowest RTO.</li>
+            <li data-k="C">Implement warm standby because every production workload must have a multi-Region DR strategy.</li>
+            <li data-k="D">Implement pilot light with Aurora Global Database regardless of cost.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Whitepaper nêu rõ: nếu <b>chi phí chiến lược khôi phục cao hơn chi phí của sự cố</b>, không nên triển khai (trừ khi có yêu cầu pháp lý); với workload ít quan trọng, không có DR (hoặc chỉ backup rẻ) là quyết định hợp lệ; kiến trúc Multi-AZ đã giảm phần lớn rủi ro. <b>B, C, D sai</b>: đều bỏ qua phân tích chi phí – lợi ích; không phải workload nào cũng bắt buộc DR đa Region.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect đang xem xét bản phân tích tác động kinh doanh (business impact analysis) cho một số workload. Với một công cụ nội bộ có mức độ quan trọng thấp, chi phí ước tính để triển khai warm standby đa Region cao hơn tổn thất kinh doanh ước tính do sự cố kéo dài nhiều ngày, và không có yêu cầu pháp lý nào. Công cụ này đã được triển khai trên nhiều Availability Zone. Theo hướng dẫn của AWS, quyết định MOST appropriate (phù hợp nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Không triển khai warm standby đa Region; dựa vào thiết kế Multi-AZ và, nếu cần, các bản backup rẻ được copy sang Region khác.</span><span class="why">Đúng: AWS khuyên không triển khai chiến lược khôi phục có chi phí cao hơn tổn thất của sự cố (khi không có yêu cầu pháp lý); Multi-AZ đã giảm phần lớn rủi ro.</span></li>
+              <li data-k="B"><span class="tv">Triển khai multi-site active/active vì nó cho RTO thấp nhất.</span><span class="why">Sai: Active/active là đắt nhất, càng vượt xa tổn thất kinh doanh; bỏ qua phân tích chi phí – lợi ích.</span></li>
+              <li data-k="C"><span class="tv">Triển khai warm standby vì mọi workload production đều phải có chiến lược DR đa Region.</span><span class="why">Sai: Không có quy định nào bắt buộc mọi workload phải có DR đa Region; ở đây chi phí warm standby đã vượt tổn thất.</span></li>
+              <li data-k="D"><span class="tv">Triển khai pilot light với Aurora Global Database bất kể chi phí.</span><span class="why">Sai: "Bất kể chi phí" đi ngược hướng dẫn của AWS là cân bằng chi phí DR với tác động kinh doanh.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/business-continuity-plan-bcp.html" target="_blank" rel="noopener">Business Continuity Plan (BCP) – Recovery objectives (RTO and RPO)</a></li>
+        <li><a href="https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-is-different-in-the-cloud.html" target="_blank" rel="noopener">Disaster recovery is different in the cloud</a></li>
+        <li><a href="https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/testing-disaster-recovery.html" target="_blank" rel="noopener">Testing disaster recovery</a></li>
+        <li><a href="https://docs.aws.amazon.com/drs/latest/userguide/CloudEndure-Concepts.html" target="_blank" rel="noopener">Elastic Disaster Recovery concepts (RPO, RTO, PIT snapshots)</a></li>
+        <li><a href="https://docs.aws.amazon.com/drs/latest/userguide/point-in-time.html" target="_blank" rel="noopener">Elastic Disaster Recovery – Point in time (PIT) policy</a></li>
+        <li><a href="https://docs.aws.amazon.com/drs/latest/userguide/Network-Requirements.html" target="_blank" rel="noopener">Elastic Disaster Recovery network requirements</a></li>
+        <li><a href="https://docs.aws.amazon.com/drs/latest/userguide/default-replication-settings.html" target="_blank" rel="noopener">Elastic Disaster Recovery default replication settings</a></li>
+        <li><a href="https://docs.aws.amazon.com/drs/latest/userguide/failback-performing-main.html" target="_blank" rel="noopener">Performing a failback with Elastic Disaster Recovery</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover-types.html" target="_blank" rel="noopener">Route 53 – Active-active and active-passive failover</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

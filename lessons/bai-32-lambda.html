@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 32 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Lambda.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="32" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <b>AWS Lambda</b> là gì, các khái niệm <b>function</b>, <b>trigger</b>, <b>execution environment</b>, và ba cách gọi hàm: <b>synchronous</b>, <b>asynchronous</b>, <b>event source mapping</b>.</li>
+          <li>Thuộc các giới hạn hay thi: memory <b>128 MB – 10.240 MB</b>, timeout <b>tối đa 900 giây (15 phút)</b>, payload <b>6 MB</b> (sync) / <b>1 MB</b> (async), package <b>50 MB / 250 MB</b>, container image <b>10 GB</b>, <code>/tmp</code> tới <b>10.240 MB</b>.</li>
+          <li>Tính được <b>concurrency</b> và phân biệt <b>reserved concurrency</b> (giới hạn + dành riêng, miễn phí) với <b>provisioned concurrency</b> (khởi tạo sẵn, chống cold start, tốn phí); biết quota <b>1.000</b> concurrency / Region và tốc độ scale <b>1.000 môi trường / 10 giây</b> mỗi function.</li>
+          <li>Giải thích <b>cold start</b> và chọn giữa <b>provisioned concurrency</b> và <b>SnapStart</b>.</li>
+          <li>Thiết kế <b>Lambda trong VPC</b> đúng: Hyperplane ENI, private subnet + <b>NAT gateway</b> để ra Internet, <b>VPC endpoint</b> để gọi dịch vụ AWS.</li>
+          <li>Dùng <b>Layers</b> để chia sẻ thư viện và <b>Destinations</b> / DLQ để xử lý kết quả của lời gọi bất đồng bộ.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 6 – Application Integration &amp; Serverless</span>
+        <p>Bài 30 (SQS, SNS) và Bài 31 (EventBridge, Step Functions) đã dạy các dịch vụ thường <b>gọi</b> Lambda – bài này không lặp lại, chỉ nói Lambda nhận event từ chúng thế nào. Ở đây tập trung vào <b>bản thân Lambda</b>: cấu hình, concurrency, cold start, VPC, layers, destinations, SnapStart. Bài sau: <b>API Gateway</b> và kiến trúc serverless hoàn chỉnh (Bài 33); <b>ECS/Fargate</b> cho workload chạy lâu hơn 15 phút (Bài 34); <b>Kinesis</b> streaming (Bài 35). <b>RDS Proxy</b> đã học ở Bài 26, <b>NAT gateway / VPC endpoint</b> ở Bài 20–22.</p></div>
+
+      <!-- ===================== PHẦN 1: LAMBDA LÀ GÌ ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">AWS Lambda: function, trigger và mô hình serverless</h2>
+      <p class="lead"><b>AWS Lambda</b> là dịch vụ <span class="t" data-vi="Điện toán không máy chủ">serverless compute</span>: bạn chạy code mà <b>không cần cấp phát hay quản lý máy chủ</b>. Lambda tự quản lý toàn bộ hạ tầng bên dưới – bảo trì máy chủ, cấp phát dung lượng, <b>scale</b> và <b>vá lỗi (patching)</b> – để bạn chỉ tập trung vào logic ứng dụng.</p>
+
+      <h3>Khái niệm cốt lõi</h3>
+      <ul>
+        <li><span class="t" data-vi="Hàm">Function</span>: đơn vị code bạn triển khai. Bạn viết một <span class="t" data-vi="Hàm xử lý chính">handler</span>, chọn <span class="t" data-vi="Môi trường ngôn ngữ chạy code">runtime</span> (Node.js, Python, Java, .NET, Ruby… hoặc custom runtime) và cấu hình memory, timeout, quyền.</li>
+        <li><span class="t" data-vi="Bộ kích hoạt">Trigger</span>: dịch vụ/tài nguyên gọi function khi có sự kiện. Theo tài liệu, có thể nối với <b>API Gateway, Amazon S3, Amazon SQS, EventBridge và hơn 200 dịch vụ AWS</b> khác. Mỗi lần gọi chạy <b>độc lập, không chia sẻ trạng thái</b>, scale ngang theo nhu cầu.</li>
+        <li><span class="t" data-vi="Môi trường thực thi">Execution environment</span>: môi trường cô lập, an toàn (dựa trên <b>Firecracker</b> microVM) nơi Lambda chạy code. Mặc định, <b>mỗi môi trường xử lý một request tại một thời điểm</b>; môi trường có thể được <b>tái sử dụng</b> (warm start) nhưng trạng thái không chắc còn giữa các lần gọi.</li>
+        <li><span class="t" data-vi="Vai trò thực thi">Execution role</span>: IAM role mà function assume để gọi dịch vụ AWS khác (đọc S3, ghi DynamoDB…). Ngược lại, quyền cho <b>dịch vụ khác gọi function</b> (S3, SNS, EventBridge, API Gateway) nằm trong <span class="t" data-vi="Chính sách gắn trên tài nguyên">resource-based policy</span> của function (tối đa <b>20 KB</b>).</li>
+        <li><b>Giá</b>: trả theo <b>số request</b> + <b>GB-giây</b> thời gian chạy (memory × thời lượng, làm tròn lên 1 ms). Không có phí khi không chạy – “scale to zero”.</li>
+      </ul>
+
+      <h3>Dịch vụ và tài nguyên trong bài</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">
+          <div><h4>AWS Lambda</h4><span class="vi">Điện toán không máy chủ</span><p>Chạy code theo sự kiện, tối đa 15 phút mỗi lần gọi, scale tự động, trả tiền theo request + GB-giây.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">
+          <div><h4>Lambda function / version / alias</h4><span class="vi">Hàm / phiên bản / bí danh</span><p><code>$LATEST</code> sửa được; <b>version</b> là bản chụp bất biến; <b>alias</b> trỏ tới version (dùng cho provisioned concurrency, SnapStart).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg" alt="">
+          <div><h4>Hyperplane ENI</h4><span class="vi">Card mạng do Lambda quản lý</span><p>Nối function tới tài nguyên trong VPC của bạn; dùng chung theo cặp subnet + security group.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Application-Auto-Scaling.svg" alt="">
+          <div><h4>Application Auto Scaling</h4><span class="vi">Tự động co giãn ứng dụng</span><p>Tăng/giảm <b>provisioned concurrency</b> theo lịch (scheduled) hoặc theo mức sử dụng (target tracking).</p></div></div>
+      </div>
+
+      <h3>Ba cách Lambda được gọi (invocation model)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Kiểu gọi</th><th>Cơ chế</th><th>Ví dụ nguồn</th><th>Xử lý lỗi</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Gọi đồng bộ">Synchronous</span> (<code>InvocationType=RequestResponse</code>)</td><td>Bên gọi <b>chờ</b> function xử lý xong và nhận response</td><td>API Gateway, ALB, function URL, SDK/CLI <code>Invoke</code>, Cognito trigger</td><td>Lỗi trả thẳng về bên gọi – <b>bên gọi tự retry</b></td></tr>
+          <tr><td><span class="t" data-vi="Gọi bất đồng bộ">Asynchronous</span> (<code>InvocationType=Event</code>)</td><td>Lambda đưa event vào <b>hàng đợi nội bộ</b>, trả ngay HTTP <b>202</b>; một tiến trình riêng đọc hàng đợi và gọi function</td><td>Amazon S3, Amazon SNS, EventBridge, CloudWatch Logs…</td><td>Lambda <b>tự retry 2 lần</b>; gửi kết quả tới <b>destination</b> hoặc <b>DLQ</b></td></tr>
+          <tr><td><span class="t" data-vi="Ánh xạ nguồn sự kiện">Event source mapping</span> (ESM)</td><td>Tài nguyên <b>của Lambda</b> có các <i>event poller</i> chủ động <b>poll</b> stream/queue rồi gọi function với <b>batch</b> bản ghi</td><td>Amazon SQS, Kinesis, DynamoDB Streams, Amazon MSK, Kafka tự quản, Amazon MQ, DocumentDB</td><td>Lỗi ⇒ xử lý lại cả batch; stream: cấu hình số lần retry, on-failure destination; SQS: DLQ <b>trên queue</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <ul>
+        <li><b>Trigger</b> (S3, SNS, API Gateway) là kiểu <b>push</b>: cấu hình nằm ở <b>dịch vụ phát sự kiện</b> (vd S3 event notification). <b>Event source mapping</b> là kiểu <b>pull</b>: cấu hình là tài nguyên của Lambda, phù hợp xử lý <b>khối lượng lớn theo batch</b>.</li>
+        <li>ESM gom batch theo 3 điều kiện, cái nào tới trước: <b>batching window</b> (0–300 giây; mặc định 0 giây cho Kinesis/DynamoDB/SQS, 500 ms cho MSK/Kafka/MQ/DocumentDB), <b>batch size</b> (tối thiểu 1), hoặc payload chạm <b>6 MB</b>.</li>
+        <li>ESM xử lý mỗi event <b>ít nhất một lần</b> (at-least-once) – có thể trùng ⇒ tài liệu khuyên viết code <span class="t" data-vi="Lũy đẳng – chạy nhiều lần cho cùng kết quả">idempotent</span>.</li>
+        <li><span class="t" data-vi="URL gọi hàm">Function URL</span>: endpoint HTTPS riêng cho một function (<code>https://&lt;url-id&gt;.lambda-url.&lt;region&gt;.on.aws</code>) – cách đơn giản nhất để có HTTP endpoint mà không cần API Gateway (không có throttling/caching/authorizer phong phú như API Gateway – Bài 33).</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Serverless.svg" alt="">AWS Cloud – một Region</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">API Gateway / ALB<small>synchronous – chờ response</small></div>
+            <span class="arrow">Invoke (RequestResponse)</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda function<small>execution environment</small></div>
+            <span class="arrow">execution role</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">DynamoDB / S3 …</div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">S3 / SNS / EventBridge<small>asynchronous – nhận 202</small></div>
+            <span class="arrow">Invoke (Event)</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">Hàng đợi nội bộ của Lambda<small>retry 2 lần, ≤ 6 giờ</small></div>
+            <span class="arrow">gọi function</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda function</div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Queue-Service.svg" alt="">SQS / Kinesis / DynamoDB Streams<small>queue &amp; stream</small></div>
+            <span class="arrow dashed">event poller poll</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Event source mapping<small>batch size + batching window</small></div>
+            <span class="arrow">batch ≤ 6 MB</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda function</div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Ba mô hình gọi Lambda: <b>synchronous</b> (bên gọi chờ kết quả, tự retry), <b>asynchronous</b> (Lambda xếp event vào hàng đợi nội bộ, tự retry và gửi tới destination/DLQ) và <b>event source mapping</b> (Lambda chủ động poll queue/stream và gọi function theo batch).</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – bếp nấu theo đơn</span>
+        <p>Lambda giống một <b>bếp ăn thuê theo suất</b>: bạn chỉ đưa <b>công thức</b> (code). Có đơn (event) thì bếp mở một <b>quầy nấu</b> (execution environment); nhiều đơn cùng lúc thì mở nhiều quầy song song (concurrency). Không có đơn thì không trả tiền thuê bếp. Quầy mới mở cần thời gian <b>nhóm lò</b> (cold start); quầy vừa nấu xong còn nóng thì nấu đơn sau nhanh hơn (warm start). <b>Reserved concurrency</b> là <b>số quầy giữ riêng</b> cho món quan trọng, <b>provisioned concurrency</b> là <b>quầy đã nhóm lò sẵn</b> chờ khách.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Serverless</i>”, “<i>no servers to manage</i>”, “<i>run code in response to events</i>”, “<i>least operational overhead</i>”, “<i>pay only when code runs</i>”, tác vụ <b>ngắn (&lt; 15 phút)</b>, tải thất thường ⇒ <b>AWS Lambda</b>.</li>
+          <li>“<i>Process an image / file as soon as it is uploaded to S3</i>” ⇒ <b>S3 event notification → Lambda</b> (async). Cần đệm, chống mất khi tải đột biến ⇒ S3 → <b>SQS</b> → Lambda (ESM).</li>
+          <li>Function cần quyền ghi DynamoDB ⇒ sửa <b>execution role</b>. S3/SNS bị “access denied” khi gọi function ⇒ thiếu <b>resource-based policy</b> (<code>lambda:InvokeFunction</code>) trên function.</li>
+        </ul></div>
+
+      <div class="callout note"><span class="ttl">Cập nhật mới trong tài liệu (ngoài phạm vi đề thi hiện tại)</span>
+        <p>Tài liệu Lambda hiện chia thành ba “compute primitive”: <b>Lambda Event Functions</b> (tên mới của Lambda function truyền thống – API, ARN, <code>CreateFunction</code>, <code>Invoke</code> không đổi), <b>Lambda Web Functions</b> (chạy web app/HTTP server, một môi trường phục vụ nhiều request) và <b>Lambda MicroVMs</b> (môi trường riêng cho từng user/job, sống tới 8 giờ). Ngoài ra có <b>Durable Functions</b> (workflow nhiều bước tới 1 năm) và <b>Lambda Managed Instances</b> (chạy trên hạ tầng của khách, timeout tới 90 phút cho async/ESM). Đề SAA-C03 vẫn dựa trên mô hình <b>function truyền thống</b> với giới hạn <b>15 phút</b> – bài này dạy theo mô hình đó.</p></div>
+
+      <!-- ===================== PHẦN 2: MEMORY, TIMEOUT, QUOTAS ===================== -->
+      <h2 id="gioi-han"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Memory, timeout và các giới hạn (quotas) quan trọng</h2>
+      <p class="lead">Theo tài liệu, Lambda được thiết kế cho các <b>tác vụ tính toán ngắn</b>, <b>không giữ và không phụ thuộc trạng thái</b> giữa các lần gọi. Hiểu các <span class="t" data-vi="Hạn mức dịch vụ">quota</span> giúp bạn loại nhanh đáp án sai: rất nhiều câu hỏi xoay quanh “việc này có vừa trong giới hạn Lambda không?”.</p>
+
+      <h3>Memory quyết định cả CPU</h3>
+      <ul>
+        <li><span class="t" data-vi="Bộ nhớ cấp cho hàm">Memory</span>: <b>128 MB – 10.240 MB</b>, bước <b>1 MB</b>; mặc định <b>128 MB</b> (cũng là mức thấp nhất – chỉ hợp với hàm đơn giản, chuyển tiếp event).</li>
+        <li>Lambda cấp <b>CPU tỉ lệ thuận với memory</b>. Tại <b>1.769 MB</b>, function có tương đương <b>1 vCPU</b>. Ở mức tối đa 10.240 MB được tới 6 vCPU (kiến thức phổ biến). Không có tùy chọn chỉnh CPU riêng – muốn thêm CPU thì <b>tăng memory</b>.</li>
+        <li>Theo tài liệu, memory là <b>“đòn bẩy chính”</b> điều khiển hiệu năng: hàm bị giới hạn bởi CPU, mạng hay bộ nhớ đều có thể nhanh lên đáng kể khi tăng memory (và đôi khi rẻ hơn vì chạy ngắn hơn). Công cụ chọn memory: <b>AWS Compute Optimizer</b> (gợi ý memory, chỉ x86_64) và <b>AWS Lambda Power Tuning</b> (mã nguồn mở, chạy bằng Step Functions).</li>
+        <li>Băng thông mạng mỗi execution environment: <b>625 Mbps</b> (hàm ngoài VPC có thể xin tăng, scale theo memory tới 3.000 Mbps).</li>
+      </ul>
+
+      <h3>Timeout</h3>
+      <ul>
+        <li><span class="t" data-vi="Thời gian chạy tối đa">Timeout</span>: tối đa <b>900 giây (15 phút)</b> mỗi lần gọi; mặc định 3 giây (kiến thức phổ biến, thấy trong log mẫu “Task timed out after 3.00 seconds”). Đây là giới hạn <b>cứng</b>, không xin tăng được (trừ Lambda Managed Instances mới).</li>
+        <li>Hàm vượt timeout bị dừng và môi trường bị <b>reset</b>. Với async, lỗi timeout được tính là <b>function error</b> và được retry.</li>
+        <li>Pha <b>Init</b> (chạy code ngoài handler) giới hạn <b>10 giây</b>; quá thì Lambda thử Init lại ở lần gọi đầu với timeout của function. Giới hạn 10 giây <b>không áp dụng</b> với provisioned concurrency và SnapStart (init tới 15 phút).</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>15 phút</b><span>timeout tối đa (900 giây)</span></div>
+        <div class="stat"><b>10.240 MB</b><span>memory tối đa (128 MB tối thiểu)</span></div>
+        <div class="stat"><b>1.769 MB</b><span>≈ 1 vCPU</span></div>
+        <div class="stat"><b>6 MB / 1 MB</b><span>payload sync (request &amp; response) / async</span></div>
+        <div class="stat"><b>10 GB</b><span>container image (giải nén)</span></div>
+        <div class="stat"><b>1.000</b><span>concurrency mặc định / Region (tăng được)</span></div>
+      </div>
+
+      <h3>Bảng quota đầy đủ (theo trang Lambda quotas)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tài nguyên</th><th>Giới hạn</th><th>Ghi chú thi</th></tr></thead>
+        <tbody>
+          <tr><td>Concurrent executions</td><td><b>1.000</b> / Region</td><td>Soft – tăng được tới hàng chục nghìn. Tài khoản mới có thể thấp hơn.</td></tr>
+          <tr><td>Storage cho .zip &amp; layers</td><td><b>300 GB</b> / Region (giải nén)</td><td>Không tăng được; mỗi version và layer version đều chiếm chỗ ⇒ dọn version cũ.</td></tr>
+          <tr><td>ENI mỗi VPC (Lambda + EFS…)</td><td><b>3.000</b></td><td>Soft; dùng chung với dịch vụ khác.</td></tr>
+          <tr><td>Memory</td><td>128 – 10.240 MB, bước 1 MB</td><td>CPU tỉ lệ theo memory.</td></tr>
+          <tr><td>Timeout</td><td><b>900 giây</b></td><td>Không tăng được.</td></tr>
+          <tr><td>Environment variables</td><td><b>4 KB</b> tổng cộng</td><td>Dữ liệu bí mật lớn ⇒ Secrets Manager / Parameter Store.</td></tr>
+          <tr><td>Resource-based policy</td><td>20 KB</td><td></td></tr>
+          <tr><td>Layers</td><td><b>5</b> layer / function</td><td></td></tr>
+          <tr><td>Concurrency scaling rate</td><td><b>1.000</b> môi trường / <b>10 giây</b> mỗi function</td><td>Tương đương 10.000 RPS mỗi 10 giây.</td></tr>
+          <tr><td>Invocation payload</td><td><b>6 MB</b> sync (mỗi chiều); <b>200 MB</b> response streaming; <b>1 MB</b> async</td><td>Payload lớn ⇒ đặt vào S3, truyền key.</td></tr>
+          <tr><td>Deployment package .zip</td><td><b>50 MB</b> nén (upload trực tiếp); <b>250 MB</b> giải nén (gồm cả layers, custom runtime)</td><td>File lớn hơn 50 MB upload qua S3, nhưng vẫn ≤ 250 MB giải nén.</td></tr>
+          <tr><td>Container image</td><td><b>10 GB</b> (giải nén, gồm mọi layer)</td><td>Image lưu trong Amazon ECR.</td></tr>
+          <tr><td><code>/tmp</code> (ephemeral storage)</td><td><b>512 MB – 10.240 MB</b>, bước 1 MB</td><td>Giữ lại khi môi trường được tái sử dụng – dùng làm cache tạm.</td></tr>
+          <tr><td>File descriptors / processes-threads</td><td>1.024 / 1.024</td><td></td></tr>
+          <tr><td>Control plane API (trừ Invoke, GetFunction, GetPolicy)</td><td>15 request/giây tổng</td><td>Không tăng được.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Version và alias</h3>
+      <ul>
+        <li>Mỗi lần deploy code là ghi đè <span class="t" data-vi="Phiên bản chưa phát hành">$LATEST</span>. <b>Publish</b> tạo một <span class="t" data-vi="Phiên bản">version</span> đánh số tăng dần, <b>bất biến</b> (code, runtime, memory, layers… bị khóa). Số version không bao giờ dùng lại.</li>
+        <li><b>Qualified ARN</b> có hậu tố version (<code>…:function:helloworld:42</code>); <b>unqualified ARN</b> không hậu tố ⇒ gọi <code>$LATEST</code>.</li>
+        <li><span class="t" data-vi="Bí danh trỏ tới version">Alias</span> (vd <code>PROD</code>, <code>BLUE</code>) là con trỏ tới một version – event source chỉ cần trỏ tới alias, đổi version phía sau không phải sửa trigger. Alias có thể chia trọng số giữa <b>2 version</b> để <b>canary</b> (kiến thức phổ biến).</li>
+        <li>Provisioned concurrency và SnapStart <b>chỉ áp dụng trên version/alias</b>, không dùng được với <code>$LATEST</code>.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Tác vụ chạy <b>&gt; 15 phút</b> (transcode video dài, ETL nhiều giờ) ⇒ <b>không dùng Lambda</b>: chọn <b>ECS/Fargate</b>, <b>AWS Batch</b>, hoặc chia nhỏ thành nhiều bước bằng <b>Step Functions</b> (Bài 31).</li>
+          <li>“<i>Function is CPU-bound and slow</i>” ⇒ <b>tăng memory</b> (CPU tăng theo). Không có tham số “CPU” riêng.</li>
+          <li>Payload request &gt; 6 MB (vd upload ảnh lớn qua API) ⇒ client upload thẳng lên <b>S3 (presigned URL)</b>, Lambda xử lý qua S3 event.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“Tăng timeout lên 30 phút” – <b>không thể</b>, 900 giây là trần.</li>
+          <li>Upload .zip qua S3 giúp vượt giới hạn 50 MB <b>nén</b>, nhưng <b>không</b> vượt được 250 MB <b>giải nén</b>. Dependency lớn (thư viện ML vài GB) ⇒ dùng <b>container image (10 GB)</b> hoặc mount <b>EFS</b>.</li>
+          <li>Đừng lưu dữ liệu cần giữ lâu trong <code>/tmp</code> hay biến toàn cục: Lambda <b>hủy môi trường sau vài giờ</b> kể cả khi function được gọi liên tục.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: ASYNC & DESTINATIONS ===================== -->
+      <h2 id="destinations"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Message.svg" alt="">Gọi bất đồng bộ, retry, Destinations và DLQ</h2>
+      <p class="lead">Với <span class="t" data-vi="Gọi bất đồng bộ">asynchronous invocation</span>, bên gọi không chờ kết quả: Lambda đưa event vào <b>hàng đợi bất đồng bộ</b> của function và tự lo phần còn lại – retry, loại bỏ event quá hạn, và gửi <span class="t" data-vi="Đích nhận bản ghi kết quả">destination</span> khi thành công hoặc thất bại.</p>
+
+      <h3>Retry mặc định (theo tài liệu)</h3>
+      <ul>
+        <li><b>Function error</b> (lỗi code trả về, lỗi runtime, <b>timeout</b>): Lambda chạy lại <b>thêm 2 lần</b> – chờ <b>1 phút</b> trước lần thứ 2 và <b>2 phút</b> trước lần thứ 3.</li>
+        <li><b>Throttling (429)</b> hoặc <b>system error (5xx)</b>: Lambda trả event về hàng đợi và thử lại tới <b>6 giờ</b> (mặc định), khoảng cách tăng theo cấp số nhân từ 1 giây tới tối đa 5 phút.</li>
+        <li>Cấu hình được: <b>Maximum age of event</b> (tối đa <b>6 giờ</b>) và <b>Retry attempts</b> (<b>0 – 2</b>), trên function, version hoặc alias.</li>
+        <li>Event hết hạn hoặc hết lượt retry ⇒ Lambda <b>bỏ (discard)</b> event – trừ khi có on-failure destination hoặc DLQ.</li>
+        <li>Hàng đợi là <b>eventually consistent</b> ⇒ function có thể nhận <b>cùng một event nhiều lần</b> kể cả khi không lỗi ⇒ code phải <b>idempotent</b>.</li>
+        <li>Mẹo dừng khẩn cấp: đặt <b>reserved concurrency = 0</b> ⇒ function không chạy nữa; với async, event mới đi thẳng vào DLQ / on-failure destination <b>không retry</b>.</li>
+      </ul>
+
+      <h3>Destinations – nơi nhận “biên bản” mỗi lần gọi</h3>
+      <p>Bạn cấu hình riêng <b>On success</b> và <b>On failure</b>. Mỗi bản ghi là một JSON chứa <code>requestContext</code> (lý do, ví dụ <code>RetriesExhausted</code>, số lần gọi), <code>requestPayload</code> (event gốc), <code>responseContext</code> và <code>responsePayload</code> (kết quả/lỗi). Execution role cần quyền tương ứng (<code>sqs:SendMessage</code>, <code>sns:Publish</code>, <code>lambda:InvokeFunction</code>, <code>events:PutEvents</code>, <code>s3:PutObject</code>).</p>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Simple-Queue-Service.svg" alt="">
+          <div><h4>Amazon SQS</h4><span class="vi">Standard queue</span><p>Bản ghi đi vào <code>Message</code>. Không hỗ trợ FIFO queue.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" alt="">
+          <div><h4>Amazon SNS</h4><span class="vi">Standard topic</span><p>Giới hạn message 256 KB – payload gần 1 MB có thể lỗi giao.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">
+          <div><h4>Lambda function</h4><span class="vi">Hàm khác</span><p>Bản ghi là payload của function đích – nối chuỗi xử lý.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">
+          <div><h4>EventBridge</h4><span class="vi">Event bus</span><p><code>source: lambda</code>, <code>detail-type</code> “Lambda Function Invocation Result - Success/Failure”.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">
+          <div><h4>Amazon S3</h4><span class="vi">Bucket (chỉ on failure)</span><p>Lưu bản ghi thất bại dạng object JSON <code>aws/lambda/async/&lt;function&gt;/…</code>.</p></div></div>
+      </div>
+
+      <h3>Destinations vs Dead-letter queue</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Destinations</th><th>Dead-letter queue (DLQ) của function</th></tr></thead>
+        <tbody>
+          <tr><td>Khi nào gửi</td><td class="yes">Cả <b>thành công</b> và <b>thất bại</b></td><td class="no">Chỉ khi thất bại / hết hạn</td></tr>
+          <tr><td>Nội dung</td><td>Event + <b>chi tiết response</b>, lỗi, số lần gọi</td><td>Chỉ <b>nội dung event</b> (kèm attribute RequestID, ErrorCode, ErrorMessage 1 KB đầu)</td></tr>
+          <tr><td>Loại đích</td><td>SQS, SNS, Lambda, EventBridge, S3 (on failure)</td><td>SQS standard hoặc SNS standard</td></tr>
+          <tr><td>Phạm vi cấu hình</td><td>Function, version, <b>alias</b></td><td>Chỉ cấp function (version dùng chung với <code>$LATEST</code>)</td></tr>
+          <tr><td>Áp dụng cho ESM</td><td>On-failure cho Kinesis, DynamoDB Streams, Kafka (MSK / tự quản)</td><td>Với <b>SQS làm nguồn</b>: cấu hình DLQ <b>trên SQS queue</b>, không trên function</td></tr>
+          <tr><td>Khuyến nghị</td><td class="yes">Linh hoạt hơn: nhiều loại đích, có chi tiết response, cấu hình theo alias</td><td>Phương án thay thế, vẫn được hỗ trợ</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Serverless.svg" alt="">Asynchronous invocation với Destinations</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">S3 bucket<small>ObjectCreated</small></div>
+            <span class="arrow">async (202)</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">Async event queue<small>max age ≤ 6 giờ</small></div>
+            <span class="arrow">tối đa 3 lần chạy</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Function: resize-image<small>retry 0–2 (1 phút, 2 phút)</small></div>
+          </div>
+          <div class="row">
+            <div class="flow">
+              <span class="arrow">On success</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">EventBridge bus<small>kích hoạt bước tiếp theo</small></div>
+            </div>
+            <div class="flow">
+              <span class="arrow dashed">On failure</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Queue-Service.svg" alt="">SQS queue<small>event + lỗi để xử lý lại</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> S3 gọi function bất đồng bộ. Lambda giữ event trong hàng đợi nội bộ, chạy tối đa 3 lần (1 lần + 2 retry). Kết quả thành công gửi tới EventBridge để kích hoạt bước sau; thất bại (hết retry hoặc quá maximum event age) gửi bản ghi chi tiết vào SQS thay vì bị bỏ.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Capture failed asynchronous invocations with error details / response</i>”, “<i>route successful results to another service without code</i>” ⇒ <b>Lambda Destinations</b> (on failure / on success).</li>
+          <li>“<i>Lambda reads from SQS, failed messages must be isolated</i>” ⇒ <b>redrive policy / DLQ trên SQS queue</b> (Bài 30), không phải DLQ của function.</li>
+          <li>“<i>Duplicate processing occurs</i>” ⇒ async và ESM đều có thể giao lặp ⇒ làm function <b>idempotent</b> (vd conditional write DynamoDB).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: CONCURRENCY ===================== -->
+      <h2 id="concurrency"><img src="../assets/icons/svc/AWS-Application-Auto-Scaling.svg" alt="">Concurrency: reserved và provisioned</h2>
+      <p class="lead"><span class="t" data-vi="Số lời gọi đồng thời">Concurrency</span> là số request mà function đang xử lý <b>cùng một lúc</b>. Mỗi request đồng thời cần một execution environment riêng; Lambda tự tăng số môi trường cho tới khi chạm <b>quota concurrency của account</b> – mặc định <b>1.000</b> cho <b>tất cả function trong một Region</b>.</p>
+
+      <h3>Công thức tính (rất hay ra đề)</h3>
+      <pre><code>Concurrency = (số request trung bình mỗi giây) × (thời gian xử lý trung bình, giây)
+
+Ví dụ tài liệu:
+  100 req/s × 1    s   = 100
+  100 req/s × 0,5  s   = 50
+  200 req/s × 0,25 s   = 50
+  5.000 req/s × 0,2 s  = 1.000   ← chạm đúng quota mặc định</code></pre>
+      <ul>
+        <li>Concurrency <b>khác</b> request per second. Ngoài concurrency, Lambda còn giới hạn <b>RPS = 10 × concurrency quota</b> (mặc định <b>10.000 RPS</b>/account). Hàm rất ngắn (vd 20 ms, 30.000 RPS ⇒ concurrency chỉ 600) vẫn bị throttle vì vượt 10.000 RPS ⇒ phải xin tăng quota lên ≥ 3.000.</li>
+        <li>Vượt concurrency ⇒ request bị <span class="t" data-vi="Bóp băng thông – từ chối tạm thời">throttle</span> (lỗi <b>429 TooManyRequestsException</b>). Sync: bên gọi nhận lỗi; async: Lambda tự thử lại tới 6 giờ; ESM: poller chậm lại.</li>
+        <li><span class="t" data-vi="Tốc độ tăng concurrency">Concurrency scaling rate</span>: mỗi function tăng tối đa <b>1.000 execution environment mỗi 10 giây</b> (hoặc 10.000 RPS mỗi 10 giây), độc lập giữa các function.</li>
+      </ul>
+
+      <h3>Reserved concurrency</h3>
+      <ul>
+        <li><span class="t" data-vi="Concurrency dành riêng">Reserved concurrency</span> đặt <b>đồng thời mức tối đa và tối thiểu</b> cho function: phần này <b>dành riêng</b> cho nó, function khác không dùng được; function cũng <b>không vượt quá</b> mức này (throttle khi chạm trần).</li>
+        <li><b>Miễn phí</b>. Dùng để: (1) bảo đảm function quan trọng luôn có capacity, (2) <b>giới hạn</b> function để không làm quá tải tài nguyên hạ nguồn (vd database chỉ chịu N kết nối), (3) đặt <b>= 0</b> để tắt function.</li>
+        <li>Lambda luôn giữ <b>100</b> concurrency cho các function không reserved ⇒ với quota 1.000 chỉ reserve được tối đa <b>900</b> (quota 2.000 ⇒ 1.900).</li>
+        <li>Reserved concurrency <b>không khởi tạo sẵn</b> môi trường ⇒ vẫn có cold start.</li>
+      </ul>
+
+      <h3>Provisioned concurrency</h3>
+      <ul>
+        <li><span class="t" data-vi="Concurrency khởi tạo sẵn">Provisioned concurrency</span> là số execution environment được <b>khởi tạo trước</b> (đã chạy xong Init), sẵn sàng phản hồi với độ trễ <b>hai chữ số mili-giây</b> ⇒ <b>loại bỏ cold start</b> cho phần lưu lượng nằm trong mức provisioned.</li>
+        <li><b>Tốn phí</b> (tính liên tục, kể cả khi không có request). Phù hợp workload <b>tương tác</b> (web, mobile, API) nhạy độ trễ; pipeline bất đồng bộ thường không cần.</li>
+        <li>Cấu hình trên <b>version hoặc alias</b> (không phải <code>$LATEST</code>); event source phải trỏ đúng alias/version đó. Lambda cần 1–2 phút chuẩn bị và cấp tối đa <b>6.000</b> môi trường mỗi phút; chỉ dùng được khi cấp phát <b>xong toàn bộ</b>.</li>
+        <li>Vượt mức provisioned: nếu không đặt reserved ⇒ dùng tiếp concurrency chung (có thể cold start); nếu có reserved ⇒ bị throttle khi chạm reserved. Provisioned <b>không được lớn hơn</b> reserved.</li>
+        <li>Tự động hóa bằng <b>Application Auto Scaling</b>: <b>scheduled scaling</b> (lưu lượng dự đoán được, vd giờ hành chính) hoặc <b>target tracking</b> theo metric <code>LambdaProvisionedConcurrencyUtilization</code> (vd giữ 70%, chọn 10%–90%). Tài liệu khuyên cộng thêm <b>10% buffer</b> so với đỉnh thường gặp.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 300" width="760" role="img" aria-label="Chia quota concurrency 1000 cho các function">
+          <text x="20" y="28" font-size="13" font-weight="700">Account concurrency quota = 1.000 (một Region)</text>
+          <text x="20" y="52" font-size="11" class="muted">Kịch bản A – reserved concurrency</text>
+          <rect x="20" y="60" width="288" height="44" rx="4" fill="#2E73B8" fill-opacity="0.25" stroke="#2E73B8"/>
+          <text x="164" y="80" font-size="12" text-anchor="middle" font-weight="700">function-blue: reserved 400</text>
+          <text x="164" y="96" font-size="10" text-anchor="middle" class="muted">chỉ nó dùng; tối đa 400</text>
+          <rect x="308" y="60" width="288" height="44" rx="4" fill="#ED7100" fill-opacity="0.25" stroke="#ED7100"/>
+          <text x="452" y="80" font-size="12" text-anchor="middle" font-weight="700">function-orange: reserved 400</text>
+          <text x="452" y="96" font-size="10" text-anchor="middle" class="muted">chạm 400 ⇒ throttle</text>
+          <rect x="596" y="60" width="144" height="44" rx="4" fill="#7AA116" fill-opacity="0.25" stroke="#7AA116"/>
+          <text x="668" y="80" font-size="12" text-anchor="middle" font-weight="700">Unreserved 200</text>
+          <text x="668" y="96" font-size="10" text-anchor="middle" class="muted">các function còn lại</text>
+          <image href="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" x="20" y="112" width="22" height="22"/>
+          <text x="48" y="128" font-size="10" class="muted">Lambda luôn giữ tối thiểu 100 cho phần unreserved ⇒ reserve tối đa 900.</text>
+
+          <text x="20" y="170" font-size="11" class="muted">Kịch bản B – provisioned 200 + reserved 400 trên cùng function-orange</text>
+          <rect x="20" y="178" width="144" height="44" rx="4" fill="#ED7100" fill-opacity="0.55" stroke="#ED7100"/>
+          <text x="92" y="198" font-size="12" text-anchor="middle" font-weight="700">Provisioned 200</text>
+          <text x="92" y="214" font-size="10" text-anchor="middle">khởi tạo sẵn – không cold start</text>
+          <rect x="164" y="178" width="144" height="44" rx="4" fill="#ED7100" fill-opacity="0.2" stroke="#ED7100" stroke-dasharray="5 3"/>
+          <text x="236" y="198" font-size="12" text-anchor="middle" font-weight="700">On-demand 200</text>
+          <text x="236" y="214" font-size="10" text-anchor="middle" class="muted">trong reserved – có cold start</text>
+          <rect x="308" y="178" width="432" height="44" rx="4" fill="#7AA116" fill-opacity="0.15" stroke="#7AA116"/>
+          <text x="524" y="198" font-size="12" text-anchor="middle" font-weight="700">Unreserved 600</text>
+          <text x="524" y="214" font-size="10" text-anchor="middle" class="muted">function-orange KHÔNG được dùng (vì đã đặt reserved)</text>
+          <path d="M308 236 V258" stroke="#DD344C" stroke-width="3"/>
+          <text x="316" y="254" font-size="11" style="fill:#DD344C" font-weight="700">Request thứ 401 của function-orange ⇒ 429 throttle</text>
+          <text x="20" y="284" font-size="10" class="muted">Cả reserved và provisioned đều trừ vào quota 1.000 của account.</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Chia quota concurrency 1.000 của một Region (dựa theo ví dụ trong tài liệu). Kịch bản A: hai function reserved 400 mỗi cái, phần còn lại 200 dùng chung. Kịch bản B: function-orange có provisioned 200 (không cold start) nằm trong reserved 400; vượt 400 thì bị throttle dù account còn dư concurrency.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Reserved concurrency</th><th>Provisioned concurrency</th></tr></thead>
+        <tbody>
+          <tr><td>Định nghĩa</td><td>Số môi trường <b>tối đa</b> (và dành riêng) cho function</td><td>Số môi trường <b>khởi tạo sẵn</b> cho version/alias</td></tr>
+          <tr><td>Cách cấp phát</td><td>Theo nhu cầu (on-demand)</td><td>Cấp trước khi có request</td></tr>
+          <tr><td>Cold start</td><td class="no">Có thể xảy ra</td><td class="yes">Không (trong phạm vi provisioned)</td></tr>
+          <tr><td>Throttle</td><td>Khi chạm mức reserved</td><td>Không reserved: tràn sang unreserved. Có reserved: throttle khi chạm reserved</td></tr>
+          <tr><td>Giá</td><td class="yes">Miễn phí</td><td class="no">Tính phí thêm</td></tr>
+          <tr><td>Phạm vi</td><td>Cả function</td><td>Version hoặc alias (không <code>$LATEST</code>)</td></tr>
+          <tr><td>Use case đề thi</td><td>Bảo vệ DB hạ nguồn, cô lập function quan trọng, tắt khẩn cấp (= 0)</td><td>API nhạy độ trễ, lưu lượng đỉnh dự đoán được (scheduled scaling)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Function overwhelms the database with too many connections</i>” ⇒ <b>reserved concurrency</b> để giới hạn, và/hoặc <b>RDS Proxy</b> để gom kết nối (Bài 26).</li>
+          <li>“<i>Critical function must always have capacity even when other functions spike</i>” ⇒ <b>reserved concurrency</b>.</li>
+          <li>“<i>Eliminate cold-start latency</i>”, “<i>consistent low latency at predictable peak hours</i>” ⇒ <b>provisioned concurrency</b> + <b>Application Auto Scaling scheduled</b>.</li>
+          <li>“<i>TooManyRequestsException / 429</i>” toàn account ⇒ xin <b>tăng quota concurrency</b> qua Service Quotas (sau khi tính bằng công thức).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Reserved concurrency <b>không</b> giảm cold start – nó chỉ “giữ chỗ” và “đặt trần”.</li>
+          <li>Provisioned concurrency đặt trên <code>$LATEST</code> là <b>không hợp lệ</b>; gọi function bằng unqualified ARN sẽ không dùng môi trường provisioned.</li>
+          <li>Đặt reserved quá cao cho một function có thể làm các function khác thiếu concurrency (pool unreserved nhỏ lại).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: COLD START & SNAPSTART ===================== -->
+      <h2 id="cold-start"><img src="../assets/icons/cat/Compute.svg" alt="">Vòng đời execution environment, cold start và SnapStart</h2>
+      <p class="lead">Mỗi execution environment trải qua ba pha: <b>Init → Invoke → Shutdown</b>. Khi chưa có môi trường sẵn, Lambda phải tải code, khởi động môi trường và chạy code khởi tạo – phần trễ thêm này gọi là <span class="t" data-vi="Khởi động lạnh">cold start</span>. Môi trường được tái sử dụng cho request sau gọi là <span class="t" data-vi="Khởi động ấm">warm start</span>.</p>
+
+      <ol class="steps">
+        <li><b>Init</b> – khởi động các extension, bootstrap runtime, chạy <b>static code</b> (code ngoài handler: import thư viện, tạo SDK client, mở kết nối DB). Giới hạn <b>10 giây</b>. Thời gian Init được <b>tính tiền</b>.</li>
+        <li><b>Invoke</b> – chạy handler; toàn bộ pha bị giới hạn bởi <b>timeout</b> của function. Lỗi/timeout ⇒ Lambda <b>reset</b> môi trường (lần sau phải init lại).</li>
+        <li><b>Freeze / thaw</b> – xong request, môi trường bị “đóng băng” và giữ lại một thời gian; request mới tới thì “rã đông” và dùng lại: biến toàn cục, kết nối DB, nội dung <code>/tmp</code> còn nguyên.</li>
+        <li><b>Shutdown</b> – Lambda gửi sự kiện Shutdown cho extension (0 ms nếu không có extension, 500 ms với internal extension, 2.000 ms với external extension). Lambda vẫn <b>hủy môi trường sau vài giờ</b> để cập nhật runtime.</li>
+      </ol>
+
+      <ul>
+        <li>Theo tài liệu, cold start thường xảy ra ở <b>dưới 1%</b> số lần gọi, kéo dài từ <b>dưới 100 ms tới hơn 1 giây</b>; hay gặp ở môi trường dev/test (ít gọi) hơn production.</li>
+        <li>Giảm cold start bằng code: <b>khởi tạo ngoài handler</b> (tái sử dụng kết nối), <b>chỉ import thứ cần dùng</b>, giảm kích thước package, lazy-load tài nguyên ít dùng, tách function “to” thành nhiều function nhỏ.</li>
+        <li>Giảm cold start bằng cấu hình: <b>provisioned concurrency</b> (khởi tạo sẵn) hoặc <b>SnapStart</b> (khôi phục từ snapshot).</li>
+      </ul>
+
+      <h3>Lambda SnapStart</h3>
+      <ul>
+        <li><span class="t" data-vi="Khởi động nhanh từ ảnh chụp">SnapStart</span>: khi bạn <b>publish một version</b>, Lambda chạy Init một lần, chụp <b>snapshot Firecracker microVM</b> (trạng thái memory + disk của môi trường đã khởi tạo), <b>mã hóa</b> và cache nhiều bản sao. Khi gọi và khi scale, Lambda <b>resume</b> môi trường mới từ snapshot thay vì init từ đầu ⇒ startup từ vài giây xuống <b>dưới 1 giây</b>, thường <b>không cần sửa code</b>.</li>
+        <li>Runtime hỗ trợ: <b>Java 11+</b>, <b>Python 3.12+</b>, <b>.NET 8+</b> (cả .zip và container image dựa trên base image AWS). Node.js, Ruby, OS-only runtime <b>không</b> hỗ trợ.</li>
+        <li><b>Không dùng chung</b> với: provisioned concurrency, Amazon EFS, Amazon S3 Files, ephemeral storage &gt; 512 MB. Chỉ trên <b>published version</b> và alias trỏ tới version (không <code>$LATEST</code>).</li>
+        <li><b>Giá</b>: với runtime <b>Java</b> – <b>không tốn thêm</b>. Với Python/.NET – trả phí <b>caching</b> snapshot (tối thiểu 3 giờ, theo memory) và phí <b>restoration</b> mỗi lần khôi phục.</li>
+        <li>Lưu ý <b>uniqueness</b>: một snapshot dùng làm trạng thái ban đầu cho nhiều môi trường ⇒ giá trị “ngẫu nhiên/duy nhất” sinh ra trong Init (ID, secret, seed) sẽ bị <b>trùng</b> – phải sinh sau khi restore (dùng <b>runtime hooks</b> before-checkpoint / after-restore). Kết nối mạng mở trong Init cần kiểm tra lại; dữ liệu tạm (credential, timestamp) cần làm mới.</li>
+      </ul>
+
+      <div class="compare">
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/svc/AWS-Application-Auto-Scaling.svg" alt="">Provisioned concurrency</h4>
+          <ul>
+            <li>Môi trường <b>luôn ấm sẵn</b> – phản hồi hai chữ số ms.</li>
+            <li>Mọi runtime.</li>
+            <li>Trả tiền liên tục cho số môi trường provisioned.</li>
+            <li>Dùng khi yêu cầu độ trễ <b>nghiêm ngặt</b> mà SnapStart chưa đủ.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">SnapStart</h4>
+          <ul>
+            <li>Resume từ snapshot – startup <b>dưới 1 giây</b> (tối ưu).</li>
+            <li>Java 11+, Python 3.12+, .NET 8+.</li>
+            <li>Java: <b>miễn phí</b>; Python/.NET: phí cache + restore.</li>
+            <li>Hiệu quả nhất khi gọi <b>ở quy mô lớn</b>; hàm ít gọi cải thiện ít hơn.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Java (Spring Boot) function has multi-second cold starts; reduce startup latency at no additional cost</i>” ⇒ <b>SnapStart</b>.</li>
+          <li>“<i>Strict, predictable low latency for every request</i>” ⇒ <b>provisioned concurrency</b> (có phí).</li>
+          <li>“<i>Reuse database connections across invocations</i>” ⇒ khởi tạo client/kết nối <b>ngoài handler</b> (static init) – kết hợp <b>RDS Proxy</b> khi concurrency cao.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: LAMBDA IN VPC ===================== -->
+      <h2 id="lambda-vpc"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">Lambda trong VPC</h2>
+      <p class="lead">Mọi function thực ra luôn chạy trong một <b>VPC do Lambda sở hữu và quản lý</b> (bạn không thấy) – VPC này <b>có Internet</b>. Khi function cần truy cập tài nguyên <b>private</b> trong VPC của bạn (RDS, ElastiCache, EC2, internal ALB…), bạn <b>gắn function vào VPC</b> bằng cách chọn <b>private subnet</b> và <b>security group</b>.</p>
+
+      <h3>Hyperplane ENI – cách Lambda “cắm” vào VPC</h3>
+      <ul>
+        <li>Lambda tạo <span class="t" data-vi="Card mạng Hyperplane do Lambda quản lý">Hyperplane ENI</span> trong các subnet bạn chọn. ENI gắn với <b>một tổ hợp subnet + security group</b>; các function khác dùng <b>cùng</b> tổ hợp sẽ <b>dùng chung</b> ENI ⇒ tài liệu khuyên dùng chung subnet/SG cho các function để tránh tạo ENI mới.</li>
+        <li>Mỗi Hyperplane ENI hỗ trợ tới <b>65.000 kết nối/port</b>; vượt thì Lambda tự thêm ENI. ENI không cần tự cấu hình, không hiển thị để quản lý trực tiếp.</li>
+        <li>Function mới ở trạng thái <b>Pending</b> (không gọi được) trong lúc tạo ENI – có thể mất <b>vài phút</b>. Function <b>idle 14 ngày</b> ⇒ Lambda thu hồi ENI, function thành <b>Inactive</b>; lần gọi kế tiếp thất bại và function quay lại Pending tới khi có ENI.</li>
+        <li>Gỡ cấu hình VPC: Lambda cần tới <b>20 phút</b> để xóa ENI (chỉ xóa khi không function/version nào khác dùng).</li>
+        <li>Quota ENI: <b>3.000 ENI mỗi VPC</b> (chia sẻ với EFS và dịch vụ khác). Function không kết nối trực tiếp được VPC có <b>dedicated tenancy</b> (phải peer sang VPC default tenancy).</li>
+      </ul>
+
+      <h3>Quyền IAM cần có</h3>
+      <ul>
+        <li><b>Execution role</b> cần quyền tạo/quản lý ENI: gắn managed policy <b>AWSLambdaVPCAccessExecutionRole</b> (console tự thêm) hoặc tự cấp <code>ec2:CreateNetworkInterface</code>, <code>ec2:DescribeNetworkInterfaces</code>, <code>ec2:DescribeSubnets</code>, <code>ec2:DeleteNetworkInterface</code>, <code>ec2:AssignPrivateIpAddresses</code>, <code>ec2:UnassignPrivateIpAddresses</code> trên <code>"Resource": "*"</code>.</li>
+        <li>Các quyền EC2 này cũng <b>vô tình cấp cho code</b> của function ⇒ theo nguyên tắc least privilege, thêm <b>Deny</b> với điều kiện <code>lambda:SourceFunctionArn</code> để chặn code gọi EC2 API mà Lambda service vẫn quản lý được ENI.</li>
+        <li>Quản trị: condition key <code>lambda:VpcIds</code>, <code>lambda:SubnetIds</code>, <code>lambda:SecurityGroupIds</code> trong IAM policy cho <code>CreateFunction</code>/<code>UpdateFunctionConfiguration</code> – vd <b>bắt buộc</b> mọi function phải gắn VPC (<code>"Null": {"lambda:VpcIds": "true"}</code> ⇒ Deny).</li>
+      </ul>
+
+      <h3>Ra Internet và gọi dịch vụ AWS từ function trong VPC</h3>
+      <ul>
+        <li>Sau khi gắn VPC, function <b>chỉ</b> truy cập được những gì VPC đó cho phép – <b>mất Internet</b> mặc định.</li>
+        <li>Muốn ra Internet (gọi API bên thứ ba): đặt function trong <b>private subnet</b> có route <code>0.0.0.0/0</code> → <b>NAT gateway</b> nằm ở <b>public subnet</b> (public subnet route tới internet gateway). IPv6: route <code>::/0</code> → <b>egress-only internet gateway</b>.</li>
+        <li><b>Gắn function vào public subnet KHÔNG cho Internet</b> và không cho public IP – ENI của Lambda không có public IP.</li>
+        <li>Chỉ cần gọi dịch vụ AWS (S3, DynamoDB, SQS, Secrets Manager…) mà không cần Internet ⇒ dùng <b>VPC endpoint</b>: <b>gateway endpoint</b> (S3, DynamoDB – miễn phí) hoặc <b>interface endpoint</b> (dịch vụ khác) – Bài 22. Rẻ hơn và riêng tư hơn NAT.</li>
+        <li>Tài liệu khuyên dùng <b>ít nhất 2 AZ</b> (chọn subnet ở nhiều AZ) và <b>NAT gateway mỗi AZ</b> để tăng tính sẵn sàng. Security group của function phải cho phép <b>outbound</b>; SG của DB cho phép inbound từ SG của function.</li>
+        <li>IPv6: bật <b>Allow IPv6 traffic for dual-stack subnets</b> – mọi subnet phải dual-stack; không hỗ trợ subnet IPv6-only.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Serverless.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region</span>
+            <div class="row">
+              <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda service VPC<small>do AWS quản lý, chạy code</small></div>
+              <div class="node"><img src="../assets/icons/res/Internet.svg" alt="">Internet<small>API bên thứ ba</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">DynamoDB / S3<small>dịch vụ AWS public</small></div>
+            </div>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC của bạn 10.0.0.0/16</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" alt="">Internet gateway</div>
+                <div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">Gateway endpoint<small>S3 / DynamoDB – không qua NAT</small></div>
+              </div>
+              <div class="row">
+                <div class="grp az"><span class="lbl">Availability Zone A</span>
+                  <div class="grp pub"><span class="lbl">Public subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">NAT gateway A<small>Elastic IP</small></div></div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet (chọn cho Lambda)</span>
+                    <div class="row center">
+                      <div class="node"><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg" alt="">Hyperplane ENI<small>SG: sg-lambda</small></div>
+                      <div class="node"><img src="../assets/icons/res/Amazon-RDS-Proxy-Instance.svg" alt="">RDS Proxy</div>
+                      <div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS primary</div>
+                    </div></div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone B</span>
+                  <div class="grp pub"><span class="lbl">Public subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">NAT gateway B<small>Elastic IP</small></div></div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet (chọn cho Lambda)</span>
+                    <div class="row center">
+                      <div class="node"><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg" alt="">Hyperplane ENI<small>dùng chung subnet + SG</small></div>
+                      <div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS standby</div>
+                    </div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> Function gắn vào VPC: code vẫn chạy trong VPC của Lambda, đi vào VPC của bạn qua <b>Hyperplane ENI</b> ở các <b>private subnet</b> (2 AZ). Truy cập RDS qua <b>RDS Proxy</b>; ra Internet qua route <code>0.0.0.0/0</code> → <b>NAT gateway</b> ở public subnet → internet gateway; gọi S3/DynamoDB qua <b>gateway endpoint</b> không cần NAT.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Lambda must access an RDS database in a private subnet</i>” ⇒ cấu hình <b>VPC</b> cho function (private subnet + SG), SG của DB cho phép inbound từ SG của Lambda.</li>
+          <li>“<i>After connecting to the VPC, the function can no longer reach the internet / third-party API</i>” ⇒ <b>NAT gateway</b> trong public subnet + route từ private subnet của function.</li>
+          <li>“<i>VPC-connected function must access S3 / DynamoDB privately, no internet, lowest cost</i>” ⇒ <b>gateway VPC endpoint</b>.</li>
+          <li>“<i>Many concurrent Lambda functions exhaust database connections</i>” ⇒ <b>RDS Proxy</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Chọn <b>public subnet</b> cho function để “có Internet” – <b>sai</b>, ENI của Lambda không có public IP.</li>
+          <li>Gắn Elastic IP cho function – không làm được; muốn IP ra ngoài cố định (whitelist ở đối tác) ⇒ đi qua <b>NAT gateway có Elastic IP</b>.</li>
+          <li>Không cần gắn VPC chỉ để gọi S3/DynamoDB – function ngoài VPC đã gọi được dịch vụ AWS public. Chỉ gắn VPC khi cần tài nguyên <b>private</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: LAYERS & PACKAGING ===================== -->
+      <h2 id="layers"><img src="../assets/icons/svc/Amazon-Elastic-Container-Registry.svg" alt="">Layers, đóng gói và container image</h2>
+      <p class="lead">Một <span class="t" data-vi="Lớp chứa thư viện/dữ liệu dùng chung">Lambda layer</span> là file <b>.zip</b> chứa code hoặc dữ liệu bổ sung – thường là <b>thư viện phụ thuộc</b>, <b>custom runtime</b> hoặc <b>file cấu hình</b>. Layer giúp tách thư viện khỏi code nghiệp vụ và dùng chung giữa nhiều function.</p>
+
+      <h3>Vì sao dùng layer (theo tài liệu)</h3>
+      <ul>
+        <li><b>Giảm kích thước deployment package</b> – thư viện để trong layer, package chỉ còn code nghiệp vụ.</li>
+        <li><b>Tách logic khỏi dependency</b> – cập nhật thư viện độc lập với code và ngược lại.</li>
+        <li><b>Chia sẻ dependency giữa nhiều function</b> – tạo một lần, gắn cho bao nhiêu function cũng được (cũng có thể chia sẻ sang account khác qua quyền của layer version).</li>
+        <li>Dùng được <b>code editor trên console</b> (package quá lớn thì không mở được editor).</li>
+        <li><b>Khóa phiên bản AWS SDK</b> – runtime có SDK nhúng có thể đổi; đặt SDK vào layer để cố định version.</li>
+      </ul>
+
+      <h3>Cách hoạt động và giới hạn</h3>
+      <ul>
+        <li>Khi gắn layer, Lambda <b>giải nén nội dung vào thư mục <code>/opt</code></b> trong execution environment; runtime có sẵn đường dẫn tới các thư mục con trong <code>/opt</code>.</li>
+        <li>Tối đa <b>5 layer</b> mỗi function. Tổng code + mọi layer + custom runtime ≤ <b>250 MB giải nén</b>.</li>
+        <li><span class="t" data-vi="Phiên bản layer">Layer version</span> là bản chụp <b>bất biến</b>, đánh số từ 1, mỗi version có ARN riêng (<code>…:layer:my-layer:1</code>); khi gắn phải chỉ rõ version.</li>
+        <li>Layer <b>chỉ dùng với function đóng gói .zip</b>. Function dạng <b>container image</b> phải đóng runtime + dependency vào image.</li>
+        <li>Với <b>Go và Rust</b>, tài liệu khuyên <b>không</b> dùng layer (binary đã chứa dependency; layer làm tăng cold start).</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>.zip archive (+ layers)</th><th>Container image</th></tr></thead>
+        <tbody>
+          <tr><td>Kích thước tối đa</td><td>50 MB nén khi upload trực tiếp; <b>250 MB giải nén</b> (gồm layers)</td><td><b>10 GB</b> giải nén</td></tr>
+          <tr><td>Nơi lưu</td><td>Lambda-managed storage (300 GB/Region) hoặc S3 tự quản</td><td><b>Amazon ECR</b></td></tr>
+          <tr><td>Layers</td><td class="yes">Tối đa 5</td><td class="no">Không – đóng gói vào image</td></tr>
+          <tr><td>Khi chọn</td><td>Function nhỏ, chia sẻ thư viện qua layer, dùng console editor</td><td>Dependency lớn (ML, thư viện native), đã có quy trình build Docker/CI</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Many functions share the same libraries; reduce duplication and package size</i>” ⇒ <b>Lambda layers</b>.</li>
+          <li>“<i>Dependencies exceed 250 MB (e.g. ML libraries, ~2–5 GB)</i>”, “<i>team already packages apps as Docker images</i>” ⇒ <b>Lambda container image</b> (tới 10 GB) lưu trong <b>ECR</b>.</li>
+          <li>Cần file dùng chung lớn / ghi đọc chung giữa nhiều function ⇒ mount <b>Amazon EFS</b> (lưu ý: không dùng chung với SnapStart).</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>Lambda</b> = serverless compute theo sự kiện, trả theo <b>request + GB-giây</b>; mỗi môi trường xử lý <b>1 request/lần</b>; tác vụ phải <b>≤ 15 phút</b>.</li>
+          <li>Ba kiểu gọi: <b>sync</b> (API Gateway, ALB, function URL – bên gọi retry), <b>async</b> (S3, SNS, EventBridge – Lambda retry <b>2 lần</b>, event giữ tới <b>6 giờ</b>), <b>event source mapping</b> (SQS, Kinesis, DynamoDB Streams, MSK, MQ – Lambda poll theo batch, at-least-once).</li>
+          <li>Giới hạn: memory <b>128–10.240 MB</b> (CPU theo memory, 1.769 MB ≈ 1 vCPU), timeout <b>900 s</b>, payload <b>6 MB</b> sync / <b>1 MB</b> async, env vars <b>4 KB</b>, .zip <b>50 MB</b> nén / <b>250 MB</b> giải nén, image <b>10 GB</b>, <code>/tmp</code> 512 MB–10 GB, <b>5 layer</b>.</li>
+          <li><b>Destinations</b> (on success / on failure → SQS, SNS, Lambda, EventBridge, S3) chứa cả response; <b>DLQ</b> (SQS/SNS) chỉ chứa event lỗi. Nguồn SQS ⇒ DLQ đặt trên queue.</li>
+          <li><b>Concurrency = RPS × thời gian xử lý</b>. Quota <b>1.000</b>/Region (RPS ≤ 10 × concurrency), scale <b>1.000 môi trường / 10 s</b> mỗi function. <b>Reserved</b> = trần + dành riêng, miễn phí, giữ 100 cho unreserved, = 0 để tắt. <b>Provisioned</b> = khởi tạo sẵn trên version/alias, chống cold start, có phí, scale bằng Application Auto Scaling.</li>
+          <li><b>Cold start</b> &lt; 1% lời gọi; Init ≤ 10 s; khởi tạo client ngoài handler. <b>SnapStart</b> (Java 11+, Python 3.12+, .NET 8+, chỉ published version, không cùng provisioned concurrency/EFS) – Java miễn phí.</li>
+          <li><b>Lambda trong VPC</b>: Hyperplane ENI dùng chung theo subnet + SG; cần <b>AWSLambdaVPCAccessExecutionRole</b>; mất Internet ⇒ <b>private subnet + NAT gateway</b> (public subnet không giúp gì); dịch vụ AWS ⇒ <b>VPC endpoint</b>; DB ⇒ <b>RDS Proxy</b>.</li>
+          <li><b>Layers</b>: .zip giải nén vào <code>/opt</code>, version bất biến, chia sẻ thư viện; không dùng với container image.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Serverless compute</dt><dd><b>Điện toán không máy chủ</b> – không quản lý server, scale tự động, trả theo dùng.</dd></div>
+        <div><dt>Function / Handler</dt><dd><b>Hàm / Hàm xử lý chính</b> – điểm vào code Lambda gọi mỗi lần invoke.</dd></div>
+        <div><dt>Runtime</dt><dd><b>Môi trường ngôn ngữ chạy code</b> – Node.js, Python, Java, .NET… hoặc custom runtime.</dd></div>
+        <div><dt>Trigger</dt><dd><b>Bộ kích hoạt</b> – dịch vụ đẩy (push) event tới function; cấu hình ở dịch vụ nguồn.</dd></div>
+        <div><dt>Execution environment</dt><dd><b>Môi trường thực thi</b> – microVM Firecracker cô lập; Init → Invoke → Shutdown.</dd></div>
+        <div><dt>Execution role</dt><dd><b>Vai trò thực thi</b> – IAM role function assume để gọi dịch vụ AWS.</dd></div>
+        <div><dt>Synchronous / Asynchronous invocation</dt><dd><b>Gọi đồng bộ / bất đồng bộ</b> – <code>RequestResponse</code> / <code>Event</code> (trả 202).</dd></div>
+        <div><dt>Event source mapping (ESM)</dt><dd><b>Ánh xạ nguồn sự kiện</b> – Lambda poll queue/stream và gọi function theo batch.</dd></div>
+        <div><dt>Batching window / Batch size</dt><dd><b>Cửa sổ gom lô / Kích thước lô</b> – 0–300 s; payload lô ≤ 6 MB.</dd></div>
+        <div><dt>Function URL</dt><dd><b>URL gọi hàm</b> – endpoint HTTPS riêng của một function.</dd></div>
+        <div><dt>Version / $LATEST / Alias</dt><dd><b>Phiên bản bất biến / Bản chưa phát hành / Bí danh trỏ tới version</b>.</dd></div>
+        <div><dt>Qualified / Unqualified ARN</dt><dd><b>ARN có / không có hậu tố version</b>.</dd></div>
+        <div><dt>Ephemeral storage (/tmp)</dt><dd><b>Bộ nhớ đĩa tạm</b> – 512 MB–10.240 MB, còn khi môi trường được tái sử dụng.</dd></div>
+        <div><dt>Destination (on success / on failure)</dt><dd><b>Đích nhận bản ghi kết quả</b> lời gọi async – SQS, SNS, Lambda, EventBridge, S3.</dd></div>
+        <div><dt>Dead-letter queue (Lambda)</dt><dd><b>Hàng đợi thư chết của function</b> – SQS/SNS standard, chỉ chứa event lỗi.</dd></div>
+        <div><dt>Maximum event age / Retry attempts</dt><dd><b>Tuổi tối đa của event / Số lần thử lại</b> – ≤ 6 giờ / 0–2.</dd></div>
+        <div><dt>Idempotent</dt><dd><b>Lũy đẳng</b> – xử lý lặp cùng event cho cùng kết quả.</dd></div>
+        <div><dt>Concurrency</dt><dd><b>Số lời gọi đồng thời</b> = RPS × thời gian xử lý trung bình.</dd></div>
+        <div><dt>Reserved concurrency</dt><dd><b>Concurrency dành riêng</b> – trần + sàn cho function, miễn phí.</dd></div>
+        <div><dt>Unreserved concurrency</dt><dd><b>Concurrency dùng chung</b> – luôn giữ tối thiểu 100.</dd></div>
+        <div><dt>Provisioned concurrency</dt><dd><b>Concurrency khởi tạo sẵn</b> – môi trường ấm trên version/alias, có phí.</dd></div>
+        <div><dt>Concurrency scaling rate</dt><dd><b>Tốc độ tăng concurrency</b> – 1.000 môi trường / 10 giây mỗi function.</dd></div>
+        <div><dt>Throttling (429)</dt><dd><b>Bị từ chối do vượt hạn mức</b> – TooManyRequestsException.</dd></div>
+        <div><dt>Cold start / Warm start</dt><dd><b>Khởi động lạnh / ấm</b> – phải init môi trường mới / tái sử dụng môi trường cũ.</dd></div>
+        <div><dt>Init phase / Static initialization</dt><dd><b>Pha khởi tạo / Khởi tạo tĩnh</b> – code ngoài handler, giới hạn 10 giây.</dd></div>
+        <div><dt>SnapStart</dt><dd><b>Khởi động nhanh từ ảnh chụp</b> – resume môi trường từ snapshot của version.</dd></div>
+        <div><dt>Runtime hooks (SnapStart)</dt><dd><b>Móc chạy trước snapshot / sau khôi phục</b> – xử lý tính duy nhất.</dd></div>
+        <div><dt>Hyperplane ENI</dt><dd><b>Card mạng Hyperplane</b> – ENI do Lambda quản lý, dùng chung theo subnet + SG.</dd></div>
+        <div><dt>AWSLambdaVPCAccessExecutionRole</dt><dd><b>Managed policy cho phép tạo ENI</b> khi gắn function vào VPC.</dd></div>
+        <div><dt>Lambda layer / Layer version</dt><dd><b>Lớp thư viện dùng chung / Phiên bản lớp</b> – giải nén vào <code>/opt</code>, tối đa 5.</dd></div>
+        <div><dt>Container image (Lambda)</dt><dd><b>Ảnh container</b> – đóng gói function tới 10 GB, lưu ở ECR.</dd></div>
+        <div><dt>Application Auto Scaling (Lambda)</dt><dd><b>Tự động co giãn provisioned concurrency</b> – scheduled / target tracking.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">An AWS Lambda function reads customer records from an Amazon RDS for MySQL DB instance in a private subnet and then calls a third-party payment API on the public internet. After the function was configured to connect to the VPC, the database queries succeed but every call to the payment API times out. What should a solutions architect do to resolve the issue?</div>
+          <ol class="opts">
+            <li data-k="A">Move the function's VPC configuration to a public subnet that has a route to an internet gateway.</li>
+            <li data-k="B">Assign an Elastic IP address to the Lambda function.</li>
+            <li data-k="C">Keep the function in private subnets, create a NAT gateway in a public subnet, and add a 0.0.0.0/0 route from the private subnets' route table to the NAT gateway.</li>
+            <li data-k="D">Create a gateway VPC endpoint for the payment API.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Khi gắn VPC, function chỉ truy cập được những gì VPC cho phép. Tài liệu Lambda hướng dẫn: chọn <b>private subnet</b> có route <code>0.0.0.0/0</code> tới <b>NAT gateway</b> nằm ở public subnet. <b>A sai</b>: tài liệu nói rõ gắn function vào public subnet <b>không</b> cho Internet hay public IP. <b>B sai</b>: không gắn Elastic IP trực tiếp cho function được. <b>D sai</b>: gateway endpoint chỉ dành cho S3 và DynamoDB, không cho API bên thứ ba.</div>
+          <div class="trans">
+            <div class="tq">Một AWS Lambda function đọc hồ sơ khách hàng từ một Amazon RDS for MySQL DB instance trong private subnet rồi gọi một API thanh toán của bên thứ ba trên Internet công cộng. Sau khi function được cấu hình kết nối vào VPC, các truy vấn database thành công nhưng mọi lời gọi tới API thanh toán đều bị timeout. Solutions architect nên làm gì để khắc phục?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển cấu hình VPC của function sang một public subnet có route tới internet gateway.</span><span class="why">Sai: Lambda gắn vào public subnet không được cấp public IP nên vẫn không ra Internet được.</span></li>
+              <li data-k="B"><span class="tv">Gán một Elastic IP address cho Lambda function.</span><span class="why">Sai: không thể gắn Elastic IP trực tiếp cho Lambda function.</span></li>
+              <li data-k="C"><span class="tv">Giữ function trong private subnet, tạo một NAT gateway trong public subnet, và thêm route 0.0.0.0/0 từ route table của private subnet tới NAT gateway.</span><span class="why">Đúng: function vẫn truy cập RDS trong VPC, còn lưu lượng ra Internet đi qua NAT gateway – đúng cách AWS khuyến nghị cho Lambda trong VPC cần gọi Internet.</span></li>
+              <li data-k="D"><span class="tv">Tạo một gateway VPC endpoint cho API thanh toán.</span><span class="why">Sai: gateway endpoint chỉ hỗ trợ Amazon S3 và DynamoDB, không dùng cho API bên thứ ba.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company runs a customer-facing API on Amazon API Gateway backed by an AWS Lambda function. Traffic is predictable: it rises sharply every weekday at 8 AM and drops after 6 PM. Users complain about slow responses on the first requests each morning. The company needs consistent double-digit millisecond startup for all runtimes it uses. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Configure provisioned concurrency on a function alias and use Application Auto Scaling scheduled scaling to raise it before 8 AM and lower it after 6 PM.</li>
+            <li data-k="B">Configure reserved concurrency equal to the peak concurrency.</li>
+            <li data-k="C">Increase the function timeout to 15 minutes.</li>
+            <li data-k="D">Invoke the $LATEST version with provisioned concurrency configured on it.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Provisioned concurrency</b> khởi tạo sẵn môi trường, phản hồi ở mức hai chữ số ms, áp dụng cho mọi runtime; với lưu lượng dự đoán được, tài liệu khuyên dùng <b>Application Auto Scaling scheduled scaling</b> để tiết kiệm chi phí ngoài giờ cao điểm. <b>B sai</b>: reserved concurrency chỉ giữ chỗ/đặt trần, <b>không</b> khởi tạo sẵn ⇒ vẫn cold start. <b>C sai</b>: timeout không liên quan độ trễ khởi động. <b>D sai</b>: provisioned concurrency <b>không</b> cấu hình được trên <code>$LATEST</code>, phải dùng version hoặc alias.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một API phục vụ khách hàng trên Amazon API Gateway, phía sau là một AWS Lambda function. Lưu lượng có thể dự đoán: tăng mạnh vào 8 giờ sáng mỗi ngày làm việc và giảm sau 6 giờ chiều. Người dùng phàn nàn phản hồi chậm ở những request đầu tiên mỗi sáng. Công ty cần thời gian khởi động ổn định ở mức hai chữ số mili giây cho mọi runtime đang dùng. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình provisioned concurrency trên một function alias và dùng scheduled scaling của Application Auto Scaling để tăng trước 8 giờ sáng và giảm sau 6 giờ chiều.</span><span class="why">Đúng: provisioned concurrency khởi tạo sẵn môi trường nên phản hồi ở mức hai chữ số ms cho mọi runtime; scheduled scaling theo giờ cao điểm giúp tiết kiệm chi phí ngoài giờ.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình reserved concurrency bằng mức concurrency cao điểm.</span><span class="why">Sai: reserved concurrency chỉ dành chỗ và đặt trần, không khởi tạo sẵn môi trường nên vẫn bị cold start.</span></li>
+              <li data-k="C"><span class="tv">Tăng timeout của function lên 15 phút.</span><span class="why">Sai: timeout là thời gian chạy tối đa, không liên quan đến độ trễ khởi động.</span></li>
+              <li data-k="D"><span class="tv">Gọi version $LATEST đã được cấu hình provisioned concurrency.</span><span class="why">Sai: không thể cấu hình provisioned concurrency trên $LATEST; phải dùng published version hoặc alias.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An AWS Lambda function processes messages and writes results to a legacy on-premises database that can safely handle at most 50 concurrent connections. During traffic spikes, the function scales out and the database becomes unavailable. Each invocation opens one connection. What is the MOST operationally efficient way to protect the database?</div>
+          <ol class="opts">
+            <li data-k="A">Configure provisioned concurrency of 50 on the function.</li>
+            <li data-k="B">Request an increase of the account concurrency quota.</li>
+            <li data-k="C">Enable Lambda SnapStart on the function.</li>
+            <li data-k="D">Configure reserved concurrency of 50 on the function.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Reserved concurrency đặt <b>trần</b> cho số môi trường đồng thời của function – tài liệu nêu rõ dùng để tránh làm quá tải tài nguyên hạ nguồn như kết nối database. Không tốn phí. <b>A sai</b>: provisioned concurrency chỉ khởi tạo sẵn; khi vượt mức, function vẫn tràn sang concurrency chung (nếu không có reserved) ⇒ không giới hạn. <b>B sai</b>: tăng quota làm function scale <b>nhiều hơn</b>. <b>C sai</b>: SnapStart chỉ giảm cold start.</div>
+          <div class="trans">
+            <div class="tq">Một AWS Lambda function xử lý message và ghi kết quả vào một database on-premises cũ, vốn chỉ chịu được an toàn tối đa 50 kết nối đồng thời. Khi lưu lượng tăng đột biến, function scale out và database trở nên không khả dụng. Mỗi lần gọi function mở một kết nối. Cách MOST operationally efficient (hiệu quả vận hành nhất) để bảo vệ database là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình provisioned concurrency bằng 50 cho function.</span><span class="why">Sai: provisioned concurrency chỉ khởi tạo sẵn 50 môi trường, không đặt trần; vượt mức function vẫn scale thêm bằng concurrency chung và làm quá tải database.</span></li>
+              <li data-k="B"><span class="tv">Yêu cầu tăng quota concurrency của account.</span><span class="why">Sai: tăng quota cho phép function scale nhiều hơn, làm tình trạng quá tải database tệ hơn.</span></li>
+              <li data-k="C"><span class="tv">Bật Lambda SnapStart cho function.</span><span class="why">Sai: SnapStart chỉ giảm thời gian cold start, không giới hạn số lần chạy đồng thời.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình reserved concurrency bằng 50 cho function.</span><span class="why">Đúng: reserved concurrency đặt trần 50 môi trường đồng thời, tương ứng tối đa 50 kết nối – bảo vệ tài nguyên hạ nguồn, không cần code và không tốn phí.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">Amazon S3 invokes an AWS Lambda function asynchronously for every uploaded image. The operations team wants a record of every failed invocation, including the error message returned by the function, delivered to an Amazon SQS queue. Successful results must be sent to an Amazon EventBridge event bus to start downstream processing. The solution must not require changes to the function code. What should a solutions architect configure?</div>
+          <ol class="opts">
+            <li data-k="A">A dead-letter queue on the function that points to the SQS queue, and an S3 event notification to EventBridge.</li>
+            <li data-k="B">Lambda destinations: an on-failure destination that targets the SQS queue and an on-success destination that targets the EventBridge event bus.</li>
+            <li data-k="C">An SQS FIFO queue as the on-failure destination and an SNS FIFO topic as the on-success destination.</li>
+            <li data-k="D">A redrive policy on an SQS queue that is placed between Amazon S3 and the function.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Destinations</b> cho lời gọi async hỗ trợ cả <b>on success</b> và <b>on failure</b>; bản ghi gồm event gốc <b>và chi tiết response/lỗi</b>; đích có thể là SQS, SNS, Lambda, EventBridge, S3 (on failure). <b>A sai</b>: DLQ chỉ chứa nội dung event (không có response) và chỉ cho trường hợp thất bại; S3 → EventBridge gửi sự kiện upload chứ không phải kết quả xử lý. <b>C sai</b>: tài liệu nêu SQS FIFO và SNS FIFO <b>không</b> được hỗ trợ làm destination. <b>D sai</b>: thay đổi kiến trúc, không gửi kết quả thành công tới EventBridge.</div>
+          <div class="trans">
+            <div class="tq">Amazon S3 gọi một AWS Lambda function theo kiểu bất đồng bộ (asynchronous) cho mỗi ảnh được tải lên. Đội vận hành muốn có bản ghi của mọi lần gọi thất bại, bao gồm thông báo lỗi do function trả về, được gửi tới một Amazon SQS queue. Kết quả thành công phải được gửi tới một Amazon EventBridge event bus để khởi động xử lý phía sau. Giải pháp không được yêu cầu sửa code function. Solutions architect nên cấu hình gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một dead-letter queue trên function trỏ tới SQS queue, và một S3 event notification tới EventBridge.</span><span class="why">Sai: DLQ chỉ chứa event gốc, không có thông báo lỗi; còn S3 → EventBridge gửi sự kiện upload chứ không phải kết quả xử lý thành công.</span></li>
+              <li data-k="B"><span class="tv">Lambda destinations: một on-failure destination trỏ tới SQS queue và một on-success destination trỏ tới EventBridge event bus.</span><span class="why">Đúng: destinations cho lời gọi async hỗ trợ cả thành công và thất bại, bản ghi gồm event gốc kèm chi tiết response/lỗi, và không cần sửa code.</span></li>
+              <li data-k="C"><span class="tv">Một SQS FIFO queue làm on-failure destination và một SNS FIFO topic làm on-success destination.</span><span class="why">Sai: SQS FIFO và SNS FIFO không được hỗ trợ làm Lambda destination; đề cũng yêu cầu gửi kết quả thành công tới EventBridge.</span></li>
+              <li data-k="D"><span class="tv">Một redrive policy trên một SQS queue đặt giữa Amazon S3 và function.</span><span class="why">Sai: thay đổi kiến trúc, không ghi kèm thông báo lỗi và không gửi kết quả thành công tới EventBridge.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A media company has a video-processing job that currently runs in an AWS Lambda function. As video files have grown, some executions now need about 40 minutes and fail with a timeout error. The company wants to keep the solution serverless and event-driven when a file arrives in Amazon S3. Which TWO solutions will meet these requirements? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Run the processing in an Amazon ECS task on AWS Fargate that is started by an Amazon EventBridge rule for the S3 Object Created event.</li>
+            <li data-k="B">Increase the Lambda function timeout to 60 minutes.</li>
+            <li data-k="C">Split the job into smaller steps, each under 15 minutes, and orchestrate them with an AWS Step Functions Standard workflow.</li>
+            <li data-k="D">Configure provisioned concurrency so that the function starts faster.</li>
+            <li data-k="E">Increase the function's ephemeral storage to 10,240 MB.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> Timeout tối đa của Lambda là <b>900 giây (15 phút)</b> – không tăng được. Workload dài nên chạy trên <b>Fargate</b> (serverless container, không giới hạn 15 phút) được EventBridge kích hoạt (A), hoặc chia thành các bước ngắn điều phối bằng <b>Step Functions Standard</b> (chạy tới 1 năm – Bài 31) (C). <b>B sai</b>: vượt trần 15 phút. <b>D sai</b>: provisioned concurrency chỉ giảm cold start, không kéo dài thời gian chạy. <b>E sai</b>: dung lượng <code>/tmp</code> không ảnh hưởng timeout.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền thông có job xử lý video hiện đang chạy trong một AWS Lambda function. Khi file video ngày càng lớn, một số lần chạy giờ cần khoảng 40 phút và thất bại với lỗi timeout. Công ty muốn giữ giải pháp serverless và hướng sự kiện (event-driven) khi có file mới trong Amazon S3. HAI giải pháp nào đáp ứng các yêu cầu này? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chạy việc xử lý trong một Amazon ECS task trên AWS Fargate, được khởi động bởi một Amazon EventBridge rule cho sự kiện S3 Object Created.</span><span class="why">Đúng: Fargate là container serverless không bị giới hạn 15 phút, và EventBridge rule giữ tính hướng sự kiện khi file vào S3.</span></li>
+              <li data-k="B"><span class="tv">Tăng timeout của Lambda function lên 60 phút.</span><span class="why">Sai: timeout tối đa của Lambda là 900 giây (15 phút), không thể đặt 60 phút.</span></li>
+              <li data-k="C"><span class="tv">Chia job thành các bước nhỏ hơn, mỗi bước dưới 15 phút, và điều phối chúng bằng một AWS Step Functions Standard workflow.</span><span class="why">Đúng: mỗi bước nằm trong giới hạn Lambda, còn Standard workflow chạy được tới 1 năm nên tổng 40 phút không thành vấn đề – vẫn serverless.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình provisioned concurrency để function khởi động nhanh hơn.</span><span class="why">Sai: provisioned concurrency chỉ giảm cold start, không kéo dài thời gian chạy tối đa.</span></li>
+              <li data-k="E"><span class="tv">Tăng ephemeral storage của function lên 10.240 MB.</span><span class="why">Sai: dung lượng /tmp không liên quan đến giới hạn timeout 15 phút.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A new AWS Lambda function will receive about 2,000 requests per second from Amazon API Gateway. Each request takes 800 ms on average. The account is in a Region with the default Lambda quotas, and no other functions run in the account. During load testing, many requests fail with 429 TooManyRequestsException errors. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the function memory to 10,240 MB.</li>
+            <li data-k="B">Configure reserved concurrency of 1,000 on the function.</li>
+            <li data-k="C">Convert the function to a container image.</li>
+            <li data-k="D">Request an increase to the account's concurrent executions quota for Lambda in the Region to at least 1,600 (plus headroom).</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Concurrency = 2.000 req/s × 0,8 s = <b>1.600</b>, vượt quota mặc định <b>1.000</b> mỗi Region ⇒ bị throttle (429). Quota concurrent executions là soft limit, tăng được qua Service Quotas. <b>A sai</b>: tăng memory có thể rút ngắn thời gian nhưng không bảo đảm; vấn đề gốc là quota. <b>B sai</b>: reserved tối đa 900 (Lambda giữ 100 cho unreserved) và cũng không vượt được 1.000. <b>C sai</b>: kiểu đóng gói không ảnh hưởng concurrency.</div>
+          <div class="trans">
+            <div class="tq">Một AWS Lambda function mới sẽ nhận khoảng 2.000 request mỗi giây từ Amazon API Gateway. Mỗi request mất trung bình 800 ms. Account nằm trong một Region với quota Lambda mặc định, và không có function nào khác chạy trong account. Khi kiểm thử tải, nhiều request thất bại với lỗi 429 TooManyRequestsException. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng bộ nhớ của function lên 10.240 MB.</span><span class="why">Sai: tăng memory có thể rút ngắn thời gian chạy nhưng không bảo đảm đủ; nguyên nhân gốc là concurrency cần 1.600 vượt quota 1.000.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình reserved concurrency bằng 1.000 cho function.</span><span class="why">Sai: reserved tối đa chỉ 900 (Lambda giữ 100 cho unreserved) và cũng không thể vượt quota account 1.000.</span></li>
+              <li data-k="C"><span class="tv">Chuyển function sang dạng container image.</span><span class="why">Sai: kiểu đóng gói không ảnh hưởng đến concurrency hay throttling.</span></li>
+              <li data-k="D"><span class="tv">Yêu cầu tăng quota concurrent executions của Lambda cho account trong Region lên ít nhất 1.600 (cộng thêm dư phòng).</span><span class="why">Đúng: concurrency = 2.000 req/s × 0,8 s = 1.600, vượt quota mặc định 1.000 nên bị throttle (429); quota này là soft limit, tăng được qua Service Quotas.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs a Java 21 Spring Boot application on AWS Lambda behind an API. Initialization of the framework takes 6–8 seconds, which causes slow responses whenever Lambda scales out. The company wants to reduce startup latency to sub-second with minimal code changes and WITHOUT additional cost. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Configure provisioned concurrency for the function.</li>
+            <li data-k="B">Enable Lambda SnapStart on the function and invoke a published version through an alias.</li>
+            <li data-k="C">Move the Spring Boot libraries into a Lambda layer.</li>
+            <li data-k="D">Increase the reserved concurrency of the function.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>SnapStart</b> khởi tạo function lúc publish version, chụp snapshot Firecracker microVM và resume từ snapshot ⇒ startup từ vài giây xuống dưới 1 giây, thường không cần sửa code; với runtime <b>Java</b> thì <b>không tốn thêm phí</b>. Phải dùng <b>published version/alias</b>. <b>A sai</b>: provisioned concurrency hiệu quả nhưng <b>tính phí thêm</b>. <b>C sai</b>: layer chỉ tách thư viện, không bỏ được thời gian khởi tạo framework (code vẫn phải load). <b>D sai</b>: reserved concurrency không khởi tạo sẵn.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng Java 21 Spring Boot trên AWS Lambda phía sau một API. Việc khởi tạo framework mất 6–8 giây, gây phản hồi chậm mỗi khi Lambda scale out. Công ty muốn giảm độ trễ khởi động xuống dưới 1 giây với ít thay đổi code nhất và WITHOUT additional cost (không tốn thêm chi phí). Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình provisioned concurrency cho function.</span><span class="why">Sai: provisioned concurrency loại bỏ cold start nhưng tính phí thêm, vi phạm yêu cầu không tốn thêm chi phí.</span></li>
+              <li data-k="B"><span class="tv">Bật Lambda SnapStart cho function và gọi một published version thông qua alias.</span><span class="why">Đúng: SnapStart chụp snapshot môi trường đã khởi tạo khi publish version và resume từ đó, giảm startup xuống dưới 1 giây; với Java không tốn thêm phí, thường không cần sửa code.</span></li>
+              <li data-k="C"><span class="tv">Chuyển các thư viện Spring Boot vào một Lambda layer.</span><span class="why">Sai: layer chỉ tách cách đóng gói thư viện; framework vẫn phải load và khởi tạo nên thời gian khởi động không giảm.</span></li>
+              <li data-k="D"><span class="tv">Tăng reserved concurrency của function.</span><span class="why">Sai: reserved concurrency chỉ dành chỗ/đặt trần, không khởi tạo sẵn môi trường nên vẫn cold start chậm.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A Lambda function is connected to a VPC so that it can query an Amazon ElastiCache cluster. The function must also read objects from Amazon S3 and write items to Amazon DynamoDB. Security policy prohibits any traffic from the VPC to the internet. Which solution provides access at the LOWEST cost?</div>
+          <ol class="opts">
+            <li data-k="A">Add a NAT gateway in each Availability Zone and route the private subnets through it.</li>
+            <li data-k="B">Remove the VPC configuration from the function.</li>
+            <li data-k="C">Create gateway VPC endpoints for Amazon S3 and Amazon DynamoDB and associate them with the route tables of the function's subnets.</li>
+            <li data-k="D">Attach the function to public subnets with an internet gateway.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Gateway VPC endpoint</b> cho S3 và DynamoDB <b>miễn phí</b>, đi qua mạng AWS, không ra Internet – đúng chính sách bảo mật và rẻ nhất. <b>A sai</b>: NAT gateway tốn phí theo giờ + GB và đi ra Internet, vi phạm chính sách. <b>B sai</b>: bỏ VPC thì mất truy cập ElastiCache trong VPC. <b>D sai</b>: public subnet không cho function Internet và vi phạm chính sách.</div>
+          <div class="trans">
+            <div class="tq">Một Lambda function được kết nối vào VPC để có thể truy vấn một Amazon ElastiCache cluster. Function cũng phải đọc object từ Amazon S3 và ghi item vào Amazon DynamoDB. Chính sách bảo mật cấm mọi lưu lượng từ VPC ra Internet. Giải pháp nào cung cấp quyền truy cập với LOWEST cost (chi phí thấp nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một NAT gateway ở mỗi Availability Zone và định tuyến các private subnet qua đó.</span><span class="why">Sai: NAT gateway tốn phí theo giờ và theo GB, đồng thời đưa lưu lượng ra Internet – vi phạm chính sách bảo mật.</span></li>
+              <li data-k="B"><span class="tv">Gỡ cấu hình VPC khỏi function.</span><span class="why">Sai: bỏ VPC thì function mất khả năng truy cập ElastiCache cluster nằm trong VPC.</span></li>
+              <li data-k="C"><span class="tv">Tạo gateway VPC endpoint cho Amazon S3 và Amazon DynamoDB và liên kết chúng với route table của các subnet chứa function.</span><span class="why">Đúng: gateway endpoint cho S3 và DynamoDB miễn phí và đi qua mạng nội bộ AWS, không ra Internet – vừa đúng chính sách vừa rẻ nhất.</span></li>
+              <li data-k="D"><span class="tv">Gắn function vào public subnet có internet gateway.</span><span class="why">Sai: Lambda trong public subnet không có public IP nên vẫn không ra Internet, và hướng này vi phạm chính sách cấm lưu lượng Internet.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company has dozens of AWS Lambda functions in one account and Region. An order-processing function is business-critical and must always be able to scale to 300 concurrent executions, even when other functions experience traffic spikes. A nightly reporting function must never use more than 100 concurrent executions. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Enable SnapStart on the order-processing function.</li>
+            <li data-k="B">Configure reserved concurrency of 300 on the order-processing function.</li>
+            <li data-k="C">Configure provisioned concurrency of 100 on the reporting function.</li>
+            <li data-k="D">Increase the timeout of the reporting function so that it finishes with fewer executions.</li>
+            <li data-k="E">Configure reserved concurrency of 100 on the reporting function.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Reserved concurrency vừa <b>dành riêng</b> (function khác không lấy được – B bảo đảm 300 cho function quan trọng) vừa là <b>trần</b> (E giới hạn function báo cáo ở 100). <b>A sai</b>: SnapStart chỉ giảm cold start. <b>C sai</b>: provisioned concurrency không đặt trần – vượt mức sẽ tràn sang pool unreserved (và còn tốn phí). <b>D sai</b>: timeout không điều khiển concurrency.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có hàng chục AWS Lambda function trong cùng một account và Region. Một function xử lý đơn hàng có tính sống còn với doanh nghiệp và phải luôn scale được tới 300 lần chạy đồng thời, kể cả khi các function khác gặp lưu lượng tăng đột biến. Một function báo cáo chạy hằng đêm không bao giờ được dùng quá 100 lần chạy đồng thời. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật SnapStart cho function xử lý đơn hàng.</span><span class="why">Sai: SnapStart chỉ giảm cold start, không bảo đảm dung lượng concurrency.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình reserved concurrency bằng 300 cho function xử lý đơn hàng.</span><span class="why">Đúng: reserved concurrency dành riêng 300 cho function này, các function khác không thể chiếm dù có traffic spike.</span></li>
+              <li data-k="C"><span class="tv">Cấu hình provisioned concurrency bằng 100 cho function báo cáo.</span><span class="why">Sai: provisioned concurrency không đặt trần – vượt mức function vẫn tràn sang pool unreserved, lại còn tốn phí.</span></li>
+              <li data-k="D"><span class="tv">Tăng timeout của function báo cáo để nó hoàn thành với ít lần chạy hơn.</span><span class="why">Sai: timeout không điều khiển hay giới hạn số lần chạy đồng thời.</span></li>
+              <li data-k="E"><span class="tv">Cấu hình reserved concurrency bằng 100 cho function báo cáo.</span><span class="why">Đúng: reserved concurrency đồng thời là trần, nên function báo cáo không bao giờ vượt 100 lần chạy đồng thời.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A data science team wants to run an inference function on AWS Lambda. The function depends on machine learning libraries and a model file that together are about 4 GB uncompressed. The team already builds Docker images in its CI/CD pipeline. Which deployment approach should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Package the function and its dependencies as a container image, push it to Amazon ECR, and create the Lambda function from the image.</li>
+            <li data-k="B">Split the libraries across five Lambda layers attached to a .zip-based function.</li>
+            <li data-k="C">Upload the .zip deployment package to Amazon S3 and reference it when creating the function.</li>
+            <li data-k="D">Increase the function's /tmp storage to 10,240 MB and include the model in the .zip deployment package.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Function dạng <b>container image</b> hỗ trợ tới <b>10 GB</b> (giải nén, gồm mọi layer của image), lưu trong <b>Amazon ECR</b>, phù hợp với nhóm đã build Docker. <b>B sai</b>: tổng code + tất cả layer tối đa <b>250 MB giải nén</b>, và tối đa 5 layer. <b>C sai</b>: upload qua S3 chỉ vượt giới hạn 50 MB nén, vẫn bị trần 250 MB giải nén. <b>D sai</b>: <code>/tmp</code> là bộ nhớ tạm lúc chạy, không nới giới hạn của deployment package.</div>
+          <div class="trans">
+            <div class="tq">Một đội khoa học dữ liệu muốn chạy một function suy luận (inference) trên AWS Lambda. Function phụ thuộc vào các thư viện machine learning và một file model, tổng cộng khoảng 4 GB khi chưa nén. Đội đã build Docker image trong pipeline CI/CD. Solutions architect nên đề xuất cách triển khai nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đóng gói function và các dependency thành container image, đẩy lên Amazon ECR, và tạo Lambda function từ image đó.</span><span class="why">Đúng: Lambda dạng container image hỗ trợ tới 10 GB (đủ cho 4 GB), lưu trong Amazon ECR và khớp với pipeline Docker sẵn có của đội.</span></li>
+              <li data-k="B"><span class="tv">Chia các thư viện vào năm Lambda layer gắn với một function dạng .zip.</span><span class="why">Sai: tổng code + mọi layer tối đa 250 MB khi giải nén (và tối đa 5 layer), quá nhỏ cho 4 GB.</span></li>
+              <li data-k="C"><span class="tv">Tải deployment package .zip lên Amazon S3 và tham chiếu nó khi tạo function.</span><span class="why">Sai: upload qua S3 chỉ vượt được giới hạn 50 MB nén khi upload trực tiếp, vẫn bị trần 250 MB giải nén.</span></li>
+              <li data-k="D"><span class="tv">Tăng dung lượng /tmp của function lên 10.240 MB và đưa model vào deployment package .zip.</span><span class="why">Sai: /tmp là bộ nhớ tạm lúc chạy, không nới giới hạn kích thước của deployment package.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/lambda-invocation.html" target="_blank" rel="noopener">Understanding Lambda function invocation methods</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/invocation-async.html" target="_blank" rel="noopener">Invoking a Lambda function asynchronously</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-error-handling.html" target="_blank" rel="noopener">How Lambda handles errors and retries with asynchronous invocation</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-configuring.html" target="_blank" rel="noopener">Configuring error handling settings for asynchronous invocations</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-retain-records.html" target="_blank" rel="noopener">Capturing records of Lambda asynchronous invocations (destinations &amp; DLQ)</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventsourcemapping.html" target="_blank" rel="noopener">How Lambda processes records from stream and queue-based event sources</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/provisioned-concurrency.html" target="_blank" rel="noopener">Configuring provisioned concurrency</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html" target="_blank" rel="noopener">Understanding the Lambda execution environment lifecycle</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html" target="_blank" rel="noopener">Improving startup performance with Lambda SnapStart</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc-internet.html" target="_blank" rel="noopener">Enable internet access for VPC-connected Lambda functions</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/chapter-layers.html" target="_blank" rel="noopener">Managing Lambda dependencies with layers</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/configuration-memory.html" target="_blank" rel="noopener">Configure Lambda function memory</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/configuration-versions.html" target="_blank" rel="noopener">Manage Lambda function versions</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

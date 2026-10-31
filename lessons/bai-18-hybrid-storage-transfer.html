@@ -1,0 +1,924 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 18 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Storage-Gateway.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="18" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Phân biệt hai nhóm bài toán: <span class="t" data-vi="Lưu trữ lai">hybrid storage</span> (on-premises tiếp tục dùng storage, dữ liệu nằm trên AWS) và <span class="t" data-vi="Di chuyển dữ liệu">data transfer / migration</span> (chuyển dữ liệu một lần hoặc định kỳ).</li>
+          <li>Chọn đúng loại <b>AWS Storage Gateway</b>: <b>S3 File Gateway</b> (NFS/SMB → S3), <b>Volume Gateway</b> cached vs stored (iSCSI → EBS snapshot), <b>Tape Gateway</b> (VTL → S3 Glacier), và biết tình trạng của FSx File Gateway.</li>
+          <li>Hiểu kiến trúc <b>AWS DataSync</b>: agent, location, task, task execution; khi nào cần agent, Basic vs Enhanced mode, kiểm tra toàn vẹn dữ liệu.</li>
+          <li>Biết khi nào phải chuyển dữ liệu <b>offline</b> bằng <b>AWS Snowball Edge</b> (Storage Optimized / Compute Optimized), các con số chính và lưu ý “không còn cho khách hàng mới”.</li>
+          <li>Thiết kế endpoint <b>AWS Transfer Family</b> (SFTP/FTPS/FTP/AS2) trên S3 hoặc EFS: endpoint type, Elastic IP cho allow list, identity provider, managed workflows.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 3 – Storage</span>
+        <p><b>Bài 11</b> (EBS, snapshot), <b>Bài 14–16</b> (S3, storage classes, Glacier, lifecycle, mã hóa) và <b>Bài 17</b> (EFS, FSx) đã dạy các “điểm đến” trên AWS. Bài này trả lời câu hỏi: <i>dữ liệu đang nằm ở data center thì làm sao đưa lên, hoặc làm sao để server on-premises dùng storage AWS như ổ đĩa local?</i> Kết nối mạng riêng (AWS Direct Connect, Site-to-Site VPN) sẽ học kỹ ở Module mạng; <b>Bài 19</b> sẽ dạy AWS Backup để sao lưu tập trung.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Migration-Transfer.svg" alt="">Tổng quan: lưu trữ lai và các con đường đưa dữ liệu lên AWS</h2>
+      <p class="lead">Hầu hết doanh nghiệp không “lên cloud” trong một đêm. Trong giai đoạn chuyển tiếp – có khi kéo dài nhiều năm – họ cần một kiến trúc <span class="t" data-vi="Đám mây lai">hybrid cloud</span>: ứng dụng vẫn chạy on-premises nhưng dữ liệu, bản sao lưu, kho lưu trữ dài hạn đã nằm trên AWS. Song song đó là bài toán <span class="t" data-vi="Di chuyển dữ liệu">data migration</span>: chuyển hàng trăm TB tới PB lên AWS an toàn, nhanh, kiểm chứng được. AWS có một bộ dịch vụ riêng cho từng tình huống; đề SAA-C03 rất hay cho bạn chọn giữa chúng.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Storage-Gateway.svg" alt="">
+          <div><h4>AWS Storage Gateway</h4><span class="vi">Cổng lưu trữ lai</span><p>Appliance (VM / phần cứng / EC2) đặt tại chỗ, nói giao thức quen thuộc <b>NFS, SMB, iSCSI, VTL</b>, dữ liệu lưu ở S3 / Glacier / EBS snapshot; có <b>cache local</b> độ trễ thấp. Dùng <b>lâu dài</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-DataSync.svg" alt="">
+          <div><h4>AWS DataSync</h4><span class="vi">Dịch vụ truyền dữ liệu trực tuyến</span><p>Chuyển file/object <b>qua mạng</b>, tốc độ cao, mã hóa TLS, kiểm tra toàn vẹn; NFS, SMB, HDFS, object storage, cloud khác ↔ S3, EFS, mọi loại FSx. Một lần hoặc theo lịch.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Snowball-Edge.svg" alt="">
+          <div><h4>AWS Snowball Edge</h4><span class="vi">Thiết bị chuyển dữ liệu vật lý</span><p>Thiết bị chắc chắn chứa tới <b>210 TB</b>, gửi qua đơn vị vận chuyển – <b>không dùng Internet</b>. Có compute tại biên. Không còn cho khách hàng mới.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Transfer-Family.svg" alt="">
+          <div><h4>AWS Transfer Family</h4><span class="vi">Dịch vụ truyền file được quản lý</span><p>Endpoint <b>SFTP, FTPS, FTP, AS2</b> và web app được quản lý, đọc/ghi thẳng vào <b>S3</b> hoặc <b>EFS</b>. Đối tác giữ nguyên client và quy trình cũ.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Direct-Connect.svg" alt="">
+          <div><h4>Đường mạng</h4><span class="vi">Direct Connect / Site-to-Site VPN</span><p>Kênh riêng mà Storage Gateway, DataSync, FSx dùng để đi tới AWS mà không qua Internet công cộng (học kỹ ở Module mạng).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">
+          <div><h4>Điểm đến</h4><span class="vi">S3, Glacier, EFS, FSx, EBS</span><p>Đã học ở Bài 11, 14–17. Sau khi dữ liệu vào S3, dùng <b>S3 Lifecycle</b> để đẩy xuống Glacier Flexible Retrieval / Deep Archive.</p></div></div>
+      </div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhu cầu trong đề</th><th>Bản chất</th><th>Dịch vụ</th></tr></thead>
+        <tbody>
+          <tr><td>Server on-premises cần <b>tiếp tục</b> đọc/ghi file, nhưng muốn dung lượng “vô hạn” trên S3</td><td>Hybrid, dài hạn, giao thức file</td><td><b>S3 File Gateway</b></td></tr>
+          <tr><td>Ứng dụng on-premises dùng <b>ổ đĩa iSCSI</b>, cần backup lên AWS / DR sang EC2</td><td>Hybrid, block</td><td><b>Volume Gateway</b> (cached / stored)</td></tr>
+          <tr><td>Thay <b>thư viện băng từ</b> vật lý, giữ nguyên phần mềm backup</td><td>Hybrid, archive</td><td><b>Tape Gateway</b></td></tr>
+          <tr><td><b>Migrate</b> hoặc <b>đồng bộ định kỳ</b> NAS (NFS/SMB) lên S3/EFS/FSx qua mạng</td><td>Transfer online</td><td><b>AWS DataSync</b></td></tr>
+          <tr><td>Hàng trăm TB–PB, băng thông yếu / không có mạng, hoặc cần compute ở nơi hẻo lánh</td><td>Transfer offline, edge</td><td><b>Snowball Edge</b> (khách hàng hiện có) / Data Transfer Terminal</td></tr>
+          <tr><td>Đối tác bên ngoài gửi file qua <b>SFTP / FTPS / AS2</b></td><td>Trao đổi file B2B</td><td><b>AWS Transfer Family</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 860 380" width="860" role="img" aria-label="Cây quyết định chọn dịch vụ hybrid storage và data transfer">
+          <defs><marker id="ah18a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="290" y="10" width="280" height="46" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="430" y="30" font-size="13" text-anchor="middle" font-weight="700">Dữ liệu đang ở on-premises</text>
+          <text x="430" y="47" font-size="11" text-anchor="middle" class="muted">On-premises còn cần truy cập lâu dài không?</text>
+          <path class="line-o" d="M430 56 L215 100" marker-end="url(#ah18a)"/>
+          <path class="line-o" d="M430 56 L645 100" marker-end="url(#ah18a)"/>
+          <text x="215" y="118" font-size="12" text-anchor="middle" font-weight="700">CÓ – hybrid lâu dài</text>
+          <text x="645" y="118" font-size="12" text-anchor="middle" font-weight="700">KHÔNG – chuyển / đồng bộ dữ liệu</text>
+          <!-- left branch -->
+          <path class="line-o" d="M215 126 L80 168" marker-end="url(#ah18a)"/>
+          <path class="line-o" d="M215 126 L215 168" marker-end="url(#ah18a)"/>
+          <path class="line-o" d="M215 126 L350 168" marker-end="url(#ah18a)"/>
+          <text x="80" y="186" font-size="11" text-anchor="middle">NFS / SMB file</text>
+          <text x="215" y="186" font-size="11" text-anchor="middle">Ổ đĩa iSCSI</text>
+          <text x="350" y="186" font-size="11" text-anchor="middle">Băng từ (VTL)</text>
+          <image href="../assets/icons/res/AWS-Storage-Gateway_Amazon-S3-File-Gateway.svg" x="56" y="198" width="48" height="48"/>
+          <image href="../assets/icons/res/AWS-Storage-Gateway_Volume-Gateway.svg" x="191" y="198" width="48" height="48"/>
+          <image href="../assets/icons/res/AWS-Storage-Gateway_Tape-Gateway.svg" x="326" y="198" width="48" height="48"/>
+          <text x="80" y="264" font-size="12" text-anchor="middle" font-weight="700">S3 File Gateway</text>
+          <text x="215" y="264" font-size="12" text-anchor="middle" font-weight="700">Volume Gateway</text>
+          <text x="350" y="264" font-size="12" text-anchor="middle" font-weight="700">Tape Gateway</text>
+          <text x="80" y="280" font-size="10.5" text-anchor="middle" class="muted">file ⇄ object S3</text>
+          <text x="215" y="280" font-size="10.5" text-anchor="middle" class="muted">snapshot = EBS</text>
+          <text x="350" y="280" font-size="10.5" text-anchor="middle" class="muted">Glacier / Deep Archive</text>
+          <!-- right branch -->
+          <path class="line-o" d="M645 126 L520 168" marker-end="url(#ah18a)"/>
+          <path class="line-o" d="M645 126 L645 168" marker-end="url(#ah18a)"/>
+          <path class="line-o" d="M645 126 L780 168" marker-end="url(#ah18a)"/>
+          <text x="520" y="186" font-size="11" text-anchor="middle">Mạng đủ nhanh</text>
+          <text x="645" y="186" font-size="11" text-anchor="middle">Mạng yếu / quá nhiều TB</text>
+          <text x="780" y="186" font-size="11" text-anchor="middle">Đối tác gửi SFTP</text>
+          <image href="../assets/icons/svc/AWS-DataSync.svg" x="496" y="198" width="48" height="48"/>
+          <image href="../assets/icons/svc/AWS-Snowball-Edge.svg" x="621" y="198" width="48" height="48"/>
+          <image href="../assets/icons/svc/AWS-Transfer-Family.svg" x="756" y="198" width="48" height="48"/>
+          <text x="520" y="264" font-size="12" text-anchor="middle" font-weight="700">AWS DataSync</text>
+          <text x="645" y="264" font-size="12" text-anchor="middle" font-weight="700">Snowball Edge</text>
+          <text x="780" y="264" font-size="12" text-anchor="middle" font-weight="700">Transfer Family</text>
+          <text x="520" y="280" font-size="10.5" text-anchor="middle" class="muted">online, TLS, verify</text>
+          <text x="645" y="280" font-size="10.5" text-anchor="middle" class="muted">offline, vận chuyển</text>
+          <text x="780" y="280" font-size="10.5" text-anchor="middle" class="muted">S3 / EFS backend</text>
+          <rect x="20" y="310" width="820" height="56" rx="6" fill="none" stroke="#147EBA" stroke-width="1.5" stroke-dasharray="6 4"/>
+          <text x="430" y="332" font-size="11.5" text-anchor="middle">Kết hợp hay gặp: DataSync migrate dữ liệu lịch sử lên S3 ⇒ S3 File Gateway cho truy cập liên tục từ on-premises;</text>
+          <text x="430" y="352" font-size="11.5" text-anchor="middle">Snowball Edge cho đợt nạp đầu tiên (bulk) ⇒ DataSync / File Gateway cho phần thay đổi về sau.</text>
+        </svg>
+        <figcaption><b>Hình 1.</b> Cây quyết định chọn dịch vụ. Câu hỏi đầu tiên luôn là: <b>sau khi lên AWS, on-premises còn truy cập dữ liệu đó không?</b> Có ⇒ một loại Storage Gateway (chọn theo giao thức). Không ⇒ dịch vụ truyền dữ liệu (chọn theo băng thông và kiểu nguồn).</figcaption>
+      </figure>
+
+      <h3>Ước lượng nhanh: mạng hay xe tải?</h3>
+      <p>Đề hay cho số liệu kiểu “<i>80 TB, đường truyền 100 Mbps, phải xong trong 2 tuần</i>”. Hãy tự tính: 1 Gbps dùng hết 100% băng thông chuyển được khoảng <b>10,8 TB/ngày</b> (1 Gbit/s × 86.400 s ÷ 8). Vậy:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Dung lượng</th><th>100 Mbps (≈ 1 TB/ngày)</th><th>1 Gbps (≈ 10,8 TB/ngày)</th><th>10 Gbps (≈ 108 TB/ngày)</th></tr></thead>
+        <tbody>
+          <tr><td>10 TB</td><td>~10 ngày</td><td>~1 ngày</td><td>~2,5 giờ</td></tr>
+          <tr><td>100 TB</td><td class="no">~100 ngày</td><td>~9–10 ngày</td><td>~1 ngày</td></tr>
+          <tr><td>1 PB</td><td class="no">~3 năm</td><td class="no">~3 tháng</td><td>~10 ngày</td></tr>
+        </tbody>
+      </table></div>
+      <p>Thực tế còn phải chia băng thông với lưu lượng nghiệp vụ, nên con số thật lâu hơn. Nếu kết quả vượt quá thời hạn của đề, hoặc đề nói “<i>limited bandwidth / không muốn ảnh hưởng mạng production</i>” ⇒ nghĩ tới chuyển offline (Snow). Nếu đủ thời gian ⇒ DataSync (có thể giới hạn băng thông để không ảnh hưởng production).</p>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – chuyển nhà</span>
+        <p><b>Storage Gateway</b> giống một tủ đồ nhỏ ngay cửa nhà bạn được nối với nhà kho ở ngoại ô: đồ hay dùng nằm sẵn trong tủ, đồ còn lại tự động gửi ra kho, bạn vẫn “mở tủ” như bình thường. <b>DataSync</b> là dịch vụ chuyển nhà chuyên nghiệp chạy xe liên tục trên đường cao tốc (mạng), có kiểm đếm từng thùng. <b>Snowball Edge</b> là thuê nguyên một container chở bằng xe tải khi đường cao tốc quá tắc. <b>Transfer Family</b> là quầy lễ tân nhận bưu phẩm theo đúng quy trình khách hàng đã quen (SFTP), rồi cất thẳng vào kho.</p></div>
+
+      <!-- ===================== PHẦN 2: STORAGE GATEWAY CHUNG ===================== -->
+      <h2 id="storage-gateway"><img src="../assets/icons/svc/AWS-Storage-Gateway.svg" alt="">AWS Storage Gateway: kiến trúc chung</h2>
+      <p class="lead"><span class="t" data-vi="Cổng lưu trữ AWS">AWS Storage Gateway</span> kết nối một <span class="t" data-vi="Thiết bị phần mềm">software appliance</span> đặt tại chỗ với storage trên AWS Cloud, giúp môi trường IT on-premises tích hợp liền mạch và an toàn với hạ tầng lưu trữ AWS. Ứng dụng on-premises <b>không cần sửa code</b>: chúng vẫn nói NFS, SMB, iSCSI hay giao tiếp với thư viện băng từ như trước, còn gateway lo phần chuyển dữ liệu lên AWS.</p>
+
+      <h3>Triển khai gateway ở đâu?</h3>
+      <ul>
+        <li><b>VM on-premises</b> trên hypervisor <b>VMware ESXi, Microsoft Hyper-V, Linux KVM</b> hoặc <b>Nutanix AHV</b>.</li>
+        <li><b>Hardware appliance</b> đặt mua qua đại lý (reseller) – dùng khi data center không có hạ tầng ảo hóa (vd chi nhánh nhỏ).</li>
+        <li><b>Amazon EC2</b> (AMI) hoặc VMware Cloud on AWS – dùng cho <b>disaster recovery</b>, data mirroring, hoặc cấp storage cho ứng dụng chạy trên EC2.</li>
+        <li>Sau khi triển khai, bạn <b>activate</b> gateway từ Storage Gateway console hoặc API, gateway được gắn với một AWS Region.</li>
+      </ul>
+
+      <h3>Hai vùng đĩa local: cache storage và upload buffer</h3>
+      <p>Hầu hết loại gateway cần bạn cấp đĩa local cho VM với hai vai trò:</p>
+      <ul>
+        <li><span class="t" data-vi="Bộ nhớ đệm">Cache storage</span> – nơi lưu bền tạm thời dữ liệu đang chờ upload, đồng thời giữ <b>dữ liệu vừa truy cập</b> để đọc với độ trễ thấp. Khi ứng dụng đọc, gateway kiểm tra cache trước rồi mới lấy từ AWS. Với Volume Gateway cached, AWS khuyến nghị cache <b>≥ 20%</b> kích thước file store hiện có và <b>lớn hơn upload buffer</b>.</li>
+        <li><span class="t" data-vi="Vùng đệm tải lên">Upload buffer</span> – vùng staging chứa dữ liệu chuẩn bị upload, gửi lên AWS qua kết nối <b>SSL/TLS mã hóa</b>, rồi lưu <b>mã hóa</b> trong S3. (S3 File Gateway chỉ dùng cache.)</li>
+      </ul>
+      <p>Gateway <b>xác nhận ghi xong</b> với ứng dụng ngay khi dữ liệu nằm an toàn trên đĩa local, rồi upload <b>bất đồng bộ</b> – đó là lý do ứng dụng cảm thấy độ trễ như storage local, đồng thời gateway “đệm” ứng dụng khỏi tắc nghẽn mạng.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại gateway</th><th>Giao thức phía on-premises</th><th>Dữ liệu lưu ở AWS dưới dạng</th><th>Truy cập trực tiếp từ AWS?</th><th>Use case điển hình</th></tr></thead>
+        <tbody>
+          <tr><td><b>S3 File Gateway</b></td><td>NFS v3 / v4.1, SMB 2 / 3</td><td><b>Object S3</b> (1 file = 1 object, path = key)</td><td class="yes">Có – mọi dịch vụ đọc bucket được</td><td>File share lưu trên S3, backup DB vào S3, data lake ingest</td></tr>
+          <tr><td><b>FSx File Gateway</b></td><td>SMB</td><td>File trên <b>FSx for Windows File Server</b></td><td class="yes">Có – qua FSx</td><td>Truy cập Windows share trên cloud với độ trễ thấp. <b>Không còn cho khách hàng mới</b></td></tr>
+          <tr><td><b>Volume Gateway – cached</b></td><td>iSCSI (block)</td><td>Volume trong S3 (do dịch vụ quản lý) + <b>EBS snapshot</b></td><td class="no">Không đọc được bằng S3 API</td><td>Primary storage trên S3, giữ dữ liệu nóng local</td></tr>
+          <tr><td><b>Volume Gateway – stored</b></td><td>iSCSI (block)</td><td>Toàn bộ dữ liệu local, <b>snapshot bất đồng bộ</b> dạng EBS snapshot</td><td class="no">Chỉ qua snapshot → EBS volume</td><td>Backup off-site, DR sang EC2, cần độ trễ thấp cho toàn bộ dataset</td></tr>
+          <tr><td><b>Tape Gateway</b></td><td>iSCSI VTL (media changer + tape drive)</td><td>Virtual tape trong S3, archive ở <b>S3 Glacier Flexible Retrieval / Deep Archive</b></td><td class="no">Phải retrieve tape về gateway</td><td>Thay băng từ vật lý, giữ phần mềm backup cũ</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout note"><span class="ttl">Amazon FSx File Gateway – trạng thái hiện tại</span>
+        <p>Tài liệu AWS ghi: <i>“Amazon FSx File Gateway is no longer available to new customers. Existing customers can continue to use the service normally.”</i> Kiến trúc của nó: gateway join vào Microsoft AD, gắn với một FSx for Windows File Server qua Direct Connect/VPN, mọi share trên FSx hiện thành share local (ánh xạ 1:1) có cache cho độ trễ thấp. Đề thi cũ có thể vẫn hỏi “<i>low-latency on-premises access to FSx for Windows File Server shares</i>” ⇒ FSx File Gateway; với khách hàng mới, AWS hướng dẫn truy cập FSx for Windows trực tiếp qua Direct Connect/VPN.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – nhận diện Storage Gateway</span>
+        <ul>
+          <li>“<i>On-premises applications</i>” + “<i>low-latency access to frequently used data</i>” + “<i>store data in AWS</i>” ⇒ Storage Gateway (từ khóa <b>local cache</b>).</li>
+          <li>“<i>NFS / SMB</i>” + “<i>objects in Amazon S3</i>” ⇒ <b>S3 File Gateway</b>. “<i>iSCSI</i>” ⇒ <b>Volume Gateway</b>. “<i>tape backup software / VTL</i>” ⇒ <b>Tape Gateway</b>.</li>
+          <li>“<i>No virtualization infrastructure at the branch office</i>” ⇒ Storage Gateway <b>hardware appliance</b>.</li>
+          <li>“<i>Disaster recovery: run gateway in AWS</i>” ⇒ gateway trên <b>EC2</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: S3 FILE GATEWAY ===================== -->
+      <h2 id="s3-file-gateway"><img src="../assets/icons/res/AWS-Storage-Gateway_Amazon-S3-File-Gateway.svg" alt="">Amazon S3 File Gateway</h2>
+      <p class="lead"><span class="t" data-vi="Cổng tệp S3">Amazon S3 File Gateway</span> cung cấp <b>giao diện file vào Amazon S3</b>: bạn lưu và lấy object trong S3 bằng giao thức file chuẩn <b>NFS</b> (v3 hoặc v4.1) và <b>SMB</b> (v2 và v3). Có thể hình dung nó như một “mount” của S3 bucket, kèm cache local trong suốt để đọc nhanh dữ liệu vừa dùng.</p>
+
+      <h3>Cách hoạt động</h3>
+      <ol class="steps">
+        <li><b>Triển khai &amp; activate</b> gateway (VM, hardware appliance hoặc EC2).</li>
+        <li><b>Tạo <span class="t" data-vi="Thư mục chia sẻ">file share</span></b> và liên kết với một S3 bucket (có thể kèm prefix). Share dùng NFS hoặc SMB. Với SMB, gateway có thể join <b>Microsoft Active Directory</b> để xác thực người dùng Windows.</li>
+        <li><b>Client mount share</b>. Mỗi file ghi vào share trở thành <b>một object</b> trong S3, <b>đường dẫn file = object key</b> (ánh xạ 1:1). Object có sẵn trong bucket cũng hiện thành file.</li>
+        <li><b>Gateway upload bất đồng bộ</b> qua HTTPS, dùng multipart upload song song và byte-range download để tận dụng băng thông; điền header <code>Content-MD5</code> để S3 từ chối và gateway gửi lại nếu checksum lệch.</li>
+        <li><b>Metadata file</b> (owner, quyền, timestamp) được lưu thành <b>metadata của object</b> S3. Object được mã hóa mặc định bằng <b>SSE-S3</b> (có thể dùng AWS KMS).</li>
+      </ol>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">Corporate data center</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">Linux app server<small>mount NFS v3/v4.1</small></div>
+              <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Windows users<small>map ổ SMB, xác thực AD</small></div>
+            </div>
+            <div class="arrow down"><span>NFS / SMB (LAN)</span></div>
+            <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Storage-Gateway_Amazon-S3-File-Gateway.svg" alt="">S3 File Gateway VM<small>VMware / Hyper-V / KVM / Nutanix</small></div>
+              <div class="node"><img src="../assets/icons/res/Disk.svg" alt="">Cache disk<small>dữ liệu vừa đọc / chờ upload</small></div></div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+            <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+              <div class="row center"><div class="node"><img src="../assets/icons/svc/AWS-Storage-Gateway.svg" alt="">Storage Gateway service<small>HTTPS / Direct Connect / VPC endpoint</small></div></div>
+              <div class="arrow down"><span>1 file = 1 object</span></div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">S3 bucket<small>SSE-S3 / SSE-KMS, versioning</small></div>
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier-Deep-Archive.svg" alt="">S3 Lifecycle<small>→ Glacier / Deep Archive</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Dịch vụ AWS<small>Athena, Lambda, EMR đọc object</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> S3 File Gateway: client on-premises mount share NFS/SMB như NAS bình thường; gateway giữ cache local và upload bất đồng bộ lên S3. Vì dữ liệu là <b>object S3 nguyên bản</b>, ứng dụng trên AWS dùng trực tiếp được, đồng thời áp dụng được lifecycle, cross-Region replication, versioning của S3.</figcaption>
+      </figure>
+
+      <h3>Thao tác file nào “đắt” trên S3?</h3>
+      <p>Vì S3 không sửa được một phần object, nhiều thao tác file bình thường lại sinh ra object mới. Tài liệu AWS liệt kê:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thao tác file</th><th>Ảnh hưởng tới object S3</th><th>Hệ quả với storage class</th></tr></thead>
+        <tbody>
+          <tr><td>Đổi tên file</td><td>Thay object cũ, tạo object mới cho file</td><td rowspan="5">Có thể phát sinh <b>phí xóa sớm</b> (early deletion) và <b>phí truy xuất</b> nếu object ở IA / Glacier</td></tr>
+          <tr><td>Đổi tên thư mục</td><td>Thay <b>toàn bộ</b> object của mọi file và thư mục con</td></tr>
+          <tr><td>Đổi quyền file/thư mục</td><td>Thay object, tạo object mới</td></tr>
+          <tr><td>Đổi owner</td><td>Thay object, tạo object mới</td></tr>
+          <tr><td>Append vào file</td><td>Thay object, tạo object mới</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Khi client ghi một file mới, gateway upload <b>dữ liệu</b> trước rồi <b>metadata</b> sau ⇒ tạo <b>2 phiên bản</b> object nếu bật S3 Versioning. File lớn có thể bị upload thành nhiều đợt (giải phóng cache, ghi nhanh) ⇒ nhiều phiên bản hơn.</li>
+        <li>Khi sửa file đã upload, gateway chỉ gửi phần dữ liệu mới/thay đổi, nhưng vẫn tạo <b>phiên bản object mới</b>.</li>
+        <li>Khuyến nghị: theo dõi số phiên bản, cấu hình <b>lifecycle expiration cho noncurrent version</b>; lưu ý SRR/CRR sẽ nhân thêm dung lượng.</li>
+      </ul>
+
+      <h3>Các điểm cần nhớ khác</h3>
+      <ul>
+        <li><b>Cache local</b> giảm độ trễ và <b>giảm phí data egress</b> (đọc lại dữ liệu nóng không phải tải từ S3).</li>
+        <li>Nếu ứng dụng khác ghi thẳng object vào bucket (không qua gateway), gateway chưa biết ngay – cần <b>refresh cache</b> (API <code>RefreshCache</code>, có thể đặt lịch) để danh sách file trên share cập nhật.</li>
+        <li>Lưu được vào các lớp <b>S3 Standard, S3 Standard-IA, S3 One Zone-IA, S3 Intelligent-Tiering</b>; muốn xuống Glacier thì dùng <b>S3 Lifecycle</b> (đọc lại file đã ở Glacier phải restore trước).</li>
+        <li>Tích hợp <b>IAM</b> (role cho gateway ghi vào bucket), <b>AWS KMS</b>, <b>CloudWatch</b> metrics, <b>CloudTrail</b> audit.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – S3 File Gateway</span>
+        <ul>
+          <li>“<i>Replace on-premises NAS / file server, store files as objects in S3, keep NFS/SMB access</i>” ⇒ <b>S3 File Gateway</b>.</li>
+          <li>“<i>On-premises database backups written to an SMB/NFS share must land in S3 and later move to Glacier</i>” ⇒ S3 File Gateway + S3 Lifecycle.</li>
+          <li>“<i>Files uploaded via the gateway must be analyzed by Athena / processed by Lambda</i>” ⇒ S3 File Gateway (dữ liệu là object S3 đọc được), <b>không</b> phải Volume Gateway.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – S3 File Gateway</span>
+        <ul>
+          <li>Đổi tên thư mục lớn trên share = ghi lại hàng triệu object ⇒ tốn phí PUT và có thể phí xóa sớm nếu object ở IA/Glacier.</li>
+          <li>Upload thẳng vào bucket rồi “không thấy file trên share” ⇒ cần <b>RefreshCache</b>, không phải lỗi quyền.</li>
+          <li>S3 File Gateway không phải giải pháp <b>migration một lần</b> tối ưu – migrate hàng loạt dùng <b>DataSync</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: VOLUME GATEWAY ===================== -->
+      <h2 id="volume-gateway"><img src="../assets/icons/res/AWS-Storage-Gateway_Volume-Gateway.svg" alt="">Volume Gateway: cached volumes vs stored volumes</h2>
+      <p class="lead"><span class="t" data-vi="Cổng ổ đĩa">Volume Gateway</span> cung cấp các <b>storage volume được AWS hậu thuẫn</b> mà server on-premises mount như thiết bị <span class="t" data-vi="Giao thức SCSI qua mạng IP">iSCSI</span> (block storage). Bạn có thể chụp <b>snapshot</b> gia tăng của volume; snapshot được lưu trong S3 dưới dạng <b>Amazon EBS snapshot</b>, nên có thể khôi phục về gateway hoặc tạo <b>EBS volume</b> gắn vào EC2 (Bài 11).</p>
+
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Storage-Gateway_Cached-Volume.svg" alt="">Cached volumes</h4>
+          <ul>
+            <li><b>S3 là primary storage</b>; chỉ giữ <b>tập dữ liệu hay truy cập</b> ở cache local.</li>
+            <li>Tiết kiệm lớn chi phí primary storage, <b>giảm nhu cầu mở rộng storage on-premises</b>.</li>
+            <li>Volume <b>1 GiB – 32 TiB</b>; tối đa <b>32 volume</b>/gateway, tổng <b>1.024 TiB (1 PiB)</b>.</li>
+            <li>Cache ≥ 20% file store hiện có, lớn hơn upload buffer.</li>
+            <li>Dữ liệu và snapshot lưu trong S3, mã hóa SSE, nhưng <b>không truy cập được bằng S3 API / S3 console</b>.</li>
+            <li>Snapshot ≤ 16 TiB có thể dùng làm nguồn tạo EBS volume mới.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/AWS-Storage-Gateway_Non-Cached-Volume.svg" alt="">Stored volumes</h4>
+          <ul>
+            <li><b>Toàn bộ dữ liệu ở local</b> (DAS/SAN on-premises) ⇒ độ trễ thấp cho <b>toàn bộ dataset</b>.</li>
+            <li><b>Bất đồng bộ</b> backup point-in-time snapshot lên S3 (EBS snapshot) – bản sao off-site bền, rẻ.</li>
+            <li>Volume <b>1 GiB – 16 TiB</b>; tối đa <b>32 volume</b>/gateway, tổng <b>512 TiB</b>.</li>
+            <li>Có thể ánh xạ volume vào đĩa mới hoặc <b>đĩa đã có dữ liệu</b>.</li>
+            <li>Khôi phục: về volume on-premises, hoặc tạo EBS volume gắn vào <b>EC2 cho DR</b>.</li>
+            <li>Vẫn cần upload buffer (staging trước khi gửi qua SSL).</li>
+          </ul></div>
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 860 300" width="860" role="img" aria-label="So sánh luồng dữ liệu cached volume và stored volume">
+          <defs><marker id="ah18b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <text x="20" y="24" font-size="13" font-weight="700">Cached volume – S3 là bản chính</text>
+          <image href="../assets/icons/res/Traditional-server.svg" x="20" y="40" width="44" height="44"/>
+          <text x="42" y="100" font-size="10.5" text-anchor="middle">App server</text>
+          <path class="line-o" d="M70 62 L150 62" marker-end="url(#ah18b)"/>
+          <text x="110" y="54" font-size="10" text-anchor="middle" class="muted">iSCSI</text>
+          <image href="../assets/icons/res/AWS-Storage-Gateway_Cached-Volume.svg" x="160" y="40" width="44" height="44"/>
+          <text x="182" y="100" font-size="10.5" text-anchor="middle">Gateway</text>
+          <text x="182" y="114" font-size="10" text-anchor="middle" class="muted">cache: dữ liệu nóng</text>
+          <path class="line-o" d="M212 62 L330 62" marker-end="url(#ah18b)"/>
+          <text x="270" y="54" font-size="10" text-anchor="middle" class="muted">upload toàn bộ</text>
+          <image href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" x="340" y="40" width="44" height="44"/>
+          <text x="362" y="100" font-size="10.5" text-anchor="middle">Volume trong S3</text>
+          <text x="362" y="114" font-size="10" text-anchor="middle" class="muted">(bản chính, 32 TiB)</text>
+          <text x="20" y="174" font-size="13" font-weight="700">Stored volume – on-premises là bản chính</text>
+          <image href="../assets/icons/res/Traditional-server.svg" x="20" y="190" width="44" height="44"/>
+          <text x="42" y="250" font-size="10.5" text-anchor="middle">App server</text>
+          <path class="line-o" d="M70 212 L150 212" marker-end="url(#ah18b)"/>
+          <text x="110" y="204" font-size="10" text-anchor="middle" class="muted">iSCSI</text>
+          <image href="../assets/icons/res/AWS-Storage-Gateway_Non-Cached-Volume.svg" x="160" y="190" width="44" height="44"/>
+          <text x="182" y="250" font-size="10.5" text-anchor="middle">Gateway</text>
+          <text x="182" y="264" font-size="10" text-anchor="middle" class="muted">đĩa local: toàn bộ data</text>
+          <path class="line-o" d="M212 212 L330 212" stroke-dasharray="6 4" marker-end="url(#ah18b)"/>
+          <text x="270" y="204" font-size="10" text-anchor="middle" class="muted">snapshot bất đồng bộ</text>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" x="340" y="190" width="44" height="44"/>
+          <text x="362" y="250" font-size="10.5" text-anchor="middle">EBS snapshot</text>
+          <text x="362" y="264" font-size="10" text-anchor="middle" class="muted">(bản sao lưu, 16 TiB)</text>
+          <rect x="470" y="40" width="370" height="230" rx="8" fill="none" stroke="#147EBA" stroke-width="1.5" stroke-dasharray="6 4"/>
+          <text x="655" y="64" font-size="12.5" text-anchor="middle" font-weight="700">Khôi phục / Disaster recovery</text>
+          <path class="line-o" d="M390 212 L520 150" marker-end="url(#ah18b)"/>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" x="530" y="110" width="44" height="44"/>
+          <text x="552" y="170" font-size="10.5" text-anchor="middle">EBS volume mới</text>
+          <path class="line-o" d="M580 132 L680 132" marker-end="url(#ah18b)"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="690" y="110" width="44" height="44"/>
+          <text x="712" y="170" font-size="10.5" text-anchor="middle">EC2 (chạy app ở AWS)</text>
+          <text x="655" y="210" font-size="11" text-anchor="middle">Hoặc restore snapshot về volume gateway</text>
+          <text x="655" y="228" font-size="11" text-anchor="middle">on-premises khi sự cố cục bộ đã khắc phục.</text>
+          <text x="655" y="252" font-size="10.5" text-anchor="middle" class="muted">Snapshot gia tăng: chỉ lưu phần thay đổi so với lần trước</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Cached volume coi S3 là bản chính và chỉ giữ dữ liệu nóng tại chỗ; stored volume giữ toàn bộ dữ liệu tại chỗ và đẩy snapshot bất đồng bộ lên AWS. Cả hai tạo <b>EBS snapshot</b>, từ đó dựng được <b>EBS volume cho EC2</b> – mô hình DR “on-premises → AWS” kinh điển.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – cached hay stored?</span>
+        <ul>
+          <li>“<i>Minimize on-premises storage, most data infrequently accessed, keep low-latency access to frequently accessed data</i>” ⇒ <b>cached volumes</b>.</li>
+          <li>“<i>Need low-latency access to the ENTIRE dataset</i>” + “<i>durable offsite backup in AWS</i>” ⇒ <b>stored volumes</b>.</li>
+          <li>“<i>iSCSI block storage + recover to Amazon EC2 for DR</i>” ⇒ Volume Gateway → EBS snapshot → EBS volume.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: TAPE GATEWAY ===================== -->
+      <h2 id="tape-gateway"><img src="../assets/icons/res/AWS-Storage-Gateway_Tape-Gateway.svg" alt="">Tape Gateway: thư viện băng từ ảo</h2>
+      <p class="lead"><span class="t" data-vi="Cổng băng từ">Tape Gateway</span> cung cấp kho băng từ ảo được AWS hậu thuẫn, giúp <b>archive dữ liệu backup</b> bền và rẻ trong <b>S3 Glacier Flexible Retrieval</b> hoặc <b>S3 Glacier Deep Archive</b>, đồng thời loại bỏ gánh nặng mua, mở rộng, bảo trì hạ tầng băng từ vật lý. Phần mềm backup hiện có <b>không phải thay</b> – nó vẫn “thấy” một thư viện băng từ.</p>
+
+      <div class="stats">
+        <div class="stat"><b>10</b><span>tape drive ảo mỗi VTL (thiết bị iSCSI)</span></div>
+        <div class="stat"><b>1</b><span>media changer mỗi VTL</span></div>
+        <div class="stat"><b>100 GiB – 15 TiB</b><span>kích thước một virtual tape</span></div>
+        <div class="stat"><b>1.500 tape / 1 PiB</b><span>tối đa trên một gateway tại một thời điểm</span></div>
+        <div class="stat"><b>3–5 giờ</b><span>retrieve tape từ Glacier Flexible Retrieval</span></div>
+        <div class="stat"><b>~12 giờ</b><span>retrieve tape từ Glacier Deep Archive</span></div>
+      </div>
+
+      <h3>Thành phần</h3>
+      <ul>
+        <li><span class="t" data-vi="Băng từ ảo">Virtual tape</span> – giống cartridge vật lý nhưng dữ liệu nằm trên AWS; tạo bằng console hoặc API.</li>
+        <li><span class="t" data-vi="Thư viện băng từ ảo">Virtual tape library (VTL)</span> – tương tự thư viện băng từ có tay robot; mỗi Tape Gateway có <b>một VTL</b>, tape trong VTL được lưu ở <b>Amazon S3</b>.</li>
+        <li><b>Tape drive</b> (10 cái) và <b>media changer</b> (1 cái) – xuất hiện với phần mềm backup như thiết bị <b>iSCSI</b>; media changer nạp/rút tape vào drive.</li>
+        <li><span class="t" data-vi="Kệ băng từ ảo">Virtual tape shelf (VTS)</span> / Archive – tương tự kho băng từ off-site. Khi phần mềm backup <b>eject</b> tape, gateway chuyển tape vào archive (cùng Region), lưu ở Glacier Flexible Retrieval hoặc Deep Archive.</li>
+        <li>Tape đã archive <b>không đọc trực tiếp được</b> – phải <b>retrieve</b> về VTL của gateway trước.</li>
+        <li>Gateway cần cache storage và upload buffer; upload buffer còn là nơi tạo <b>recovery point</b> để khôi phục tape khi gateway gặp sự cố.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">Backup server<small>phần mềm backup sẵn có</small></div>
+          <span class="arrow">iSCSI: media changer + tape drive</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Storage-Gateway_Tape-Gateway.svg" alt="">Tape Gateway<small>cache + upload buffer</small></div>
+          <span class="arrow">upload bất đồng bộ</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Storage-Gateway_Virtual-Tape-Library.svg" alt="">VTL (S3)<small>tape đang dùng</small></div>
+          <span class="arrow">eject ⇒ archive</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier-Deep-Archive.svg" alt="">VTS<small>Glacier Flexible / Deep Archive</small></div>
+          <span class="arrow dashed">retrieve 3–5 h / ~12 h</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Storage-Gateway_Virtual-Tape-Library.svg" alt="">VTL<small>đọc lại để restore</small></div>
+        </div>
+        <figcaption><b>Hình 4.</b> Vòng đời một virtual tape: phần mềm backup ghi vào tape qua iSCSI; gateway ghi vào cache và upload buffer rồi xác nhận ghi xong, sau đó upload bất đồng bộ lên VTL (S3). Khi tape bị eject, nó được chuyển xuống archive (Glacier). Muốn đọc lại phải retrieve tape về VTL.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Tape Gateway</span>
+        <ul>
+          <li>“<i>Replace physical tape library / offsite tape vaulting, keep existing backup application</i>” ⇒ <b>Tape Gateway</b>.</li>
+          <li>“<i>Lowest cost long-term retention of backup tapes, retrieval within 12 hours is acceptable</i>” ⇒ archive vào <b>S3 Glacier Deep Archive</b>.</li>
+          <li>Phân biệt: đề nói “<i>backup files to an NFS/SMB share</i>” ⇒ S3 File Gateway; “<i>tape</i>” ⇒ Tape Gateway.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: DATASYNC ===================== -->
+      <h2 id="datasync"><img src="../assets/icons/svc/AWS-DataSync.svg" alt="">AWS DataSync: truyền dữ liệu trực tuyến</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ truyền dữ liệu trực tuyến">AWS DataSync</span> là dịch vụ truyền file/object <b>an toàn, tin cậy, tốc độ cao</b> tới, từ và giữa các dịch vụ lưu trữ AWS. DataSync dùng <b>giao thức mạng chuyên dụng</b> cùng kiến trúc <b>song song, đa luồng</b> để tăng tốc, tự động hóa cả quy trình truyền lẫn hạ tầng cần cho việc truyền – bạn không phải viết script <code>rsync</code>/<code>robocopy</code> rồi tự kiểm tra.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhóm location</th><th>Hỗ trợ</th></tr></thead>
+        <tbody>
+          <tr><td><b>On-premises</b> (cần agent)</td><td>NFS, SMB, <b>HDFS</b> (Hadoop), object storage tự quản lý</td></tr>
+          <tr><td><b>AWS storage</b></td><td>Amazon S3 (chọn được storage class), Amazon EFS, FSx for Windows File Server, FSx for Lustre, FSx for OpenZFS, FSx for NetApp ONTAP</td></tr>
+          <tr><td><b>Cloud khác</b></td><td>Google Cloud Storage, Azure Blob Storage, Azure Files, Wasabi, DigitalOcean Spaces, Oracle Cloud Object Storage, Cloudflare R2, Backblaze B2, IBM Cloud Object Storage…</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Bốn khái niệm cốt lõi</h3>
+      <ul>
+        <li><span class="t" data-vi="Tác tử">Agent</span> – VM appliance mà DataSync dùng để đọc/ghi storage trong quá trình truyền. Triển khai trên <b>VMware ESXi, KVM, Nutanix AHV</b> (dùng image KVM) hoặc <b>Hyper-V</b>; với storage trong VPC có thể chạy agent dạng <b>EC2 instance</b>. Có hai loại agent: cho task <b>Basic mode</b> và cho task <b>Enhanced mode</b>.</li>
+        <li><span class="t" data-vi="Vị trí nguồn/đích">Location</span> – mô tả nơi copy <b>từ</b> hoặc <b>tới</b> (vd một NFS export, một S3 bucket/prefix).</li>
+        <li><span class="t" data-vi="Tác vụ truyền">Task</span> – định nghĩa một lần truyền: source location, destination location và tùy chọn (metadata, file đã xóa, quyền, filter, băng thông, lịch, mức kiểm tra).</li>
+        <li><span class="t" data-vi="Lần chạy tác vụ">Task execution</span> – một lần chạy task, đi qua các pha <b>chuẩn bị (prepare) → truyền (transfer) → kiểm tra (verify)</b>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">Corporate data center</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">NAS (NFS / SMB)<small>file server cũ</small></div>
+              <div class="node"><img src="../assets/icons/res/Disk.svg" alt="">HDFS / object storage<small>cụm Hadoop</small></div>
+            </div>
+            <div class="arrow down"><span>đọc qua LAN</span></div>
+            <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Datasync_Agent.svg" alt="">DataSync agent (VM)<small>tối đa 4 agent / location</small></div></div>
+            <div class="row center"><div class="node"><img src="../assets/icons/svc/AWS-Direct-Connect.svg" alt="">Direct Connect / VPN / Internet<small>TLS, giới hạn băng thông</small></div></div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+            <div class="grp region"><span class="lbl">Region</span>
+              <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">VPC service endpoint<small>(AWS PrivateLink) – tùy chọn</small></div></div>
+              </div>
+              <div class="row center"><div class="node"><img src="../assets/icons/svc/AWS-DataSync.svg" alt="">DataSync service<small>task: prepare → transfer → verify</small></div></div>
+              <div class="arrow down"><span>ghi vào destination location</span></div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Amazon S3<small>chọn storage class</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Elastic-File-System.svg" alt="">Amazon EFS</div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-FSx.svg" alt="">Amazon FSx<small>Windows / Lustre / ONTAP / OpenZFS</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> DataSync từ on-premises: agent đặt gần nguồn dữ liệu đọc NFS/SMB/HDFS/object storage, truyền mã hóa TLS lên dịch vụ DataSync (qua Internet, Direct Connect, hoặc VPC service endpoint để không đi Internet công cộng), rồi ghi vào S3/EFS/FSx. Truyền giữa các dịch vụ AWS trong cùng account <b>không cần agent</b> và dữ liệu không rời mạng AWS.</figcaption>
+      </figure>
+
+      <h3>Khi nào cần agent?</h3>
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/AWS-Datasync_Agent.svg" alt="">Cần agent</h4>
+          <ul>
+            <li>Giữa <b>storage on-premises</b> và AWS.</li>
+            <li>Giữa Amazon EFS / FSx và storage ở <b>cloud khác</b>.</li>
+            <li>Giữa một số dịch vụ AWS <b>khác account</b> khi <b>không bên nào là S3</b>.</li>
+            <li>Giữa Region thương mại và AWS GovCloud (US) khi cả hai đầu là EFS/FSx.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/AWS-DataSync.svg" alt="">Không cần agent</h4>
+          <ul>
+            <li>Giữa các dịch vụ AWS <b>cùng account</b> (cùng Region hoặc khác Region).</li>
+            <li>Giữa Amazon S3 và dịch vụ AWS khác <b>khác account</b>.</li>
+            <li>Giữa Amazon S3 và object storage ở <b>cloud khác</b>.</li>
+            <li>Commercial ↔ GovCloud khi một đầu là S3.</li>
+          </ul></div>
+      </div>
+      <p>Truyền giữa Region bị tính <b>phí data transfer OUT</b> từ Region nguồn. Có thể gắn tối đa <b>4 agent Basic + 4 agent Enhanced</b> vào một location để tăng tốc với hàng triệu file nhỏ, nhưng nhiều agent <b>không tạo high availability</b>: mọi agent của location phải online thì task mới chạy. Với dataset rất lớn, AWS khuyên chia thành <b>nhiều task chạy song song, mỗi task một agent</b>.</p>
+
+      <h3>Basic mode vs Enhanced mode</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Pha</th><th>Basic mode</th><th>Enhanced mode</th></tr></thead>
+        <tbody>
+          <tr><td>Prepare</td><td>Quét toàn bộ nguồn và đích trước, có thể mất phút → giờ; số item tính vào <b>task quota</b></td><td>Chuẩn bị object ngay khi tìm thấy, chạy suốt task; <b>gần như không giới hạn</b> số object mỗi lần chạy</td></tr>
+          <tr><td>Transfer</td><td>Chỉ bắt đầu sau khi chuẩn bị xong</td><td>Truyền từng object ngay khi đã chuẩn bị</td></tr>
+          <tr><td>Verify</td><td>Kiểm tra cuối task (có thể lâu với dataset lớn)</td><td>Kiểm tra từng object khi truyền, chỉ dữ liệu đã truyền</td></tr>
+          <tr><td>Thứ tự</td><td>Tuần tự</td><td>Song song</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Tính năng hay được hỏi</h3>
+      <ul>
+        <li><b>Toàn vẹn dữ liệu</b>: DataSync <b>luôn</b> kiểm tra toàn vẹn khi truyền, và có thể kiểm tra thêm cuối task (chỉ dữ liệu đã truyền hoặc toàn bộ dataset) bằng so sánh <b>checksum và metadata</b>.</li>
+        <li><b>Bảo mật</b>: mã hóa <b>TLS</b> in transit; truy cập storage AWS bằng <b>IAM role</b>; hỗ trợ <b>VPC endpoint</b> để không đi Internet công cộng.</li>
+        <li><b>Lặp lại định kỳ</b>: đặt <b>lịch (schedule)</b>, chỉ truyền <b>dữ liệu thay đổi</b> kể từ lần trước, tùy chọn <b>xóa ở đích</b> những gì không còn ở nguồn.</li>
+        <li><b>Kiểm soát</b>: <b>filter</b> include/exclude, <b>giới hạn băng thông</b> (không “ăn” hết đường truyền production), chọn metadata/quyền cần giữ.</li>
+        <li><b>File đang mở</b>: copy được; nếu file bị ghi trong lúc truyền, pha verify phát hiện ⇒ chạy lại task. File bị <b>khóa</b> mà server không cho mở ⇒ bị bỏ qua và ghi log; DataSync không lock/unlock file.</li>
+        <li><b>Object archive</b>: object ở lớp Glacier chưa restore sẽ bị <b>bỏ qua</b> – phải restore trước.</li>
+        <li>Use case chính: <b>migrate</b> dataset đang hoạt động, <b>archive dữ liệu lạnh</b> thẳng vào S3 Glacier Flexible Retrieval / Deep Archive để tắt hệ thống cũ, <b>replicate</b> sang S3 / EFS / FSx làm bản standby, <b>đưa dữ liệu vào/ra để xử lý</b> (ML, media, phân tích).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – DataSync</span>
+        <ul>
+          <li>“<i>Migrate X TB from on-premises NFS/SMB NAS to Amazon EFS / FSx / S3</i>”, “<i>automate, verify data integrity, encrypted in transit</i>”, “<i>LEAST operational overhead</i>” ⇒ <b>AWS DataSync</b>.</li>
+          <li>“<i>Copy data between two EFS file systems / from S3 to FSx in another Region</i>” ⇒ DataSync (không cần agent khi cùng account).</li>
+          <li>“<i>Hadoop HDFS cluster migration to S3</i>” ⇒ DataSync (HDFS location).</li>
+          <li>“<i>Transfer must not consume all bandwidth during business hours</i>” ⇒ DataSync + <b>bandwidth limit</b> / schedule.</li>
+          <li>“<i>Transfer over Direct Connect privately</i>” ⇒ DataSync với <b>VPC service endpoint</b> (PrivateLink).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – DataSync vs Storage Gateway</span>
+        <ul>
+          <li>DataSync là công cụ <b>di chuyển/đồng bộ</b> – không phải nơi ứng dụng mount để đọc/ghi hằng ngày. Ứng dụng on-premises cần tiếp tục dùng file ⇒ Storage Gateway.</li>
+          <li>Kịch bản phổ biến của AWS: dùng <b>DataSync để migrate dữ liệu hiện có</b>, rồi <b>S3 File Gateway cho truy cập liên tục</b> từ on-premises vào dữ liệu đã migrate.</li>
+          <li>Nhiều agent trên một location ≠ HA. Agent offline ⇒ task không chạy được.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: SNOWBALL EDGE ===================== -->
+      <h2 id="snowball"><img src="../assets/icons/svc/AWS-Snowball-Edge.svg" alt="">AWS Snowball Edge và chuyển dữ liệu offline</h2>
+      <p class="lead"><span class="t" data-vi="Thiết bị Snowball Edge">AWS Snowball Edge</span> là thiết bị có sẵn storage và năng lực tính toán cho một số dịch vụ AWS. Nó có thể <b>xử lý dữ liệu tại chỗ</b>, chạy workload <span class="t" data-vi="Điện toán biên">edge computing</span>, và <b>chuyển dữ liệu vào/ra AWS nhanh hơn Internet</b> bằng cách gửi chính thiết bị qua đơn vị vận chuyển. Thiết bị là một hộp chắc chắn (rugged), có màn hình <b>E Ink</b> tự hiển thị nhãn gửi hàng.</p>
+
+      <div class="callout warn"><span class="ttl">Tình trạng dịch vụ (quan trọng khi đọc đề cũ)</span>
+        <p>Tài liệu AWS hiện ghi: <i>“AWS Snowball Edge is no longer available to new customers.”</i> Khách hàng mới được hướng tới <b>AWS DataSync</b> cho truyền online, <b>AWS Data Transfer Terminal</b> cho truyền vật lý an toàn (mang thiết bị lưu trữ tới địa điểm của AWS), hoặc giải pháp đối tác; với edge computing dùng <b>AWS Outposts</b>. Các thiết bị nhỏ hơn (<b>Snowcone</b>) và xe tải <b>Snowmobile</b> (100 PB) cũng đã ngừng. Tuy vậy, đề SAA-C03 vẫn có thể dùng Snow Family làm đáp án cho tình huống “<i>băng thông hạn chế, hàng trăm TB–PB</i>”, vì vậy bạn vẫn cần hiểu chúng.</p></div>
+
+      <div class="stats">
+        <div class="stat"><b>210 TB</b><span>NVMe usable – Storage Optimized 210 TB</span></div>
+        <div class="stat"><b>104 vCPU / 416 GB</b><span>RAM usable – Compute Optimized</span></div>
+        <div class="stat"><b>28 TB NVMe</b><span>dành cho compute instance (Compute Optimized)</span></div>
+        <div class="stat"><b>100 Gbit/s</b><span>cổng mạng nhanh nhất (QSFP28)</span></div>
+        <div class="stat"><b>3–16 thiết bị</b><span>cluster cho local storage &amp; compute bền</span></div>
+        <div class="stat"><b>22,5 kg</b><span>khối lượng mỗi thiết bị</span></div>
+      </div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thông số</th><th>Snowball Edge Storage Optimized 210 TB</th><th>Snowball Edge Compute Optimized</th></tr></thead>
+        <tbody>
+          <tr><td>Mục đích chính</td><td><b>Chuyển dữ liệu</b> khối lượng lớn, local storage</td><td><b>Edge computing</b> (ML inference, xử lý video, phân tích tại chỗ)</td></tr>
+          <tr><td>CPU / RAM</td><td>104 vCPU, 416 GB</td><td>104 vCPU, 512 GB (tối đa 416 GB cho khách hàng)</td></tr>
+          <tr><td>Storage</td><td>210 TB NVMe usable (object &amp; NFS)</td><td>28 TB NVMe SSD</td></tr>
+          <tr><td>Mạng</td><td colspan="2">2× 10 Gbit RJ45 (1 cổng dùng được), 1× 25 Gbit SFP28, 1× 100 Gbit QSFP28 – chỉ dùng <b>một</b> interface tại một thời điểm</td></tr>
+          <tr><td>Bảo mật vật lý</td><td colspan="2">Ốc từ ẩn, công tắc phát hiện mở máy, thẻ NFC, chống can thiệp, security card; <b>mã hóa bắt buộc</b> at rest và khi vận chuyển</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Tính năng chính</h3>
+      <ul>
+        <li><b>Import / export</b> dữ liệu giữa môi trường local và <b>Amazon S3</b>, vận chuyển bằng một hoặc nhiều thiết bị <b>không dùng Internet</b>.</li>
+        <li>Giao thức nạp dữ liệu: <b>NFSv3 / v4 / v4.1</b> và <b>S3 API</b> (S3 adapter, HTTP/HTTPS).</li>
+        <li><b>Endpoint tương thích Amazon S3 và Amazon EC2</b>: chạy instance từ AMI (loại <code>sbe1</code>, <code>sbe-c</code>, <code>sbe-g</code>), EBS volume cục bộ cho instance, <b>Amazon EKS Anywhere</b> cho Kubernetes, Lambda qua AWS IoT Greengrass.</li>
+        <li><b>Amazon S3 compatible storage on Snowball Edge</b>: tập S3 API mở rộng, cluster 3–16 node để tăng độ bền, quản lý bucket cục bộ.</li>
+        <li>Quản lý: tạo <b>job</b> trong AWS Snow Family Management Console hoặc job management API; tại chỗ cấu hình IP qua màn hình LCD và <b>mở khóa (unlock)</b> bằng Snowball Edge client hoặc <b>AWS OpsHub</b>.</li>
+      </ul>
+
+      <h3>Quy trình một job import</h3>
+      <ol class="steps">
+        <li>Tạo job import trên console, chọn S3 bucket đích và KMS key. AWS gửi thiết bị tới bạn.</li>
+        <li>Nhận thiết bị, cắm mạng, unlock bằng manifest + unlock code (Snowball Edge client / OpsHub).</li>
+        <li>Copy dữ liệu bằng NFS hoặc S3 adapter (dữ liệu được mã hóa khi ghi lên thiết bị).</li>
+        <li>Tắt thiết bị – nhãn E Ink tự đổi sang địa chỉ trả về; gửi qua đơn vị vận chuyển.</li>
+        <li>AWS nhận thiết bị, nạp dữ liệu vào <b>S3 bucket</b>, sau đó <b>xóa an toàn</b> thiết bị theo chuẩn NIST.</li>
+      </ol>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Snow Family</span>
+        <ul>
+          <li>“<i>Hundreds of TB / petabytes</i>” + “<i>limited / slow network bandwidth</i>” + “<i>complete within weeks</i>” ⇒ <b>Snowball Edge Storage Optimized</b> (nhiều thiết bị song song nếu cần).</li>
+          <li>“<i>Process data at a remote location with no / intermittent connectivity (ship, mine, field)</i>” ⇒ <b>Snowball Edge Compute Optimized</b> (hoặc AWS Outposts nếu có kết nối ổn định và cần hạ tầng AWS lâu dài).</li>
+          <li>Snowball nạp dữ liệu vào <b>S3</b>. Muốn dữ liệu vào Glacier ⇒ import vào S3 rồi dùng <b>S3 Lifecycle</b> chuyển xuống Glacier Flexible Retrieval / Deep Archive.</li>
+          <li>Đủ băng thông + thời gian ⇒ ưu tiên <b>DataSync</b> (online, tự động, kiểm tra toàn vẹn) thay vì vận chuyển thiết bị.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: TRANSFER FAMILY ===================== -->
+      <h2 id="transfer-family"><img src="../assets/icons/svc/AWS-Transfer-Family.svg" alt="">AWS Transfer Family: SFTP, FTPS, FTP, AS2 được quản lý</h2>
+      <p class="lead"><span class="t" data-vi="Họ dịch vụ truyền file AWS">AWS Transfer Family</span> là dịch vụ truyền file an toàn, <b>fully managed</b>, cho phép chuyển file vào/ra <b>Amazon S3</b> hoặc <b>Amazon EFS</b> qua <b>SFTP</b> (version 3), <b>FTPS</b>, <b>FTP</b>, <b>AS2</b> và truyền qua trình duyệt (<b>web apps</b>). Khách hàng, đối tác, đội nội bộ giữ nguyên client (OpenSSH, WinSCP, FileZilla, Cyberduck…), cấu hình xác thực và firewall – <b>không có gì thay đổi phía họ</b>, còn bạn không phải chạy server SFTP nào.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Transfer-Family_AWS-SFTP.svg" alt="">
+          <div><h4>SFTP</h4><span class="vi">SSH File Transfer Protocol</span><p>Qua SSH, mã hóa. Cổng 22 (mặc định), có thể thêm 2222, 22000. Dùng được trên endpoint public lẫn VPC.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Transfer-Family_AWS-FTPS.svg" alt="">
+          <div><h4>FTPS</h4><span class="vi">FTP qua TLS</span><p>Control channel cổng 21, data channel <b>8192–8200</b>. Dùng được trên VPC endpoint internet-facing.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Transfer-Family_AWS-FTP.svg" alt="">
+          <div><h4>FTP</h4><span class="vi">Không mã hóa</span><p>Chỉ cho mạng nội bộ: endpoint <b>VPC internal</b> (internet-facing chỉ cho SFTP và FTPS).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Transfer-Family.svg" alt="">
+          <div><h4>AS2</h4><span class="vi">Applicability Statement 2</span><p>Giao thức B2B có sẵn bảo vệ dữ liệu: chuỗi cung ứng, thanh toán, tích hợp ERP/CRM, yêu cầu tuân thủ.</p></div></div>
+      </div>
+
+      <h3>Endpoint type</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Endpoint</th><th>Ai kết nối được</th><th>Kiểm soát truy cập</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><b>Public</b></td><td>Bất kỳ ai trên Internet</td><td>Xác thực người dùng; không gắn security group</td><td>IP do AWS quản lý, có thể thay đổi ⇒ khó cho đối tác allow list</td></tr>
+          <tr><td><b>VPC – Internal</b></td><td>Chỉ client trong VPC hoặc mạng nối với VPC (Direct Connect, VPN, peering)</td><td><b>Security group</b>, IP private</td><td>Không qua Internet công cộng; hỗ trợ cả <b>FTP</b>; không hỗ trợ custom hostname</td></tr>
+          <tr><td><b>VPC – Internet facing</b></td><td>Client trên Internet</td><td><b>Security group</b> lọc IP nguồn (IP allow list)</td><td>Gắn <b>Elastic IP</b> mỗi subnet ⇒ IP <b>tĩnh</b> để đối tác mở firewall; subnet phải public; chỉ <b>SFTP và FTPS</b></td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Endpoint VPC chọn tối đa <b>3 AZ</b> (mỗi AZ một subnet); dịch vụ chạy trên fleet dư thừa, tự scale.</li>
+        <li><b>Custom hostname</b> qua Route 53 alias (vd <code>sftp.example.com</code>) hoặc DNS khác; mặc định là <code>server-id.server.transfer.region.amazonaws.com</code>.</li>
+        <li>Kiểu cũ <code>VPC_ENDPOINT</code> đã ngừng cho account mới – dùng <code>VPC</code> (không cần NLB để gắn Elastic IP).</li>
+        <li>Ghi log hoạt động người dùng vào <b>CloudWatch</b> qua logging role; chọn <b>security policy</b> (bộ thuật toán mã hóa), có tùy chọn endpoint FIPS.</li>
+      </ul>
+
+      <h3>Identity provider – ai được đăng nhập?</h3>
+      <ul>
+        <li><b>Service managed</b>: user và <b>SSH public key</b> lưu trong Transfer Family, mỗi user gắn IAM role và home directory (S3 prefix / thư mục EFS).</li>
+        <li><b>AWS Directory Service</b>: xác thực bằng <b>AWS Managed Microsoft AD</b> hoặc AD on-premises qua AD Connector (Bài 7).</li>
+        <li><b>Custom identity provider</b>: <b>AWS Lambda</b> hoặc <b>Amazon API Gateway</b> gọi tới IdP riêng (Okta, Azure AD, Cognito, database…), trả về IAM role, home directory, policy.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Internet.svg" alt="">Đối tác bên ngoài</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Đối tác / vendor<small>WinSCP, OpenSSH, FileZilla</small></div>
+            </div>
+            <div class="arrow down"><span>SFTP :22 tới Elastic IP tĩnh</span></div>
+            <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">sftp.example.com<small>Route 53 alias</small></div></div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+            <div class="grp region"><span class="lbl">Region</span>
+              <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC</span>
+                <div class="row">
+                  <div class="grp pub"><span class="lbl">Public subnet AZ A</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Transfer-Family_AWS-SFTP.svg" alt="">Endpoint + EIP<small>SG: allow list IP đối tác</small></div></div></div>
+                  <div class="grp pub"><span class="lbl">Public subnet AZ B</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Transfer-Family_AWS-SFTP.svg" alt="">Endpoint + EIP</div></div></div>
+                </div>
+              </div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Custom IdP<small>Lambda / API Gateway</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Transfer-Family.svg" alt="">Managed workflow<small>copy, tag, quét, giải mã PGP</small></div>
+              </div>
+              <div class="arrow down"><span>IAM role của user ⇒ home directory</span></div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">Amazon S3<small>data lake, phân tích</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Elastic-File-System.svg" alt="">Amazon EFS<small>ứng dụng Linux dùng chung</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 6.</b> Transfer Family với endpoint <b>VPC internet-facing</b>: mỗi AZ một Elastic IP tĩnh để đối tác cấu hình firewall, security group chỉ cho phép IP đối tác, user xác thực qua custom IdP; file rơi thẳng vào S3/EFS và có thể kích hoạt managed workflow xử lý sau khi upload.</figcaption>
+      </figure>
+
+      <h3>Tính năng bổ sung</h3>
+      <ul>
+        <li><span class="t" data-vi="Luồng xử lý được quản lý">Managed workflows</span> (MFTW): serverless, tự chạy sau khi upload xong (hoặc upload dở) – copy, gắn tag, quét, lọc, nén/giải nén, mã hóa/giải mã; có theo dõi end-to-end để audit.</li>
+        <li><b>Transfer Family web apps</b>: giao diện web được quản lý để người dùng nghiệp vụ tải lên/xuống S3, tích hợp <b>S3 Access Grants</b>.</li>
+        <li><b>Connectors</b> (SFTP / AS2 connector): Transfer Family chủ động gửi/nhận file với server của đối tác.</li>
+        <li>Trả tiền theo sử dụng, không phí trả trước; dữ liệu trong S3 dùng ngay cho phân tích, báo cáo, audit, archive.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Transfer Family</span>
+        <ul>
+          <li>“<i>Partners upload files via SFTP, store in S3, no servers to manage</i>” ⇒ <b>AWS Transfer Family</b> (không dựng EC2 chạy SFTP).</li>
+          <li>“<i>Partners must allow list a static IP address</i>” ⇒ endpoint <b>VPC, internet-facing + Elastic IP</b>; chặn IP lạ bằng security group.</li>
+          <li>“<i>Authenticate SFTP users against the corporate Active Directory</i>” ⇒ identity provider <b>AWS Directory Service</b>; IdP bên thứ ba ⇒ <b>custom IdP (Lambda / API Gateway)</b>.</li>
+          <li>“<i>EDI / B2B, AS2 protocol</i>” ⇒ Transfer Family AS2.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: SO SÁNH TỔNG HỢP ===================== -->
+      <h2 id="so-sanh"><img src="../assets/icons/cat/Storage.svg" alt="">So sánh tổng hợp: chọn dịch vụ nào?</h2>
+      <p class="lead">Nhiều đáp án trong đề đều “làm được”, nhưng chỉ một phương án khớp đúng từ khóa về <b>thời gian</b>, <b>băng thông</b>, <b>giao thức</b> và <b>operational overhead</b>. Bảng sau gom lại các tiêu chí phân biệt (S3 Transfer Acceleration đã học ở Bài 15).</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Storage Gateway</th><th>DataSync</th><th>Snowball Edge</th><th>Transfer Family</th><th>S3 Transfer Acceleration</th></tr></thead>
+        <tbody>
+          <tr><td>Bản chất</td><td>Hybrid storage lâu dài</td><td>Migrate / sync online</td><td>Migrate offline + edge</td><td>Endpoint trao đổi file</td><td>Tăng tốc upload S3 qua edge</td></tr>
+          <tr><td>Giao thức nguồn</td><td>NFS, SMB, iSCSI, VTL</td><td>NFS, SMB, HDFS, object, cloud khác</td><td>NFS, S3 API</td><td>SFTP, FTPS, FTP, AS2, web</td><td>S3 API (HTTPS)</td></tr>
+          <tr><td>Đích</td><td>S3, Glacier, EBS snapshot, FSx</td><td>S3, EFS, mọi FSx</td><td>S3</td><td>S3, EFS</td><td>S3</td></tr>
+          <tr><td>Cache local</td><td class="yes">Có</td><td class="no">Không</td><td>Lưu trên thiết bị</td><td class="no">Không</td><td class="no">Không</td></tr>
+          <tr><td>Cần cài gì tại chỗ</td><td>Gateway VM / appliance</td><td>Agent VM (khi nguồn on-premises)</td><td>Nhận thiết bị</td><td>Không (client sẵn có)</td><td>Không</td></tr>
+          <tr><td>Kiểm tra toàn vẹn</td><td>MD5 khi upload</td><td class="yes">Checksum + metadata, verify</td><td>Mã hóa bắt buộc</td><td>—</td><td>—</td></tr>
+          <tr><td>Từ khóa đề</td><td><i>on-premises apps keep using, local cache</i></td><td><i>migrate NAS, schedule, verify, least overhead</i></td><td><i>PB, limited bandwidth, no connectivity</i></td><td><i>SFTP partners, static IP</i></td><td><i>global users upload to one bucket</i></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy tổng hợp</span>
+        <ul>
+          <li>Đề hỏi “<i>migrate once, then decommission on-premises</i>” mà bạn chọn Storage Gateway ⇒ sai trọng tâm; Storage Gateway dành cho on-premises <b>còn tiếp tục</b> truy cập.</li>
+          <li>“<i>Upload via SFTP</i>” mà chọn DataSync ⇒ sai; DataSync không phải SFTP server cho bên thứ ba.</li>
+          <li>Dựng EC2 + phần mềm SFTP/rsync tự viết thường <b>không phải</b> đáp án “least operational overhead”.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải nhớ</span>
+        <ul>
+          <li><b>Storage Gateway</b> = appliance tại chỗ (VMware/Hyper-V/KVM/Nutanix, hardware appliance, EC2) + cache local; ứng dụng on-premises <b>tiếp tục dùng</b> storage, dữ liệu nằm ở AWS.</li>
+          <li><b>S3 File Gateway</b>: NFS v3/4.1, SMB 2/3 ⇒ <b>1 file = 1 object</b>, path = key, SSE-S3; đổi tên/quyền/append tạo object mới; dùng S3 Lifecycle để xuống Glacier. <b>FSx File Gateway</b> không còn cho khách hàng mới.</li>
+          <li><b>Volume Gateway</b> (iSCSI): <b>cached</b> = S3 là bản chính, 32 TiB/volume, 1 PiB/gateway; <b>stored</b> = toàn bộ local, snapshot bất đồng bộ, 16 TiB/volume, 512 TiB/gateway; snapshot là <b>EBS snapshot</b> ⇒ EBS volume cho EC2.</li>
+          <li><b>Tape Gateway</b>: VTL iSCSI (10 tape drive + 1 media changer), tape 100 GiB–15 TiB, 1.500 tape / 1 PiB; archive vào Glacier Flexible Retrieval (3–5 h) hoặc Deep Archive (~12 h).</li>
+          <li><b>DataSync</b>: agent + location + task + task execution; TLS, verify checksum, schedule, chỉ truyền phần thay đổi, bandwidth limit, filter; không cần agent giữa dịch vụ AWS cùng account; tối đa 4 agent/location nhưng không HA.</li>
+          <li><b>Snowball Edge</b>: Storage Optimized 210 TB, Compute Optimized 104 vCPU/416 GB/28 TB; mã hóa bắt buộc; cluster 3–16; nạp vào <b>S3</b>; không còn cho khách hàng mới (thay bằng DataSync / Data Transfer Terminal / Outposts).</li>
+          <li><b>Transfer Family</b>: SFTP/FTPS/FTP/AS2/web ⇒ S3 hoặc EFS; endpoint Public / VPC internal / VPC internet-facing (Elastic IP tĩnh, security group); IdP service managed / Directory Service / custom (Lambda, API Gateway); managed workflows.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Hybrid cloud / Hybrid storage</dt><dd><b>Đám mây lai / Lưu trữ lai</b> – kết hợp hạ tầng on-premises với AWS.</dd></div>
+        <div><dt>Data migration</dt><dd><b>Di chuyển dữ liệu</b> – chuyển dữ liệu từ hệ thống cũ sang AWS, một lần hoặc theo đợt.</dd></div>
+        <div><dt>AWS Storage Gateway</dt><dd><b>Cổng lưu trữ lai</b> – appliance tại chỗ nói NFS/SMB/iSCSI/VTL, lưu dữ liệu ở AWS.</dd></div>
+        <div><dt>Software appliance / Hardware appliance</dt><dd><b>Thiết bị phần mềm (VM) / Thiết bị phần cứng</b> chạy gateway tại chỗ.</dd></div>
+        <div><dt>Gateway activation</dt><dd><b>Kích hoạt gateway</b> – liên kết gateway vừa triển khai với account và Region.</dd></div>
+        <div><dt>Cache storage</dt><dd><b>Bộ nhớ đệm cục bộ</b> – giữ dữ liệu vừa truy cập và dữ liệu chờ upload.</dd></div>
+        <div><dt>Upload buffer</dt><dd><b>Vùng đệm tải lên</b> – vùng staging trước khi gateway gửi dữ liệu lên AWS.</dd></div>
+        <div><dt>S3 File Gateway</dt><dd><b>Cổng tệp S3</b> – NFS/SMB share ánh xạ 1:1 file ⇄ object S3.</dd></div>
+        <div><dt>FSx File Gateway</dt><dd><b>Cổng tệp FSx</b> – cache on-premises cho share FSx for Windows; không còn cho khách hàng mới.</dd></div>
+        <div><dt>File share (gateway)</dt><dd><b>Thư mục chia sẻ</b> – điểm mount NFS/SMB liên kết với một S3 bucket/prefix.</dd></div>
+        <div><dt>RefreshCache</dt><dd><b>Làm mới bộ nhớ đệm</b> – cập nhật danh sách file khi object được ghi thẳng vào bucket.</dd></div>
+        <div><dt>Volume Gateway</dt><dd><b>Cổng ổ đĩa</b> – volume iSCSI được AWS hậu thuẫn, snapshot dạng EBS snapshot.</dd></div>
+        <div><dt>Cached volume / Stored volume</dt><dd><b>Volume lưu đệm / Volume lưu tại chỗ</b> – S3 là bản chính / on-premises là bản chính.</dd></div>
+        <div><dt>Tape Gateway</dt><dd><b>Cổng băng từ</b> – thư viện băng từ ảo cho phần mềm backup.</dd></div>
+        <div><dt>Virtual tape / Virtual tape library (VTL)</dt><dd><b>Băng từ ảo / Thư viện băng từ ảo</b> – tape lưu trong S3.</dd></div>
+        <div><dt>Media changer / Tape drive</dt><dd><b>Bộ đổi băng / Ổ băng</b> – thiết bị iSCSI ảo của VTL (1 và 10 cái).</dd></div>
+        <div><dt>Virtual tape shelf (VTS) / Archive</dt><dd><b>Kệ băng từ ảo</b> – nơi lưu tape đã eject, trên Glacier Flexible Retrieval / Deep Archive.</dd></div>
+        <div><dt>AWS DataSync</dt><dd><b>Dịch vụ truyền dữ liệu trực tuyến</b> – migrate/sync giữa on-premises, cloud khác và AWS storage.</dd></div>
+        <div><dt>DataSync agent</dt><dd><b>Tác tử DataSync</b> – VM đọc/ghi storage tự quản lý trong quá trình truyền.</dd></div>
+        <div><dt>Location / Task / Task execution</dt><dd><b>Vị trí nguồn-đích / Tác vụ truyền / Lần chạy tác vụ</b>.</dd></div>
+        <div><dt>Basic mode / Enhanced mode</dt><dd><b>Chế độ cơ bản / nâng cao</b> – chuẩn bị-truyền-kiểm tra tuần tự / song song.</dd></div>
+        <div><dt>Data integrity verification</dt><dd><b>Kiểm tra toàn vẹn dữ liệu</b> – so sánh checksum và metadata nguồn-đích.</dd></div>
+        <div><dt>HDFS</dt><dd><b>Hệ thống tệp phân tán Hadoop</b> – nguồn DataSync hỗ trợ.</dd></div>
+        <div><dt>AWS Snowball Edge</dt><dd><b>Thiết bị chuyển dữ liệu vật lý có compute</b> – Storage Optimized / Compute Optimized.</dd></div>
+        <div><dt>Edge computing</dt><dd><b>Điện toán biên</b> – xử lý dữ liệu tại nơi phát sinh, xa Region.</dd></div>
+        <div><dt>Import job / Export job</dt><dd><b>Tác vụ nhập / xuất</b> – nạp dữ liệu vào S3 / lấy dữ liệu từ S3 ra thiết bị.</dd></div>
+        <div><dt>AWS OpsHub</dt><dd><b>Ứng dụng quản lý thiết bị Snow</b> – giao diện đồ họa để unlock, copy, quản lý.</dd></div>
+        <div><dt>AWS Data Transfer Terminal</dt><dd><b>Điểm truyền dữ liệu vật lý</b> – mang thiết bị lưu trữ tới địa điểm AWS để upload tốc độ cao.</dd></div>
+        <div><dt>AWS Transfer Family</dt><dd><b>Dịch vụ truyền file được quản lý</b> – SFTP/FTPS/FTP/AS2/web vào S3 hoặc EFS.</dd></div>
+        <div><dt>SFTP / FTPS / FTP</dt><dd><b>Truyền file qua SSH / FTP qua TLS / FTP không mã hóa</b>.</dd></div>
+        <div><dt>AS2 (Applicability Statement 2)</dt><dd><b>Giao thức trao đổi dữ liệu B2B</b> có ký và mã hóa sẵn.</dd></div>
+        <div><dt>Endpoint type (Public / VPC internal / VPC internet-facing)</dt><dd><b>Kiểu điểm cuối</b> của server Transfer Family.</dd></div>
+        <div><dt>IP allow list</dt><dd><b>Danh sách IP được phép</b> – chỉ chấp nhận kết nối từ IP đã khai báo.</dd></div>
+        <div><dt>Service managed / Custom identity provider</dt><dd><b>Nhà cung cấp danh tính do dịch vụ quản lý / tùy chỉnh</b> – lưu user trong Transfer Family / gọi Lambda, API Gateway.</dd></div>
+        <div><dt>Managed workflows (Transfer Family)</dt><dd><b>Luồng xử lý được quản lý</b> – xử lý file tự động sau khi upload.</dd></div>
+      </dl>
+
+      <!-- ===================== CÂU HỎI LUYỆN TẬP ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="B">
+          <div class="qh">A company's on-premises Linux and Windows servers store documents on an aging NAS that is running out of capacity. The company wants to store the documents in Amazon S3 so that they can be analyzed with Amazon Athena, while the on-premises servers continue to access them over NFS and SMB with low latency for recently used files. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Deploy Volume Gateway with cached volumes and mount the volumes over iSCSI.</li>
+            <li data-k="B">Deploy Amazon S3 File Gateway on premises and create NFS and SMB file shares backed by the S3 bucket.</li>
+            <li data-k="C">Use AWS DataSync to copy the NAS to Amazon S3 every hour and keep the NAS as the primary storage.</li>
+            <li data-k="D">Order Snowball Edge devices every month to move new documents to Amazon S3.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> S3 File Gateway cho truy cập NFS/SMB từ on-premises, lưu mỗi file thành <b>object S3</b> (Athena đọc được ngay), có cache local cho dữ liệu vừa dùng. <b>A sai</b>: Volume Gateway là block iSCSI, dữ liệu trong S3 <b>không truy cập được bằng S3 API</b> ⇒ Athena không đọc được. <b>C sai</b>: NAS vẫn hết dung lượng, đồng bộ theo giờ tốn vận hành. <b>D sai</b>: Snowball dành cho chuyển khối lượng lớn một lần, không phải truy cập liên tục.</div>
+          <div class="trans">
+            <div class="tq">Các server Linux và Windows on-premises của một công ty lưu tài liệu trên một NAS đã cũ và sắp hết dung lượng. Công ty muốn lưu tài liệu trong Amazon S3 để có thể phân tích bằng Amazon Athena, trong khi các server on-premises vẫn tiếp tục truy cập chúng qua NFS và SMB với độ trễ thấp cho các file mới được dùng gần đây. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Triển khai Volume Gateway với cached volumes và mount các volume qua iSCSI.</span><span class="why">Sai: Volume Gateway cung cấp block storage iSCSI, không phải NFS/SMB, và dữ liệu lưu trong S3 không truy cập được bằng S3 API nên Athena không đọc được.</span></li>
+              <li data-k="B"><span class="tv">Triển khai Amazon S3 File Gateway on-premises và tạo các NFS và SMB file share dựa trên S3 bucket.</span><span class="why">Đúng: S3 File Gateway cho truy cập NFS/SMB, lưu mỗi file thành một object S3 (Athena đọc trực tiếp được) và có cache local cho file dùng gần đây với độ trễ thấp.</span></li>
+              <li data-k="C"><span class="tv">Dùng AWS DataSync sao chép NAS sang Amazon S3 mỗi giờ và giữ NAS làm bộ lưu trữ chính.</span><span class="why">Sai: NAS vẫn là bộ lưu trữ chính nên vẫn hết dung lượng; vận hành đồng bộ theo giờ cũng tốn công hơn.</span></li>
+              <li data-k="D"><span class="tv">Đặt các thiết bị Snowball Edge mỗi tháng để chuyển tài liệu mới lên Amazon S3.</span><span class="why">Sai: Snowball dành cho chuyển dữ liệu lớn một lần (offline), không cung cấp truy cập NFS/SMB liên tục và tốn nhiều công vận hành.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company runs an application on premises that uses iSCSI block storage. The company wants to keep the entire dataset on premises for low-latency access, but it also needs durable offsite backups in AWS that can be used to launch the application on Amazon EC2 during a disaster. Which solution should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Volume Gateway with cached volumes.</li>
+            <li data-k="B">Amazon S3 File Gateway with S3 Cross-Region Replication.</li>
+            <li data-k="C">Tape Gateway with tapes archived to S3 Glacier Deep Archive.</li>
+            <li data-k="D">Volume Gateway with stored volumes and scheduled snapshots.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Stored volumes</b> giữ toàn bộ dữ liệu tại chỗ (độ trễ thấp cho toàn bộ dataset) và backup bất đồng bộ dạng <b>EBS snapshot</b>; khi DR, tạo EBS volume từ snapshot và gắn vào EC2. <b>A sai</b>: cached volumes coi S3 là bản chính, chỉ giữ dữ liệu nóng tại chỗ. <b>B sai</b>: File Gateway là NFS/SMB, không phải iSCSI. <b>C sai</b>: Tape Gateway cho archive, retrieve mất tới ~12 giờ, không khởi chạy EC2 trực tiếp được.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng on-premises dùng block storage iSCSI. Công ty muốn giữ toàn bộ dataset tại chỗ để truy cập với độ trễ thấp, nhưng cũng cần bản backup ngoài site bền vững trên AWS, có thể dùng để khởi chạy ứng dụng trên Amazon EC2 khi xảy ra thảm họa. Solutions architect nên đề xuất giải pháp nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Volume Gateway với cached volumes.</span><span class="why">Sai: cached volumes coi S3 là bản chính và chỉ giữ dữ liệu truy cập thường xuyên tại chỗ, không giữ toàn bộ dataset on-premises.</span></li>
+              <li data-k="B"><span class="tv">Amazon S3 File Gateway với S3 Cross-Region Replication.</span><span class="why">Sai: File Gateway cung cấp file share NFS/SMB, không phải block storage iSCSI mà ứng dụng đang dùng.</span></li>
+              <li data-k="C"><span class="tv">Tape Gateway với các tape được archive vào S3 Glacier Deep Archive.</span><span class="why">Sai: Tape Gateway dành cho archive backup, retrieve mất tới khoảng 12 giờ và không tạo trực tiếp EBS volume để chạy EC2.</span></li>
+              <li data-k="D"><span class="tv">Volume Gateway với stored volumes và snapshot theo lịch.</span><span class="why">Đúng: stored volumes giữ toàn bộ dữ liệu tại chỗ (độ trễ thấp) và backup bất đồng bộ lên AWS dạng EBS snapshot; khi DR, tạo EBS volume từ snapshot rồi gắn vào EC2.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company uses backup software that writes to a physical tape library. The company wants to eliminate the tape infrastructure and the offsite tape storage contract without changing its backup software or processes. Backups older than 90 days are rarely restored, and a restore time of up to 12 hours is acceptable. Which solution is MOST cost-effective?</div>
+          <ol class="opts">
+            <li data-k="A">Deploy Tape Gateway and archive ejected virtual tapes to S3 Glacier Deep Archive.</li>
+            <li data-k="B">Deploy S3 File Gateway and configure the backup software to write to an SMB share.</li>
+            <li data-k="C">Use AWS DataSync to copy the tape library to Amazon EFS Infrequent Access.</li>
+            <li data-k="D">Deploy Volume Gateway with cached volumes and take daily snapshots.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Tape Gateway giả lập VTL qua iSCSI nên phần mềm backup <b>không đổi</b>; tape eject được chuyển vào archive trên <b>Glacier Deep Archive</b> – rẻ nhất, retrieve khoảng 12 giờ, đúng yêu cầu. <b>B sai</b>: phải thay đổi quy trình backup (từ tape sang share). <b>C sai</b>: DataSync không đọc thư viện băng từ; EFS IA đắt hơn Deep Archive nhiều. <b>D sai</b>: đổi quy trình và không phải giải pháp archive rẻ nhất.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng phần mềm backup ghi dữ liệu vào một thư viện băng từ vật lý. Công ty muốn loại bỏ hạ tầng băng từ và hợp đồng lưu trữ băng từ ngoài site mà không thay đổi phần mềm hay quy trình backup. Các bản backup cũ hơn 90 ngày hiếm khi được khôi phục, và thời gian khôi phục tới 12 giờ là chấp nhận được. Giải pháp nào MOST cost-effective (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Triển khai Tape Gateway và archive các virtual tape đã eject vào S3 Glacier Deep Archive.</span><span class="why">Đúng: Tape Gateway giả lập thư viện băng từ (VTL) qua iSCSI nên phần mềm backup không đổi; Glacier Deep Archive là lớp rẻ nhất, retrieve trong khoảng 12 giờ – đúng yêu cầu.</span></li>
+              <li data-k="B"><span class="tv">Triển khai S3 File Gateway và cấu hình phần mềm backup ghi vào một SMB share.</span><span class="why">Sai: chuyển từ ghi tape sang ghi file share là thay đổi quy trình backup, trái yêu cầu đề bài.</span></li>
+              <li data-k="C"><span class="tv">Dùng AWS DataSync sao chép thư viện băng từ sang Amazon EFS Infrequent Access.</span><span class="why">Sai: DataSync không đọc được thư viện băng từ, và EFS IA đắt hơn Glacier Deep Archive rất nhiều.</span></li>
+              <li data-k="D"><span class="tv">Triển khai Volume Gateway với cached volumes và chụp snapshot hằng ngày.</span><span class="why">Sai: phải đổi quy trình backup sang volume iSCSI, và EBS snapshot không phải lớp archive rẻ nhất.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company must migrate 60 TB of data from an on-premises NFS file server to Amazon EFS within 3 weeks. The company has a 1 Gbps AWS Direct Connect connection with sufficient spare capacity. The migration must be automated, encrypt data in transit, verify data integrity, and keep the data private. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Order AWS Snowball Edge Storage Optimized devices and import the data into Amazon EFS.</li>
+            <li data-k="B">Mount the EFS file system on an on-premises server and copy the data by using rsync in a cron job.</li>
+            <li data-k="C">Deploy an AWS DataSync agent on premises, use a VPC service endpoint over Direct Connect, and run a DataSync task to Amazon EFS.</li>
+            <li data-k="D">Deploy Amazon S3 File Gateway and configure lifecycle rules to move files to Amazon EFS.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> 1 Gbps ≈ 10,8 TB/ngày ⇒ 60 TB mất khoảng 6–7 ngày, nằm trong 3 tuần. DataSync tự động hóa, mã hóa TLS, <b>verify checksum</b>, truyền riêng qua <b>VPC service endpoint</b> trên Direct Connect, ghi trực tiếp vào EFS. <b>A sai</b>: Snowball nạp vào S3, không vào EFS trực tiếp, và không cần vì mạng đủ nhanh. <b>B sai</b>: rsync tự viết, không kiểm tra toàn vẹn tích hợp, nhiều vận hành. <b>D sai</b>: S3 Lifecycle không chuyển dữ liệu sang EFS.</div>
+          <div class="trans">
+            <div class="tq">Một công ty phải di chuyển 60 TB dữ liệu từ một NFS file server on-premises sang Amazon EFS trong vòng 3 tuần. Công ty có kết nối AWS Direct Connect 1 Gbps với đủ dung lượng dư. Việc di chuyển phải được tự động hóa, mã hóa dữ liệu khi truyền, kiểm tra tính toàn vẹn dữ liệu và giữ dữ liệu ở chế độ riêng tư. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt các thiết bị AWS Snowball Edge Storage Optimized và nhập dữ liệu vào Amazon EFS.</span><span class="why">Sai: Snowball nạp dữ liệu vào S3 chứ không trực tiếp vào EFS, và không cần thiết vì Direct Connect 1 Gbps chuyển 60 TB chỉ mất khoảng 6–7 ngày.</span></li>
+              <li data-k="B"><span class="tv">Mount EFS file system trên một server on-premises và sao chép dữ liệu bằng rsync trong một cron job.</span><span class="why">Sai: phải tự viết và giám sát script, không có kiểm tra toàn vẹn tích hợp – nhiều công vận hành hơn DataSync.</span></li>
+              <li data-k="C"><span class="tv">Triển khai một AWS DataSync agent on-premises, dùng VPC service endpoint qua Direct Connect, và chạy một DataSync task tới Amazon EFS.</span><span class="why">Đúng: DataSync tự động hóa, mã hóa TLS, verify checksum và ghi thẳng vào EFS; VPC endpoint qua Direct Connect giữ dữ liệu riêng tư, kịp trong 3 tuần.</span></li>
+              <li data-k="D"><span class="tv">Triển khai Amazon S3 File Gateway và cấu hình lifecycle rule để chuyển file sang Amazon EFS.</span><span class="why">Sai: S3 Lifecycle chỉ chuyển giữa các storage class của S3, không thể chuyển dữ liệu sang EFS.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company is planning to use AWS DataSync. Which TWO transfers can be performed WITHOUT deploying a DataSync agent? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Copying data from an Amazon EFS file system to an Amazon FSx for Windows File Server file system in another AWS Region in the same account.</li>
+            <li data-k="B">Copying data from an on-premises SMB file server to Amazon S3.</li>
+            <li data-k="C">Copying data from an on-premises Hadoop HDFS cluster to Amazon S3.</li>
+            <li data-k="D">Copying data from an Amazon S3 bucket to an Amazon EFS file system in a different AWS account.</li>
+            <li data-k="E">Copying data from an Amazon EFS file system to an Amazon FSx for Lustre file system in a different AWS account.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> Theo tài liệu DataSync, <b>không cần agent</b> khi truyền giữa dịch vụ AWS <b>cùng account</b> (kể cả khác Region) và giữa <b>Amazon S3</b> với dịch vụ AWS khác <b>khác account</b>. <b>B, C sai</b>: nguồn on-premises (SMB, HDFS) luôn cần agent. <b>E sai</b>: khác account mà <b>không bên nào là S3</b> ⇒ cần agent.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang lên kế hoạch dùng AWS DataSync. HAI kiểu truyền dữ liệu nào có thể thực hiện mà KHÔNG cần triển khai DataSync agent? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Sao chép dữ liệu từ một Amazon EFS file system sang một Amazon FSx for Windows File Server file system ở AWS Region khác trong cùng account.</span><span class="why">Đúng: truyền giữa các dịch vụ lưu trữ AWS trong cùng account (kể cả khác Region) không cần agent.</span></li>
+              <li data-k="B"><span class="tv">Sao chép dữ liệu từ một SMB file server on-premises sang Amazon S3.</span><span class="why">Sai: nguồn on-premises luôn cần DataSync agent để đọc dữ liệu và gửi lên AWS.</span></li>
+              <li data-k="C"><span class="tv">Sao chép dữ liệu từ một cụm Hadoop HDFS on-premises sang Amazon S3.</span><span class="why">Sai: HDFS on-premises cũng là nguồn ngoài AWS nên bắt buộc phải có agent.</span></li>
+              <li data-k="D"><span class="tv">Sao chép dữ liệu từ một Amazon S3 bucket sang một Amazon EFS file system ở AWS account khác.</span><span class="why">Đúng: truyền cross-account giữa Amazon S3 và một dịch vụ AWS khác được hỗ trợ không cần agent.</span></li>
+              <li data-k="E"><span class="tv">Sao chép dữ liệu từ một Amazon EFS file system sang một Amazon FSx for Lustre file system ở AWS account khác.</span><span class="why">Sai: truyền khác account mà không bên nào là S3 thì vẫn cần agent.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A research company in a remote location needs to move 900 TB of genomics data to Amazon S3. The site has a 100 Mbps internet connection that is also used for daily operations. The data must be in AWS within one month. The company is an existing AWS Snow Family customer. Which solution should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Use AWS DataSync over the internet connection with a bandwidth limit.</li>
+            <li data-k="B">Order multiple AWS Snowball Edge Storage Optimized devices, copy the data in parallel, and ship the devices back to AWS.</li>
+            <li data-k="C">Enable S3 Transfer Acceleration and upload the data with multipart uploads.</li>
+            <li data-k="D">Deploy Volume Gateway with cached volumes to upload the data in the background.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> 100 Mbps ≈ 1 TB/ngày ⇒ 900 TB mất khoảng 2,5 năm. Chỉ chuyển <b>offline</b> mới kịp: mỗi Snowball Edge Storage Optimized chứa <b>210 TB</b> ⇒ cần khoảng 5 thiết bị, nạp song song rồi gửi về để AWS nạp vào S3. <b>A, C, D sai</b>: đều phụ thuộc đường truyền 100 Mbps – Transfer Acceleration chỉ tối ưu đường đi tới edge, không tăng băng thông của site. (Với khách hàng mới, AWS gợi ý Data Transfer Terminal hoặc giải pháp đối tác.)</div>
+          <div class="trans">
+            <div class="tq">Một công ty nghiên cứu ở vùng xa cần chuyển 900 TB dữ liệu genomics lên Amazon S3. Địa điểm này có kết nối internet 100 Mbps, cũng đang được dùng cho hoạt động hằng ngày. Dữ liệu phải có trên AWS trong vòng một tháng. Công ty là khách hàng hiện tại của AWS Snow Family. Solutions architect nên đề xuất giải pháp nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng AWS DataSync qua kết nối internet với giới hạn băng thông.</span><span class="why">Sai: 100 Mbps chỉ khoảng 1 TB/ngày, 900 TB mất khoảng 2,5 năm – không kịp một tháng, lại chiếm băng thông vận hành.</span></li>
+              <li data-k="B"><span class="tv">Đặt nhiều thiết bị AWS Snowball Edge Storage Optimized, sao chép dữ liệu song song và gửi các thiết bị trở lại AWS.</span><span class="why">Đúng: chỉ chuyển offline mới kịp; mỗi thiết bị chứa 210 TB nên khoảng 5 thiết bị nạp song song rồi gửi về để AWS nạp vào S3, không tốn băng thông site.</span></li>
+              <li data-k="C"><span class="tv">Bật S3 Transfer Acceleration và tải dữ liệu lên bằng multipart upload.</span><span class="why">Sai: Transfer Acceleration chỉ tối ưu đường đi tới edge location, không tăng băng thông 100 Mbps của site nên vẫn không kịp.</span></li>
+              <li data-k="D"><span class="tv">Triển khai Volume Gateway với cached volumes để tải dữ liệu lên ở chế độ nền.</span><span class="why">Sai: vẫn phụ thuộc đường truyền 100 Mbps nên mất nhiều năm; Volume Gateway cũng không phải công cụ migrate khối lượng lớn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company exchanges files with dozens of external partners by using an SFTP server that runs on premises. The company wants to move the files to Amazon S3 and eliminate server management. Partners' firewalls only allow outbound connections to specific, static IP addresses, and the company must restrict access to the partners' known IP ranges. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create an AWS Transfer Family server with a public endpoint and share the endpoint DNS name with the partners.</li>
+            <li data-k="B">Launch Amazon EC2 instances with an SFTP daemon behind a Network Load Balancer and mount the S3 bucket.</li>
+            <li data-k="C">Create an AWS Transfer Family SFTP server with a VPC-hosted, internet-facing endpoint, associate Elastic IP addresses, and restrict source IPs with security groups.</li>
+            <li data-k="D">Use AWS DataSync with an agent in each partner's network to copy files to Amazon S3.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Endpoint <b>VPC internet-facing</b> cho phép gắn <b>Elastic IP</b> (IP tĩnh để đối tác mở firewall) và dùng <b>security group</b> làm IP allow list; Transfer Family là fully managed, ghi thẳng vào S3. <b>A sai</b>: endpoint public không gắn security group, IP do AWS quản lý có thể thay đổi. <b>B sai</b>: tự quản lý server – trái yêu cầu. <b>D sai</b>: không thể bắt đối tác cài agent; DataSync không phải SFTP server.</div>
+          <div class="trans">
+            <div class="tq">Một công ty trao đổi file với hàng chục đối tác bên ngoài thông qua một SFTP server chạy on-premises. Công ty muốn chuyển các file sang Amazon S3 và loại bỏ việc quản lý server. Firewall của các đối tác chỉ cho phép kết nối đi ra tới các địa chỉ IP tĩnh, cụ thể, và công ty phải giới hạn truy cập chỉ từ các dải IP đã biết của đối tác. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một AWS Transfer Family server với public endpoint và chia sẻ DNS name của endpoint cho các đối tác.</span><span class="why">Sai: public endpoint không có IP tĩnh (IP do AWS quản lý có thể thay đổi) và không gắn được security group để giới hạn IP nguồn.</span></li>
+              <li data-k="B"><span class="tv">Chạy các Amazon EC2 instance có SFTP daemon phía sau một Network Load Balancer và mount S3 bucket.</span><span class="why">Sai: vẫn phải tự quản lý server SFTP, trái với yêu cầu loại bỏ việc quản lý server.</span></li>
+              <li data-k="C"><span class="tv">Tạo một AWS Transfer Family SFTP server với endpoint dạng VPC-hosted, internet-facing, gắn Elastic IP address và giới hạn IP nguồn bằng security group.</span><span class="why">Đúng: Elastic IP cho đối tác địa chỉ tĩnh để mở firewall, security group làm IP allow list, và Transfer Family là fully managed, ghi thẳng vào S3.</span></li>
+              <li data-k="D"><span class="tv">Dùng AWS DataSync với một agent trong mạng của mỗi đối tác để sao chép file lên Amazon S3.</span><span class="why">Sai: không thể bắt đối tác cài agent, và DataSync không cung cấp SFTP server cho đối tác kết nối.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company deployed Amazon S3 File Gateway for an on-premises application. Another application running on AWS writes new objects directly to the same S3 bucket. Users of the on-premises file share report that they cannot see the new files, although the objects exist in the bucket. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Enable S3 Versioning on the bucket.</li>
+            <li data-k="B">Increase the size of the gateway's cache disk.</li>
+            <li data-k="C">Change the file share from NFS to SMB.</li>
+            <li data-k="D">Run the RefreshCache operation on the file share, for example on a schedule or triggered by S3 event notifications.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Gateway chỉ biết ngay những thay đổi đi qua nó. Object ghi thẳng vào bucket chỉ hiện trên share sau khi <b>làm mới cache</b> (<code>RefreshCache</code>), có thể tự động theo lịch hoặc bằng Lambda khi có S3 event. <b>A sai</b>: versioning không liên quan danh sách file trên share, còn làm tăng số phiên bản. <b>B sai</b>: dung lượng cache không quyết định metadata danh mục. <b>C sai</b>: giao thức không phải nguyên nhân.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đã triển khai Amazon S3 File Gateway cho một ứng dụng on-premises. Một ứng dụng khác chạy trên AWS ghi object mới trực tiếp vào cùng S3 bucket đó. Người dùng file share on-premises báo rằng họ không thấy các file mới, mặc dù các object đã tồn tại trong bucket. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật S3 Versioning trên bucket.</span><span class="why">Sai: versioning chỉ giữ nhiều phiên bản object, không làm gateway cập nhật danh sách file trên share.</span></li>
+              <li data-k="B"><span class="tv">Tăng kích thước cache disk của gateway.</span><span class="why">Sai: dung lượng cache không quyết định metadata danh mục; gateway vẫn không biết object được ghi thẳng vào bucket.</span></li>
+              <li data-k="C"><span class="tv">Đổi file share từ NFS sang SMB.</span><span class="why">Sai: giao thức truy cập không phải nguyên nhân; cả NFS và SMB đều cần làm mới cache.</span></li>
+              <li data-k="D"><span class="tv">Chạy thao tác RefreshCache trên file share, ví dụ theo lịch hoặc được kích hoạt bởi S3 event notification.</span><span class="why">Đúng: gateway chỉ biết ngay các thay đổi đi qua nó; object ghi thẳng vào bucket chỉ hiện trên share sau khi RefreshCache, có thể tự động hóa theo lịch hoặc bằng S3 event.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company has 500 TB of rarely accessed archive files on an on-premises NFS server and plans to decommission the server. The company has a 10 Gbps AWS Direct Connect connection and wants to store the data at the LOWEST possible cost in AWS. Data must be validated after the transfer. Which TWO actions should the company take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Deploy Amazon S3 File Gateway and keep the NFS server running as a cache.</li>
+            <li data-k="B">Use AWS DataSync to transfer the data to Amazon S3.</li>
+            <li data-k="C">Use AWS Transfer Family to upload the data with FTPS.</li>
+            <li data-k="D">Store the data in Amazon EFS Standard with lifecycle management.</li>
+            <li data-k="E">Configure the DataSync task's S3 location to write objects directly to the S3 Glacier Deep Archive storage class.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> 10 Gbps ≈ 108 TB/ngày ⇒ 500 TB khoảng 5 ngày qua mạng: <b>DataSync</b> phù hợp (tự động, verify toàn vẹn). DataSync có thể <b>archive dữ liệu lạnh thẳng vào S3 Glacier Deep Archive</b> – lớp rẻ nhất cho dữ liệu hiếm truy cập. <b>A sai</b>: Storage Gateway dành cho truy cập liên tục, trong khi server sẽ bị tắt. <b>C sai</b>: Transfer Family dành cho đối tác dùng SFTP/FTPS, không phải migrate hàng loạt có verify. <b>D sai</b>: EFS đắt hơn nhiều so với Deep Archive.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 500 TB file lưu trữ hiếm khi được truy cập trên một NFS server on-premises và dự định ngừng sử dụng server này. Công ty có kết nối AWS Direct Connect 10 Gbps và muốn lưu dữ liệu với chi phí LOWEST (thấp nhất có thể) trên AWS. Dữ liệu phải được kiểm tra sau khi truyền. Công ty nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Triển khai Amazon S3 File Gateway và giữ NFS server chạy làm cache.</span><span class="why">Sai: Storage Gateway dành cho truy cập hybrid liên tục, trong khi server sẽ bị ngừng sử dụng; giữ server chạy trái mục tiêu.</span></li>
+              <li data-k="B"><span class="tv">Dùng AWS DataSync để truyền dữ liệu sang Amazon S3.</span><span class="why">Đúng: 10 Gbps chuyển 500 TB trong khoảng 5 ngày; DataSync tự động hóa và verify tính toàn vẹn dữ liệu sau khi truyền.</span></li>
+              <li data-k="C"><span class="tv">Dùng AWS Transfer Family để tải dữ liệu lên bằng FTPS.</span><span class="why">Sai: Transfer Family dành cho trao đổi file với đối tác qua SFTP/FTPS, không phải migrate hàng loạt có verify tích hợp.</span></li>
+              <li data-k="D"><span class="tv">Lưu dữ liệu trong Amazon EFS Standard với lifecycle management.</span><span class="why">Sai: EFS (kể cả các tầng IA/Archive) đắt hơn nhiều so với S3 Glacier Deep Archive cho dữ liệu hiếm truy cập.</span></li>
+              <li data-k="E"><span class="tv">Cấu hình S3 location của DataSync task để ghi object trực tiếp vào storage class S3 Glacier Deep Archive.</span><span class="why">Đúng: DataSync ghi thẳng vào Glacier Deep Archive – lớp lưu trữ rẻ nhất cho dữ liệu lạnh, đáp ứng yêu cầu chi phí thấp nhất.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company wants its SFTP users to authenticate against an existing third-party identity provider that exposes an API. After authentication, each user must be restricted to their own prefix in an Amazon S3 bucket, and uploaded files must be automatically scanned and tagged. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Create an AWS Transfer Family SFTP server with a custom identity provider that uses AWS Lambda, return an IAM role and home directory per user, and attach a managed workflow for post-upload processing.</li>
+            <li data-k="B">Create an AWS Transfer Family server with service-managed users and manually copy the users' SSH keys from the identity provider every day.</li>
+            <li data-k="C">Deploy Amazon S3 File Gateway and join it to the identity provider by using SMB.</li>
+            <li data-k="D">Run an SFTP server on Amazon EC2 with a custom PAM module and an S3 event-driven Lambda function for scanning.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Custom identity provider</b> (Lambda hoặc API Gateway) tích hợp IdP bên thứ ba, trả về IAM role và home directory để giới hạn từng user vào prefix của mình; <b>managed workflows</b> tự động xử lý (quét, gắn tag, copy…) sau upload. <b>B sai</b>: đồng bộ thủ công, tốn vận hành, không dùng IdP. <b>C sai</b>: File Gateway không phải SFTP và không tích hợp IdP kiểu này. <b>D sai</b>: tự quản lý EC2 – nhiều overhead nhất.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn người dùng SFTP của mình xác thực với một identity provider bên thứ ba hiện có, vốn cung cấp một API. Sau khi xác thực, mỗi người dùng phải bị giới hạn trong prefix riêng của mình trong một Amazon S3 bucket, và các file được tải lên phải được tự động quét và gắn tag. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một AWS Transfer Family SFTP server với custom identity provider dùng AWS Lambda, trả về IAM role và home directory cho từng người dùng, và gắn một managed workflow để xử lý sau khi upload.</span><span class="why">Đúng: custom IdP qua Lambda tích hợp IdP bên thứ ba, IAM role và home directory giới hạn mỗi user vào prefix riêng; managed workflow tự động quét, gắn tag sau upload – tất cả đều managed.</span></li>
+              <li data-k="B"><span class="tv">Tạo một AWS Transfer Family server với service-managed user và sao chép thủ công SSH key của người dùng từ identity provider mỗi ngày.</span><span class="why">Sai: không dùng IdP bên thứ ba để xác thực, đồng bộ thủ công hằng ngày tốn vận hành và không xử lý yêu cầu quét/gắn tag.</span></li>
+              <li data-k="C"><span class="tv">Triển khai Amazon S3 File Gateway và kết nối nó với identity provider bằng SMB.</span><span class="why">Sai: File Gateway cung cấp NFS/SMB, không phải SFTP, và không tích hợp IdP bên thứ ba theo cách này.</span></li>
+              <li data-k="D"><span class="tv">Chạy một SFTP server trên Amazon EC2 với PAM module tùy chỉnh và một Lambda function kích hoạt bởi S3 event để quét file.</span><span class="why">Sai: tự quản lý EC2, PAM module và vá lỗi hệ điều hành – nhiều overhead nhất trong các phương án.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/filegateway/latest/files3/what-is-file-s3.html" target="_blank" rel="noopener">What is Amazon S3 File Gateway</a></li>
+        <li><a href="https://docs.aws.amazon.com/filegateway/latest/files3/file-gateway-concepts.html" target="_blank" rel="noopener">How Amazon S3 File Gateway works</a></li>
+        <li><a href="https://docs.aws.amazon.com/filegateway/latest/filefsxw/what-is-file-fsxw.html" target="_blank" rel="noopener">What is Amazon FSx File Gateway</a></li>
+        <li><a href="https://docs.aws.amazon.com/storagegateway/latest/vgw/WhatIsStorageGateway.html" target="_blank" rel="noopener">What is Volume Gateway?</a></li>
+        <li><a href="https://docs.aws.amazon.com/storagegateway/latest/vgw/StorageGatewayConcepts.html" target="_blank" rel="noopener">How Volume Gateway works (cached &amp; stored volumes)</a></li>
+        <li><a href="https://docs.aws.amazon.com/storagegateway/latest/tgw/WhatIsStorageGateway.html" target="_blank" rel="noopener">What is Tape Gateway?</a></li>
+        <li><a href="https://docs.aws.amazon.com/storagegateway/latest/tgw/StorageGatewayConcepts.html" target="_blank" rel="noopener">How Tape Gateway works</a></li>
+        <li><a href="https://docs.aws.amazon.com/datasync/latest/userguide/how-datasync-transfer-works.html" target="_blank" rel="noopener">How AWS DataSync works</a></li>
+        <li><a href="https://docs.aws.amazon.com/datasync/latest/userguide/do-i-need-datasync-agent.html" target="_blank" rel="noopener">Do I need an AWS DataSync agent?</a></li>
+        <li><a href="https://docs.aws.amazon.com/snowball/latest/developer-guide/device-differences.html" target="_blank" rel="noopener">AWS Snowball Edge device hardware information</a></li>
+        <li><a href="https://docs.aws.amazon.com/transfer/latest/userguide/create-server-in-vpc.html" target="_blank" rel="noopener">AWS Transfer Family: create a server in a VPC</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

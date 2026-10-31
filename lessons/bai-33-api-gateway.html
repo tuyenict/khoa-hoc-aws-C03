@@ -1,0 +1,923 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 33 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-API-Gateway.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="33" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <b>Amazon API Gateway</b> là “cửa trước” (front door) của ứng dụng serverless, nắm các khái niệm <b>resource</b>, <b>method</b>, <b>integration</b>, <b>deployment</b>, <b>stage</b>.</li>
+          <li>Chọn đúng giữa <b>REST API</b>, <b>HTTP API</b> và <b>WebSocket API</b> dựa trên tính năng (API key, usage plan, caching, WAF, private endpoint, JWT authorizer, giao tiếp hai chiều).</li>
+          <li>Phân biệt ba <b>endpoint type</b>: <b>edge-optimized</b>, <b>Regional</b>, <b>private</b>, và biết khi nào dùng custom domain + Route 53.</li>
+          <li>Thuộc cơ chế <b>throttling</b> (token bucket, <b>10.000 RPS / burst 5.000</b> mỗi account mỗi Region, thứ tự áp dụng, <b>429</b>) và <b>usage plan + API key</b>.</li>
+          <li>Cấu hình <b>API caching</b> (TTL mặc định <b>300 giây</b>, tối đa <b>3.600 giây</b>, chỉ <code>GET</code> mặc định, invalidate bằng <code>Cache-Control: max-age=0</code>).</li>
+          <li>Chọn <b>authorizer</b> phù hợp: <b>IAM (SigV4)</b>, <b>Cognito user pool</b>, <b>Lambda authorizer</b> (TOKEN / REQUEST), <b>JWT authorizer</b>, kết hợp <b>resource policy</b> và <b>AWS WAF</b>; thiết kế các kiến trúc serverless hay thi.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 6 – Application Integration &amp; Serverless</span>
+        <p>Bài 32 đã dạy kỹ <b>AWS Lambda</b> (concurrency, cold start, VPC, destinations) – ở đây chỉ nhắc Lambda ở vai trò <b>back end</b> của API. <b>Cognito user pool / identity pool</b> đã học chi tiết ở Bài 7; <b>CloudFront</b> ở Bài 25; <b>VPC endpoint / PrivateLink</b> ở Bài 22; <b>DynamoDB</b> ở Bài 28; <b>SQS/SNS</b> ở Bài 30. Bài này tập trung vào <b>bản thân API Gateway</b>: loại API, endpoint, stage, throttling, caching, authorizer và cách ghép thành kiến trúc serverless hoàn chỉnh. <b>AWS WAF / Shield</b> sẽ học sâu ở Bài 39, <b>ECS/Fargate</b> ở Bài 34.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">Amazon API Gateway: “cửa trước” của ứng dụng</h2>
+      <p class="lead"><b>Amazon API Gateway</b> là dịch vụ AWS để <b>tạo, publish, bảo trì, giám sát và bảo mật</b> các <b>REST, HTTP và WebSocket API</b> ở mọi quy mô. Theo tài liệu, API Gateway xử lý mọi việc liên quan tới việc nhận và xử lý <b>tới hàng trăm nghìn lời gọi API đồng thời</b>: quản lý lưu lượng (traffic management), ủy quyền và kiểm soát truy cập (authorization &amp; access control), giám sát (monitoring) và quản lý phiên bản API.</p>
+
+      <p>API Gateway đóng vai trò <span class="t" data-vi="Cửa trước – điểm vào duy nhất">front door</span> để ứng dụng truy cập dữ liệu, logic nghiệp vụ hoặc chức năng ở <b>back end</b>: workload chạy trên Amazon EC2, code chạy trên AWS Lambda, bất kỳ web application nào, hoặc ứng dụng giao tiếp thời gian thực. Tài liệu nhấn mạnh: <b>API Gateway cùng với AWS Lambda tạo thành phần “hướng ứng dụng” (app-facing) của hạ tầng serverless AWS</b>.</p>
+
+      <h3>Các khái niệm cốt lõi</h3>
+      <ul>
+        <li><span class="t" data-vi="Tài nguyên – một đường dẫn URL">Resource</span>: một đường dẫn trong API, ví dụ <code>/pets</code>, <code>/pets/{id}</code>. Resource đặc biệt <code>{proxy+}</code> bắt mọi đường dẫn con – tài liệu khuyên dùng để giảm số resource (quota <b>300 resource/API</b>).</li>
+        <li><span class="t" data-vi="Phương thức HTTP">Method</span>: động từ HTTP gắn trên resource – <code>GET</code>, <code>POST</code>, <code>PUT</code>, <code>PATCH</code>, <code>DELETE</code>… Mỗi method có <b>method request</b> (xác thực, validate, tham số), <b>integration request</b>, <b>integration response</b> và <b>method response</b>.</li>
+        <li><span class="t" data-vi="Tích hợp – back end mà method gọi tới">Integration</span>: back end thực sự xử lý request – Lambda function, HTTP endpoint, một action của dịch vụ AWS (vd <code>SendMessage</code> của SQS), tài nguyên private trong VPC (qua <b>VPC link</b>) hoặc <b>mock</b>.</li>
+        <li><span class="t" data-vi="Bản triển khai – ảnh chụp cấu hình API">Deployment</span>: một <b>snapshot</b> của API tại một thời điểm. Sửa API xong phải <b>deploy</b> thì client mới thấy (REST API); HTTP API hỗ trợ <b>automatic deployment</b>.</li>
+        <li><span class="t" data-vi="Giai đoạn – tên tham chiếu tới một deployment">Stage</span>: “tên tham chiếu tới một deployment” – ví dụ <code>dev</code>, <code>test</code>, <code>prod</code>. Nhiều thiết lập vận hành (caching, throttling, logging, WAF, canary) được cấu hình <b>theo stage</b>.</li>
+        <li><b>Invoke URL</b> mặc định có dạng <code>https://{api-id}.execute-api.{region}.amazonaws.com/{stage}</code>. Muốn URL dễ nhớ (<code>https://api.example.com/myservice</code>) thì dùng <b>custom domain name</b>.</li>
+      </ul>
+
+      <h3>Dịch vụ và tài nguyên trong bài</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">
+          <div><h4>Amazon API Gateway</h4><span class="vi">Cổng API được quản lý</span><p>REST, HTTP, WebSocket API; throttling, caching, authorizer, stage, canary, custom domain, tích hợp WAF &amp; X-Ray.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-API-Gateway_Endpoint.svg" alt="">
+          <div><h4>API endpoint</h4><span class="vi">Điểm cuối của API</span><p>Hostname của API: edge-optimized (qua CloudFront POP), Regional, hoặc private (chỉ gọi được từ VPC).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">
+          <div><h4>AWS Lambda</h4><span class="vi">Back end / authorizer</span><p>Back end phổ biến nhất (Lambda proxy integration) và cũng dùng làm <b>Lambda authorizer</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">
+          <div><h4>Amazon DynamoDB</h4><span class="vi">Lưu dữ liệu serverless</span><p>Kho dữ liệu điển hình phía sau Lambda trong kiến trúc API serverless.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">
+          <div><h4>Amazon Cognito</h4><span class="vi">Đăng nhập người dùng cuối</span><p>User pool cấp JWT; API Gateway dùng <b>Cognito user pool authorizer</b> (REST) hoặc <b>JWT authorizer</b> (HTTP).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-WAF.svg" alt="">
+          <div><h4>AWS WAF</h4><span class="vi">Tường lửa ứng dụng web</span><p>Gắn web ACL vào <b>stage của REST API</b> để chặn SQL injection, XSS, bot, giới hạn theo IP.</p></div></div>
+      </div>
+
+      <h3>Tính năng chính (theo tài liệu)</h3>
+      <ul>
+        <li>Hỗ trợ API <b>stateful</b> (WebSocket) và <b>stateless</b> (HTTP, REST).</li>
+        <li>Cơ chế xác thực linh hoạt: <b>IAM policy</b>, <b>Lambda authorizer</b>, <b>Amazon Cognito user pool</b>.</li>
+        <li><b>Canary release deployment</b> để triển khai thay đổi an toàn.</li>
+        <li>Log &amp; giám sát: <b>CloudTrail</b> (ghi lại thay đổi cấu hình API), <b>CloudWatch</b> access log, execution log, metric và alarm; <b>AWS X-Ray</b> để truy vết độ trễ.</li>
+        <li>Định nghĩa API bằng <b>CloudFormation</b>; hỗ trợ <b>custom domain name</b>; tích hợp <b>AWS WAF</b>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Serverless.svg" alt="">AWS Cloud – kiến trúc API serverless điển hình</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Mobile-client.svg" alt="">Web / mobile client<small>HTTPS + JWT</small></div>
+            <span class="arrow">sign-in</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">Cognito user pool<small>cấp ID / access token</small></div>
+          </div>
+          <div class="grp region"><span class="lbl">Region</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Mobile-client.svg" alt="">Client<small>Authorization: token</small></div>
+              <span class="arrow">HTTPS</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">API Gateway (stage prod)<small>authorizer · throttling · cache</small></div>
+              <span class="arrow">Lambda proxy</span>
+              <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda function<small>logic nghiệp vụ</small></div>
+              <span class="arrow">execution role</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Table.svg" alt="">DynamoDB table<small>on-demand</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Kiến trúc “three-tier serverless” kinh điển: người dùng đăng nhập Cognito lấy token; API Gateway xác minh token (authorizer), áp throttling/caching rồi gọi Lambda qua <b>Lambda proxy integration</b>; Lambda đọc/ghi DynamoDB bằng execution role. Không có máy chủ nào phải quản lý, mọi tầng tự scale và trả tiền theo request.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – quầy lễ tân tòa nhà</span>
+        <p>API Gateway giống <b>quầy lễ tân</b> của một tòa văn phòng. Khách (client) không tự đi thẳng vào phòng ban (back end): lễ tân <b>kiểm tra thẻ</b> (authorizer), <b>hạn chế số khách mỗi phút</b> để thang máy không quá tải (throttling), <b>trả lời ngay</b> những câu hỏi lặp đi lặp lại như “giờ làm việc mấy giờ?” mà không cần gọi lên trên (caching), rồi <b>chỉ đường</b> tới đúng phòng (integration). <b>Stage</b> giống các tầng “dev”, “prod” – cùng tòa nhà nhưng mỗi tầng có quy định riêng.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Expose Lambda functions as a RESTful API</i>”, “<i>serverless back end for a mobile app</i>”, “<i>least operational overhead</i>” ⇒ <b>API Gateway + Lambda (+ DynamoDB)</b>.</li>
+          <li>“<i>Single entry point / front door for microservices</i>”, “<i>authentication, throttling, monitoring of API calls</i>” ⇒ <b>API Gateway</b> (không phải ALB tự viết logic).</li>
+          <li>Ghi lại <b>ai đã thay đổi cấu hình API</b> ⇒ <b>CloudTrail</b>; ghi lại <b>từng request</b> của client ⇒ <b>CloudWatch access logging</b>; truy vết độ trễ end-to-end ⇒ <b>X-Ray</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: REST / HTTP / WEBSOCKET ===================== -->
+      <h2 id="loai-api"><img src="../assets/icons/res/Amazon-API-Gateway_Endpoint.svg" alt="">REST API, HTTP API và WebSocket API</h2>
+      <p class="lead">API Gateway có ba “sản phẩm” API. <span class="t" data-vi="API REST đầy đủ tính năng">REST API</span> và <span class="t" data-vi="API HTTP tối giản, giá rẻ">HTTP API</span> đều là API kiểu RESTful (dựa trên HTTP, client-server <b>stateless</b>, dùng các method chuẩn GET/POST/PUT/PATCH/DELETE). <span class="t" data-vi="API giao tiếp hai chiều liên tục">WebSocket API</span> tuân theo giao thức WebSocket (RFC 6455) – <b>stateful</b>, <b>full-duplex</b>, định tuyến message theo nội dung.</p>
+
+      <p>Câu chốt của tài liệu: “<i>REST APIs support more features than HTTP APIs, while HTTP APIs are designed with minimal features so that they can be offered at a lower price. Choose REST APIs if you need features such as <b>API keys, per-client throttling, request validation, AWS WAF integration, or private API endpoints</b>.</i>”</p>
+
+      <h3>So sánh REST API và HTTP API (theo trang “Choose between REST APIs and HTTP APIs”)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhóm</th><th>Tính năng</th><th>REST API</th><th>HTTP API</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="3">Endpoint type</td><td>Edge-optimized</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Regional</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Private</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td rowspan="3">Security</td><td>Mutual TLS</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Certificate cho backend authentication</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>AWS WAF</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td rowspan="5">Authorization</td><td>IAM</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Resource policy</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Amazon Cognito</td><td class="yes">Có</td><td class="yes">Có (qua JWT authorizer)</td></tr>
+          <tr><td>Lambda authorizer</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>JWT authorizer (native)</td><td class="no">Không (dùng Lambda authorizer để validate JWT)</td><td class="yes">Có</td></tr>
+          <tr><td rowspan="4">API management</td><td>Custom domain</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>API key</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Per-client rate limiting / usage throttling</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Developer portal</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td rowspan="7">Development</td><td>CORS</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td><b>Caching</b></td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Automatic deployment</td><td class="no">Không</td><td class="yes">Có</td></tr>
+          <tr><td>Canary release deployment</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Request validation</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Request body transformation (mapping template)</td><td class="yes">Có</td><td class="no">Không (chỉ parameter mapping)</td></tr>
+          <tr><td>Custom gateway response / test invocation</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td rowspan="3">Monitoring</td><td>CloudWatch metrics, access log tới CloudWatch Logs</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Access log tới Amazon Data Firehose, execution log</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>AWS X-Ray tracing</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td rowspan="4">Integrations</td><td>Lambda, HTTP endpoint public, dịch vụ AWS</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Private integration với NLB / ALB</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Private integration với AWS Cloud Map</td><td class="no">Không</td><td class="yes">Có</td></tr>
+          <tr><td>Mock integration, response streaming</td><td class="yes">Có</td><td class="no">Không</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>WebSocket API – giao tiếp hai chiều</h3>
+      <ul>
+        <li>Khác REST API (nhận request – trả response), WebSocket API giữ <b>kết nối lâu dài</b>, cho phép <b>back end chủ động gửi message</b> (callback) tới client đang kết nối – phù hợp <b>chat</b>, <b>bảng điều khiển thời gian thực</b>, game nhiều người chơi, thông báo trực tiếp.</li>
+        <li><span class="t" data-vi="Tuyến định tuyến message">Route</span>: message JSON được chuyển tới integration theo <b>route key</b>, là giá trị thu được khi đánh giá <span class="t" data-vi="Biểu thức chọn route">route selection expression</span> (vd <code>${request.body.action}</code>). Ba route định sẵn:
+          <ul>
+            <li><code>$connect</code> – gọi khi client bắt đầu mở kết nối (chỗ thích hợp để xác thực, lưu <b>connection ID</b> vào DynamoDB).</li>
+            <li><code>$disconnect</code> – gọi khi client hoặc server ngắt kết nối.</li>
+            <li><code>$default</code> – khi không đánh giá được biểu thức hoặc không có route khớp (message không phải JSON cũng vào đây).</li>
+          </ul></li>
+        <li>Back end gửi dữ liệu về client bằng: (1) <b>route response</b> của integration, hoặc (2) gửi <b>POST</b> tới <b><code>@connections</code> API</b> kèm connection ID.</li>
+        <li>Mã đóng kết nối đáng nhớ: <b>1001</b> – client idle <b>10 phút</b> hoặc chạm thời gian sống tối đa <b>2 giờ</b>; <b>1008</b> – quá nhiều request từ một client; <b>1009</b> – message quá lớn.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp region"><span class="lbl"><img src="../assets/icons/cat/Serverless.svg" alt="">Ứng dụng chat với WebSocket API</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng chat<small>wss:// kết nối lâu dài</small></div>
+            <span class="arrow">$connect / $disconnect</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">WebSocket API<small>route selection: $request.body.action</small></div>
+            <span class="arrow">route "sendmessage"</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda<small>đọc danh sách connection ID</small></div>
+            <span class="arrow">đọc / ghi</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Table.svg" alt="">DynamoDB<small>bảng connections</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda</div>
+            <span class="arrow dashed">POST @connections/{connectionId}</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">WebSocket API<small>đẩy message xuống</small></div>
+            <span class="arrow dashed">push</span>
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Mọi client đang kết nối</div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> Mẫu chat serverless: route <code>$connect</code> lưu connection ID vào DynamoDB, <code>$disconnect</code> xóa đi. Khi một người gửi message (route tùy chỉnh <code>sendmessage</code>), Lambda đọc danh sách connection và dùng <b><code>@connections</code> API</b> để <b>đẩy</b> message tới từng client – điều REST/HTTP API không làm được.</figcaption>
+      </figure>
+
+      <h3>Các quota quan trọng theo loại API</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Quota</th><th>REST API</th><th>HTTP API</th><th>WebSocket API</th></tr></thead>
+        <tbody>
+          <tr><td>Throttle mỗi account mỗi Region (chung cho mọi loại API)</td><td colspan="3"><b>10.000 RPS</b> + burst (bucket tối đa <b>5.000</b> request) – tăng được RPS; burst do AWS quyết định. Một số Region mới: 2.500 RPS / burst 1.250.</td></tr>
+          <tr><td>Integration timeout</td><td><b>50 ms – 29 giây</b>; Regional &amp; private <b>xin tăng được</b> (có thể phải giảm throttle quota); edge-optimized không tăng</td><td>Tối đa <b>30 giây</b> (không tăng)</td><td>50 ms – <b>29 giây</b> (không tăng)</td></tr>
+          <tr><td>Payload</td><td><b>10 MB</b></td><td><b>10 MB</b></td><td>Message <b>128 KB</b>, frame <b>32 KB</b></td></tr>
+          <tr><td>Stage mỗi API</td><td>10 (tăng được)</td><td>10 (tăng được)</td><td>10 (tăng được)</td></tr>
+          <tr><td>Authorizer mỗi API</td><td>10</td><td>10</td><td>10 (Lambda)</td></tr>
+          <tr><td>Resource / route mỗi API</td><td>300 resource</td><td>300 route</td><td>300 route</td></tr>
+          <tr><td>Khác</td><td>Cached response ≤ <b>1 MB</b>; resource policy ≤ 8.192 ký tự; API key/account/Region 10.000; usage plan/account/Region 300; idle connection 310 giây</td><td>Timeout Lambda authorizer 10 giây; VPC link 10/Region</td><td>Kết nối mới <b>500/giây</b>/account/Region; thời gian sống kết nối <b>2 giờ</b>; idle <b>10 phút</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>10.000 RPS</b><span>throttle mặc định / account / Region</span></div>
+        <div class="stat"><b>5.000</b><span>burst (dung lượng token bucket)</span></div>
+        <div class="stat"><b>29 giây</b><span>integration timeout REST / WebSocket (HTTP API: 30 giây)</span></div>
+        <div class="stat"><b>10 MB</b><span>payload REST &amp; HTTP API</span></div>
+        <div class="stat"><b>2 giờ / 10 phút</b><span>WebSocket: thời gian sống / idle</span></div>
+        <div class="stat"><b>300 / 3.600 giây</b><span>cache TTL mặc định / tối đa</span></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Cần <b>API key, usage plan, per-client throttling, caching, request validation, AWS WAF, private endpoint, canary, X-Ray</b> ⇒ <b>REST API</b>.</li>
+          <li>“<i>Lowest cost</i>”, “<i>simple proxy to Lambda / HTTP back end</i>”, xác thực bằng <b>JWT/OIDC</b> có sẵn (Cognito, Auth0, Okta) và không cần các tính năng trên ⇒ <b>HTTP API</b>.</li>
+          <li>“<i>Real-time two-way communication</i>”, “<i>server must push updates to connected clients</i>”, chat, live dashboard ⇒ <b>WebSocket API</b> (hoặc AWS AppSync subscriptions nếu đề nói GraphQL).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>Lambda có timeout 15 phút nhưng API Gateway chỉ chờ 29 giây</b> (REST mặc định). Tác vụ đồng bộ chạy lâu qua API sẽ nhận <b>504 Gateway Timeout</b> dù Lambda vẫn chạy. Giải pháp: chuyển sang <b>bất đồng bộ</b> – API nhận request, đẩy vào SQS/Step Functions, trả về <code>202</code> + job ID, client poll hoặc nhận thông báo qua WebSocket.</li>
+          <li>Upload file &gt; <b>10 MB</b> qua API Gateway là không được ⇒ cấp <b>S3 presigned URL</b> qua API, client upload thẳng lên S3.</li>
+          <li>HTTP API <b>không</b> có caching, usage plan, WAF, private endpoint – đề hỏi những thứ này mà đáp án là HTTP API thì sai.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: ENDPOINT TYPES ===================== -->
+      <h2 id="endpoint"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">Endpoint type: edge-optimized, Regional, private</h2>
+      <p class="lead"><span class="t" data-vi="Kiểu điểm cuối của API">Endpoint type</span> là kiểu <b>hostname</b> của API, chọn theo việc <b>phần lớn lưu lượng đến từ đâu</b>. Đây là chủ đề rất hay ra đề vì nó gắn với CloudFront, VPC endpoint và custom domain.</p>
+
+      <div class="compare">
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" alt="">Edge-optimized</h4>
+          <ul>
+            <li>Request đi tới <b>CloudFront Point of Presence (POP)</b> gần client nhất rồi mới vào Region của API (CloudFront distribution do API Gateway quản lý – bạn không thấy/không cấu hình được).</li>
+            <li>Phù hợp client <b>phân tán toàn cầu</b>.</li>
+            <li>Là endpoint <b>mặc định</b> của REST API.</li>
+            <li>Viết hoa tên HTTP header (vd <code>Cookie</code>); CloudFront sắp xếp cookie theo tên.</li>
+            <li>Custom domain áp dụng trên <b>mọi Region</b>; certificate ACM phải ở <b>us-east-1</b> (kiến thức phổ biến, giống CloudFront).</li>
+            <li>Chỉ REST API.</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/res/Amazon-API-Gateway_Endpoint.svg" alt="">Regional</h4>
+          <ul>
+            <li>Dành cho client <b>cùng Region</b> (vd EC2 trong cùng Region) hoặc API phục vụ <b>ít client nhưng tải cao</b> – giảm overhead kết nối.</li>
+            <li>Truyền header nguyên trạng.</li>
+            <li>Custom domain <b>riêng từng Region</b>; deploy cùng API ở nhiều Region với <b>cùng custom domain</b> + Route 53 <b>latency-based routing</b> / failover ⇒ API multi-Region.</li>
+            <li>Client toàn cầu nhưng muốn <b>tự kiểm soát CloudFront</b> (cache policy, WAF ở edge, Lambda@Edge) ⇒ Regional API + <b>CloudFront distribution của riêng bạn</b>.</li>
+            <li>REST và HTTP API (HTTP API chỉ có Regional).</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">Private</h4>
+          <ul>
+            <li>Chỉ gọi được <b>từ trong VPC</b> qua <b>interface VPC endpoint</b> (dịch vụ <code>execute-api</code>, chạy bằng <b>AWS PrivateLink</b>).</li>
+            <li>On-premises truy cập qua <b>Direct Connect / VPN</b> vào VPC. Lưu lượng <b>không rời mạng Amazon</b>.</li>
+            <li>Cần <b>resource policy</b> cho phép VPC/VPC endpoint (<code>aws:SourceVpc</code>, <code>aws:SourceVpce</code>).</li>
+            <li>Chỉ <b>REST API</b>; chỉ TLS 1.2; không chuyển thành edge-optimized được.</li>
+          </ul></div>
+      </div>
+
+      <h3>Private API – các best practice theo tài liệu</h3>
+      <ul>
+        <li>Dùng <b>một VPC endpoint</b> để truy cập <b>nhiều private API</b> – giảm số endpoint (và chi phí).</li>
+        <li><b>Associate</b> VPC endpoint với API ⇒ API Gateway tạo bản ghi <b>Route 53 alias</b>, gọi API dễ hơn.</li>
+        <li>Bật <b>private DNS</b> trên endpoint để gọi API trong VPC mà không cần truyền header <code>Host</code> / <code>x-apigw-api-id</code>. Lưu ý: bật private DNS thì từ VPC <b>không gọi được endpoint mặc định của các API public</b> (muốn cả hai thì tắt private DNS và tạo private hosted zone riêng).</li>
+        <li>Giới hạn truy cập bằng điều kiện <code>aws:SourceVpc</code> / <code>aws:SourceVpce</code> trong <b>resource policy</b>; muốn “data perimeter” chặt nhất thì thêm <b>VPC endpoint policy</b>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/res/Internet.svg" alt="">Edge-optimized</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Client toàn cầu</div>
+              <span class="arrow">gần nhất</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" alt="">CloudFront POP<small>do API Gateway quản lý</small></div>
+              <span class="arrow">mạng AWS</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">REST API<small>Region gốc</small></div>
+            </div>
+          </div>
+          <div class="grp region"><span class="lbl">Regional</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Client.svg" alt="">Client cùng Region</div>
+              <span class="arrow">trực tiếp</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">REST / HTTP API<small>header giữ nguyên</small></div>
+            </div>
+          </div>
+        </div>
+        <div class="grp region"><span class="lbl">Private – chỉ từ VPC</span>
+          <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+            <div class="grp priv"><span class="lbl">Private subnet</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">EC2 / Lambda / ECS<small>gọi API nội bộ</small></div>
+                <span class="arrow">private IP</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">Interface endpoint<small>com.amazonaws.region.execute-api</small></div>
+              </div>
+            </div>
+          </div>
+          <div class="flow">
+            <span class="arrow">PrivateLink</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">Private REST API<small>resource policy: aws:SourceVpce</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Ba endpoint type. <b>Edge-optimized</b>: request vào CloudFront POP gần client rồi đi trên mạng AWS về Region. <b>Regional</b>: client gọi thẳng vào Region (có thể tự đặt CloudFront riêng phía trước). <b>Private</b>: chỉ gọi được từ VPC qua interface VPC endpoint <code>execute-api</code>; resource policy giới hạn VPC endpoint nào được gọi.</figcaption>
+      </figure>
+
+      <h3>Custom domain name</h3>
+      <ul>
+        <li>Thay URL mặc định bằng tên dễ nhớ, kèm <b>base path mapping</b> (vd <code>api.example.com/orders</code> → API orders stage prod, <code>api.example.com/users</code> → API users). Cần certificate SSL/TLS trong <b>ACM</b> (hoặc import).</li>
+        <li>Tạo bản ghi DNS (Route 53 <b>alias</b>) trỏ custom domain tới endpoint của API. Có thể <b>tắt endpoint mặc định</b> (<code>execute-api</code>) để buộc client đi qua custom domain – gọi endpoint mặc định sẽ nhận <b>403</b>.</li>
+        <li>Custom domain duy nhất trong một Region trên mọi account; hỗ trợ <b>wildcard</b> (<code>*.example.com</code>) cho kịch bản mỗi khách hàng một subdomain.</li>
+        <li>Có thể chuyển custom domain giữa edge-optimized và Regional; không chuyển public sang private được.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Users around the world, reduce latency, REST API</i>” ⇒ <b>edge-optimized endpoint</b>. Nếu đề thêm “<i>need control over caching / custom CloudFront behaviors</i>” ⇒ <b>Regional endpoint + CloudFront của bạn</b>.</li>
+          <li>“<i>API must be accessible only from within the VPC / from on-premises over Direct Connect, not from the internet</i>” ⇒ <b>private REST API</b> + <b>interface VPC endpoint (execute-api)</b> + <b>resource policy</b>.</li>
+          <li>“<i>Multi-Region active-active API with the same domain name</i>” ⇒ <b>Regional API</b> ở mỗi Region + custom domain + Route 53 <b>latency / failover routing</b> (Bài 24).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: INTEGRATION & STAGE ===================== -->
+      <h2 id="stages"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Integration, deployment, stage và canary release</h2>
+      <p class="lead">Mỗi method phải gắn một <span class="t" data-vi="Kiểu tích hợp back end">integration type</span>. Sau khi định nghĩa API, bạn tạo <span class="t" data-vi="Bản triển khai">deployment</span> và gắn vào một <span class="t" data-vi="Giai đoạn triển khai">stage</span> để client gọi được.</p>
+
+      <h3>Năm kiểu integration (thuộc tính <code>type</code>)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Type</th><th>Tên gọi</th><th>Đặc điểm</th><th>Dùng khi</th></tr></thead>
+        <tbody>
+          <tr><td><code>AWS_PROXY</code></td><td><b>Lambda proxy integration</b></td><td>API Gateway chuyển <b>nguyên request</b> (header, path, query string, body) cho Lambda; Lambda trả về theo định dạng chuẩn (statusCode, headers, body). Không cấu hình integration request/response.</td><td><b>Cách được khuyến nghị</b> để gọi Lambda – đơn giản, back end thay đổi không phải dựng lại API.</td></tr>
+          <tr><td><code>AWS</code></td><td>AWS service / Lambda custom integration</td><td>Gọi trực tiếp một <b>action của dịch vụ AWS</b> (SQS <code>SendMessage</code>, DynamoDB <code>PutItem</code>, Kinesis <code>PutRecord</code>, Step Functions <code>StartExecution</code>…). Phải tự viết <b>mapping template</b> (VTL) cho request &amp; response. API Gateway assume một <b>IAM role</b> có quyền gọi dịch vụ.</td><td>Bỏ Lambda “trung gian” – API ghi thẳng vào SQS/Kinesis/DynamoDB ⇒ ít code, ít chi phí.</td></tr>
+          <tr><td><code>HTTP_PROXY</code></td><td>HTTP proxy integration</td><td>Chuyển nguyên request tới một HTTP endpoint và trả nguyên response.</td><td>Đặt API Gateway trước một API/back end HTTP có sẵn (EC2, on-premises, SaaS).</td></tr>
+          <tr><td><code>HTTP</code></td><td>HTTP custom integration</td><td>Như trên nhưng tự cấu hình mapping request/response.</td><td>Cần biến đổi dữ liệu giữa client và back end cũ.</td></tr>
+          <tr><td><code>MOCK</code></td><td>Mock integration</td><td>API Gateway <b>tự trả response</b>, không gọi back end.</td><td>Test, phát triển song song giữa các team, trả header CORS cho method <code>OPTIONS</code>.</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li><span class="t" data-vi="Liên kết VPC – tích hợp riêng tư">VPC link</span> (private integration): cho phép API Gateway gọi tài nguyên <b>private trong VPC</b> phía sau <b>Network Load Balancer</b> hoặc <b>Application Load Balancer</b> (HTTP API còn hỗ trợ <b>AWS Cloud Map</b>). Back end không cần public IP.</li>
+        <li>Khi API Gateway gọi Lambda, quyền được cấp bằng <b>resource-based policy</b> trên function (console tự thêm <code>lambda:InvokeFunction</code> cho principal <code>apigateway.amazonaws.com</code>); với <code>AWS</code> integration tới dịch vụ khác thì dùng IAM role có trust <code>apigateway.amazonaws.com</code>.</li>
+      </ul>
+
+      <h3>Stage và stage settings</h3>
+      <ul>
+        <li>Stage là <b>tên tham chiếu tới một deployment</b>. Thiết lập theo stage: <b>cache</b> (provision cache, TTL, encrypt), <b>throttling</b> (rate, burst), <b>AWS WAF web ACL</b> (có tùy chọn fail-close nếu web ACL không đánh giá được), <b>client certificate</b> (để back end xác minh request đến từ API Gateway), <b>CloudWatch Logs</b> (Off / Errors only / Errors and info), <b>detailed metrics</b>, <b>custom access logging</b> (tới CloudWatch Logs hoặc Firehose), <b>X-Ray tracing</b>.</li>
+        <li>Mỗi thiết lập stage có thể <b>override theo method</b> (vd tắt cache cho <code>GET /pets</code>, throttling riêng cho <code>POST /orders</code>).</li>
+        <li><span class="t" data-vi="Biến của stage">Stage variables</span>: cặp key/value theo stage (tối đa 100/stage) – dùng như biến môi trường, vd trỏ stage <code>dev</code> tới alias Lambda <code>DEV</code>, stage <code>prod</code> tới alias <code>PROD</code> (<code>arn:...:function:orders:${stageVariables.lambdaAlias}</code>).</li>
+        <li>Bật CloudWatch Logs cần khai báo một <b>IAM role</b> cho API Gateway (managed policy <code>AmazonAPIGatewayPushToCloudWatchLogs</code>). Tài liệu khuyên <b>không bật data tracing</b> cho production vì có thể ghi dữ liệu nhạy cảm vào log.</li>
+      </ul>
+
+      <h3>Canary release deployment (REST API)</h3>
+      <ul>
+        <li>Trên <b>cùng một stage</b>, lưu lượng được chia <b>ngẫu nhiên</b> giữa <b>production release</b> (bản gốc) và <b>canary release</b> (bản mới) theo <b>phần trăm 0,0 – 100,0</b> bạn đặt; thường canary nhận phần nhỏ.</li>
+        <li>Canary có thể <b>override stage variables</b>, có <b>log &amp; metric riêng</b> (log group hậu tố <code>/Canary</code>) để so sánh; có thể dùng stage cache.</li>
+        <li>Kết quả tốt ⇒ <b>promote</b> canary thành production; xấu ⇒ tắt canary (rollback). Đây là cách giảm rủi ro khi đổi API mà không cần tạo stage/URL mới.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Send API requests directly to an SQS queue / Kinesis stream without managing compute</i>”, “<i>remove the Lambda function that only forwards data</i>” ⇒ <b>AWS service integration</b> (<code>AWS</code> type) – API Gateway gọi thẳng dịch vụ.</li>
+          <li>“<i>Expose a private service running behind an NLB/ALB in a VPC through API Gateway</i>” ⇒ <b>VPC link</b> (private integration).</li>
+          <li>“<i>Roll out a new API version to 10% of users and monitor</i>” ⇒ <b>canary release deployment</b> trên stage (REST API). Phía Lambda tương đương là <b>alias weighted routing</b> (Bài 32).</li>
+          <li>“<i>Separate dev / test / prod environments for the same API</i>” ⇒ nhiều <b>stage</b> + <b>stage variables</b> trỏ tới Lambda alias khác nhau.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: THROTTLING ===================== -->
+      <h2 id="throttling"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">Throttling, usage plan và API key</h2>
+      <p class="lead"><span class="t" data-vi="Giới hạn tốc độ request">Throttling</span> và <span class="t" data-vi="Hạn ngạch số request theo kỳ">quota</span> bảo vệ API (và back end) khỏi bị quá tải. API Gateway dùng thuật toán <span class="t" data-vi="Thùng token">token bucket</span>: mỗi request tiêu một token. Tài liệu nhấn mạnh throttle và quota đều áp dụng theo kiểu <b>best-effort</b> – là <b>mục tiêu</b>, không phải trần bảo đảm tuyệt đối.</p>
+
+      <h3>Token bucket: rate và burst</h3>
+      <ul>
+        <li><span class="t" data-vi="Tốc độ nạp token">Rate</span>: số token được <b>thêm vào bucket mỗi giây</b> – tức tốc độ ổn định (steady-state) cho phép.</li>
+        <li><span class="t" data-vi="Sức chứa tối đa của bucket">Burst</span>: <b>dung lượng</b> của bucket – số request tối đa được xử lý “dồn” trong một khoảnh khắc trước khi API Gateway trả lỗi. Tài liệu định nghĩa: burst là “số request đồng thời mục tiêu tối đa API Gateway đáp ứng trước khi trả <code>429 Too Many Requests</code>”.</li>
+        <li>Vượt cả rate và burst ⇒ client nhận <b><code>429 Too Many Requests</code></b>; client nên <b>retry có giới hạn tốc độ</b> (exponential backoff).</li>
+        <li><b>Mặc định mỗi account, mỗi Region</b>: <b>10.000 RPS</b> (gộp chung REST, HTTP, WebSocket API) với bucket tối đa <b>5.000</b>. RPS tăng được (Service Quotas / Support); burst do đội API Gateway quyết định theo RPS. Một số Region mới hơn: 2.500 RPS / burst 1.250.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 290" width="760" role="img" aria-label="Token bucket và bốn tầng throttling của API Gateway">
+          <defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#7AA116"/></marker>
+          <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#DD344C"/></marker></defs>
+          <text x="20" y="26" font-size="13" font-weight="700">Token bucket (mỗi account / Region)</text>
+          <path d="M60 50 L60 190 Q60 205 75 205 L185 205 Q200 205 200 190 L200 50" fill="none" stroke="#8C4FFF" stroke-width="3"/>
+          <rect x="63" y="95" width="134" height="107" fill="#8C4FFF" fill-opacity="0.25"/>
+          <text x="130" y="140" font-size="12" text-anchor="middle" font-weight="700">burst = 5.000</text>
+          <text x="130" y="158" font-size="10" text-anchor="middle" class="muted">dung lượng bucket</text>
+          <text x="130" y="42" font-size="11" text-anchor="middle">rate: +10.000 token/giây</text>
+          <path d="M130 46 V80" stroke="#7AA116" stroke-width="3" marker-end="url(#ah)"/>
+          <path d="M200 175 H250" stroke="#7AA116" stroke-width="3" marker-end="url(#ah)"/>
+          <text x="20" y="232" font-size="10" class="muted">Mỗi request lấy 1 token. Bucket rỗng ⇒ request bị từ chối.</text>
+          <text x="20" y="250" font-size="10" class="muted">Lưu lượng đột biến ngắn được “đệm” bởi token tích trữ (burst).</text>
+          <image href="../assets/icons/svc/Amazon-API-Gateway.svg" x="20" y="262" width="22" height="22"/>
+          <text x="48" y="278" font-size="11" style="fill:#DD344C" font-weight="700">Hết token ⇒ 429 Too Many Requests</text>
+
+          <text x="290" y="26" font-size="13" font-weight="700">Thứ tự API Gateway áp dụng giới hạn</text>
+          <rect x="290" y="40" width="450" height="44" rx="4" fill="#2E73B8" fill-opacity="0.2" stroke="#2E73B8"/>
+          <text x="305" y="60" font-size="12" font-weight="700">1. Per-client / per-method trong usage plan</text>
+          <text x="305" y="76" font-size="10" class="muted">theo API key; không vượt per-account</text>
+          <rect x="290" y="92" width="450" height="44" rx="4" fill="#ED7100" fill-opacity="0.2" stroke="#ED7100"/>
+          <text x="305" y="112" font-size="12" font-weight="700">2. Per-method / stage throttling của API</text>
+          <text x="305" y="128" font-size="10" class="muted">bạn đặt trên stage, override được theo method</text>
+          <rect x="290" y="144" width="450" height="44" rx="4" fill="#7AA116" fill-opacity="0.2" stroke="#7AA116"/>
+          <text x="305" y="164" font-size="12" font-weight="700">3. Account-level per Region (10.000 RPS / burst 5.000)</text>
+          <text x="305" y="180" font-size="10" class="muted">chung cho mọi API trong account; xin tăng được</text>
+          <rect x="290" y="196" width="450" height="44" rx="4" fill="#DD344C" fill-opacity="0.15" stroke="#DD344C"/>
+          <text x="305" y="216" font-size="12" font-weight="700">4. AWS Regional throttling</text>
+          <text x="305" y="232" font-size="10" class="muted">AWS đặt cho mọi account; khách hàng không đổi được</text>
+          <path d="M280 50 V232" stroke="#DD344C" stroke-width="2" marker-end="url(#ar)"/>
+          <text x="290" y="262" font-size="10" class="muted">Request phải lọt qua mọi tầng; tầng nào cạn token trước sẽ trả 429.</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> Token bucket (trái): token được nạp với tốc độ <b>rate</b>, bucket chứa tối đa <b>burst</b> token, mỗi request tiêu một token. Bốn tầng throttling (phải) theo đúng thứ tự tài liệu: usage plan (per-client/per-method) → stage/method → account-level per Region → AWS Regional.</figcaption>
+      </figure>
+
+      <h3>Bốn loại thiết lập liên quan tới throttling</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại</th><th>Phạm vi</th><th>Ai đặt</th><th>Ràng buộc</th></tr></thead>
+        <tbody>
+          <tr><td>AWS throttling limits</td><td>Mọi account và client trong một Region</td><td>AWS</td><td>Khách hàng không thay đổi được</td></tr>
+          <tr><td>Per-account limits</td><td>Tất cả API của account trong một Region</td><td>AWS mặc định; tăng theo yêu cầu</td><td>Không vượt AWS limits; API timeout ngắn &amp; payload nhỏ dễ được tăng hơn</td></tr>
+          <tr><td>Per-API, per-stage (per-method)</td><td>Method trong một stage</td><td>Bạn</td><td>Không vượt AWS limits; đặt chung hoặc riêng từng method</td></tr>
+          <tr><td>Per-client (usage plan)</td><td>Client dùng <b>API key</b> gắn với usage plan</td><td>Bạn</td><td>Không vượt per-account</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Usage plan và API key (chỉ REST API)</h3>
+      <ul>
+        <li><span class="t" data-vi="Gói sử dụng">Usage plan</span> chỉ định <b>ai</b> được truy cập một hoặc nhiều <b>stage/method</b> đã deploy, kèm <b>throttling</b> (rate, burst) và <b>quota</b> (số request tối đa trong ngày/tuần/tháng) cho từng <b>API key</b>. Dùng để bán API như một <b>sản phẩm</b> theo gói (Free / Basic / Premium).</li>
+        <li><span class="t" data-vi="Khóa API">API key</span>: chuỗi chữ-số 20–128 ký tự phân phát cho khách hàng (client gửi qua header <code>x-api-key</code> – kiến thức phổ biến). Một API key có thể thuộc nhiều usage plan, nhưng với <b>mỗi stage</b> chỉ thuộc <b>một</b> usage plan.</li>
+        <li>Throttling và quota áp dụng cho từng API key, <b>cộng dồn trên mọi stage</b> trong usage plan.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp (tài liệu nhấn mạnh)</span>
+        <ul>
+          <li><b>Không dùng API key để xác thực/ủy quyền.</b> Người có API key hợp lệ cho một API trong usage plan có thể gọi <b>mọi API</b> trong plan đó; API key lại hay bị log trong header. Kiểm soát truy cập phải dùng <b>IAM</b>, <b>Lambda authorizer</b> hoặc <b>Cognito user pool</b>.</li>
+          <li><b>Không dựa vào usage plan / throttling để kiểm soát chi phí hay chặn truy cập</b> – chúng là best-effort, client có thể vượt. Theo dõi chi phí bằng <b>AWS Budgets</b>, chặn/giới hạn request độc hại bằng <b>AWS WAF</b> (rate-based rule).</li>
+          <li>Throttle ở API Gateway <b>không thay</b> cho giới hạn ở back end: API 10.000 RPS vẫn có thể làm Lambda chạm quota concurrency (Bài 32) hoặc làm database quá tải ⇒ đặt stage throttling phù hợp sức chịu của back end.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Offer the API to third-party developers with different request limits per customer / tiered plans</i>” ⇒ <b>usage plan + API key</b> (REST API).</li>
+          <li>“<i>Protect the back-end database from sudden traffic spikes coming through the API</i>” ⇒ <b>stage/method throttling</b> trên API Gateway (+ đệm bằng SQS nếu chấp nhận xử lý bất đồng bộ).</li>
+          <li>Client nhận <b>429</b> ⇒ bị throttle (API Gateway hoặc Lambda) ⇒ retry với <b>exponential backoff</b>, xin tăng quota hoặc bật caching. Nhận <b>504</b> ⇒ back end vượt <b>integration timeout 29 giây</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: CACHING ===================== -->
+      <h2 id="caching"><img src="../assets/icons/res/Amazon-DynamoDB_Amazon-DynamoDB-Accelerator.svg" alt="">API caching</h2>
+      <p class="lead">Bật <span class="t" data-vi="Bộ nhớ đệm của API">API caching</span> để cache response của back end trong một khoảng <span class="t" data-vi="Thời gian sống của mục cache">TTL</span> (giây). Khi có request trùng, API Gateway trả kết quả từ cache thay vì gọi back end ⇒ <b>giảm số lời gọi tới back end</b> và <b>giảm độ trễ</b>. Caching chỉ có ở <b>REST API</b>.</p>
+
+      <h3>Các điểm cần nhớ (theo tài liệu)</h3>
+      <ul>
+        <li>Bật cache theo <b>stage</b>: API Gateway tạo một <b>cache instance riêng</b> – mất <b>tới khoảng 4 phút</b> để tạo/xóa. Bạn chọn <b>cache capacity</b>; capacity lớn hơn ⇒ nhiều CPU, memory, băng thông hơn ⇒ hiệu năng tốt hơn nhưng đắt hơn. Các mức từ <b>0,5 GB tới 237 GB</b> (kiến thức phổ biến – xem tham số <code>cacheClusterSize</code>).</li>
+        <li>Đổi capacity = <b>xóa cache cũ, tạo cache mới</b> ⇒ toàn bộ dữ liệu cache bị mất.</li>
+        <li>TTL <b>mặc định 300 giây</b>, <b>tối đa 3.600 giây</b>; <b>TTL = 0</b> nghĩa là tắt cache. Response tối đa được cache: <b>1.048.576 byte (1 MB)</b>.</li>
+        <li>Khi bật cache cho stage, <b>chỉ method <code>GET</code></b> được cache mặc định (vì an toàn). Method khác muốn cache phải <b>override theo method</b>. Mỗi method có thể override: bật/tắt cache, TTL, <b>mã hóa cache</b> (encrypt cache data – nên bật nếu response có dữ liệu nhạy cảm).</li>
+        <li><span class="t" data-vi="Khóa phân biệt mục cache">Cache key</span>: chọn tham số (header, path, query string) làm khóa – response cho mỗi giá trị khóa được cache riêng. Ví dụ dùng <code>type</code> làm khóa: <code>GET /users?type=admin</code> và <code>?type=regular</code> cache riêng; tham số không nằm trong khóa (vd <code>department</code>) thì bị bỏ qua khi tra cache.</li>
+        <li><b>Flush stage cache</b>: xóa toàn bộ cache của stage (console / <code>flush-stage-cache</code>) – sau đó back end tạm thời chịu nhiều request hơn.</li>
+        <li><b>Invalidate từng mục</b>: client gửi header <b><code>Cache-Control: max-age=0</code></b> ⇒ lấy response mới từ back end và thay mục cache. Nên yêu cầu quyền IAM <b><code>execute-api:InvalidateCache</code></b> (“Require authorization”) – nếu không, <b>bất kỳ client nào</b> cũng có thể vô hiệu cache, làm tăng độ trễ. Request không có quyền có thể bị: <code>FAIL_WITH_403</code>, bỏ qua header + thêm cảnh báo, hoặc bỏ qua header.</li>
+        <li>Caching <b>tính phí theo giờ</b> theo kích thước cache, <b>không</b> thuộc Free Tier. Theo dõi hiệu quả bằng metric <b><code>CacheHitCount</code></b> và <b><code>CacheMissCount</code></b>. Caching là <b>best-effort</b>.</li>
+        <li>Tài liệu khuyên chạy <b>load test 10 phút</b> mô phỏng traffic thật (ramp up, ổn định, spike) để chọn capacity phù hợp.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp region"><span class="lbl"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">REST API – stage prod (cache 0,5 GB, TTL 300 s)</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Client<small>GET /products?category=books</small></div>
+            <span class="arrow">request</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">Stage cache<small>cache key: category</small></div>
+            <span class="arrow">cache HIT ⇒ trả ngay</span>
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Client<small>độ trễ thấp</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">Stage cache<small>cache MISS / hết TTL / max-age=0</small></div>
+            <span class="arrow dashed">gọi back end</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda<small>chỉ chạy khi miss</small></div>
+            <span class="arrow">query</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Table.svg" alt="">DynamoDB<small>giảm RCU tiêu thụ</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> API caching trên stage. Request <code>GET</code> có cùng cache key (<code>category=books</code>) trong TTL được trả thẳng từ cache – Lambda và DynamoDB không bị gọi. Khi miss, hết TTL hoặc client có quyền gửi <code>Cache-Control: max-age=0</code>, API Gateway gọi back end và cập nhật cache.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Many identical read requests, reduce load on back end / reduce latency, data changes infrequently</i>” ⇒ <b>bật API Gateway caching</b> trên stage (REST API), chọn TTL phù hợp.</li>
+          <li>“<i>Clients must be able to get fresh data on demand</i>” ⇒ <code>Cache-Control: max-age=0</code> + quyền <code>execute-api:InvalidateCache</code>.</li>
+          <li>Response chứa dữ liệu nhạy cảm/tuân thủ ⇒ bật <b>Encrypt cache data</b>. Response khác nhau theo user/tham số ⇒ đưa header/query đó vào <b>cache key</b> (tránh trả nhầm dữ liệu của người khác).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Bật cache nhưng <code>POST</code> vẫn gọi back end – đúng, vì <b>mặc định chỉ cache <code>GET</code></b>.</li>
+          <li>Cache key thiếu tham số quan trọng ⇒ client nhận <b>dữ liệu sai</b> của request khác. Ngược lại, quá nhiều tham số trong cache key ⇒ tỉ lệ hit thấp.</li>
+          <li>Không nhầm API Gateway cache với CloudFront cache: endpoint edge-optimized đi qua CloudFront nhưng distribution đó <b>không</b> cache response của bạn (kiến thức phổ biến); đừng dùng header <code>X-Cache</code> của CloudFront để kiểm tra API cache (tài liệu nêu rõ).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: AUTHORIZERS ===================== -->
+      <h2 id="authorizers"><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">Kiểm soát truy cập: IAM, Cognito, Lambda authorizer, resource policy, WAF</h2>
+      <p class="lead">API Gateway có nhiều cơ chế kiểm soát truy cập, thường kết hợp với nhau. Ba loại <span class="t" data-vi="Bộ ủy quyền – quyết định ai được gọi API">authorizer</span> hay thi là <b>IAM</b>, <b>Amazon Cognito user pool</b> và <b>Lambda authorizer</b>; bổ sung bởi <b>resource policy</b>, <b>VPC endpoint policy</b>, <b>AWS WAF</b>, <b>mutual TLS</b>.</p>
+
+      <h3>1. IAM authorization (<code>AWS_IAM</code>)</h3>
+      <ul>
+        <li>Đặt <code>authorizationType = AWS_IAM</code> trên method ⇒ caller phải <b>ký request bằng SigV4 (hoặc SigV4a)</b> với AWS credentials. IAM policy của caller cần <b><code>execute-api:Invoke</code></b> trên ARN dạng <code>arn:aws:execute-api:{region}:{account}:{api-id}/{stage}/{METHOD}/{path}</code>.</li>
+        <li>Phù hợp khi caller <b>đã có AWS credentials</b>: dịch vụ/ứng dụng nội bộ trên EC2/Lambda (dùng IAM role), user trong account khác (kết hợp resource policy), hoặc người dùng mobile có <b>credentials tạm từ Cognito identity pool</b>.</li>
+      </ul>
+
+      <h3>2. Amazon Cognito user pool authorizer (<code>COGNITO_USER_POOLS</code>)</h3>
+      <ul>
+        <li>Tạo authorizer kiểu <code>COGNITO_USER_POOLS</code> trỏ tới user pool (có thể ở account khác), gắn vào method. Client đăng nhập user pool, nhận <b>ID token</b> hoặc <b>access token</b> (JWT), gửi trong header <code>Authorization</code>. API Gateway <b>tự xác minh token</b> – không cần viết code.</li>
+        <li><b>ID token</b>: ủy quyền theo <b>claim danh tính</b> của user. <b>Access token</b>: ủy quyền theo <b>custom scope</b> (OAuth 2.0) của resource server.</li>
+        <li>Muốn user Cognito lấy <b>credentials IAM tạm thời</b> rồi gọi API bằng IAM ⇒ dùng <b>identity pool</b> + <code>AWS_IAM</code> (chi tiết Cognito ở Bài 7).</li>
+        <li>Với <b>HTTP API</b>: dùng <b>JWT authorizer</b> native (Cognito user pool hoặc bất kỳ OIDC/OAuth 2.0 provider nào).</li>
+      </ul>
+
+      <h3>3. Lambda authorizer (trước đây gọi là custom authorizer)</h3>
+      <ul>
+        <li>API Gateway gọi một <b>Lambda function của bạn</b>; function nhận danh tính của caller và <b>trả về IAM policy</b> (Allow/Deny <code>execute-api:Invoke</code>) cùng <b>principal ID</b> (và tùy chọn <code>context</code> để chuyển thông tin cho back end). Không trả đủ thông tin ⇒ request thất bại.</li>
+        <li>Dùng cho cơ chế xác thực <b>tùy chỉnh / bên thứ ba</b>: <b>OAuth</b>, <b>SAML</b>, token tự phát hành, tra credential trong database, logic dựa trên tham số request.</li>
+        <li>Hai kiểu:
+          <ul>
+            <li><b><code>TOKEN</code> authorizer</b>: nhận danh tính trong <b>bearer token</b> (JWT, OAuth token) ở một header; hỗ trợ <b>regex validation</b> token trước khi gọi Lambda.</li>
+            <li><b><code>REQUEST</code> authorizer</b>: nhận danh tính từ <b>tổ hợp</b> header, query string, stage variables, <code>$context</code> ⇒ policy chi tiết hơn. <b>Tài liệu khuyến nghị dùng REQUEST</b>.</li>
+          </ul></li>
+        <li><b>Authorization caching</b>: API Gateway cache policy trả về để <b>không gọi lại Lambda</b> cho các request sau cùng danh tính (cache key: header token với TOKEN; tổ hợp identity source với REQUEST) – giảm độ trễ và chi phí. Cần đảm bảo policy cache được áp dụng đúng cho mọi resource/method. TTL cache authorizer mặc định 300 giây, tối đa 3.600 giây (kiến thức phổ biến).</li>
+        <li>Kết quả: Deny ⇒ <b>403</b>; token thiếu/không hợp lệ ⇒ <b>401 Unauthorized</b>. Lambda authorizer có thể ở <b>account khác</b> với API.</li>
+      </ul>
+
+      <h3>4. Resource policy, VPC endpoint policy, WAF và các cơ chế khác</h3>
+      <ul>
+        <li><span class="t" data-vi="Chính sách gắn trên API">Resource policy</span> (REST API): JSON policy gắn trên API, cho phép/từ chối gọi API từ: <b>principal của account khác</b> (cross-account), <b>dải IP / CIDR</b> nguồn (<code>aws:SourceIp</code>), <b>VPC hoặc VPC endpoint</b> (<code>aws:SourceVpc</code>, <code>aws:SourceVpce</code>). Bắt buộc với private API. Dùng chung với IAM policy theo logic identity-based + resource-based.</li>
+        <li><b>VPC endpoint policy</b>: policy trên interface endpoint – giới hạn endpoint đó được gọi API nào.</li>
+        <li><b>AWS WAF</b>: gắn web ACL vào stage REST API để chống khai thác web phổ biến (SQL injection, XSS), chặn IP/quốc gia, <b>rate-based rule</b> chống flood (Bài 39).</li>
+        <li><b>Mutual TLS</b>: client phải trình certificate (REST &amp; HTTP API, dùng custom domain). <b>Client-side SSL certificate</b> do API Gateway sinh: back end xác minh request thực sự đến từ API Gateway.</li>
+        <li><b>CORS</b>: cấu hình để trình duyệt từ domain khác gọi được API (REST dùng mock integration cho <code>OPTIONS</code>; HTTP API cấu hình CORS trực tiếp).</li>
+      </ul>
+
+      <h3>So sánh các authorizer</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>IAM (<code>AWS_IAM</code>)</th><th>Cognito user pool authorizer</th><th>Lambda authorizer</th></tr></thead>
+        <tbody>
+          <tr><td>Caller gửi gì</td><td>Request ký <b>SigV4</b> bằng AWS credentials</td><td><b>JWT</b> (ID/access token) của user pool</td><td>Bearer token hoặc tham số request bất kỳ</td></tr>
+          <tr><td>Ai xác thực</td><td>IAM</td><td>API Gateway tự verify token của Cognito</td><td><b>Code của bạn</b> (gọi IdP bên thứ ba, DB…)</td></tr>
+          <tr><td>Phân quyền chi tiết</td><td>IAM policy trên ARN method</td><td>Scope (access token) / claim, group</td><td>IAM policy do Lambda sinh ra – linh hoạt nhất</td></tr>
+          <tr><td>Chi phí / vận hành</td><td>Không code</td><td>Không code (trả phí Cognito theo MAU)</td><td>Phải viết &amp; bảo trì code, trả phí Lambda (giảm nhờ caching)</td></tr>
+          <tr><td>Use case đề thi</td><td>Service-to-service, cross-account, user có credentials từ identity pool</td><td>User đăng ký/đăng nhập vào web/mobile app</td><td>IdP bên thứ ba (OAuth/SAML), token tùy chỉnh, logic theo header/IP/thời gian</td></tr>
+          <tr><td>Loại API</td><td>REST, HTTP, WebSocket</td><td>REST (HTTP API: JWT authorizer)</td><td>REST, HTTP, WebSocket</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Security-Identity-Compliance.svg" alt="">Luồng Lambda authorizer (REQUEST / TOKEN)</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Client.svg" alt="">Client<small>Authorization: Bearer &lt;token&gt;</small></div>
+            <span class="arrow">① gọi method</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">API Gateway<small>kiểm tra authorization cache</small></div>
+            <span class="arrow">② cache miss ⇒ invoke</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda authorizer<small>③ xác thực với OAuth/SAML IdP</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda authorizer</div>
+            <span class="arrow">④ IAM policy + principalId</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">API Gateway<small>⑤ đánh giá policy, cache kết quả</small></div>
+            <span class="arrow">Allow</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Back end integration</div>
+            <span class="arrow dashed">Deny</span>
+            <div class="node"><img src="../assets/icons/res/Client.svg" alt="">403 / 401</div>
+          </div>
+        </div>
+        <figcaption><b>Hình 6.</b> Luồng Lambda authorizer theo tài liệu: client gửi token/tham số ⇒ API Gateway gọi Lambda authorizer (nếu chưa có trong cache) ⇒ Lambda xác thực (OAuth, SAML, DB…) và trả <b>IAM policy + principal ID</b> ⇒ API Gateway đánh giá policy: Allow thì gọi back end, Deny trả 403 (token sai/thiếu: 401). Bật authorization caching để các request sau không phải gọi lại Lambda.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Users sign up and sign in to the mobile app; only authenticated users may call the API</i>”, “<i>least development effort</i>” ⇒ <b>Cognito user pool authorizer</b>.</li>
+          <li>“<i>Company uses a third-party OAuth / SAML identity provider</i>”, “<i>custom authorization logic based on headers</i>” ⇒ <b>Lambda authorizer</b> (bật caching để giảm độ trễ).</li>
+          <li>“<i>Internal microservices / EC2 instances with IAM roles call the API</i>”, “<i>another AWS account must call the API</i>” ⇒ <b>IAM authorization (SigV4)</b> + <b>resource policy</b> cho cross-account.</li>
+          <li>“<i>Allow only specific IP ranges / only a specific VPC endpoint</i>” ⇒ <b>resource policy</b> (<code>aws:SourceIp</code>, <code>aws:SourceVpce</code>). “<i>Protect from SQL injection / bots / HTTP floods</i>” ⇒ <b>AWS WAF</b> trên stage.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>API key không phải authorizer</b> – chỉ để nhận diện client cho usage plan.</li>
+          <li>Cognito <b>user pool</b> cấp JWT (dùng với authorizer COGNITO_USER_POOLS / JWT); Cognito <b>identity pool</b> cấp <b>AWS credentials</b> (dùng với <code>AWS_IAM</code>). Đừng ghép nhầm.</li>
+          <li>Resource policy và AWS WAF <b>chỉ có ở REST API</b> – HTTP API không có.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: KIẾN TRÚC SERVERLESS ===================== -->
+      <h2 id="serverless"><img src="../assets/icons/cat/Serverless.svg" alt="">Các kiến trúc serverless hay thi</h2>
+      <p class="lead">Ghép API Gateway với Lambda, DynamoDB, S3, SQS, Step Functions, Cognito và CloudFront tạo ra các mẫu kiến trúc <b>serverless</b>: không quản lý máy chủ, tự scale, <b>highly available</b> (các dịch vụ đều chạy trên nhiều AZ của Region), trả tiền theo mức dùng.</p>
+
+      <h3>Mẫu 1 – Web/mobile back end đồng bộ</h3>
+      <p><b>CloudFront + S3</b> (static website: HTML/JS/ảnh) → <b>API Gateway</b> (REST/HTTP, authorizer Cognito) → <b>Lambda</b> → <b>DynamoDB</b>. Bổ sung: bật <b>API caching</b> cho đọc nhiều, <b>DAX</b> nếu cần microsecond, <b>DynamoDB global tables</b> + Regional API ở nhiều Region cho multi-Region.</p>
+
+      <h3>Mẫu 2 – Nhận request rồi xử lý bất đồng bộ (buffer)</h3>
+      <p>API Gateway dùng <b>AWS service integration</b> ghi thẳng request vào <b>SQS</b> (hoặc Kinesis Data Streams) và trả <code>200/202</code> ngay; <b>Lambda</b> đọc queue theo batch (event source mapping) và ghi vào database. Lợi ích: <b>decouple</b>, chịu được đột biến, không mất request khi back end chậm/lỗi, vượt giới hạn 29 giây.</p>
+
+      <h3>Mẫu 3 – Quy trình nhiều bước</h3>
+      <p>API Gateway → <b>Step Functions</b> <code>StartExecution</code> (Standard workflow cho quy trình dài, Express cho khối lượng lớn ngắn – Bài 31). Client nhận execution ARN và kiểm tra trạng thái sau.</p>
+
+      <h3>Mẫu 4 – Upload file lớn</h3>
+      <p>Client gọi API → Lambda sinh <b>S3 presigned URL</b> → client upload thẳng lên S3 (tránh giới hạn <b>10 MB</b> payload API Gateway và <b>6 MB</b> payload Lambda) → S3 event kích hoạt Lambda xử lý.</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Serverless.svg" alt="">Mẫu 2 – Ingestion bất đồng bộ không dùng Lambda ở front</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Thiết bị / client<small>POST /orders – lưu lượng đột biến</small></div>
+            <span class="arrow">HTTPS</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">REST API<small>AWS integration: SQS SendMessage<br>throttling + WAF</small></div>
+            <span class="arrow">IAM role</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Queue-Service.svg" alt="">Amazon SQS<small>đệm, DLQ</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Queue-Service.svg" alt="">Amazon SQS</div>
+            <span class="arrow dashed">event source mapping (batch)</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda worker<small>reserved concurrency bảo vệ DB</small></div>
+            <span class="arrow">ghi</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-DynamoDB_Table.svg" alt="">DynamoDB</div>
+          </div>
+        </div>
+        <figcaption><b>Hình 7.</b> API Gateway gọi trực tiếp <b>SQS SendMessage</b> (AWS service integration, không cần Lambda “chuyển tiếp”), trả phản hồi ngay cho client. Lambda đọc queue theo batch với tốc độ back end chịu được. Kiến trúc này <b>decouple</b> front và back end, hấp thụ đột biến và không mất request.</figcaption>
+      </figure>
+
+      <h3>API Gateway hay Application Load Balancer hay Lambda function URL?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>API Gateway</th><th>Application Load Balancer</th><th>Lambda function URL</th></tr></thead>
+        <tbody>
+          <tr><td>Mục đích</td><td>Quản lý API đầy đủ</td><td>Cân bằng tải HTTP/HTTPS tới EC2, container, IP, Lambda</td><td>Endpoint HTTPS đơn giản cho <b>một</b> function</td></tr>
+          <tr><td>Throttling / usage plan / API key</td><td class="yes">Có (REST)</td><td class="no">Không</td><td class="no">Không (chỉ giới hạn concurrency của function)</td></tr>
+          <tr><td>Caching</td><td class="yes">Có (REST)</td><td class="no">Không</td><td class="no">Không</td></tr>
+          <tr><td>Xác thực</td><td>IAM, Cognito, Lambda/JWT authorizer</td><td>Cognito / OIDC trên HTTPS listener (Bài 12)</td><td>IAM hoặc NONE</td></tr>
+          <tr><td>WebSocket</td><td>WebSocket API (route, @connections)</td><td>Hỗ trợ kết nối WebSocket tới target</td><td class="no">Không</td></tr>
+          <tr><td>Timeout</td><td>29 giây (REST mặc định), 30 giây (HTTP)</td><td>Idle timeout cấu hình được</td><td>Theo timeout function (≤ 15 phút)</td></tr>
+          <tr><td>Khi chọn</td><td>API public/partner, cần quản lý, bảo mật, giới hạn</td><td>Ứng dụng web chạy trên EC2/ECS, tải lớn, ổn định</td><td>Webhook, công cụ nội bộ đơn giản, chi phí thấp nhất</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Highly scalable, serverless, least operational overhead web application</i>” ⇒ <b>S3 + CloudFront</b> (front end) + <b>API Gateway + Lambda + DynamoDB</b> (back end) + <b>Cognito</b> (đăng nhập).</li>
+          <li>“<i>API receives unpredictable bursts; requests must not be lost; processing can be asynchronous</i>” ⇒ <b>API Gateway → SQS → Lambda</b>.</li>
+          <li>“<i>Long-running request through API times out after 29 seconds</i>” ⇒ chuyển sang <b>async</b> (SQS / Step Functions + polling hoặc WebSocket thông báo), <b>không</b> phải tăng timeout Lambda.</li>
+          <li>Ứng dụng legacy trên EC2 cần thêm throttling, API key, caching mà không sửa code ⇒ đặt <b>API Gateway (HTTP proxy / VPC link)</b> phía trước.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải thuộc</span>
+        <ul>
+          <li><b>API Gateway</b> = front door cho REST, HTTP, WebSocket API; cùng Lambda tạo phần app-facing của serverless. Resource → method → integration; <b>deployment</b> = snapshot, <b>stage</b> = tên tham chiếu tới deployment.</li>
+          <li><b>REST API</b>: đủ tính năng – API key, usage plan, per-client throttling, <b>caching</b>, request validation, <b>WAF</b>, <b>resource policy</b>, <b>private endpoint</b>, edge-optimized, canary, X-Ray. <b>HTTP API</b>: rẻ hơn, tối giản, có <b>JWT authorizer</b>, automatic deployment, chỉ Regional. <b>WebSocket</b>: hai chiều, <code>$connect/$disconnect/$default</code>, <code>@connections</code>, 2 giờ / idle 10 phút.</li>
+          <li>Endpoint: <b>edge-optimized</b> (mặc định REST, qua CloudFront POP, client toàn cầu), <b>Regional</b> (client cùng Region, hoặc tự đặt CloudFront, multi-Region với Route 53), <b>private</b> (chỉ từ VPC qua interface endpoint <code>execute-api</code> + resource policy, chỉ REST).</li>
+          <li>Integration: <code>AWS_PROXY</code> (Lambda proxy – khuyến nghị), <code>AWS</code> (gọi thẳng SQS/DynamoDB/Kinesis/Step Functions), <code>HTTP(_PROXY)</code>, <code>MOCK</code>; <b>VPC link</b> tới NLB/ALB private.</li>
+          <li>Throttling: token bucket; <b>10.000 RPS + burst 5.000</b> mỗi account mỗi Region; thứ tự: usage plan → stage/method → account → AWS Regional; vượt ⇒ <b>429</b>. Integration timeout <b>29 giây</b> (504), payload <b>10 MB</b>.</li>
+          <li>Caching (REST): theo stage, TTL <b>300 s</b> mặc định, tối đa <b>3.600 s</b>, chỉ <code>GET</code> mặc định, response ≤ 1 MB, invalidate bằng <code>Cache-Control: max-age=0</code> + <code>execute-api:InvalidateCache</code>, tính phí theo giờ.</li>
+          <li>Authorizer: <b>IAM/SigV4</b> (caller có AWS credentials, cross-account), <b>Cognito user pool</b> (user app, không code), <b>Lambda authorizer</b> TOKEN/REQUEST (IdP bên thứ ba, logic tùy chỉnh, có cache). <b>API key ≠ xác thực.</b></li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="glossary">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Amazon API Gateway</dt><dd><b>Cổng API được quản lý</b> – tạo, publish, bảo mật, giám sát REST/HTTP/WebSocket API.</dd></div>
+        <div><dt>Front door</dt><dd><b>Cửa trước</b> – điểm vào duy nhất của client tới back end.</dd></div>
+        <div><dt>REST API / HTTP API / WebSocket API</dt><dd><b>API REST đầy đủ tính năng / API HTTP tối giản giá rẻ / API giao tiếp hai chiều</b>.</dd></div>
+        <div><dt>Resource / Method</dt><dd><b>Đường dẫn / Phương thức HTTP</b> của API, vd <code>GET /pets</code>.</dd></div>
+        <div><dt>Integration</dt><dd><b>Tích hợp back end</b> – Lambda, HTTP, dịch vụ AWS, mock.</dd></div>
+        <div><dt>Lambda proxy integration (AWS_PROXY)</dt><dd><b>Tích hợp ủy nhiệm Lambda</b> – chuyển nguyên request cho Lambda; cách khuyến nghị.</dd></div>
+        <div><dt>AWS service integration (AWS)</dt><dd><b>Tích hợp trực tiếp dịch vụ AWS</b> – gọi action SQS/DynamoDB/Kinesis… bằng mapping template.</dd></div>
+        <div><dt>Mock integration</dt><dd><b>Tích hợp giả lập</b> – API Gateway tự trả response.</dd></div>
+        <div><dt>Mapping template</dt><dd><b>Mẫu ánh xạ dữ liệu</b> (VTL) – biến đổi request/response (REST API).</dd></div>
+        <div><dt>VPC link</dt><dd><b>Liên kết VPC</b> – private integration tới NLB/ALB (Cloud Map với HTTP API).</dd></div>
+        <div><dt>Deployment</dt><dd><b>Bản triển khai</b> – snapshot cấu hình API.</dd></div>
+        <div><dt>Stage</dt><dd><b>Giai đoạn triển khai</b> – tên tham chiếu tới deployment (dev, prod); nơi đặt cache, throttling, WAF, log.</dd></div>
+        <div><dt>Stage variables</dt><dd><b>Biến của stage</b> – key/value như biến môi trường, ≤ 100/stage.</dd></div>
+        <div><dt>Canary release deployment</dt><dd><b>Triển khai thử nghiệm theo tỉ lệ</b> – chia % traffic của stage sang bản mới.</dd></div>
+        <div><dt>Endpoint type</dt><dd><b>Kiểu điểm cuối</b> – edge-optimized / Regional / private.</dd></div>
+        <div><dt>Edge-optimized endpoint</dt><dd><b>Điểm cuối tối ưu biên</b> – đi qua CloudFront POP; mặc định của REST API.</dd></div>
+        <div><dt>Private API</dt><dd><b>API riêng tư</b> – chỉ gọi từ VPC qua interface endpoint execute-api.</dd></div>
+        <div><dt>Custom domain name / Base path mapping</dt><dd><b>Tên miền tùy chỉnh / Ánh xạ đường dẫn gốc</b> – URL thân thiện trỏ tới API + stage.</dd></div>
+        <div><dt>Token bucket</dt><dd><b>Thùng token</b> – thuật toán throttling: rate = tốc độ nạp, burst = sức chứa.</dd></div>
+        <div><dt>Rate / Burst</dt><dd><b>Tốc độ ổn định / Sức chứa đột biến</b> – mặc định 10.000 RPS / 5.000 mỗi account mỗi Region.</dd></div>
+        <div><dt>Usage plan</dt><dd><b>Gói sử dụng</b> – throttling + quota theo API key cho stage/method.</dd></div>
+        <div><dt>API key</dt><dd><b>Khóa API</b> – nhận diện client cho usage plan; không dùng để xác thực.</dd></div>
+        <div><dt>API caching / Cache capacity</dt><dd><b>Bộ nhớ đệm API / Dung lượng cache</b> – theo stage, TTL 300 s (≤ 3.600 s), tính phí theo giờ.</dd></div>
+        <div><dt>Cache invalidation</dt><dd><b>Vô hiệu mục cache</b> – <code>Cache-Control: max-age=0</code> + <code>execute-api:InvalidateCache</code>.</dd></div>
+        <div><dt>Authorizer</dt><dd><b>Bộ ủy quyền</b> – quyết định caller có được gọi method không.</dd></div>
+        <div><dt>IAM authorization (AWS_IAM)</dt><dd><b>Ủy quyền bằng IAM</b> – request ký SigV4, policy <code>execute-api:Invoke</code>.</dd></div>
+        <div><dt>Lambda authorizer (TOKEN / REQUEST)</dt><dd><b>Bộ ủy quyền bằng Lambda</b> – trả IAM policy dựa trên token hoặc tham số request.</dd></div>
+        <div><dt>JWT authorizer</dt><dd><b>Bộ ủy quyền JWT</b> – native trên HTTP API, dùng Cognito/OIDC.</dd></div>
+        <div><dt>Resource policy (API Gateway)</dt><dd><b>Chính sách gắn trên API</b> – giới hạn theo account, IP, VPC/VPC endpoint.</dd></div>
+        <div><dt>Route / Route selection expression</dt><dd><b>Tuyến / Biểu thức chọn tuyến</b> của WebSocket API – <code>$connect</code>, <code>$disconnect</code>, <code>$default</code>.</dd></div>
+        <div><dt>@connections API</dt><dd><b>API gửi message tới client WebSocket</b> theo connection ID.</dd></div>
+        <div><dt>429 / 504</dt><dd><b>Too Many Requests (bị throttle) / Gateway Timeout (vượt 29 giây)</b>.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company is building a public API for a mobile application. The API is backed by AWS Lambda functions. The company needs to throttle each partner developer to a different number of requests per second, enforce a monthly request quota for each partner, and cache responses for frequently requested product data. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create an Amazon API Gateway HTTP API with a JWT authorizer and enable caching on the default stage.</li>
+            <li data-k="B">Create an Amazon API Gateway REST API, create usage plans with API keys for each partner, and enable API caching on the stage.</li>
+            <li data-k="C">Create Lambda function URLs and configure reserved concurrency for each partner.</li>
+            <li data-k="D">Place an Application Load Balancer in front of the Lambda functions and configure listener rules per partner.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Throttling và quota <b>theo từng client</b> thực hiện bằng <b>usage plan + API key</b>, còn <b>API caching</b> – cả hai chỉ có ở <b>REST API</b>. <b>A sai</b>: HTTP API không hỗ trợ caching, API key hay per-client throttling. <b>C sai</b>: function URL không có throttling theo khách hàng, quota hay cache; reserved concurrency là theo function, không theo partner. <b>D sai</b>: ALB không có rate limit theo client, quota hay cache response.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang xây dựng một API công khai cho ứng dụng di động. API chạy trên các AWS Lambda function. Công ty cần giới hạn tốc độ (throttle) mỗi nhà phát triển đối tác ở một số request mỗi giây khác nhau, áp đặt quota request hằng tháng cho từng đối tác, và cache response cho dữ liệu sản phẩm được truy vấn thường xuyên. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Amazon API Gateway HTTP API với JWT authorizer và bật caching trên default stage.</span><span class="why">Sai: HTTP API không hỗ trợ API caching, API key hay usage plan để throttle/quota theo từng đối tác.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Amazon API Gateway REST API, tạo usage plan kèm API key cho từng đối tác, và bật API caching trên stage.</span><span class="why">Đúng: usage plan + API key cho phép throttling và quota riêng từng đối tác, còn API caching giảm tải cho dữ liệu hay truy vấn – cả hai đều có ở REST API.</span></li>
+              <li data-k="C"><span class="tv">Tạo Lambda function URL và cấu hình reserved concurrency cho từng đối tác.</span><span class="why">Sai: function URL không có throttling theo client, quota hay cache; reserved concurrency áp dụng theo function chứ không theo đối tác.</span></li>
+              <li data-k="D"><span class="tv">Đặt một Application Load Balancer trước các Lambda function và cấu hình listener rule cho từng đối tác.</span><span class="why">Sai: ALB không có rate limit theo client, quota hằng tháng hay cache response.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company runs an internal REST API on Amazon API Gateway that is used only by applications running in a VPC and by on-premises servers connected through AWS Direct Connect. A security audit requires that the API must not be reachable from the public internet. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Change the API to an edge-optimized endpoint and attach an AWS WAF web ACL that blocks all public IP addresses.</li>
+            <li data-k="B">Keep the Regional endpoint and require API keys for every request.</li>
+            <li data-k="C">Create a gateway VPC endpoint for API Gateway and update the route tables.</li>
+            <li data-k="D">Change the API to a private endpoint type, create an interface VPC endpoint for execute-api, and add a resource policy that allows access only from that VPC endpoint.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Private API</b> chỉ gọi được từ VPC qua <b>interface VPC endpoint</b> (<code>execute-api</code>, PrivateLink); on-premises đi qua Direct Connect vào VPC; <b>resource policy</b> với <code>aws:SourceVpce</code> giới hạn endpoint được phép. Lưu lượng không ra Internet. <b>A sai</b>: edge-optimized vẫn là endpoint public qua CloudFront. <b>B sai</b>: API key không phải cơ chế bảo mật, endpoint vẫn public. <b>C sai</b>: gateway endpoint chỉ có cho S3 và DynamoDB.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một REST API nội bộ trên Amazon API Gateway, chỉ được dùng bởi các ứng dụng chạy trong một VPC và các server on-premises kết nối qua AWS Direct Connect. Một cuộc kiểm toán bảo mật yêu cầu API không được truy cập được từ Internet công cộng. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đổi API sang endpoint edge-optimized và gắn một AWS WAF web ACL chặn mọi địa chỉ IP public.</span><span class="why">Sai: edge-optimized vẫn là endpoint public qua CloudFront; API vẫn được công khai trên Internet.</span></li>
+              <li data-k="B"><span class="tv">Giữ Regional endpoint và yêu cầu API key cho mọi request.</span><span class="why">Sai: API key không phải cơ chế bảo mật, và endpoint vẫn truy cập được từ Internet.</span></li>
+              <li data-k="C"><span class="tv">Tạo một gateway VPC endpoint cho API Gateway và cập nhật route table.</span><span class="why">Sai: gateway endpoint chỉ tồn tại cho Amazon S3 và DynamoDB, không có cho API Gateway.</span></li>
+              <li data-k="D"><span class="tv">Đổi API sang loại private endpoint, tạo một interface VPC endpoint cho execute-api, và thêm resource policy chỉ cho phép truy cập từ VPC endpoint đó.</span><span class="why">Đúng: private API chỉ gọi được qua interface VPC endpoint (PrivateLink) – on-premises đi vào qua Direct Connect – và resource policy giới hạn đúng endpoint, không lộ ra Internet.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">An e-commerce company exposes a product catalog through an Amazon API Gateway REST API backed by AWS Lambda and Amazon DynamoDB. The catalog changes only a few times per day, but the GET /products endpoint receives thousands of identical requests per minute, which increases latency and DynamoDB read costs. Which solution will reduce latency and back-end load with the LEAST development effort?</div>
+          <ol class="opts">
+            <li data-k="A">Enable API caching on the production stage with an appropriate TTL and include the relevant query string parameters in the cache key.</li>
+            <li data-k="B">Increase the memory of the Lambda function.</li>
+            <li data-k="C">Configure provisioned concurrency on the Lambda function.</li>
+            <li data-k="D">Migrate the API to an HTTP API to reduce latency.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>API caching</b> trên stage trả response từ cache trong thời gian TTL (mặc định 300 s, tối đa 3.600 s) ⇒ Lambda và DynamoDB không bị gọi cho request trùng; đưa tham số query vào <b>cache key</b> để mỗi giá trị được cache riêng. Không phải sửa code. <b>B sai</b>: tăng memory chỉ chạy nhanh hơn, vẫn gọi DynamoDB mỗi request. <b>C sai</b>: provisioned concurrency chỉ giảm cold start. <b>D sai</b>: HTTP API <b>không hỗ trợ caching</b>.</div>
+          <div class="trans">
+            <div class="tq">Một công ty thương mại điện tử cung cấp danh mục sản phẩm qua một Amazon API Gateway REST API, phía sau là AWS Lambda và Amazon DynamoDB. Danh mục chỉ thay đổi vài lần mỗi ngày, nhưng endpoint GET /products nhận hàng nghìn request giống hệt nhau mỗi phút, làm tăng độ trễ và chi phí đọc DynamoDB. Giải pháp nào sẽ giảm độ trễ và tải back-end với LEAST development effort (ít công phát triển nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật API caching trên production stage với TTL phù hợp và đưa các query string parameter liên quan vào cache key.</span><span class="why">Đúng: cache trả response cho request trùng trong thời gian TTL nên Lambda và DynamoDB không bị gọi lại; đưa tham số vào cache key để cache đúng từng truy vấn, không cần sửa code.</span></li>
+              <li data-k="B"><span class="tv">Tăng bộ nhớ của Lambda function.</span><span class="why">Sai: function chạy nhanh hơn nhưng mỗi request vẫn gọi DynamoDB, không giảm chi phí đọc.</span></li>
+              <li data-k="C"><span class="tv">Cấu hình provisioned concurrency cho Lambda function.</span><span class="why">Sai: provisioned concurrency chỉ giảm cold start, không giảm số lần đọc DynamoDB và còn tốn thêm phí.</span></li>
+              <li data-k="D"><span class="tv">Chuyển API sang HTTP API để giảm độ trễ.</span><span class="why">Sai: HTTP API không hỗ trợ caching, nên back end vẫn chịu toàn bộ request; việc chuyển đổi cũng tốn công.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company has a REST API in Amazon API Gateway. The company's customers authenticate with an existing third-party OAuth 2.0 identity provider that issues bearer tokens. The API must validate each token against the provider and apply custom authorization rules that depend on the token claims and the request path. Which authorization option should a solutions architect choose?</div>
+          <ol class="opts">
+            <li data-k="A">IAM authorization with Signature Version 4.</li>
+            <li data-k="B">API keys associated with a usage plan.</li>
+            <li data-k="C">A Lambda authorizer that validates the token and returns an IAM policy, with authorization caching enabled.</li>
+            <li data-k="D">A resource policy that allows the identity provider's IP address range.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Lambda authorizer</b> dùng cho cơ chế xác thực tùy chỉnh/bên thứ ba (OAuth, SAML): function xác thực token với IdP, áp logic tùy chỉnh và <b>trả về IAM policy</b>; bật <b>authorization caching</b> để giảm độ trễ và số lần gọi. <b>A sai</b>: IAM yêu cầu AWS credentials ký SigV4, khách hàng chỉ có OAuth token. <b>B sai</b>: tài liệu nêu rõ không dùng API key để xác thực/ủy quyền. <b>D sai</b>: request đến từ client, không phải từ IdP; resource policy theo IP không xác thực được người dùng.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có một REST API trong Amazon API Gateway. Khách hàng của công ty xác thực bằng một nhà cung cấp danh tính (identity provider) OAuth 2.0 bên thứ ba sẵn có, vốn phát hành bearer token. API phải xác minh từng token với nhà cung cấp và áp dụng các quy tắc phân quyền tùy chỉnh phụ thuộc vào claim trong token và đường dẫn request. Solutions architect nên chọn phương án phân quyền nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">IAM authorization với Signature Version 4.</span><span class="why">Sai: IAM authorization yêu cầu caller có AWS credentials để ký SigV4, trong khi khách hàng chỉ có OAuth token.</span></li>
+              <li data-k="B"><span class="tv">API key gắn với một usage plan.</span><span class="why">Sai: API key không dùng để xác thực hay phân quyền, và không xác minh được OAuth token.</span></li>
+              <li data-k="C"><span class="tv">Một Lambda authorizer xác minh token và trả về IAM policy, có bật authorization caching.</span><span class="why">Đúng: Lambda authorizer cho phép tự xác minh token với IdP bên thứ ba và áp logic tùy chỉnh theo claim và path, trả về IAM policy; caching giảm độ trễ và số lần gọi.</span></li>
+              <li data-k="D"><span class="tv">Một resource policy cho phép dải địa chỉ IP của nhà cung cấp danh tính.</span><span class="why">Sai: request đến từ client chứ không phải từ IdP, và lọc theo IP không xác thực được người dùng hay token.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,D">
+          <div class="qh">A company's API in Amazon API Gateway invokes an AWS Lambda function that generates complex reports. Some reports take 2–5 minutes to generate. Clients report that these requests fail with HTTP 504 errors even though the Lambda function completes successfully. The company wants a scalable, serverless solution. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Increase the Lambda function timeout to 15 minutes.</li>
+            <li data-k="B">Change the API so that it accepts the request, starts the report generation asynchronously (for example, by sending a message to Amazon SQS or starting an AWS Step Functions execution), and immediately returns a job ID.</li>
+            <li data-k="C">Enable API caching on the stage.</li>
+            <li data-k="D">Store the finished report in Amazon S3 and let clients retrieve it later through a status endpoint or a presigned URL.</li>
+            <li data-k="E">Increase the account-level throttling limit for API Gateway.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, D.</b> Integration timeout của REST API mặc định tối đa <b>29 giây</b> ⇒ request đồng bộ chạy vài phút trả <b>504</b> dù Lambda vẫn chạy xong. Cách đúng là <b>bất đồng bộ</b>: API nhận request, đẩy vào SQS / Step Functions, trả job ID (B); kết quả lưu S3 để client lấy sau qua endpoint trạng thái hoặc presigned URL (D). <b>A sai</b>: Lambda không phải chỗ nghẽn – API Gateway mới cắt ở 29 giây. <b>C sai</b>: cache không giúp request lần đầu, và báo cáo khác nhau. <b>E sai</b>: 504 không phải lỗi throttling (throttling là 429).</div>
+          <div class="trans">
+            <div class="tq">API của một công ty trong Amazon API Gateway gọi một AWS Lambda function tạo các báo cáo phức tạp. Một số báo cáo mất 2–5 phút để tạo. Client báo rằng các request này thất bại với lỗi HTTP 504 dù Lambda function vẫn chạy xong thành công. Công ty muốn một giải pháp serverless, có khả năng mở rộng. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng timeout của Lambda function lên 15 phút.</span><span class="why">Sai: Lambda vốn đã chạy xong; điểm nghẽn là integration timeout 29 giây của API Gateway nên tăng timeout Lambda không hết lỗi 504.</span></li>
+              <li data-k="B"><span class="tv">Thay đổi API để nó nhận request, khởi động việc tạo báo cáo bất đồng bộ (ví dụ gửi message vào Amazon SQS hoặc khởi động một AWS Step Functions execution), và trả về ngay một job ID.</span><span class="why">Đúng: API trả lời ngay trong giới hạn 29 giây, còn việc tạo báo cáo dài chạy bất đồng bộ phía sau – tránh lỗi 504 và scale tốt.</span></li>
+              <li data-k="C"><span class="tv">Bật API caching trên stage.</span><span class="why">Sai: cache không giúp request đầu tiên (vẫn chạy vài phút), và mỗi báo cáo thường khác nhau.</span></li>
+              <li data-k="D"><span class="tv">Lưu báo cáo đã hoàn thành vào Amazon S3 và cho client lấy về sau qua một endpoint trạng thái hoặc presigned URL.</span><span class="why">Đúng: kết hợp với xử lý bất đồng bộ, client dùng job ID để kiểm tra trạng thái và tải báo cáo từ S3 khi xong.</span></li>
+              <li data-k="E"><span class="tv">Tăng giới hạn throttling cấp account của API Gateway.</span><span class="why">Sai: 504 là lỗi timeout của integration, không phải throttling (throttling trả về 429).</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company is building a live auction application. When a bid is placed, all connected browsers must receive the new highest bid within a second. The company wants a fully managed, serverless solution that does not require clients to poll the back end. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Use an Amazon API Gateway WebSocket API with AWS Lambda integrations, store connection IDs in Amazon DynamoDB, and push updates to clients through the @connections API.</li>
+            <li data-k="B">Use an Amazon API Gateway REST API with API caching and a TTL of 1 second.</li>
+            <li data-k="C">Use an Amazon API Gateway HTTP API and have clients call GET /bids every second.</li>
+            <li data-k="D">Use Amazon SQS and have each browser poll the queue for new messages.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>WebSocket API</b> giữ kết nối hai chiều; back end <b>đẩy</b> message tới client đang kết nối bằng <b><code>@connections</code> API</b> (POST tới connection ID). Mẫu chuẩn: <code>$connect</code> lưu connection ID vào DynamoDB, <code>$disconnect</code> xóa. <b>B và C sai</b>: vẫn là polling – đề yêu cầu không poll. <b>D sai</b>: trình duyệt poll SQS là polling, và mỗi message chỉ do một consumer nhận, không phát tới tất cả.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang xây dựng ứng dụng đấu giá trực tiếp. Khi có người đặt giá, mọi trình duyệt đang kết nối phải nhận được giá cao nhất mới trong vòng một giây. Công ty muốn một giải pháp fully managed, serverless mà không yêu cầu client phải poll back end. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng Amazon API Gateway WebSocket API với AWS Lambda integration, lưu connection ID trong Amazon DynamoDB, và đẩy cập nhật tới client qua @connections API.</span><span class="why">Đúng: WebSocket API giữ kết nối hai chiều nên back end chủ động đẩy giá mới tới mọi connection ID qua @connections API – serverless, không cần polling.</span></li>
+              <li data-k="B"><span class="tv">Dùng Amazon API Gateway REST API với API caching và TTL 1 giây.</span><span class="why">Sai: client vẫn phải liên tục gọi API (polling), trái yêu cầu; cache chỉ giảm tải back end.</span></li>
+              <li data-k="C"><span class="tv">Dùng Amazon API Gateway HTTP API và cho client gọi GET /bids mỗi giây.</span><span class="why">Sai: đây chính là polling, đề yêu cầu không poll back end.</span></li>
+              <li data-k="D"><span class="tv">Dùng Amazon SQS và cho mỗi trình duyệt poll queue để lấy message mới.</span><span class="why">Sai: vẫn là polling, và mỗi message SQS chỉ được một consumer nhận nên không phát tới tất cả trình duyệt.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company receives bursts of telemetry data from IoT devices through an Amazon API Gateway REST API. Currently, a Lambda function behind the API only forwards each request body to an Amazon SQS queue. The company wants to reduce cost and operational overhead while keeping the ability to absorb traffic spikes. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Replace API Gateway with an Application Load Balancer that targets the SQS queue.</li>
+            <li data-k="B">Increase the reserved concurrency of the forwarding Lambda function.</li>
+            <li data-k="C">Configure the API method with an AWS service integration that calls the SQS SendMessage action directly by using an IAM role, and remove the forwarding Lambda function.</li>
+            <li data-k="D">Configure a mock integration that returns HTTP 200 and writes the data to SQS.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Integration kiểu <b><code>AWS</code></b> cho phép API Gateway <b>gọi trực tiếp action của dịch vụ AWS</b> (SQS <code>SendMessage</code>) bằng IAM role và mapping template ⇒ bỏ Lambda trung gian, giảm chi phí và code; SQS vẫn đệm đột biến. <b>A sai</b>: ALB không có target là SQS queue. <b>B sai</b>: vẫn giữ Lambda và tăng chi phí. <b>D sai</b>: mock integration không gọi back end nào, dữ liệu không được ghi.</div>
+          <div class="trans">
+            <div class="tq">Một công ty nhận các đợt dữ liệu telemetry dồn dập từ thiết bị IoT qua một Amazon API Gateway REST API. Hiện tại, một Lambda function phía sau API chỉ chuyển tiếp body của mỗi request vào một Amazon SQS queue. Công ty muốn giảm chi phí và công sức vận hành mà vẫn giữ khả năng hấp thụ lưu lượng tăng đột biến. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thay API Gateway bằng một Application Load Balancer có target là SQS queue.</span><span class="why">Sai: ALB không hỗ trợ SQS queue làm target.</span></li>
+              <li data-k="B"><span class="tv">Tăng reserved concurrency của Lambda function chuyển tiếp.</span><span class="why">Sai: vẫn giữ Lambda trung gian, không giảm chi phí hay vận hành, thậm chí còn chiếm thêm concurrency.</span></li>
+              <li data-k="C"><span class="tv">Cấu hình API method với AWS service integration gọi trực tiếp action SQS SendMessage bằng một IAM role, và gỡ bỏ Lambda function chuyển tiếp.</span><span class="why">Đúng: API Gateway gọi thẳng SQS SendMessage qua IAM role và mapping template, bỏ Lambda trung gian nên giảm chi phí và code, còn SQS vẫn đệm đột biến.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình một mock integration trả về HTTP 200 và ghi dữ liệu vào SQS.</span><span class="why">Sai: mock integration không gọi back end nào, nên dữ liệu không được ghi vào SQS.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A mobile app uses Amazon Cognito user pools for sign-up and sign-in. The app calls a REST API in Amazon API Gateway backed by AWS Lambda. Only signed-in users should be able to call the API, and the company wants to avoid writing and maintaining any custom authorization code. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create a Lambda authorizer that decodes and validates the Cognito JWT.</li>
+            <li data-k="B">Issue an API key to every user after sign-in and require API keys on every method.</li>
+            <li data-k="C">Add a resource policy that allows only the IP addresses of mobile carriers.</li>
+            <li data-k="D">Create an authorizer of type COGNITO_USER_POOLS that references the user pool, and configure the API methods to use it with the token in the Authorization header.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Cognito user pool authorizer</b> (<code>COGNITO_USER_POOLS</code>): client gửi ID/access token trong header <code>Authorization</code>, API Gateway <b>tự xác minh</b> – không cần code. <b>A sai</b>: làm được nhưng phải viết và bảo trì code (trái yêu cầu). <b>B sai</b>: API key không dùng để xác thực, và quota 10.000 key/Region không hợp cho mọi user. <b>C sai</b>: IP nhà mạng không xác định được người dùng đã đăng nhập.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng di động dùng Amazon Cognito user pool cho đăng ký và đăng nhập. Ứng dụng gọi một REST API trong Amazon API Gateway, phía sau là AWS Lambda. Chỉ người dùng đã đăng nhập mới được gọi API, và công ty muốn tránh viết và bảo trì bất kỳ code phân quyền tùy chỉnh nào. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Lambda authorizer giải mã và xác minh JWT của Cognito.</span><span class="why">Sai: làm được nhưng phải tự viết và bảo trì code authorizer, trái yêu cầu tránh code tùy chỉnh.</span></li>
+              <li data-k="B"><span class="tv">Cấp một API key cho mỗi người dùng sau khi đăng nhập và yêu cầu API key trên mọi method.</span><span class="why">Sai: API key không dùng để xác thực người dùng, và quota 10.000 key/Region không phù hợp cấp cho từng user.</span></li>
+              <li data-k="C"><span class="tv">Thêm một resource policy chỉ cho phép địa chỉ IP của các nhà mạng di động.</span><span class="why">Sai: IP nhà mạng không xác định được người dùng đã đăng nhập hay chưa.</span></li>
+              <li data-k="D"><span class="tv">Tạo một authorizer loại COGNITO_USER_POOLS tham chiếu tới user pool, và cấu hình các API method dùng nó với token trong header Authorization.</span><span class="why">Đúng: Cognito user pool authorizer để API Gateway tự xác minh token của người dùng đã đăng nhập – không cần viết code.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,E">
+          <div class="qh">A company serves customers worldwide through an Amazon API Gateway REST API deployed in a single Region. The company wants to reduce latency for global users and protect the API from SQL injection attacks and HTTP floods from specific IP addresses. Which TWO actions will meet these requirements with the LEAST operational overhead? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Use the edge-optimized endpoint type for the API.</li>
+            <li data-k="B">Convert the API to an HTTP API.</li>
+            <li data-k="C">Use a private endpoint type and an interface VPC endpoint in each Region.</li>
+            <li data-k="D">Create a usage plan with a low throttling limit for all clients.</li>
+            <li data-k="E">Associate an AWS WAF web ACL that includes managed SQL injection rules and a rate-based rule with the API stage.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, E.</b> <b>Edge-optimized endpoint</b> định tuyến request tới CloudFront POP gần client nhất, phù hợp người dùng phân tán toàn cầu (A). <b>AWS WAF</b> gắn vào stage REST API chống SQL injection và dùng <b>rate-based rule</b> chặn flood theo IP (E). <b>B sai</b>: HTTP API không hỗ trợ WAF và không có edge-optimized. <b>C sai</b>: private API không cho người dùng Internet truy cập. <b>D sai</b>: usage plan cần API key, là best-effort và tài liệu khuyên không dựa vào nó để chặn truy cập – không chống SQL injection.</div>
+          <div class="trans">
+            <div class="tq">Một công ty phục vụ khách hàng toàn cầu qua một Amazon API Gateway REST API triển khai ở một Region duy nhất. Công ty muốn giảm độ trễ cho người dùng toàn cầu và bảo vệ API khỏi tấn công SQL injection và HTTP flood từ những địa chỉ IP cụ thể. HAI hành động nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng loại endpoint edge-optimized cho API.</span><span class="why">Đúng: edge-optimized định tuyến request qua CloudFront POP gần người dùng nhất, giảm độ trễ cho người dùng toàn cầu mà không phải triển khai thêm Region.</span></li>
+              <li data-k="B"><span class="tv">Chuyển API sang HTTP API.</span><span class="why">Sai: HTTP API không hỗ trợ AWS WAF và không có endpoint edge-optimized.</span></li>
+              <li data-k="C"><span class="tv">Dùng loại private endpoint và một interface VPC endpoint ở mỗi Region.</span><span class="why">Sai: private API không cho người dùng trên Internet truy cập, và cũng không chống SQL injection.</span></li>
+              <li data-k="D"><span class="tv">Tạo một usage plan với giới hạn throttling thấp cho mọi client.</span><span class="why">Sai: usage plan cần API key, chỉ best-effort, không nên dùng để chặn truy cập và hoàn toàn không chống SQL injection.</span></li>
+              <li data-k="E"><span class="tv">Gắn một AWS WAF web ACL gồm các managed rule chống SQL injection và một rate-based rule vào API stage.</span><span class="why">Đúng: AWS WAF gắn trực tiếp vào stage REST API; managed rule chặn SQL injection, rate-based rule chặn flood từ IP vượt ngưỡng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A partner company's applications run on Amazon EC2 instances in the partner's AWS account. They must call a REST API that a company hosts in Amazon API Gateway in its own account. Requests must be authenticated with AWS credentials, and only the partner account should be allowed to invoke the API. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Distribute an API key to the partner and attach it to a usage plan.</li>
+            <li data-k="B">Set the methods to use AWS_IAM authorization, add an API Gateway resource policy that allows execute-api:Invoke for the partner account, and have the partner's IAM role sign requests with SigV4.</li>
+            <li data-k="C">Create a Cognito user pool for the partner's EC2 instances and use a Cognito user pool authorizer.</li>
+            <li data-k="D">Change the API to a private API and share the VPC endpoint with the partner.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Caller có AWS credentials (IAM role trên EC2) ⇒ <b>IAM authorization</b>, request ký <b>SigV4</b>. Truy cập <b>cross-account</b> cần cả <b>resource policy</b> trên API cho phép account đối tác và IAM policy <code>execute-api:Invoke</code> phía đối tác. <b>A sai</b>: API key không xác thực bằng AWS credentials và không phải cơ chế bảo mật. <b>C sai</b>: user pool dành cho người dùng cuối của app, không phải xác thực bằng IAM. <b>D sai</b>: private API chỉ giới hạn mạng, không đáp ứng yêu cầu xác thực bằng AWS credentials và phức tạp hơn nhiều.</div>
+          <div class="trans">
+            <div class="tq">Ứng dụng của một công ty đối tác chạy trên các Amazon EC2 instance trong AWS account của đối tác. Chúng phải gọi một REST API mà công ty host trên Amazon API Gateway trong account của chính công ty. Request phải được xác thực bằng AWS credentials, và chỉ account của đối tác được phép gọi API. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấp một API key cho đối tác và gắn nó vào một usage plan.</span><span class="why">Sai: API key không xác thực bằng AWS credentials và không phải cơ chế bảo mật.</span></li>
+              <li data-k="B"><span class="tv">Đặt các method dùng AWS_IAM authorization, thêm API Gateway resource policy cho phép execute-api:Invoke với account đối tác, và cho IAM role của đối tác ký request bằng SigV4.</span><span class="why">Đúng: IAM authorization xác thực request ký SigV4 bằng AWS credentials; truy cập cross-account cần resource policy cho phép account đối tác cùng IAM policy execute-api:Invoke phía đối tác.</span></li>
+              <li data-k="C"><span class="tv">Tạo một Cognito user pool cho các EC2 instance của đối tác và dùng Cognito user pool authorizer.</span><span class="why">Sai: user pool dành cho người dùng cuối của ứng dụng, không phải xác thực bằng AWS credentials/IAM.</span></li>
+              <li data-k="D"><span class="tv">Đổi API sang private API và chia sẻ VPC endpoint với đối tác.</span><span class="why">Sai: private API chỉ giới hạn về mạng, không đáp ứng yêu cầu xác thực bằng AWS credentials và phức tạp hơn nhiều.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-vs-rest.html" target="_blank" rel="noopener">Choose between REST APIs and HTTP APIs</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-api-endpoint-types.html" target="_blank" rel="noopener">API endpoint types for REST APIs in API Gateway</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-private-apis.html" target="_blank" rel="noopener">Private REST APIs in API Gateway</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/how-to-custom-domains.html" target="_blank" rel="noopener">Custom domain name for public REST APIs</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/limits.html" target="_blank" rel="noopener">Amazon API Gateway quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-execution-service-limits-table.html" target="_blank" rel="noopener">Quotas for configuring and running a REST API</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-quotas.html" target="_blank" rel="noopener">Quotas for configuring and running an HTTP API</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-execution-service-websocket-limits-table.html" target="_blank" rel="noopener">Quotas for WebSocket APIs</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-websocket-api-overview.html" target="_blank" rel="noopener">Overview of WebSocket APIs in API Gateway</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-api-integration-types.html" target="_blank" rel="noopener">Choose an API Gateway API integration type</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-stages.html" target="_blank" rel="noopener">Set up a stage for a REST API</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/canary-release.html" target="_blank" rel="noopener">Set up an API Gateway canary release deployment</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-api-usage-plans.html" target="_blank" rel="noopener">Usage plans and API keys for REST APIs</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-control-access-to-api.html" target="_blank" rel="noopener">Control and manage access to REST APIs</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/permissions.html" target="_blank" rel="noopener">Control access to a REST API with IAM permissions</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-integrate-with-cognito.html" target="_blank" rel="noopener">Control access to REST APIs using Amazon Cognito user pools as an authorizer</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html" target="_blank" rel="noopener">Use API Gateway Lambda authorizers</a></li>
+        <li><a href="https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-resource-policies.html" target="_blank" rel="noopener">Control access to a REST API with API Gateway resource policies</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

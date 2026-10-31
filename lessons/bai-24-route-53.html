@@ -1,0 +1,985 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 24 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Route-53.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="24" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Giải thích ba chức năng của <span class="t" data-vi="Dịch vụ DNS của AWS">Amazon Route 53</span> (đăng ký tên miền, định tuyến DNS, kiểm tra sức khỏe) và quá trình một truy vấn DNS đi từ trình duyệt tới Route 53.</li>
+          <li>Phân biệt <b>public hosted zone</b> và <b>private hosted zone</b>, cách cấu hình <i>split-view DNS</i>, ý nghĩa của bản ghi NS/SOA và cách chuyển DNS sang Route 53 không gián đoạn.</li>
+          <li>Chọn đúng loại bản ghi: <b>A / AAAA / CNAME / MX / TXT…</b> và đặc biệt là <b>Alias record</b> (zone apex, miễn phí truy vấn tới tài nguyên AWS); hiểu tác động của <b>TTL</b>.</li>
+          <li>Nắm vững 8 <span class="t" data-vi="Chính sách định tuyến">routing policy</span>: Simple, Weighted, Latency, Failover, Geolocation, Geoproximity, Multivalue answer, IP-based – và từ khóa đề tương ứng.</li>
+          <li>Cấu hình <b>health check</b> (endpoint / calculated / CloudWatch alarm) và <b>DNS failover</b> active-active, active-passive; dùng <i>Evaluate Target Health</i> với alias.</li>
+          <li>Thiết kế phân giải DNS lai bằng <b>Route 53 Resolver</b> (VPC Resolver): inbound endpoint, outbound endpoint, forwarding rule.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 4 – Networking</span>
+        <p><b>Bài 20–22</b> dạy VPC, route table, Security Group, VPC endpoint (có nhắc private DNS của interface endpoint); <b>Bài 21</b> đã giới thiệu <b>Route 53 Resolver DNS Firewall</b>; <b>Bài 23</b> dạy VPN và Direct Connect – nền tảng mạng để chạy phân giải DNS lai. <b>Bài 12</b> đã nhắc alias record trỏ tới load balancer. Bài này đi sâu toàn bộ <b>Route 53</b>: hosted zone, bản ghi, TTL, các routing policy, health check, DNS failover và Resolver endpoint. <b>CloudFront & Global Accelerator</b> học ở <b>Bài 25</b>; chiến lược <b>Disaster Recovery</b> (pilot light, warm standby…) – nơi Route 53 failover được dùng nhiều – học ở <b>Bài 42</b>.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Tổng quan: Amazon Route 53 và DNS</h2>
+      <p class="lead">Mọi máy tính trên internet giao tiếp bằng <b>địa chỉ IP</b> (IPv4 như <code>192.0.2.44</code> hay IPv6 như <code>2001:0db8:85a3::abcd:1:2345</code>). Con người thì nhớ tên – <code>example.com</code>. <span class="t" data-vi="Hệ thống phân giải tên miền">Domain Name System (DNS)</span> là mạng lưới máy chủ toàn cầu dịch tên miền sang IP. <b>Amazon Route 53</b> là dịch vụ DNS <b>highly available</b> và <b>scalable</b> của AWS (tên “53” lấy từ cổng 53 – cổng chuẩn của DNS).</p>
+
+      <p>Theo tài liệu AWS, Route 53 làm <b>ba chức năng chính</b>, dùng riêng lẻ hoặc kết hợp:</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">
+          <div><h4>Domain registration</h4><span class="vi">Đăng ký tên miền</span><p>Mua/đăng ký tên miền (vd <code>example.com</code>). Route 53 là <i>domain reseller</i> cho Amazon Registrar. Đăng ký xong, Route 53 <b>tự tạo public hosted zone</b> cùng tên.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Route-53-Hosted-Zone.svg" alt="">
+          <div><h4>DNS routing</h4><span class="vi">Định tuyến DNS</span><p>Trả lời truy vấn DNS dựa trên các <b>record</b> trong <b>hosted zone</b>; chọn câu trả lời theo <b>routing policy</b> (trọng số, độ trễ, vị trí, sức khỏe…).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Route-53_Route-Table.svg" alt="">
+          <div><h4>Health checking</h4><span class="vi">Kiểm tra sức khỏe</span><p>Gửi request tự động qua internet tới tài nguyên để kiểm tra còn sống; gửi thông báo và <b>định tuyến tránh</b> tài nguyên hỏng (DNS failover).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Route-53_Resolver.svg" alt="">
+          <div><h4>Route 53 (VPC) Resolver</h4><span class="vi">Bộ phân giải DNS trong VPC</span><p>DNS đệ quy có sẵn trong mọi VPC (địa chỉ VPC+2); <b>inbound/outbound endpoint</b> + rule để phân giải DNS giữa VPC và on-premises.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Route-53_Resolver-DNS-Firewall.svg" alt="">
+          <div><h4>Resolver DNS Firewall</h4><span class="vi">Tường lửa DNS</span><p>Lọc truy vấn DNS đi ra theo <i>domain list</i> (đã học ở Bài 21).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">
+          <div><h4>Traffic Flow &amp; Profiles</h4><span class="vi">Luồng lưu lượng &amp; hồ sơ cấu hình</span><p><b>Traffic Flow</b>: trình soạn thảo trực quan tạo <i>traffic policy</i> kết hợp nhiều routing policy. <b>Profiles</b>: áp dụng cấu hình DNS cho nhiều VPC, nhiều account.</p></div></div>
+      </div>
+
+      <h3>Một truy vấn DNS đi như thế nào?</h3>
+      <p>Theo tài liệu “How internet traffic is routed to your website”, khi người dùng gõ <code>www.example.com</code> mọi việc xảy ra trong vài mili giây:</p>
+      <ol class="steps">
+        <li>Trình duyệt gửi truy vấn tới <span class="t" data-vi="Bộ phân giải DNS (máy chủ tên đệ quy)">DNS resolver</span> – thường do ISP hoặc mạng công ty quản lý.</li>
+        <li>Resolver hỏi một <b>root name server</b>.</li>
+        <li>Resolver hỏi tiếp <span class="t" data-vi="Máy chủ tên miền cấp cao nhất">TLD name server</span> của <code>.com</code>; máy chủ này trả về <b>tên 4 name server Route 53</b> gắn với <code>example.com</code>. Resolver <b>cache</b> 4 name server này (thường <b>2 ngày</b>) – lần sau bỏ qua bước 2–3.</li>
+        <li>Resolver chọn một name server Route 53 và hỏi <code>www.example.com</code>.</li>
+        <li>Route 53 – <span class="t" data-vi="Máy chủ tên có thẩm quyền">authoritative name server</span> – tìm record <code>www.example.com</code> trong hosted zone, trả về giá trị (vd IP <code>192.0.2.44</code>).</li>
+        <li>Resolver trả IP về trình duyệt và <b>cache</b> giá trị trong thời gian <b>TTL</b> của record.</li>
+        <li>Trình duyệt gửi HTTP request tới IP đó (EC2, ALB, CloudFront, S3 website…) và nhận trang web.</li>
+      </ol>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 330" width="780" role="img" aria-label="Luồng phân giải DNS qua Route 53">
+          <defs><marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Users.svg" x="20" y="130" width="56" height="56"/>
+          <text x="48" y="204" font-size="12" text-anchor="middle" font-weight="600">Trình duyệt</text>
+          <text x="48" y="220" font-size="11" text-anchor="middle" class="muted">www.example.com</text>
+          <image href="../assets/icons/res/Traditional-server.svg" x="190" y="130" width="56" height="56"/>
+          <text x="218" y="204" font-size="12" text-anchor="middle" font-weight="600">DNS resolver</text>
+          <text x="218" y="220" font-size="11" text-anchor="middle" class="muted">(ISP) – cache theo TTL</text>
+          <path class="line-o" d="M80 158 L186 158" marker-end="url(#ah1)"/>
+          <text x="133" y="150" font-size="11" text-anchor="middle">① hỏi</text>
+          <rect x="400" y="14" width="150" height="52" rx="6" fill="rgba(125,137,152,.08)" stroke="#7D8998"/>
+          <text x="475" y="36" font-size="12" text-anchor="middle" font-weight="700">Root name server</text>
+          <text x="475" y="54" font-size="11" text-anchor="middle" class="muted">“hỏi TLD .com”</text>
+          <rect x="400" y="96" width="150" height="52" rx="6" fill="rgba(125,137,152,.08)" stroke="#7D8998"/>
+          <text x="475" y="118" font-size="12" text-anchor="middle" font-weight="700">TLD name server .com</text>
+          <text x="475" y="136" font-size="11" text-anchor="middle" class="muted">trả 4 name server R53</text>
+          <path class="line-o" d="M250 145 L396 44" marker-end="url(#ah1)"/>
+          <text x="315" y="80" font-size="11" text-anchor="middle">②</text>
+          <path class="line-o" d="M250 156 L396 124" marker-end="url(#ah1)"/>
+          <text x="330" y="130" font-size="11" text-anchor="middle">③</text>
+          <rect x="380" y="186" width="190" height="96" rx="6" fill="rgba(140,79,255,.06)" stroke="#8C4FFF" stroke-width="2"/>
+          <image href="../assets/icons/svc/Amazon-Route-53.svg" x="392" y="200" width="48" height="48"/>
+          <text x="505" y="214" font-size="12" text-anchor="middle" font-weight="700">Route 53</text>
+          <text x="505" y="230" font-size="11" text-anchor="middle" class="muted">authoritative</text>
+          <text x="505" y="246" font-size="11" text-anchor="middle" class="muted">hosted zone example.com</text>
+          <text x="475" y="272" font-size="11" text-anchor="middle">www → A 192.0.2.44, TTL 300</text>
+          <path class="line-o" d="M250 172 L376 230" marker-end="url(#ah1)" marker-start="url(#ah1)"/>
+          <text x="300" y="214" font-size="11" text-anchor="middle">④ ⑤</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" x="680" y="130" width="56" height="56"/>
+          <text x="708" y="204" font-size="12" text-anchor="middle" font-weight="600">Web server / ALB</text>
+          <text x="708" y="220" font-size="11" text-anchor="middle" class="muted">192.0.2.44</text>
+          <path class="line-o" d="M48 230 C150 320, 600 330, 700 224" marker-end="url(#ah1)" stroke-dasharray="6 4"/>
+          <text x="380" y="318" font-size="11" text-anchor="middle">⑦ trình duyệt gửi HTTP trực tiếp tới IP (DNS không nằm trên đường dữ liệu)</text>
+        </svg>
+        <figcaption><b>Hình 1.</b> Luồng phân giải DNS: resolver lần lượt hỏi root → TLD → name server Route 53 (authoritative). Kết quả được cache theo TTL. Lưu ý: Route 53 chỉ <b>trả lời câu hỏi “IP là gì”</b>; traffic ứng dụng đi thẳng từ client tới tài nguyên, không đi qua Route 53.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – tổng đài 1080</span>
+        <p>DNS giống <b>tổng đài tra cứu số điện thoại</b>. Bạn (trình duyệt) hỏi tổng đài viên ở phường (resolver của ISP). Nếu chưa biết, cô ấy gọi lên tổng đài quốc gia (root), rồi tổng đài ngành (TLD <code>.com</code>), cuối cùng gọi tới <b>phòng hành chính chính chủ của công ty</b> (Route 53 – authoritative) để lấy số chính xác. Cô ấy ghi số vào sổ tay và dùng lại trong một thời gian (<b>TTL</b>). <b>Routing policy</b> là việc phòng hành chính có quyền trả lời khác nhau tùy người hỏi: khách ở miền Bắc nhận số chi nhánh Hà Nội, khách miền Nam nhận số chi nhánh TP.HCM, chi nhánh đang mất điện thì không đưa số đó.</p></div>
+
+      <h3>Control plane và data plane</h3>
+      <p>Tài liệu Route 53 chia dịch vụ thành hai phần:</p>
+      <ul>
+        <li><b>Control plane</b> (API tạo/sửa/xóa hosted zone, record, health check) nằm ở <b>us-east-1</b>; nếu us-east-1 gặp sự cố, console được phục vụ từ us-west-2. Đăng ký tên miền chỉ chạy trên control plane us-east-1.</li>
+        <li><b>Data plane</b> (dịch vụ DNS authoritative trả lời truy vấn) phân tán toàn cầu qua <b>hơn 200 Points of Presence</b>, tối ưu cho <b>availability</b>. AWS khuyến nghị: khi availability quan trọng (vd failover lúc thảm họa), hãy dựa vào <b>data plane</b> – tức <b>health check + failover record</b> tự động – thay vì gọi API sửa record lúc sự cố.</li>
+        <li><b>Route 53 VPC Resolver</b> là dịch vụ <b>Regional</b>: control plane và data plane chạy độc lập ở từng Region.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>3</b><span>chức năng: domain registration, DNS routing, health checking</span></div>
+        <div class="stat"><b>200+</b><span>PoP trả lời truy vấn DNS (data plane toàn cầu)</span></div>
+        <div class="stat"><b>4</b><span>name server authoritative cho mỗi hosted zone</span></div>
+        <div class="stat"><b>100%</b><span>SLA availability của DNS Route 53 (theo Route 53 SLA)</span></div>
+        <div class="stat"><b>500</b><span>hosted zone mỗi account (quota ban đầu, tăng được)</span></div>
+        <div class="stat"><b>10.000</b><span>record mỗi hosted zone (tăng được, có phí thêm)</span></div>
+      </div>
+
+      <h3>Thuật ngữ đăng ký tên miền</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thuật ngữ</th><th>Ý nghĩa (theo tài liệu)</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Nhà đăng ký tên miền">Domain registrar</span></td><td>Công ty được <b>ICANN</b> công nhận để xử lý đăng ký tên miền cho các TLD cụ thể (vd Amazon Registrar).</td></tr>
+          <tr><td><span class="t" data-vi="Cơ quan quản lý TLD">Domain registry</span></td><td>Công ty sở hữu quyền bán tên miền của một TLD (vd VeriSign với <code>.com</code>), giữ cơ sở dữ liệu authoritative gồm thông tin liên hệ và <b>name server</b> của từng tên miền.</td></tr>
+          <tr><td><span class="t" data-vi="Tên miền cấp cao nhất">Top-level domain (TLD)</span></td><td>Phần cuối của tên miền: <b>generic</b> (<code>.com</code>, <code>.org</code>, <code>.ninja</code>) hoặc <b>geographic</b> (<code>.vn</code>, <code>.io</code>…).</td></tr>
+          <tr><td><span class="t" data-vi="Tên miền con">Subdomain</span></td><td>Tên có thêm nhãn phía trước tên đã đăng ký: <code>www.example.com</code>, <code>seattle.accounting.example.com</code>.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Đăng ký tên miền và dịch vụ DNS là <b>hai việc tách biệt</b>: bạn có thể đăng ký ở nhà đăng ký khác (GoDaddy, Mắt Bão…) nhưng dùng Route 53 làm DNS bằng cách <b>trỏ NS record ở nhà đăng ký</b> về 4 name server của hosted zone Route 53 – và ngược lại.</p>
+
+      <!-- ===================== PHẦN 2: HOSTED ZONE ===================== -->
+      <h2 id="hosted-zone"><img src="../assets/icons/res/Amazon-Route-53-Hosted-Zone.svg" alt="">Hosted zone: public, private và split-view DNS</h2>
+      <p class="lead">Một <span class="t" data-vi="Vùng được lưu trữ">hosted zone</span> là <b>container chứa các record</b> mô tả cách định tuyến traffic cho một tên miền (vd <code>example.com</code>) và <b>mọi subdomain</b> của nó. Hosted zone <b>trùng tên với tên miền</b>. Có hai loại: <b>public</b> (trả lời truy vấn từ internet) và <b>private</b> (chỉ trả lời trong các VPC được associate).</p>
+
+      <div class="compare">
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/res/Amazon-Route-53-Hosted-Zone.svg" alt="">Public hosted zone</h4><ul>
+          <li>Định tuyến traffic <b>trên internet</b> cho tên miền.</li>
+          <li>Route 53 tự tạo <b>NS record</b> (4 name server authoritative) và <b>SOA record</b>.</li>
+          <li>Muốn dùng: cập nhật name server tại <b>nhà đăng ký</b> thành 4 name server này.</li>
+          <li>Hỗ trợ <b>đủ 8 routing policy</b>.</li>
+        </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">Private hosted zone</h4><ul>
+          <li>Trả lời truy vấn cho tên miền <b>bên trong một hoặc nhiều VPC</b> đã associate (vd <code>db.example.internal</code> → IP private).</li>
+          <li>VPC phải bật <code>enableDnsHostnames</code> <b>và</b> <code>enableDnsSupport</code> = <code>true</code>.</li>
+          <li>Chỉ trả lời cho truy vấn từ VPC đã associate hoặc qua <b>Resolver inbound endpoint</b>; hỏi từ internet thì truy vấn được phân giải như tên miền public bình thường.</li>
+          <li>Hỗ trợ Simple, Failover, Multivalue, Weighted, Latency, Geolocation, Geoproximity – <b>không hỗ trợ IP-based</b>.</li>
+          <li>Associate được VPC <b>ở account khác</b> (tạo authorization rồi associate qua CLI/API/SDK).</li>
+        </ul></div>
+      </div>
+
+      <h3>NS và SOA record tự động</h3>
+      <ul>
+        <li><b>NS record</b> – trùng tên hosted zone, liệt kê 4 name server (dạng <code>ns-2048.awsdns-64.com</code>, <code>.net</code>, <code>.org</code>, <code>.co.uk</code> – bốn TLD khác nhau để tăng tính sẵn sàng). AWS khuyến nghị <b>không thêm, sửa hay xóa</b> NS/SOA.</li>
+        <li><b>SOA record</b> – thông tin cơ bản của zone: name server tạo zone, email quản trị, serial, refresh, retry, expire và <b>minimum TTL</b> (vd <code>86400</code>). Minimum TTL quyết định thời gian resolver <span class="t" data-vi="Lưu cache câu trả lời phủ định">negative caching</span> câu trả lời <b>NXDOMAIN</b> (không tồn tại tên) / <b>NODATA</b> (có tên nhưng không có type đó): bằng giá trị nhỏ hơn giữa minimum TTL của SOA và TTL của chính SOA record (mặc định <b>900 giây</b>).</li>
+        <li>Mặc định mỗi hosted zone mới nhận 4 name server ngẫu nhiên. Muốn nhiều zone dùng <b>cùng bộ 4 name server</b> (tiện khi chuyển hàng loạt domain, làm <i>white-label name server</i>) ⇒ tạo <span class="t" data-vi="Bộ name server dùng lại">reusable delegation set</span> – chỉ qua API/CLI/SDK; không đổi được name server của zone đã tạo.</li>
+      </ul>
+
+      <h3>Delegation subdomain</h3>
+      <p>Bạn có thể tạo hosted zone riêng cho subdomain (vd <code>acme.example.com</code>, giao cho một team/account khác quản lý) rồi tạo <b>NS record</b> tên <code>acme.example.com</code> trong zone cha <code>example.com</code> trỏ tới 4 name server của zone con – gọi là “<i>delegating responsibility for a subdomain</i>”.</p>
+
+      <h3>Split-view DNS (split-horizon)</h3>
+      <p>Dùng <b>cùng một tên miền</b> cho cả nội bộ và bên ngoài nhưng trả về giá trị khác nhau:</p>
+      <ol class="steps">
+        <li>Tạo <b>public hosted zone</b> và <b>private hosted zone</b> cùng tên (vd <code>example.com</code>). Public zone có thể nằm ở DNS provider khác vẫn được.</li>
+        <li>Associate VPC với private hosted zone – VPC Resolver dùng zone này cho truy vấn trong VPC.</li>
+        <li>Tạo record ở mỗi zone: <code>www.example.com</code> public → ALB internet-facing; <code>www.example.com</code> private → ALB internal.</li>
+      </ol>
+
+      <h3>Khi namespace chồng lấn – zone nào thắng?</h3>
+      <ul>
+        <li>VPC Resolver chọn <b>khớp cụ thể nhất (most specific match)</b>: với truy vấn <code>seattle.accounting.example.com</code>, nếu có cả private zone <code>example.com</code> và <code>accounting.example.com</code> ⇒ chọn <code>accounting.example.com</code>.</li>
+        <li>Nếu <b>có private hosted zone khớp</b> nhưng <b>không có record</b> đúng tên và type ⇒ trả <b>NXDOMAIN</b>, <b>không</b> chuyển ra public DNS. Chỉ khi không có private zone nào khớp, truy vấn mới được phân giải trên internet.</li>
+        <li>Nếu vừa có private hosted zone <code>example.com</code> vừa có <b>Resolver forwarding rule</b> cho <code>example.com</code> gắn cùng VPC ⇒ <b>Resolver rule thắng</b> (truy vấn bị forward về on-premises).</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“<i>Created a private hosted zone but EC2 instances cannot resolve the records</i>” ⇒ kiểm tra <b>enableDnsHostnames</b> và <b>enableDnsSupport</b> của VPC, và VPC đã được <b>associate</b> với zone chưa.</li>
+          <li>Split-view: thêm private zone <code>example.com</code> mà quên tạo record <code>api.example.com</code> trong đó ⇒ EC2 trong VPC nhận <b>NXDOMAIN</b> dù record public vẫn tồn tại.</li>
+          <li>Instance dùng <b>DNS server tự dựng</b> (custom DNS) thì phải cấu hình forward truy vấn private về <b>Amazon-provided DNS ở VPC+2</b> (vd <code>10.0.0.2</code> cho VPC <code>10.0.0.0/16</code>), nếu không sẽ không thấy private hosted zone.</li>
+        </ul></div>
+
+      <h3>Chuyển DNS của tên miền đang chạy sang Route 53</h3>
+      <p>Tài liệu “Making Route 53 the DNS service for a domain that's in use” mô tả quy trình không gián đoạn:</p>
+      <ol class="steps">
+        <li>Lấy cấu hình hiện tại (<b>zone file</b>) từ DNS provider cũ – nếu có thì <b>import</b> vào Route 53 (import tạo record Simple, không tự tạo alias).</li>
+        <li>Tạo <b>public hosted zone</b> cùng tên, tạo record (không tạo thêm hay xóa NS/SOA).</li>
+        <li><b>Hạ TTL của NS record</b> (ở cả provider cũ và Route 53) xuống <b>60–900 giây</b>. TTL NS điển hình là <b>172.800 giây (2 ngày)</b> – nếu không hạ, khi có sự cố domain có thể “mất tích” tới 2 ngày.</li>
+        <li>Nếu đang bật DNSSEC: gỡ <b>DS record</b> ở zone cha trước.</li>
+        <li><b>Chờ TTL cũ hết hạn</b> (2 ngày).</li>
+        <li>Cập nhật NS tại nhà đăng ký thành <b>4 name server Route 53</b>.</li>
+        <li>Theo dõi traffic; nếu có vấn đề thì đổi NS về provider cũ.</li>
+        <li>Ổn định rồi thì <b>tăng TTL NS lại</b> (khuyến nghị 172.800 giây); tùy chọn chuyển đăng ký tên miền sang Route 53; bật lại DNSSEC.</li>
+      </ol>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Internal DNS names resolvable only from within VPCs</i>” ⇒ <b>private hosted zone</b> associate với các VPC (kể cả VPC ở account khác).</li>
+          <li>“<i>Same domain name, different answers for internal and external users</i>” ⇒ <b>split-view DNS</b>: public + private hosted zone cùng tên.</li>
+          <li>“<i>Domain registered with a third-party registrar, want to use Route 53</i>” ⇒ tạo public hosted zone rồi <b>cập nhật NS record tại registrar</b> – không bắt buộc chuyển đăng ký.</li>
+          <li>“<i>Migrate DNS with minimal downtime</i>” ⇒ <b>hạ TTL trước</b>, chờ TTL cũ hết rồi mới đổi NS.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: RECORD & ALIAS ===================== -->
+      <h2 id="record"><img src="../assets/icons/res/Amazon-Route-53_Route-Table.svg" alt="">Record, Alias và TTL</h2>
+      <p class="lead">Mỗi <span class="t" data-vi="Bản ghi DNS">record</span> (còn gọi <i>resource record set</i>) gồm: <b>Name</b> (phải kết thúc bằng tên hosted zone), <b>Type</b> (A, AAAA, MX…), <b>Value</b>, <b>TTL</b> và <b>routing policy</b>. Route 53 còn có loại mở rộng riêng – <span class="t" data-vi="Bản ghi bí danh">Alias record</span>.</p>
+
+      <h3>Các loại record hay gặp</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Type</th><th>Dùng để</th><th>Ví dụ giá trị</th></tr></thead>
+        <tbody>
+          <tr><td><b>A</b></td><td>Tên → địa chỉ <b>IPv4</b></td><td><code>192.0.2.1</code></td></tr>
+          <tr><td><b>AAAA</b></td><td>Tên → địa chỉ <b>IPv6</b></td><td><code>2001:0db8:85a3:0:0:8a2e:0370:7334</code></td></tr>
+          <tr><td><b>CNAME</b></td><td>Tên → <b>một tên miền khác</b> (bất kỳ, kể cả ngoài Route 53). <b>Không tạo được ở zone apex</b>; tên đã có CNAME thì không được có record nào khác cùng tên.</td><td><code>hostname.example.com</code></td></tr>
+          <tr><td><b>MX</b></td><td>Máy chủ email + độ ưu tiên (số nhỏ ưu tiên hơn; bằng nhau ⇒ chia đều). Giá trị phải là tên của A/AAAA, không phải CNAME.</td><td><code>10 mail.example.com</code></td></tr>
+          <tr><td><b>TXT</b></td><td>Chuỗi văn bản (xác minh domain, SPF, DKIM…). Mỗi chuỗi ≤ 255 ký tự, tổng giá trị ≤ 4.000 ký tự. AWS khuyên dùng TXT thay cho type SPF.</td><td><code>"v=spf1 ip4:192.168.0.1/16 -all"</code></td></tr>
+          <tr><td><b>NS / SOA</b></td><td>Name server của zone / thông tin quản trị zone (tự tạo). NS cũng dùng để <b>delegate subdomain</b>.</td><td><code>ns-1.example.com</code></td></tr>
+          <tr><td><b>CAA</b></td><td>Chỉ định <b>CA nào được phép cấp chứng chỉ</b> SSL/TLS cho domain (vd cho phép ACM).</td><td><code>0 issue "amazon.com"</code></td></tr>
+          <tr><td><b>PTR</b></td><td>IP → tên miền (reverse DNS).</td><td><code>hostname.example.com</code></td></tr>
+          <tr><td><b>SRV / NAPTR / DS / HTTPS / SVCB / SSHFP / TLSA</b></td><td>Định vị dịch vụ, chuyển đổi số điện thoại sang SIP URI, chuỗi tin cậy DNSSEC, thông số kết nối HTTPS…</td><td>–</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Alias record – “siêu năng lực” riêng của Route 53</h3>
+      <p>Alias là phần mở rộng DNS riêng của Route 53, cho phép trỏ một record tới <b>tài nguyên AWS được chọn</b> hoặc tới <b>record khác cùng hosted zone</b>. Khi được hỏi, Route 53 trả về <b>IP hiện tại</b> của tài nguyên (vd IP của load balancer) – và <b>tự theo dõi thay đổi</b>: IP của ALB đổi thì Route 53 tự trả IP mới.</p>
+      <p><b>Alias target được hỗ trợ</b> (theo tài liệu):</p>
+      <ul>
+        <li><b>Elastic Load Balancing</b> – ALB, NLB, Classic Load Balancer.</li>
+        <li><b>Amazon CloudFront distribution</b>.</li>
+        <li><b>Amazon S3 bucket cấu hình static website</b>.</li>
+        <li><b>Amazon API Gateway</b> custom regional API hoặc edge-optimized API.</li>
+        <li><b>VPC interface endpoint</b>; <b>AWS Global Accelerator</b> accelerator; <b>Elastic Beanstalk</b> environment; <b>App Runner</b> service; <b>OpenSearch Service</b> custom domain; <b>AWS AppSync</b> domain name.</li>
+        <li><b>Một record khác cùng type trong cùng hosted zone</b>.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Alias record</th><th>CNAME record</th></tr></thead>
+        <tbody>
+          <tr><td>Trỏ tới</td><td>Chỉ tài nguyên AWS được chọn hoặc record cùng zone</td><td><b>Bất kỳ</b> tên DNS nào (kể cả domain ngoài Route 53)</td></tr>
+          <tr><td>Tạo ở <b>zone apex</b> (<code>example.com</code>)</td><td class="yes">Được</td><td class="no">Không (giao thức DNS cấm)</td></tr>
+          <tr><td>Phí truy vấn</td><td class="yes"><b>Miễn phí</b> cho alias query tới tài nguyên AWS</td><td class="no">Tính phí; trỏ tới record trong Route 53 ⇒ tính <b>2 truy vấn</b></td></tr>
+          <tr><td>Type</td><td>A / AAAA (… ) – phải khớp type trong truy vấn</td><td>Chuyển hướng mọi type truy vấn</td></tr>
+          <tr><td>TTL</td><td>Không đặt được khi trỏ tới tài nguyên AWS (dùng TTL mặc định của tài nguyên); trỏ record cùng zone ⇒ dùng TTL của record đích</td><td>Tự đặt</td></tr>
+          <tr><td>Health</td><td>Có <b>Evaluate Target Health</b> (dùng sức khỏe của chính tài nguyên đích)</td><td>Phải gắn health check riêng</td></tr>
+          <tr><td>Hiển thị trong <code>dig</code></td><td>Hiện như A/AAAA bình thường</td><td>Hiện là CNAME</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Point the <b>apex/root domain</b> (example.com) to an ALB / CloudFront / S3 website</i>” ⇒ <b>Alias record</b> (A/AAAA). CNAME ở apex là đáp án sai.</li>
+          <li>“<i>Reduce DNS query costs</i> for records pointing to AWS resources” ⇒ dùng <b>alias</b> (miễn phí truy vấn).</li>
+          <li>“<i>Point app.example.com to a domain hosted by another provider</i> (vd <code>myapp.herokuapp.com</code>)” ⇒ <b>CNAME</b> (alias không trỏ ra ngoài AWS).</li>
+          <li>Alias <b>không</b> trỏ được tới tên DNS của một EC2 instance; muốn trỏ EC2 ⇒ A record với <b>Elastic IP</b> (hoặc đặt sau load balancer rồi alias tới LB).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Alias tới <b>S3 static website</b>: tên bucket phải <b>trùng</b> tên record (vd bucket <code>www.example.com</code> cho record <code>www.example.com</code>) – kiến thức thi phổ biến; tài liệu ví dụ alias <code>acme.example.com</code> tới bucket cùng tên.</li>
+          <li>Alias tới CloudFront/ELB <b>không cho đặt TTL</b> – đề hỏi “đặt TTL cho alias tới ALB” là bẫy.</li>
+        </ul></div>
+
+      <h3>TTL – cân bằng giữa chi phí và tốc độ thay đổi</h3>
+      <p><span class="t" data-vi="Thời gian sống của bản ghi trong cache">Time to live (TTL)</span> là số giây resolver được phép <b>cache</b> giá trị của record trước khi hỏi lại Route 53.</p>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4>TTL dài (vd 86400 s = 1 ngày)</h4><ul>
+          <li>Ít truy vấn tới Route 53 ⇒ <b>giảm phí</b> (phí tính một phần theo số truy vấn).</li>
+          <li>Phản hồi nhanh hơn cho người dùng (cache hit).</li>
+          <li>Nhược: đổi IP/endpoint thì client vẫn dùng giá trị cũ lâu.</li>
+        </ul></div>
+        <div style="--accent:#DD344C"><h4>TTL ngắn (vd 60 s)</h4><ul>
+          <li>Thay đổi (đổi IP, failover, cutover blue/green) <b>có hiệu lực nhanh</b>.</li>
+          <li>Nhược: nhiều truy vấn hơn ⇒ <b>tốn phí</b> hơn.</li>
+          <li>Thường hạ TTL <b>trước</b> một đợt migration, sau đó tăng lại.</li>
+        </ul></div>
+      </div>
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>After changing the record, some users still reach the old server</i>” ⇒ do <b>TTL/cache</b> của resolver – lần sau hạ TTL trước khi thay đổi.</li>
+          <li>Failover bằng DNS không tức thì: tổng thời gian ≈ thời gian health check phát hiện lỗi + <b>TTL</b>. Muốn failover nhanh ⇒ TTL thấp (vd 60 s) – hoặc dùng Global Accelerator (Bài 25) không phụ thuộc cache DNS.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: ROUTING POLICIES ===================== -->
+      <h2 id="routing-policy"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Tám routing policy của Route 53</h2>
+      <p class="lead">Khi tạo record, bạn chọn một <span class="t" data-vi="Chính sách định tuyến">routing policy</span> – quyết định <b>Route 53 trả lời truy vấn thế nào</b>. Trừ Simple, các policy khác cho phép tạo <b>nhiều record cùng tên, cùng type</b>, phân biệt bằng <i>Record ID</i> (set identifier), và Route 53 chọn record để trả lời theo quy tắc của policy.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Policy</th><th>Route 53 chọn câu trả lời dựa trên</th><th>Use case điển hình</th><th>Private hosted zone</th></tr></thead>
+        <tbody>
+          <tr><td><b>Simple</b></td><td>Một record (có thể nhiều giá trị), trả tất cả theo thứ tự ngẫu nhiên</td><td>Một tài nguyên duy nhất</td><td class="yes">Có</td></tr>
+          <tr><td><b>Weighted</b></td><td>Tỉ lệ <b>trọng số</b> bạn đặt</td><td>Canary, A/B test, blue/green, chia tải</td><td class="yes">Có</td></tr>
+          <tr><td><b>Latency</b></td><td>Region có <b>độ trễ thấp nhất</b> tới người dùng</td><td>Ứng dụng đa Region, tối ưu hiệu năng</td><td class="yes">Có</td></tr>
+          <tr><td><b>Failover</b></td><td>Primary khỏe ⇒ primary; không ⇒ secondary</td><td><b>Active-passive</b> DR</td><td class="yes">Có</td></tr>
+          <tr><td><b>Geolocation</b></td><td><b>Vị trí người dùng</b> (châu lục / quốc gia / bang Mỹ)</td><td>Bản địa hóa, bản quyền nội dung, tuân thủ</td><td class="yes">Có</td></tr>
+          <tr><td><b>Geoproximity</b></td><td>Khoảng cách địa lý giữa người dùng và <b>tài nguyên</b>, có <b>bias</b></td><td>Dời traffic dần giữa các vùng</td><td class="yes">Có</td></tr>
+          <tr><td><b>Multivalue answer</b></td><td>Tối đa <b>8 record khỏe</b> chọn ngẫu nhiên</td><td>Nhiều IP có health check (thay cho Simple)</td><td class="yes">Có</td></tr>
+          <tr><td><b>IP-based</b></td><td><b>Dải IP (CIDR) nguồn</b> của người dùng do bạn khai báo</td><td>Định tuyến theo ISP, tối ưu chi phí transit</td><td class="no">Không</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>1. Simple routing</h3>
+      <ul>
+        <li>Record DNS chuẩn, thường trỏ tới <b>một</b> tài nguyên (vd một web server).</li>
+        <li>Trong console <b>không tạo được nhiều record Simple cùng tên và type</b>, nhưng một record có thể chứa <b>nhiều giá trị</b> (nhiều IP). Route 53 trả <b>tất cả</b> giá trị theo <b>thứ tự ngẫu nhiên</b>; client tự chọn một.</li>
+        <li><b>Không có health check</b> – IP chết vẫn được trả về.</li>
+        <li>Simple alias record chỉ trỏ được <b>một</b> tài nguyên AWS hoặc một record.</li>
+      </ul>
+
+      <h3>2. Weighted routing</h3>
+      <p>Tạo nhiều record cùng tên, cùng type, mỗi record một <b>weight</b>. Tỉ lệ traffic tới một tài nguyên = <code>weight của record / tổng weight của nhóm</code>. Ví dụ trong tài liệu: weight <b>1</b> và <b>255</b> ⇒ tài nguyên đầu nhận 1/256 traffic, tài nguyên sau nhận 255/256. Weight nhận giá trị từ <b>0 đến 255</b>.</p>
+      <ul>
+        <li>Muốn <b>ngừng gửi traffic</b> tới một tài nguyên ⇒ đặt weight = <b>0</b>.</li>
+        <li>Nếu mọi record đều weight 0 ⇒ Route 53 trả lời với xác suất như nhau.</li>
+        <li>Có health check: Route 53 xét trước các record <b>weight &gt; 0</b>; chỉ khi <b>tất cả</b> record weight &gt; 0 đều unhealthy mới dùng record weight 0 (cách làm active-passive bằng weighted).</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng<small>app.example.com</small></div>
+            <span class="arrow">DNS query</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Route 53<small>Weighted, TTL 60</small></div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud – us-east-1</span>
+            <div class="row">
+              <div class="grp plain"><span class="lbl">Record ID “blue” – weight 90</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB v1<small>≈ 90% traffic</small></div></div></div>
+              <div class="grp plain"><span class="lbl">Record ID “green” – weight 10</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB v2 (mới)<small>≈ 10% traffic (canary)</small></div></div></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> Weighted routing cho <b>canary / blue-green deployment</b>: hai alias record cùng tên <code>app.example.com</code>, weight 90 và 10. Tăng dần weight của “green” (10 → 50 → 100) và đặt “blue” về 0 khi bản mới ổn định. Tỉ lệ là theo <b>truy vấn DNS</b>, nên kết quả thực tế còn chịu ảnh hưởng của cache TTL.</figcaption>
+      </figure>
+
+      <h3>3. Latency-based routing</h3>
+      <p>Dùng khi ứng dụng chạy ở <b>nhiều AWS Region</b>. Bạn tạo một latency record cho tài nguyên ở mỗi Region; khi nhận truy vấn, Route 53 tra <b>dữ liệu độ trễ giữa người dùng và các Region</b> rồi trả record của Region có độ trễ thấp nhất.</p>
+      <ul>
+        <li>Ví dụ trong tài liệu: ALB ở <b>us-west-2 (Oregon)</b> và <b>ap-southeast-1 (Singapore)</b>; người dùng ở London được trả IP của Region nào có độ trễ thấp hơn tới London.</li>
+        <li>Dữ liệu độ trễ đo theo thời gian và thay đổi khi mạng thay đổi – tuần này London đi Oregon, tuần sau có thể đi Singapore.</li>
+        <li>Độ trễ dựa hoàn toàn vào traffic giữa người dùng và <b>data center AWS</b>; tài nguyên không ở AWS thì độ trễ thực có thể khác xa.</li>
+        <li>Route 53 dùng phần mở rộng <b>EDNS0 (edns-client-subnet)</b> – nếu resolver hỗ trợ, nó gửi một phần IP người dùng để Route 53 ước lượng vị trí chính xác hơn (áp dụng cho cả geolocation, geoproximity).</li>
+        <li>Kết hợp health check: Region không khỏe sẽ bị loại, Route 53 chọn Region tốt kế tiếp.</li>
+      </ul>
+
+      <h3>4. Failover routing</h3>
+      <p>Dùng cho <b>active-passive failover</b>: tạo hai record cùng tên – một <b>Primary</b>, một <b>Secondary</b>. Primary khỏe ⇒ chỉ trả Primary; Primary unhealthy ⇒ trả Secondary. Chi tiết cơ chế (health check, evaluate target health, trường hợp cả hai unhealthy) ở phần <b>Health check &amp; DNS failover</b> bên dưới.</p>
+
+      <h3>5. Geolocation routing</h3>
+      <p>Chọn tài nguyên dựa trên <b>vị trí của người dùng</b> – tức nơi truy vấn DNS xuất phát. Ví dụ: mọi truy vấn từ <b>châu Âu</b> đi tới ALB ở Frankfurt.</p>
+      <ul>
+        <li>Chỉ định vị trí theo <b>châu lục</b>, <b>quốc gia</b>, hoặc <b>bang của Mỹ</b>.</li>
+        <li>Vùng chồng lấn (record cho Bắc Mỹ và record cho Canada) ⇒ <b>vùng nhỏ nhất thắng</b> (người dùng Canada đi record Canada).</li>
+        <li>Một số IP không ánh xạ được vị trí ⇒ nên tạo <b>Default record</b> cho truy vấn từ IP không xác định và từ vị trí chưa có record. <b>Không có default</b> ⇒ Route 53 trả <b>“no answer”</b>.</li>
+        <li>Use case theo tài liệu: hiển thị nội dung <b>theo ngôn ngữ</b> người dùng; <b>giới hạn nội dung</b> chỉ cho nơi có <b>bản quyền phân phối</b>; cân bằng tải dễ dự đoán (mỗi vị trí luôn tới cùng một endpoint).</li>
+      </ul>
+
+      <h3>6. Geoproximity routing</h3>
+      <p>Định tuyến dựa trên <b>vị trí của người dùng và của tài nguyên</b> – gửi tới tài nguyên <b>gần nhất</b>; có thể dùng <span class="t" data-vi="Độ lệch (mở rộng/thu hẹp vùng)">bias</span> để <b>mở rộng hoặc thu hẹp</b> vùng địa lý mà một tài nguyên phục vụ.</p>
+      <ul>
+        <li>Tài nguyên AWS: chỉ định <b>AWS Region</b> hoặc <b>Local Zone Group</b>. Tài nguyên ngoài AWS: chỉ định <b>vĩ độ / kinh độ</b>.</li>
+        <li>Bias <b>+1 → +99</b>: mở rộng vùng của tài nguyên (vùng lân cận co lại). Bias <b>-1 → -99</b>: thu hẹp vùng.</li>
+        <li>Công thức: <code>Biased distance = actual distance × [1 − (bias/100)]</code>. Ví dụ tài liệu: server A cách 150 km (bias +50), server B cách 100 km (không bias) ⇒ A được tính là <b>75 km</b> ⇒ truy vấn đi tới A.</li>
+        <li>AWS khuyên thay đổi bias <b>từng bước nhỏ</b> để tránh dồn traffic đột ngột (vd người dùng ở Texas cách đều Virginia và Oregon – đổi bias nhỏ cũng dịch chuyển nhiều traffic).</li>
+        <li>Bản đồ trực quan hóa vùng bias chỉ có trong <b>Traffic Flow</b>.</li>
+      </ul>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4>Geolocation</h4><ul>
+          <li>Hỏi: “<b>người dùng ở đâu?</b>” (quốc gia/châu lục).</li>
+          <li>Ranh giới cứng theo địa giới hành chính.</li>
+          <li>Dùng cho <b>tuân thủ, bản quyền, ngôn ngữ</b>.</li>
+          <li>Cần default record.</li>
+        </ul></div>
+        <div style="--accent:#8C4FFF"><h4>Geoproximity</h4><ul>
+          <li>Hỏi: “<b>tài nguyên nào gần người dùng nhất?</b>”.</li>
+          <li>Ranh giới mềm, điều chỉnh bằng <b>bias</b>.</li>
+          <li>Dùng để <b>dịch chuyển traffic</b> giữa các vùng.</li>
+        </ul></div>
+        <div style="--accent:#7AA116"><h4>Latency</h4><ul>
+          <li>Hỏi: “<b>Region nào phản hồi nhanh nhất?</b>”.</li>
+          <li>Dựa trên đo đạc độ trễ thực tế, thay đổi theo thời gian.</li>
+          <li>Dùng để <b>tối ưu hiệu năng</b>.</li>
+        </ul></div>
+      </div>
+
+      <h3>7. Multivalue answer routing</h3>
+      <ul>
+        <li>Tạo <b>một multivalue record cho mỗi tài nguyên</b> (mỗi IP), tùy chọn gắn health check. Route 53 trả <b>tối đa 8 record khỏe</b>, chọn ngẫu nhiên, và trả các tập khác nhau cho các resolver khác nhau.</li>
+        <li>Record <b>có</b> health check ⇒ chỉ trả khi healthy; record <b>không</b> health check ⇒ luôn coi là healthy.</li>
+        <li>≤ 8 record khỏe ⇒ trả tất cả; <b>tất cả</b> unhealthy ⇒ trả tối đa 8 record unhealthy.</li>
+        <li>Tài liệu nhấn mạnh: đây <b>không phải thay thế cho load balancer</b>, nhưng là cách dùng DNS để tăng uptime và chia tải; nếu một server chết sau khi resolver đã cache, client có thể thử IP khác trong câu trả lời.</li>
+      </ul>
+
+      <h3>8. IP-based routing</h3>
+      <p>Bạn tự cung cấp ánh xạ “<b>dải IP người dùng → endpoint</b>” vì bạn hiểu mạng và khách hàng của mình hơn dữ liệu chung của Route 53.</p>
+      <ul>
+        <li>Cấu trúc: <b>CIDR block</b> (vd <code>192.0.2.0/24</code>) → nhóm thành <b>CIDR location</b> (vd <code>example-isp-seattle</code>) → nhóm thành <b>CIDR collection</b>. Record IP-based tham chiếu một location trong collection; mọi record cùng tên và type phải dùng <b>cùng một collection</b>.</li>
+        <li>Độ dài prefix: IPv4 <b>/1 – /24</b>, IPv6 <b>/1 – /48</b>. Muốn khớp mọi IP (<code>0.0.0.0/0</code>) ⇒ dùng location mặc định <code>*</code>. Truy vấn có prefix dài hơn sẽ khớp CIDR ngắn hơn chứa nó.</li>
+        <li>Use case: định tuyến người dùng của <b>một ISP cụ thể</b> tới endpoint cụ thể để <b>tối ưu chi phí transit hoặc hiệu năng</b>; ghi đè geolocation dựa trên hiểu biết vị trí thật của client.</li>
+        <li><b>Không dùng được trong private hosted zone</b>. Quota: 5 CIDR collection / account, 1.000 CIDR block / collection.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>0 – 255</b><span>giá trị weight của weighted record</span></div>
+        <div class="stat"><b>8</b><span>record khỏe tối đa trong một câu trả lời multivalue</span></div>
+        <div class="stat"><b>±1 – 99</b><span>bias của geoproximity</span></div>
+        <div class="stat"><b>100</b><span>record cùng tên &amp; type cho geolocation / latency / multivalue / weighted / IP-based</span></div>
+        <div class="stat"><b>30</b><span>geoproximity record cùng tên &amp; type</span></div>
+        <div class="stat"><b>/24 · /48</b><span>prefix dài nhất của CIDR block IPv4 / IPv6 (IP-based)</span></div>
+      </div>
+
+      <h3>Traffic Flow – kết hợp nhiều policy</h3>
+      <p>Các policy có thể <b>lồng nhau thành cây</b>: ví dụ một latency record trỏ (alias) tới một nhóm weighted record ở mỗi Region, và mỗi weighted record lại trỏ tới ALB. <b>Traffic Flow</b> cung cấp trình soạn thảo trực quan để tạo <span class="t" data-vi="Chính sách lưu lượng">traffic policy</span> như vậy, có version, áp dụng cho nhiều domain bằng <i>policy record</i> (có phí riêng). Quota: 50 traffic policy / account, 1.000 version / policy.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – từ khóa ⇒ routing policy</span>
+        <ul>
+          <li>“<i>Send <b>10%</b> of traffic to the new version</i>”, “<i>canary</i>”, “<i>gradually shift</i>”, “<i>A/B testing</i>” ⇒ <b>Weighted</b>.</li>
+          <li>“<i>Users should be routed to the Region with the <b>lowest latency</b> / best performance</i>” ⇒ <b>Latency</b>.</li>
+          <li>“<i>Users in <b>Germany/EU must</b> be served by resources in eu-central-1</i>”, “<i>content in local language</i>”, “<i>distribution rights / compliance by country</i>” ⇒ <b>Geolocation</b> (+ default record).</li>
+          <li>“<i>Shift more traffic to a Region by <b>expanding its geographic area</b></i>”, “<i>bias</i>” ⇒ <b>Geoproximity</b>.</li>
+          <li>“<i>Active-passive</i>”, “<i>primary/secondary</i>”, “<i>static maintenance page in S3 when the site is down</i>” ⇒ <b>Failover</b>.</li>
+          <li>“<i>Return multiple IPs and <b>only healthy</b> ones</i>”, “<i>without a load balancer</i>” ⇒ <b>Multivalue answer</b> (Simple không health check).</li>
+          <li>“<i>Route users from a specific <b>ISP / IP range</b></i>” ⇒ <b>IP-based</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>Geolocation ≠ Latency</b>: người ở Singapore có thể có độ trễ tốt nhất tới Tokyo nhưng geolocation vẫn gửi theo quy tắc quốc gia. Đề yêu cầu “luật pháp / dữ liệu phải ở nước X” ⇒ geolocation, không phải latency.</li>
+          <li>Geolocation <b>quên default record</b> ⇒ người dùng ở vị trí không khớp nhận “no answer”.</li>
+          <li><b>Multivalue answer</b> không phải load balancer: không có sticky session, không kiểm tra layer 7, chỉ chia tải ở mức DNS.</li>
+          <li>Routing policy <b>không thay thế ELB</b> trong một Region; nó chọn <b>endpoint</b> (thường là ELB ở mỗi Region), sau đó ELB phân phối tới instance.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: HEALTH CHECK & FAILOVER ===================== -->
+      <h2 id="health-check"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">Health check và DNS failover</h2>
+      <p class="lead"><span class="t" data-vi="Kiểm tra sức khỏe">Route 53 health check</span> giám sát sức khỏe và hiệu năng của ứng dụng, web server và tài nguyên khác. Kết hợp với record, nó cho phép <span class="t" data-vi="Chuyển đổi dự phòng bằng DNS">DNS failover</span>: định tuyến traffic <b>khỏi</b> tài nguyên unhealthy, <b>sang</b> tài nguyên healthy.</p>
+
+      <h3>Ba loại health check (+ ARC)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại</th><th>Giám sát gì</th><th>Ghi chú quan trọng</th></tr></thead>
+        <tbody>
+          <tr><td><b>Endpoint</b></td><td>Một endpoint chỉ định bằng <b>IP</b> (IPv4/IPv6) hoặc <b>domain name</b>, giao thức <b>HTTP / HTTPS / TCP</b></td><td>Health checker ở nhiều nơi trên thế giới gửi request <b>qua internet</b>. <b>Không</b> kiểm tra được IP private, local, nonroutable, multicast. EC2 ⇒ AWS khuyên dùng <b>Elastic IP</b>.</td></tr>
+          <tr><td><span class="t" data-vi="Kiểm tra sức khỏe tổng hợp">Calculated health check</span></td><td>Trạng thái của <b>các health check khác</b> (parent – child)</td><td>Tối đa <b>256</b> child trong console (quota ghi <b>255</b>); quy tắc: <b>ít nhất x trong y</b> khỏe, <b>AND</b> (tất cả), <b>OR</b> (một hoặc hơn). Không lồng calculated trong calculated.</td></tr>
+          <tr><td><b>CloudWatch alarm</b></td><td><b>Data stream</b> của metric mà một CloudWatch alarm theo dõi</td><td>Route 53 không chờ alarm sang <code>ALARM</code> mà đọc data stream. Chỉ metric <b>standard-resolution</b>, không “M out of N”, không metric math; alarm phải <b>cùng account</b>. Khi thiếu dữ liệu: healthy / unhealthy / last known status.</td></tr>
+          <tr><td><b>ARC routing control</b></td><td>Công tắc bật/tắt trong <b>Amazon Application Recovery Controller</b></td><td>Gắn với failover record để chủ động chuyển traffic giữa AZ/Region.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Route 53 quyết định endpoint healthy như thế nào?</h3>
+      <ul>
+        <li><b>Request interval</b>: <b>30 giây</b> (standard) hoặc <b>10 giây</b> (fast – có thêm phí). Không đổi được sau khi tạo. Với 30 s, mỗi health checker gửi 30 s/lần ⇒ endpoint nhận trung bình <b>~1 request mỗi 2 giây</b> (vì nhiều checker không phối hợp nhau).</li>
+        <li><b>Failure threshold</b>: số lần kiểm tra <b>liên tiếp</b> pass/fail để đổi trạng thái healthy ⇄ unhealthy (mặc định 3 trên console – kiến thức phổ biến, khoảng 1–10).</li>
+        <li>Tổng hợp: nếu <b>hơn 18%</b> health checker báo healthy ⇒ endpoint <b>healthy</b>; <b>≤ 18%</b> ⇒ unhealthy. Con số 18% đảm bảo checker ở <b>nhiều Region</b> đồng ý, tránh kết luận sai do mạng cô lập cục bộ.</li>
+        <li><b>HTTP/HTTPS</b>: phải mở được TCP trong <b>4 giây</b>, và nhận status <b>2xx hoặc 3xx</b> trong <b>2 giây</b> sau khi kết nối. HTTPS check <b>không</b> xác thực chứng chỉ (chứng chỉ hết hạn vẫn pass).</li>
+        <li><b>TCP</b>: mở được kết nối TCP trong <b>10 giây</b>.</li>
+        <li><b>String matching</b>: sau status code, phải nhận body trong 2 giây tiếp theo và chuỗi tìm kiếm (tối đa 255 ký tự, phân biệt hoa thường) phải nằm trọn trong <b>5.120 byte đầu</b> của body.</li>
+        <li>Chọn <b>health checker regions</b>: dùng mặc định hoặc tùy chỉnh – tối thiểu <b>3 Region</b>.</li>
+        <li>Tùy chọn khác: <b>Invert health check status</b>, <b>Disabled</b> (luôn coi healthy, vẫn tính phí), <b>Latency graphs</b>, <b>SNI</b>.</li>
+        <li><b>Thông báo</b>: tạo CloudWatch alarm cho health check ⇒ gửi <b>SNS</b>. Metric health check nằm ở <b>us-east-1</b>, SNS topic cũng phải ở <b>us-east-1</b>.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>&gt; 18%</b><span>health checker báo healthy ⇒ endpoint healthy</span></div>
+        <div class="stat"><b>30 s / 10 s</b><span>request interval standard / fast (thêm phí)</span></div>
+        <div class="stat"><b>4 s + 2 s</b><span>HTTP(S): TCP connect + status 2xx/3xx</span></div>
+        <div class="stat"><b>5.120 byte</b><span>vùng body để tìm string matching</span></div>
+        <div class="stat"><b>256</b><span>child health check tối đa cho một calculated health check</span></div>
+        <div class="stat"><b>200</b><span>active health check mỗi account (tăng được)</span></div>
+      </div>
+
+      <h3>Health check cho tài nguyên private</h3>
+      <p>Health checker của Route 53 nằm <b>ngoài VPC</b>. Theo tài liệu failover trong private hosted zone:</p>
+      <ul>
+        <li>Muốn kiểm tra endpoint trong VPC bằng IP ⇒ instance phải có <b>IP public</b>.</li>
+        <li>Instance <b>chỉ có IP private</b> ⇒ tạo <b>CloudWatch metric + alarm</b> (vd theo <code>StatusCheckFailed</code> của EC2), rồi tạo health check <b>dựa trên CloudWatch alarm</b>.</li>
+        <li>Trong private hosted zone, health check chỉ gắn được với record failover, multivalue, weighted, latency, geolocation, geoproximity.</li>
+      </ul>
+
+      <h3>Evaluate Target Health – health check cho alias</h3>
+      <p>Với tài nguyên AWS mà bạn tạo được alias (ELB, CloudFront, S3 website, record khác…), tài liệu khuyên <b>không</b> tạo health check riêng mà đặt <span class="t" data-vi="Đánh giá sức khỏe của đích">Evaluate Target Health</span> = <b>Yes</b>. Khi đó Route 53 dùng sức khỏe của <b>chính tài nguyên đích</b> – vd với ALB là health check của target group (Bài 12). Nếu alias trỏ tới một nhóm weighted record: còn ít nhất một weighted record khỏe ⇒ alias healthy; không còn record nào khỏe ⇒ alias unhealthy và Route 53 bỏ qua nhánh đó của cây.</p>
+
+      <h3>Route 53 chọn record khi có health check</h3>
+      <ol class="steps">
+        <li>Chọn một record theo routing policy (vd theo weight).</li>
+        <li>Kiểm tra record: non-alias ⇒ xem trạng thái health check gắn kèm (được kiểm tra <b>định kỳ</b>, không kiểm tra lúc truy vấn đến); alias + Evaluate Target Health ⇒ xem sức khỏe tài nguyên đích.</li>
+        <li>Healthy ⇒ trả lời. Unhealthy ⇒ chọn record khác theo cùng tiêu chí, lặp lại.</li>
+      </ol>
+      <ul>
+        <li><b>Record không có health check luôn được coi là healthy.</b></li>
+        <li><b>Nếu không record nào healthy ⇒ coi tất cả là healthy</b> (Route 53 vẫn phải trả lời) và chọn theo routing policy.</li>
+        <li><b>Failover</b>: primary healthy ⇒ trả primary; primary unhealthy + secondary healthy ⇒ trả secondary; <b>cả hai unhealthy ⇒ trả primary</b>. Secondary không gắn health check ⇒ primary unhealthy thì luôn trả secondary.</li>
+      </ul>
+
+      <h3>Active-active và active-passive</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4>Active-active failover</h4><ul>
+          <li>Mọi tài nguyên <b>đều phục vụ</b> phần lớn thời gian.</li>
+          <li>Cấu hình bằng <b>bất kỳ policy nào trừ Failover</b> (weighted, latency, multivalue, geolocation…) + health check.</li>
+          <li>Tài nguyên unhealthy bị loại khỏi câu trả lời; record healthy nào cũng có thể được trả.</li>
+        </ul></div>
+        <div style="--accent:#DD344C"><h4>Active-passive failover</h4><ul>
+          <li><b>Primary</b> phục vụ phần lớn thời gian; <b>secondary standby</b> khi tất cả primary hỏng.</li>
+          <li>Cấu hình bằng <b>Failover routing policy</b> (một hoặc nhiều tài nguyên mỗi bên – dùng cây alias), hoặc weighted với weight 0 cho bên dự phòng.</li>
+          <li>Mẫu phổ biến: primary = web server/ALB, secondary = <b>S3 static website</b> “temporarily unavailable”.</li>
+        </ul></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="row">
+          <div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng<small>www.example.com</small></div>
+              <span class="arrow">DNS</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Route 53<small>Failover alias records, TTL 60</small></div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Amazon-Route-53_Route-Table.svg" alt="">Health checker<small>nhiều Region, &gt;18% healthy</small></div>
+              <span class="arrow dashed">HTTP /health mỗi 30 s</span>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">CloudWatch alarm<small>us-east-1</small></div>
+              <span class="arrow">notify</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" alt="">SNS<small>email ops</small></div>
+            </div>
+          </div>
+          <div>
+            <div class="grp region"><span class="lbl">Primary – us-east-1 (Evaluate Target Health = Yes)</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB<small>target group health</small></div>
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 Auto Scaling</div>
+              </div>
+            </div>
+            <div class="grp region"><span class="lbl">Secondary – us-west-2 hoặc S3 website</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB DR<small>warm standby</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">S3 static website<small>“maintenance page”</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Active-passive failover đa Region: hai alias record cùng tên <code>www.example.com</code>, routing policy <b>Failover</b> (Primary/Secondary), <b>Evaluate Target Health = Yes</b>. Khi ALB primary không còn target healthy, Route 53 trả secondary (ALB ở Region DR, hoặc trang bảo trì tĩnh trên S3). Thời gian chuyển ≈ thời gian phát hiện lỗi + TTL. Endpoint health check + CloudWatch alarm + SNS dùng để báo cho đội vận hành.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Automatically route traffic to a <b>static error page in S3</b> when the primary site is unavailable</i>” ⇒ Failover routing: primary = ALB (alias, Evaluate Target Health), secondary = alias tới <b>S3 website endpoint</b>.</li>
+          <li>“<i>Health check for instances with <b>only private IPs</b></i>” ⇒ health check dựa trên <b>CloudWatch alarm</b> (Route 53 checker ở ngoài VPC).</li>
+          <li>“<i>Mark the application unhealthy only when <b>fewer than 2 of 4</b> web servers are healthy</i>” ⇒ <b>calculated health check</b>.</li>
+          <li>“<i>Failover based on a CloudWatch metric such as DynamoDB throttles / application error rate</i>” ⇒ health check theo <b>CloudWatch alarm</b>.</li>
+          <li>“<i>Notify the team when an endpoint fails</i>” ⇒ CloudWatch alarm trên metric <code>HealthCheckStatus</code> + SNS (us-east-1).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Gắn health check cho <b>Simple</b> record để failover – Simple <b>không</b> health check; dùng Failover / Multivalue / Weighted…</li>
+          <li>Health check endpoint bằng <b>domain name trùng tên record</b> đang được health check ⇒ kết quả khó đoán; tài liệu khuyên tạo health check riêng cho từng server (vd <code>us-east-2-www.example.com</code>).</li>
+          <li>Firewall/Security Group của endpoint phải cho phép IP của <b>Route 53 health checker</b>, nếu không endpoint luôn unhealthy.</li>
+          <li>Tắt (Disabled) health check ⇒ Route 53 coi luôn <b>healthy</b> (traffic vẫn đi tới). Muốn chủ động rút traffic ⇒ <b>Invert</b> health check.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: RESOLVER ===================== -->
+      <h2 id="resolver"><img src="../assets/icons/res/Amazon-Route-53_Resolver.svg" alt="">Route 53 Resolver và DNS lai (hybrid DNS)</h2>
+      <p class="lead"><span class="t" data-vi="Bộ phân giải DNS trong VPC">Route 53 VPC Resolver</span> (trước đây gọi là <b>Route 53 Resolver</b>; đề thi vẫn dùng tên cũ) trả lời <b>đệ quy</b> mọi truy vấn DNS từ tài nguyên AWS và <b>có sẵn mặc định trong mọi VPC</b>. VPC kết nối tới Resolver qua địa chỉ <b>VPC+2</b> (vd <code>10.0.0.2</code> cho VPC <code>10.0.0.0/16</code>) – còn gọi là <i>AmazonProvidedDNS</i>.</p>
+
+      <p>Resolver tự động trả lời:</p>
+      <ul>
+        <li>Tên DNS cục bộ của EC2 (vd <code>ec2-192-0-2-44.compute-1.amazonaws.com</code>).</li>
+        <li>Record trong <b>private hosted zone</b> đã associate với VPC.</li>
+        <li>Tên miền public – Resolver tra đệ quy tới name server công cộng trên internet.</li>
+      </ul>
+
+      <p>Vấn đề: <b>on-premises</b> không hỏi được VPC+2 (địa chỉ này chỉ dùng được từ trong VPC), và Resolver trong VPC không biết các zone nội bộ <code>corp.example.com</code> trên DNS server on-premises. Giải pháp là <b>Resolver endpoint</b> + <b>rule</b>, chạy trên kết nối private <b>Site-to-Site VPN</b> hoặc <b>Direct Connect</b> (Bài 23).</p>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Route-53_Resolver.svg" alt="">Inbound endpoint</h4><ul>
+          <li>Chiều <b>on-premises → VPC</b>.</li>
+          <li>Tạo các <b>IP private</b> (ENI) trong subnet của VPC; DNS server on-premises cấu hình <b>conditional forwarder</b> cho <code>aws.example.com</code> trỏ tới các IP này.</li>
+          <li>Cho phép on-premises phân giải <b>private hosted zone</b>, tên interface endpoint, tên EC2…</li>
+        </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/res/Amazon-Route-53_Resolver.svg" alt="">Outbound endpoint + rule</h4><ul>
+          <li>Chiều <b>VPC → on-premises</b>.</li>
+          <li>Outbound endpoint xác định IP (private) mà truy vấn <b>xuất phát</b>; cần VPN/DX (hoặc NAT gateway) tới mạng đích.</li>
+          <li><b>Forwarding rule</b>: mỗi rule một domain (vd <code>corp.example.com</code>) + IP DNS server on-premises đích; associate rule với VPC. Rule <b>chia sẻ được sang account khác</b> qua <b>AWS RAM</b>.</li>
+          <li>Một outbound endpoint dùng chung được cho <b>nhiều VPC cùng Region</b>.</li>
+        </ul></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">Data center – corp.example.com</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Client.svg" alt="">Client on-prem</div>
+              <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">DNS server on-prem<small>forwarder: aws.example.com → inbound IPs</small></div>
+            </div>
+          </div>
+          <div>
+            <div class="flow"><span class="arrow">ⓐ inbound: hỏi aws.example.com</span></div>
+            <div class="node"><img src="../assets/icons/svc/AWS-Direct-Connect.svg" alt="">DX / Site-to-Site VPN<small>kết nối private</small></div>
+            <div class="flow"><span class="arrow dashed">① outbound: forward corp.example.com</span></div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud – Region</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">AZ a</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Route-53_Resolver.svg" alt="">Inbound ENI<small>10.0.1.100</small></div>
+                  <div class="node"><img src="../assets/icons/res/Amazon-Route-53_Resolver.svg" alt="">Outbound ENI</div></div></div>
+                <div class="grp az"><span class="lbl">AZ b</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Route-53_Resolver.svg" alt="">Inbound ENI<small>10.0.2.100</small></div>
+                  <div class="node"><img src="../assets/icons/res/Amazon-Route-53_Resolver.svg" alt="">Outbound ENI</div></div></div>
+              </div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2<small>hỏi VPC+2 (10.0.0.2)</small></div>
+                <div class="node"><img src="../assets/icons/res/Amazon-Route-53_Resolver.svg" alt="">VPC Resolver<small>rule: corp.example.com → forward</small></div>
+                <div class="node"><img src="../assets/icons/res/Amazon-Route-53-Hosted-Zone.svg" alt="">Private hosted zone<small>aws.example.com</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> DNS lai với Resolver endpoint. <b>Outbound</b> (①): EC2 hỏi <code>app.corp.example.com</code> → VPC+2 → forwarding rule khớp → outbound endpoint → qua VPN/DX → DNS server on-premises. <b>Inbound</b> (ⓐ): client on-premises hỏi <code>db.aws.example.com</code> → DNS on-prem forward tới IP của inbound endpoint → VPC Resolver trả lời từ private hosted zone. Mỗi endpoint đặt IP ở <b>ít nhất 2 AZ</b> để sẵn sàng cao.</figcaption>
+      </figure>
+
+      <h3>Các loại rule và thứ tự ưu tiên</h3>
+      <ul>
+        <li><b>Forward rule</b> – chuyển truy vấn của một domain tới IP DNS server chỉ định (thường on-premises). Target IP được chọn <b>ngẫu nhiên</b>; không phản hồi thì thử IP khác.</li>
+        <li><b>System rule</b> – buộc Resolver tự phân giải một subdomain (ngoại lệ cho forward rule cha) – kiến thức bổ sung.</li>
+        <li><b>Delegation rule</b> (mới) – tôn trọng chuỗi ủy quyền NS: chỉ chuyển quyền cho resolver on-premises khi NS record trong câu trả lời khớp cấu hình.</li>
+        <li>Khi nhiều rule khớp ⇒ rule có domain <b>cụ thể nhất</b> thắng. Resolver rule <b>ưu tiên hơn</b> private hosted zone trùng tên.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>VPC+2</b><span>địa chỉ Resolver trong mỗi VPC (vd 10.0.0.2)</span></div>
+        <div class="stat"><b>6</b><span>IP mỗi endpoint (quota mặc định, tăng được)</span></div>
+        <div class="stat"><b>10.000</b><span>truy vấn UDP/giây mỗi IP của endpoint (tối đa)</span></div>
+        <div class="stat"><b>4</b><span>endpoint mỗi Region mỗi account (tăng được)</span></div>
+        <div class="stat"><b>1.000</b><span>rule mỗi Region mỗi account</span></div>
+        <div class="stat"><b>300</b><span>VPC associate với một private hosted zone (nhiều hơn ⇒ Route 53 Profiles)</span></div>
+      </div>
+      <p class="muted">Ghi chú: tài liệu quotas cho biết nếu Security Group áp dụng connection tracking hoặc truy vấn đi qua NLB thì QPS mỗi IP của inbound endpoint có thể chỉ còn ~1.500; khi QPS vượt 50% công suất của một ENI nên thêm ENI.</p>
+
+      <h3>Các tính năng liên quan của Resolver</h3>
+      <ul>
+        <li><b>Resolver query logging</b> – ghi lại truy vấn DNS từ VPC ra CloudWatch Logs, S3 hoặc Data Firehose (phục vụ điều tra bảo mật).</li>
+        <li><b>Resolver DNS Firewall</b> – chặn/cho phép domain theo danh sách (Bài 21).</li>
+        <li><b>DNSSEC validation</b> trên Resolver; <b>DNSSEC signing</b> cho public hosted zone (KSK dựa trên customer managed key KMS ở us-east-1).</li>
+        <li><b>Route 53 Profiles</b> – gom private hosted zone, Resolver rule, DNS Firewall rule group… thành một profile rồi áp dụng cho tới 1.000 VPC, chia sẻ qua RAM.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>On-premises servers must resolve records in a Route 53 <b>private hosted zone</b></i>” ⇒ <b>Resolver inbound endpoint</b> + conditional forwarder trên DNS on-prem.</li>
+          <li>“<i>EC2 instances must resolve names in the <b>on-premises</b> domain (corp.local)</i>” ⇒ <b>Resolver outbound endpoint</b> + <b>forwarding rule</b> associate với VPC.</li>
+          <li>“<i>Many accounts/VPCs need the same forwarding rules</i>” ⇒ chia sẻ rule qua <b>AWS RAM</b> (hoặc Route 53 Profiles).</li>
+          <li>“<i>Least operational overhead</i>” cho hybrid DNS ⇒ Resolver endpoint thay vì tự dựng BIND/DNS forwarder trên EC2.</li>
+          <li>Resolver endpoint cần <b>VPN hoặc Direct Connect</b> – IP của endpoint là IP private.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: CHỌN GIẢI PHÁP ===================== -->
+      <h2 id="chon-giai-phap"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Chọn giải pháp nhanh theo tình huống đề</h2>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu trong đề</th><th>Giải pháp</th><th>Vì sao không phải phương án khác</th></tr></thead>
+        <tbody>
+          <tr><td>Trỏ <code>example.com</code> (apex) tới ALB/CloudFront/S3 website</td><td><b>Alias A/AAAA</b></td><td>CNAME không được ở apex</td></tr>
+          <tr><td>Trỏ subdomain tới domain bên ngoài AWS</td><td><b>CNAME</b></td><td>Alias chỉ tới tài nguyên AWS / record cùng zone</td></tr>
+          <tr><td>Chuyển dần 10% traffic sang phiên bản mới</td><td><b>Weighted</b></td><td>Failover chỉ all-or-nothing</td></tr>
+          <tr><td>Người dùng toàn cầu, đi tới Region nhanh nhất</td><td><b>Latency</b></td><td>Geolocation theo địa giới, không theo hiệu năng</td></tr>
+          <tr><td>Người dùng nước X phải dùng tài nguyên ở nước X</td><td><b>Geolocation</b> + default record</td><td>Latency có thể gửi sang nước khác</td></tr>
+          <tr><td>Mở rộng vùng phục vụ của một Region</td><td><b>Geoproximity</b> (bias dương)</td><td>Geolocation không có bias</td></tr>
+          <tr><td>Site chính hỏng ⇒ trang bảo trì / Region DR</td><td><b>Failover</b> + health check / Evaluate Target Health</td><td>Simple không có health check</td></tr>
+          <tr><td>Trả nhiều IP, chỉ IP còn sống, không có LB</td><td><b>Multivalue answer</b></td><td>Simple trả cả IP chết</td></tr>
+          <tr><td>Người dùng của một ISP đi endpoint riêng</td><td><b>IP-based</b></td><td>Geolocation không biết ISP</td></tr>
+          <tr><td>Tên nội bộ chỉ phân giải trong VPC</td><td><b>Private hosted zone</b></td><td>Public zone lộ ra internet</td></tr>
+          <tr><td>On-prem phân giải tên trong AWS / AWS phân giải tên on-prem</td><td><b>Resolver inbound / outbound endpoint</b></td><td>VPC+2 không truy cập được từ on-prem</td></tr>
+          <tr><td>Health check instance chỉ có IP private</td><td>Health check theo <b>CloudWatch alarm</b></td><td>Health checker nằm ngoài VPC</td></tr>
+        </tbody>
+      </table></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>Route 53</b> = domain registration + DNS routing + health checking; data plane toàn cầu (200+ PoP), control plane ở us-east-1. Route 53 chỉ trả lời DNS, traffic ứng dụng không đi qua nó.</li>
+          <li><b>Hosted zone</b>: public (internet, NS + SOA tự tạo, trỏ NS tại registrar) vs <b>private</b> (VPC associate, cần enableDnsHostnames + enableDnsSupport, associate cross-account được). <b>Split-view DNS</b> = public + private cùng tên. Namespace chồng lấn ⇒ most specific; private zone khớp mà thiếu record ⇒ NXDOMAIN; Resolver rule thắng private zone trùng tên.</li>
+          <li><b>Alias</b>: tới ELB, CloudFront, S3 website, API Gateway, VPC interface endpoint, Global Accelerator, Elastic Beanstalk, App Runner…; <b>được ở zone apex</b>, <b>miễn phí truy vấn</b>, không đặt TTL, có Evaluate Target Health. <b>CNAME</b>: trỏ đâu cũng được nhưng không ở apex và tính phí.</li>
+          <li><b>TTL</b>: dài ⇒ rẻ, chậm cập nhật; ngắn ⇒ nhanh, tốn phí. Migration: hạ TTL NS (60–900 s), chờ TTL cũ (2 ngày) rồi đổi NS.</li>
+          <li><b>8 routing policy</b>: Simple (không health check) · Weighted (0–255, canary) · Latency (Region nhanh nhất) · Failover (active-passive) · Geolocation (vị trí người dùng, cần default) · Geoproximity (bias ±99) · Multivalue (≤ 8 record khỏe) · IP-based (CIDR collection, không dùng trong private zone).</li>
+          <li><b>Health check</b>: endpoint (HTTP/HTTPS/TCP, 30 s hoặc 10 s, &gt;18% checker healthy, không check IP private), calculated (AND/OR/x of y), CloudWatch alarm (cho tài nguyên private). Alias ⇒ dùng <b>Evaluate Target Health</b>. Không record nào healthy ⇒ coi tất cả healthy; failover cả hai hỏng ⇒ trả primary.</li>
+          <li><b>Resolver</b>: VPC+2 có sẵn; <b>inbound endpoint</b> (on-prem → VPC), <b>outbound endpoint + forwarding rule</b> (VPC → on-prem) qua VPN/DX; rule chia sẻ qua RAM; IP ở ≥ 2 AZ.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Domain Name System (DNS)</dt><dd><b>Hệ thống phân giải tên miền</b> – dịch tên miền sang địa chỉ IP.</dd></div>
+        <div><dt>Amazon Route 53</dt><dd><b>Dịch vụ DNS của AWS</b> – đăng ký tên miền, định tuyến DNS, kiểm tra sức khỏe.</dd></div>
+        <div><dt>Domain registrar / registry</dt><dd><b>Nhà đăng ký tên miền / Cơ quan quản lý TLD</b> – bên bán tên miền (ICANN công nhận) / bên sở hữu và giữ CSDL của một TLD.</dd></div>
+        <div><dt>Top-level domain (TLD)</dt><dd><b>Tên miền cấp cao nhất</b> – phần cuối như .com, .org, .vn.</dd></div>
+        <div><dt>DNS resolver (recursive name server)</dt><dd><b>Bộ phân giải DNS đệ quy</b> – trung gian hỏi lần lượt các name server và cache kết quả.</dd></div>
+        <div><dt>Authoritative name server</dt><dd><b>Máy chủ tên có thẩm quyền</b> – nắm thông tin chính thức của một zone; Route 53 là authoritative cho hosted zone của bạn.</dd></div>
+        <div><dt>Hosted zone</dt><dd><b>Vùng được lưu trữ</b> – container chứa record của một tên miền và các subdomain.</dd></div>
+        <div><dt>Public / Private hosted zone</dt><dd><b>Vùng công khai / riêng tư</b> – trả lời truy vấn từ internet / chỉ trong VPC đã associate.</dd></div>
+        <div><dt>Zone apex</dt><dd><b>Đỉnh vùng</b> – tên gốc của zone (example.com), không đặt CNAME được.</dd></div>
+        <div><dt>Record (resource record set)</dt><dd><b>Bản ghi DNS</b> – Name, Type, Value, TTL, routing policy.</dd></div>
+        <div><dt>Alias record</dt><dd><b>Bản ghi bí danh</b> – phần mở rộng của Route 53 trỏ tới tài nguyên AWS; dùng ở apex, miễn phí truy vấn.</dd></div>
+        <div><dt>CNAME record</dt><dd><b>Bản ghi tên chuẩn</b> – trỏ một tên tới tên miền khác; không ở apex.</dd></div>
+        <div><dt>Time to live (TTL)</dt><dd><b>Thời gian sống trong cache</b> – số giây resolver được giữ câu trả lời.</dd></div>
+        <div><dt>NS record / SOA record</dt><dd><b>Bản ghi máy chủ tên / Bản ghi khởi đầu thẩm quyền</b> – 4 name server của zone / thông tin quản trị zone, minimum TTL.</dd></div>
+        <div><dt>Negative caching</dt><dd><b>Cache câu trả lời phủ định</b> – resolver cache NXDOMAIN/NODATA theo minimum TTL của SOA.</dd></div>
+        <div><dt>Reusable delegation set</dt><dd><b>Bộ name server dùng lại</b> – cùng 4 name server cho nhiều hosted zone.</dd></div>
+        <div><dt>Split-view DNS (split-horizon)</dt><dd><b>DNS chia góc nhìn</b> – public và private hosted zone cùng tên, trả lời khác nhau.</dd></div>
+        <div><dt>Routing policy</dt><dd><b>Chính sách định tuyến</b> – cách Route 53 chọn câu trả lời cho truy vấn.</dd></div>
+        <div><dt>Simple / Weighted / Latency routing</dt><dd><b>Định tuyến đơn giản / theo trọng số / theo độ trễ</b>.</dd></div>
+        <div><dt>Failover routing</dt><dd><b>Định tuyến dự phòng</b> – primary/secondary cho active-passive.</dd></div>
+        <div><dt>Geolocation / Geoproximity routing</dt><dd><b>Định tuyến theo vị trí người dùng / theo khoảng cách địa lý (có bias)</b>.</dd></div>
+        <div><dt>Bias</dt><dd><b>Độ lệch</b> – -99 → +99, thu hẹp/mở rộng vùng phục vụ trong geoproximity.</dd></div>
+        <div><dt>Multivalue answer routing</dt><dd><b>Định tuyến trả nhiều giá trị</b> – tối đa 8 record khỏe ngẫu nhiên.</dd></div>
+        <div><dt>IP-based routing / CIDR collection</dt><dd><b>Định tuyến theo IP nguồn / Bộ sưu tập dải IP</b> – ánh xạ CIDR người dùng tới endpoint.</dd></div>
+        <div><dt>EDNS0 (edns-client-subnet)</dt><dd><b>Phần mở rộng DNS gửi subnet client</b> – giúp ước lượng vị trí người dùng chính xác hơn.</dd></div>
+        <div><dt>Traffic Flow / Traffic policy</dt><dd><b>Luồng lưu lượng / Chính sách lưu lượng</b> – trình soạn thảo trực quan kết hợp nhiều routing policy.</dd></div>
+        <div><dt>Health check</dt><dd><b>Kiểm tra sức khỏe</b> – endpoint, calculated hoặc CloudWatch alarm.</dd></div>
+        <div><dt>Calculated health check</dt><dd><b>Kiểm tra sức khỏe tổng hợp</b> – parent theo dõi tối đa 256 child (AND/OR/x of y).</dd></div>
+        <div><dt>Failure threshold / Request interval</dt><dd><b>Ngưỡng thất bại / Chu kỳ kiểm tra</b> – số lần liên tiếp để đổi trạng thái / 30 s hoặc 10 s.</dd></div>
+        <div><dt>Evaluate Target Health</dt><dd><b>Đánh giá sức khỏe của đích</b> – alias dùng sức khỏe của tài nguyên đích thay cho health check riêng.</dd></div>
+        <div><dt>DNS failover</dt><dd><b>Chuyển đổi dự phòng bằng DNS</b> – định tuyến khỏi tài nguyên unhealthy.</dd></div>
+        <div><dt>Active-active / Active-passive failover</dt><dd><b>Dự phòng chủ động kép / chủ động – chờ</b> – mọi tài nguyên cùng chạy / secondary chỉ dùng khi primary hỏng.</dd></div>
+        <div><dt>Route 53 (VPC) Resolver</dt><dd><b>Bộ phân giải DNS trong VPC</b> – DNS đệ quy ở VPC+2, có sẵn trong mọi VPC.</dd></div>
+        <div><dt>Inbound / Outbound Resolver endpoint</dt><dd><b>Điểm cuối Resolver chiều vào / chiều ra</b> – on-prem → VPC / VPC → on-prem.</dd></div>
+        <div><dt>Forwarding rule</dt><dd><b>Quy tắc chuyển tiếp</b> – domain nào được forward tới DNS server nào; chia sẻ qua RAM.</dd></div>
+        <div><dt>Conditional forwarder</dt><dd><b>Chuyển tiếp có điều kiện</b> – cấu hình trên DNS on-prem gửi một domain tới inbound endpoint.</dd></div>
+        <div><dt>Route 53 Profiles</dt><dd><b>Hồ sơ cấu hình DNS</b> – áp dụng cấu hình DNS cho nhiều VPC/account.</dd></div>
+        <div><dt>DNSSEC</dt><dd><b>Mở rộng bảo mật DNS</b> – ký số record (signing) và xác thực chữ ký (validation).</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company hosts its website behind an Application Load Balancer (ALB). The company wants users to reach the website by typing the root domain name example.com, which is hosted in Amazon Route 53. The solution must automatically follow changes to the ALB's IP addresses and must minimize DNS query costs. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create a CNAME record for example.com that points to the ALB DNS name.</li>
+            <li data-k="B">Create an alias A record for example.com that points to the ALB.</li>
+            <li data-k="C">Create an A record for example.com that contains the current IP addresses of the ALB.</li>
+            <li data-k="D">Create an MX record for example.com that points to the ALB DNS name.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Alias record</b> tạo được ở <b>zone apex</b>, Route 53 tự trả về IP hiện tại của ALB khi IP thay đổi, và <b>không tính phí</b> truy vấn alias tới tài nguyên AWS. <b>A sai</b>: giao thức DNS không cho phép CNAME ở zone apex; CNAME còn tính phí. <b>C sai</b>: IP của ALB thay đổi theo thời gian, ghi cứng IP sẽ hỏng. <b>D sai</b>: MX dùng cho máy chủ email.</div>
+          <div class="trans">
+            <div class="tq">Một công ty host website phía sau một Application Load Balancer (ALB). Công ty muốn người dùng truy cập website bằng cách gõ tên miền gốc example.com, vốn được host trong Amazon Route 53. Giải pháp phải tự động theo kịp các thay đổi địa chỉ IP của ALB và phải giảm thiểu chi phí truy vấn DNS. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một CNAME record cho example.com trỏ tới tên DNS của ALB.</span><span class="why">Sai: giao thức DNS không cho phép CNAME ở zone apex (example.com), và truy vấn CNAME bị tính phí.</span></li>
+              <li data-k="B"><span class="tv">Tạo một alias A record cho example.com trỏ tới ALB.</span><span class="why">Đúng: alias record tạo được ở zone apex, Route 53 tự trả về IP hiện tại của ALB và không tính phí truy vấn alias tới tài nguyên AWS.</span></li>
+              <li data-k="C"><span class="tv">Tạo một A record cho example.com chứa các địa chỉ IP hiện tại của ALB.</span><span class="why">Sai: IP của ALB thay đổi theo thời gian, ghi cứng IP sẽ làm website hỏng khi IP đổi.</span></li>
+              <li data-k="D"><span class="tv">Tạo một MX record cho example.com trỏ tới tên DNS của ALB.</span><span class="why">Sai: MX record dùng để chỉ định máy chủ email, không dùng cho truy cập website.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company is releasing a new version of its web application. The new version runs behind a separate Application Load Balancer. The company wants to send 10% of users to the new version, monitor errors, and then gradually increase the share of traffic. Which Route 53 configuration meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Failover routing with the new version as the secondary record.</li>
+            <li data-k="B">Geolocation routing with the new version serving a single country.</li>
+            <li data-k="C">Simple routing with both ALB DNS names in one record.</li>
+            <li data-k="D">Weighted routing with weights of 90 and 10 on two alias records that have the same name.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Weighted routing</b> chia traffic theo tỉ lệ <code>weight / tổng weight</code> – 90/10 rồi điều chỉnh dần; đúng use case “testing new versions of software” trong tài liệu. <b>A sai</b>: failover chỉ chuyển sang secondary khi primary hỏng, không chia tỉ lệ. <b>B sai</b>: geolocation chia theo vị trí, không theo phần trăm. <b>C sai</b>: simple alias chỉ trỏ một tài nguyên; nhiều giá trị thì trả ngẫu nhiên, không kiểm soát tỉ lệ.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang phát hành phiên bản mới của ứng dụng web. Phiên bản mới chạy phía sau một Application Load Balancer riêng. Công ty muốn gửi 10% người dùng tới phiên bản mới, theo dõi lỗi, rồi tăng dần tỉ lệ traffic. Cấu hình Route 53 nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Failover routing với phiên bản mới là record secondary.</span><span class="why">Sai: failover chỉ chuyển sang secondary khi primary hỏng, không chia traffic theo tỉ lệ.</span></li>
+              <li data-k="B"><span class="tv">Geolocation routing với phiên bản mới phục vụ một quốc gia duy nhất.</span><span class="why">Sai: geolocation chia traffic theo vị trí người dùng, không theo phần trăm và khó tăng dần.</span></li>
+              <li data-k="C"><span class="tv">Simple routing với cả hai tên DNS của ALB trong một record.</span><span class="why">Sai: simple alias chỉ trỏ một tài nguyên; nhiều giá trị thì trả ngẫu nhiên, không kiểm soát được tỉ lệ.</span></li>
+              <li data-k="D"><span class="tv">Weighted routing với weight 90 và 10 trên hai alias record có cùng tên.</span><span class="why">Đúng: weighted routing chia traffic theo tỉ lệ weight / tổng weight, cho phép bắt đầu 90/10 rồi điều chỉnh dần, đúng use case thử nghiệm phiên bản mới.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A media company must ensure that users in Germany can access video content only from servers deployed in the eu-central-1 Region because of licensing agreements. Users from all other countries must be served from us-east-1. Which routing policy should be used?</div>
+          <ol class="opts">
+            <li data-k="A">Geolocation routing with a record for Germany that points to eu-central-1 and a default record that points to us-east-1.</li>
+            <li data-k="B">Latency-based routing with records in eu-central-1 and us-east-1.</li>
+            <li data-k="C">Geoproximity routing with a positive bias on eu-central-1.</li>
+            <li data-k="D">Multivalue answer routing with health checks on both Regions.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Geolocation</b> chọn theo <b>vị trí người dùng</b> (quốc gia) – đúng use case “distribution rights” trong tài liệu; <b>default record</b> phục vụ mọi vị trí còn lại (và IP không ánh xạ được). <b>B sai</b>: latency chọn Region nhanh nhất, người ở Đức có thể bị gửi đi nơi khác hoặc người nước khác bị gửi tới Frankfurt. <b>C sai</b>: geoproximity dựa trên khoảng cách + bias, ranh giới không trùng biên giới quốc gia. <b>D sai</b>: multivalue trả ngẫu nhiên.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền thông phải đảm bảo người dùng ở Đức chỉ truy cập nội dung video từ các server triển khai ở Region eu-central-1 do các thỏa thuận bản quyền. Người dùng từ tất cả các quốc gia khác phải được phục vụ từ us-east-1. Nên dùng routing policy nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Geolocation routing với một record cho Đức trỏ tới eu-central-1 và một default record trỏ tới us-east-1.</span><span class="why">Đúng: geolocation chọn theo quốc gia của người dùng, đúng use case quyền phân phối nội dung; default record phục vụ mọi vị trí còn lại.</span></li>
+              <li data-k="B"><span class="tv">Latency-based routing với các record ở eu-central-1 và us-east-1.</span><span class="why">Sai: latency chọn Region nhanh nhất, nên người ở Đức có thể bị gửi đi nơi khác và người nước khác có thể bị gửi tới Frankfurt.</span></li>
+              <li data-k="C"><span class="tv">Geoproximity routing với bias dương cho eu-central-1.</span><span class="why">Sai: geoproximity dựa trên khoảng cách địa lý và bias, ranh giới không trùng với biên giới quốc gia.</span></li>
+              <li data-k="D"><span class="tv">Multivalue answer routing với health check trên cả hai Region.</span><span class="why">Sai: multivalue trả ngẫu nhiên các record khỏe, không đảm bảo theo quốc gia.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a web application on an Application Load Balancer in us-east-1. If the application becomes unavailable, users must automatically be shown a static "temporarily unavailable" page. The solution must have the LEAST operational overhead. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create a Lambda function that updates the Route 53 record to an S3 bucket when a CloudWatch alarm fires.</li>
+            <li data-k="B">Use weighted routing with equal weights for the ALB and an S3 static website.</li>
+            <li data-k="C">Use failover routing: a primary alias record for the ALB with Evaluate Target Health set to Yes, and a secondary alias record for an Amazon S3 static website endpoint.</li>
+            <li data-k="D">Use multivalue answer routing with the ALB and the S3 bucket as values.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Mẫu chuẩn trong tài liệu: primary là web server/ALB, secondary là <b>S3 website</b> chứa thông báo “temporarily unavailable”; với alias đặt <b>Evaluate Target Health = Yes</b> thay vì tạo health check riêng. Failover tự động trên data plane. <b>A sai</b>: tự viết Lambda gọi API control plane tốn vận hành, kém tin cậy lúc sự cố. <b>B sai</b>: weight bằng nhau gửi 50% người dùng tới trang lỗi ngay cả khi ứng dụng bình thường. <b>D sai</b>: multivalue trả IP, không trả alias tới S3/ALB theo cách này và cũng chia traffic cho cả hai.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng web trên một Application Load Balancer ở us-east-1. Nếu ứng dụng không khả dụng, người dùng phải tự động được hiển thị một trang tĩnh "tạm thời không khả dụng". Giải pháp phải có LEAST operational overhead (ít công vận hành nhất). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Lambda function cập nhật record Route 53 sang một S3 bucket khi một CloudWatch alarm kích hoạt.</span><span class="why">Sai: tự viết Lambda gọi API control plane tốn công vận hành và kém tin cậy đúng lúc xảy ra sự cố.</span></li>
+              <li data-k="B"><span class="tv">Dùng weighted routing với weight bằng nhau cho ALB và một S3 static website.</span><span class="why">Sai: weight bằng nhau sẽ gửi 50% người dùng tới trang lỗi ngay cả khi ứng dụng hoạt động bình thường.</span></li>
+              <li data-k="C"><span class="tv">Dùng failover routing: một alias record primary cho ALB với Evaluate Target Health đặt là Yes, và một alias record secondary cho một Amazon S3 static website endpoint.</span><span class="why">Đúng: đây là mẫu chuẩn: Evaluate Target Health theo dõi sức khỏe ALB mà không cần health check riêng, và Route 53 tự failover sang trang S3 trên data plane.</span></li>
+              <li data-k="D"><span class="tv">Dùng multivalue answer routing với ALB và S3 bucket làm các giá trị.</span><span class="why">Sai: multivalue trả các IP và chia traffic cho cả hai đích, không phải cơ chế primary/dự phòng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company has a hybrid environment connected by AWS Direct Connect. On-premises applications must resolve DNS names in a Route 53 private hosted zone (aws.example.com). EC2 instances in the VPC must resolve names in the on-premises domain corp.example.com. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Create a Route 53 Resolver inbound endpoint in the VPC and configure the on-premises DNS servers to conditionally forward aws.example.com to the endpoint IP addresses.</li>
+            <li data-k="B">Configure the on-premises DNS servers to forward queries to the VPC+2 address of the VPC.</li>
+            <li data-k="C">Convert the private hosted zone to a public hosted zone.</li>
+            <li data-k="D">Create a Route 53 Resolver outbound endpoint and a forwarding rule for corp.example.com that targets the on-premises DNS servers, and associate the rule with the VPC.</li>
+            <li data-k="E">Create a VPC peering connection between the VPC and the on-premises network.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> <b>Inbound endpoint</b> cho phép DNS on-premises gửi truy vấn vào VPC Resolver (A); <b>outbound endpoint + forwarding rule</b> gửi truy vấn của VPC tới DNS on-premises (D) – cả hai chạy trên kết nối private DX/VPN. <b>B sai</b>: địa chỉ VPC+2 chỉ truy cập được từ trong VPC. <b>C sai</b>: đưa tên nội bộ ra internet, không cần thiết và không an toàn. <b>E sai</b>: không thể peer VPC với mạng on-premises; đã có DX.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có môi trường hybrid được kết nối bằng AWS Direct Connect. Các ứng dụng on-premises phải phân giải được tên DNS trong một Route 53 private hosted zone (aws.example.com). Các EC2 instance trong VPC phải phân giải được tên trong domain on-premises corp.example.com. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Route 53 Resolver inbound endpoint trong VPC và cấu hình các DNS server on-premises chuyển tiếp có điều kiện (conditional forward) aws.example.com tới các địa chỉ IP của endpoint.</span><span class="why">Đúng: inbound endpoint cho phép DNS on-premises gửi truy vấn vào VPC Resolver qua kết nối private để phân giải private hosted zone.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình các DNS server on-premises chuyển tiếp truy vấn tới địa chỉ VPC+2 của VPC.</span><span class="why">Sai: địa chỉ VPC+2 (Route 53 Resolver mặc định) chỉ truy cập được từ bên trong VPC.</span></li>
+              <li data-k="C"><span class="tv">Chuyển private hosted zone thành public hosted zone.</span><span class="why">Sai: làm lộ tên nội bộ ra Internet, không cần thiết và không an toàn.</span></li>
+              <li data-k="D"><span class="tv">Tạo một Route 53 Resolver outbound endpoint và một forwarding rule cho corp.example.com với target là các DNS server on-premises, rồi associate rule với VPC.</span><span class="why">Đúng: outbound endpoint cùng forwarding rule chuyển truy vấn corp.example.com từ VPC tới DNS on-premises.</span></li>
+              <li data-k="E"><span class="tv">Tạo một VPC peering connection giữa VPC và mạng on-premises.</span><span class="why">Sai: không thể peer VPC với mạng on-premises, và kết nối mạng đã có sẵn qua Direct Connect.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company created a private hosted zone named example.internal and associated it with a VPC. EC2 instances in the VPC cannot resolve any records in the zone, although the records exist. What is the MOST likely cause?</div>
+          <ol class="opts">
+            <li data-k="A">The private hosted zone does not have health checks associated with its records.</li>
+            <li data-k="B">The enableDnsHostnames and enableDnsSupport attributes of the VPC are not set to true.</li>
+            <li data-k="C">The records use the simple routing policy, which is not supported in private hosted zones.</li>
+            <li data-k="D">The private hosted zone's name servers were not added at the domain registrar.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Tài liệu yêu cầu VPC phải bật <b>enableDnsHostnames</b> và <b>enableDnsSupport</b> để dùng private hosted zone. <b>A sai</b>: health check là tùy chọn, không ảnh hưởng việc phân giải. <b>C sai</b>: simple routing được hỗ trợ trong private hosted zone (IP-based mới không được). <b>D sai</b>: private hosted zone không cần đăng ký name server ở registrar – nó chỉ được phân giải bởi VPC Resolver.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đã tạo một private hosted zone tên example.internal và associate nó với một VPC. Các EC2 instance trong VPC không phân giải được bất kỳ record nào trong zone, mặc dù các record có tồn tại. Nguyên nhân MOST likely (có khả năng nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Private hosted zone không có health check gắn với các record.</span><span class="why">Sai: health check là tùy chọn, không ảnh hưởng tới việc phân giải record.</span></li>
+              <li data-k="B"><span class="tv">Các thuộc tính enableDnsHostnames và enableDnsSupport của VPC chưa được đặt là true.</span><span class="why">Đúng: AWS yêu cầu VPC bật enableDnsHostnames và enableDnsSupport thì mới dùng được private hosted zone.</span></li>
+              <li data-k="C"><span class="tv">Các record dùng simple routing policy, vốn không được hỗ trợ trong private hosted zone.</span><span class="why">Sai: simple routing được hỗ trợ trong private hosted zone (chỉ IP-based routing là không).</span></li>
+              <li data-k="D"><span class="tv">Name server của private hosted zone chưa được thêm vào nhà đăng ký tên miền (registrar).</span><span class="why">Sai: private hosted zone không cần khai báo name server ở registrar; nó chỉ được phân giải bởi VPC Resolver.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a stateless application on several Amazon EC2 instances with Elastic IP addresses. The company does not want to use a load balancer. Route 53 must return multiple IP addresses for the application's domain name and must return only the IP addresses of healthy instances. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create one simple record that contains all of the Elastic IP addresses.</li>
+            <li data-k="B">Create a latency record for each instance.</li>
+            <li data-k="C">Create a multivalue answer record for each instance and associate a Route 53 health check with each record.</li>
+            <li data-k="D">Create a failover record for each instance, all marked as primary.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Multivalue answer</b> trả tối đa <b>8 record khỏe</b> ngẫu nhiên; mỗi record gắn health check nên IP chết bị loại. <b>A sai</b>: simple routing trả mọi IP và <b>không health check</b>. <b>B sai</b>: latency chọn theo Region, các instance cùng Region không phân biệt được, và chỉ trả một record. <b>D sai</b>: failover chỉ có một primary và một secondary cho mỗi tên.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng stateless trên nhiều Amazon EC2 instance có Elastic IP address. Công ty không muốn dùng load balancer. Route 53 phải trả về nhiều địa chỉ IP cho tên miền của ứng dụng và chỉ được trả về địa chỉ IP của các instance khỏe. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một simple record chứa tất cả Elastic IP address.</span><span class="why">Sai: simple routing trả về mọi IP và không hỗ trợ health check, nên vẫn trả IP của instance hỏng.</span></li>
+              <li data-k="B"><span class="tv">Tạo một latency record cho mỗi instance.</span><span class="why">Sai: latency chọn theo Region, không phân biệt được các instance cùng Region và chỉ trả về một record.</span></li>
+              <li data-k="C"><span class="tv">Tạo một multivalue answer record cho mỗi instance và gắn một Route 53 health check với mỗi record.</span><span class="why">Đúng: multivalue answer trả tối đa 8 record khỏe ngẫu nhiên; health check trên từng record loại bỏ IP của instance hỏng.</span></li>
+              <li data-k="D"><span class="tv">Tạo một failover record cho mỗi instance, tất cả đều đánh dấu là primary.</span><span class="why">Sai: failover chỉ cho phép một primary và một secondary cho mỗi tên.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company runs an application on EC2 instances that have only private IP addresses in a VPC. The company uses Route 53 failover records in a private hosted zone and needs Route 53 to detect when the primary instance is unhealthy. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create an HTTP health check that targets the private IP address of the primary instance.</li>
+            <li data-k="B">Create a calculated health check with no child health checks.</li>
+            <li data-k="C">Create a TCP health check that targets the VPC+2 Resolver address.</li>
+            <li data-k="D">Create a CloudWatch alarm on the instance's StatusCheckFailed metric and create a Route 53 health check that monitors the alarm's data stream.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Health checker của Route 53 nằm <b>ngoài VPC</b> và không kiểm tra được IP private; tài liệu hướng dẫn tạo <b>CloudWatch metric/alarm</b> (vd <code>StatusCheckFailed</code>) rồi tạo health check <b>dựa trên alarm</b>. <b>A sai</b>: Route 53 không health check IP private. <b>B sai</b>: calculated health check không có child thì không đo gì. <b>C sai</b>: VPC+2 là DNS resolver, không phản ánh sức khỏe ứng dụng, và cũng là IP private.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng trên các EC2 instance chỉ có địa chỉ IP private trong một VPC. Công ty dùng failover record của Route 53 trong một private hosted zone và cần Route 53 phát hiện khi instance primary không khỏe. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một HTTP health check nhắm tới địa chỉ IP private của instance primary.</span><span class="why">Sai: health checker của Route 53 nằm ngoài VPC nên không kiểm tra được địa chỉ IP private.</span></li>
+              <li data-k="B"><span class="tv">Tạo một calculated health check không có child health check nào.</span><span class="why">Sai: calculated health check không có child thì không đo được gì về instance.</span></li>
+              <li data-k="C"><span class="tv">Tạo một TCP health check nhắm tới địa chỉ Resolver VPC+2.</span><span class="why">Sai: VPC+2 là DNS resolver, không phản ánh sức khỏe ứng dụng, và cũng là IP private mà Route 53 không kiểm tra được.</span></li>
+              <li data-k="D"><span class="tv">Tạo một CloudWatch alarm trên metric StatusCheckFailed của instance và tạo một Route 53 health check theo dõi luồng dữ liệu của alarm.</span><span class="why">Đúng: với tài nguyên chỉ có IP private, AWS hướng dẫn tạo CloudWatch alarm rồi tạo health check dựa trên trạng thái alarm đó.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company is migrating DNS for its production domain from a third-party DNS provider to Amazon Route 53. The domain receives heavy traffic, and the company wants to be able to roll back quickly if a problem occurs during the migration. The current NS record TTL is 172800 seconds. What should the company do FIRST after creating the hosted zone and records in Route 53?</div>
+          <ol class="opts">
+            <li data-k="A">Lower the TTL of the NS record at the current provider and in the Route 53 hosted zone (for example, to 900 seconds), and wait for the old TTL to expire before changing the name servers.</li>
+            <li data-k="B">Immediately update the name servers at the registrar to the Route 53 name servers.</li>
+            <li data-k="C">Transfer the domain registration to Route 53 before changing DNS service.</li>
+            <li data-k="D">Delete the NS and SOA records that Route 53 created and replace them with the old provider's records.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Tài liệu migration: <b>hạ TTL NS</b> xuống 60–900 giây ở cả hai bên, <b>chờ 2 ngày</b> để TTL cũ hết, rồi mới đổi NS – nếu có sự cố, rollback có hiệu lực nhanh. <b>B sai</b>: đổi ngay khi TTL còn 2 ngày ⇒ lỗi sẽ kéo dài tới 2 ngày. <b>C sai</b>: chuyển đăng ký là bước tùy chọn <b>sau cùng</b>, không giúp rollback. <b>D sai</b>: AWS dặn không xóa/thay NS và SOA mặc định.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang chuyển DNS của domain production từ một nhà cung cấp DNS bên thứ ba sang Amazon Route 53. Domain nhận lượng traffic lớn, và công ty muốn có thể rollback nhanh nếu có sự cố trong quá trình chuyển đổi. TTL hiện tại của NS record là 172800 giây. Công ty nên làm gì FIRST (ĐẦU TIÊN) sau khi tạo hosted zone và các record trong Route 53?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Hạ TTL của NS record ở nhà cung cấp hiện tại và trong hosted zone của Route 53 (ví dụ xuống 900 giây), và chờ TTL cũ hết hạn trước khi đổi name server.</span><span class="why">Đúng: hạ TTL của NS ở cả hai bên và chờ TTL cũ (2 ngày) hết hạn giúp mọi thay đổi, kể cả rollback, có hiệu lực nhanh.</span></li>
+              <li data-k="B"><span class="tv">Cập nhật ngay name server tại registrar sang name server của Route 53.</span><span class="why">Sai: đổi ngay khi TTL còn 172800 giây (2 ngày) thì nếu có lỗi, rollback cũng mất tới 2 ngày mới có hiệu lực.</span></li>
+              <li data-k="C"><span class="tv">Chuyển đăng ký domain sang Route 53 trước khi thay đổi dịch vụ DNS.</span><span class="why">Sai: chuyển đăng ký domain là bước tùy chọn làm sau cùng và không giúp rollback nhanh.</span></li>
+              <li data-k="D"><span class="tv">Xóa NS và SOA record mà Route 53 đã tạo và thay bằng record của nhà cung cấp cũ.</span><span class="why">Sai: AWS khuyến cáo không xóa hoặc thay thế NS và SOA record mặc định của hosted zone.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company serves a global application from ALBs in us-east-1, eu-west-1, and ap-southeast-1. Users must be routed to the Region that provides the lowest latency, and traffic must automatically avoid a Region whose ALB has no healthy targets. Which TWO configurations are required? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Create three geolocation records, one per continent, without a default record.</li>
+            <li data-k="B">Create latency-based alias records with the same name, one for each Region's ALB.</li>
+            <li data-k="C">Set a TTL of 7 days on the alias records to reduce costs.</li>
+            <li data-k="D">Create a simple record that lists the three ALB DNS names.</li>
+            <li data-k="E">Set Evaluate Target Health to Yes on each alias record.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> <b>Latency routing</b> chọn Region có độ trễ thấp nhất (B); <b>Evaluate Target Health</b> trên alias làm Route 53 dùng sức khỏe của ALB (target group) để loại Region hỏng (E). <b>A sai</b>: geolocation theo vị trí, không theo độ trễ; thiếu default thì có người nhận “no answer”. <b>C sai</b>: không đặt được TTL cho alias tới ALB, và TTL dài làm failover chậm. <b>D sai</b>: simple record không chứa được nhiều tên DNS (chỉ một alias target) và không có health check.</div>
+          <div class="trans">
+            <div class="tq">Một công ty phục vụ một ứng dụng toàn cầu từ các ALB ở us-east-1, eu-west-1 và ap-southeast-1. Người dùng phải được định tuyến tới Region có độ trễ thấp nhất, và traffic phải tự động tránh Region có ALB không còn target khỏe nào. HAI cấu hình nào là bắt buộc? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo ba geolocation record, mỗi châu lục một record, không có default record.</span><span class="why">Sai: geolocation định tuyến theo vị trí chứ không theo độ trễ; thiếu default record thì một số người dùng nhận "no answer".</span></li>
+              <li data-k="B"><span class="tv">Tạo các latency-based alias record cùng tên, mỗi record cho ALB của một Region.</span><span class="why">Đúng: latency routing trả về Region có độ trễ thấp nhất đối với người dùng.</span></li>
+              <li data-k="C"><span class="tv">Đặt TTL 7 ngày trên các alias record để giảm chi phí.</span><span class="why">Sai: không đặt được TTL cho alias record trỏ tới ALB, và TTL dài sẽ làm failover rất chậm.</span></li>
+              <li data-k="D"><span class="tv">Tạo một simple record liệt kê ba tên DNS của ALB.</span><span class="why">Sai: simple alias chỉ có một target, không chứa được nhiều tên DNS và không hỗ trợ health check.</span></li>
+              <li data-k="E"><span class="tv">Đặt Evaluate Target Health là Yes trên mỗi alias record.</span><span class="why">Đúng: Evaluate Target Health khiến Route 53 dựa vào sức khỏe target của ALB để loại bỏ Region không còn target khỏe.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/welcome-dns-service.html" target="_blank" rel="noopener">How internet traffic is routed to your website or web application</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/route-53-concepts.html" target="_blank" rel="noopener">Amazon Route 53 concepts (TTL, control/data plane)</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/hosted-zones-private.html" target="_blank" rel="noopener">Working with private hosted zones</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/hosted-zone-private-considerations.html" target="_blank" rel="noopener">Considerations when working with a private hosted zone</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/SOA-NSrecords.html" target="_blank" rel="noopener">NS and SOA records for a public hosted zone</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/migrate-dns-domain-in-use.html" target="_blank" rel="noopener">Making Route 53 the DNS service for a domain that's in use</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/ResourceRecordTypes.html" target="_blank" rel="noopener">Supported DNS record types</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html" target="_blank" rel="noopener">Choosing between alias and non-alias records</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy-simple.html" target="_blank" rel="noopener">Simple routing</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy-weighted.html" target="_blank" rel="noopener">Weighted routing</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy-latency.html" target="_blank" rel="noopener">Latency-based routing</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy-geo.html" target="_blank" rel="noopener">Geolocation routing</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy-geoproximity.html" target="_blank" rel="noopener">Geoproximity routing</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy-multivalue.html" target="_blank" rel="noopener">Multivalue answer routing</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy-ipbased.html" target="_blank" rel="noopener">IP-based routing</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/health-checks-types.html" target="_blank" rel="noopener">Types of Route 53 health checks</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover-determining-health-of-endpoints.html" target="_blank" rel="noopener">How Route 53 determines whether a health check is healthy</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/health-checks-creating-values.html" target="_blank" rel="noopener">Values for creating health checks</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover-types.html" target="_blank" rel="noopener">Active-active and active-passive failover</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/health-checks-how-route-53-chooses-records.html" target="_blank" rel="noopener">How Route 53 chooses records when health checking is configured</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover-private-hosted-zones.html" target="_blank" rel="noopener">Configuring failover in a private hosted zone</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver.html" target="_blank" rel="noopener">What is Route 53 VPC Resolver?</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-forwarding-inbound-queries.html" target="_blank" rel="noopener">Forwarding inbound DNS queries to your VPCs</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-forwarding-outbound-queries.html" target="_blank" rel="noopener">Forwarding outbound DNS queries to your network</a></li>
+        <li><a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/DNSLimitations.html" target="_blank" rel="noopener">Route 53 quotas</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

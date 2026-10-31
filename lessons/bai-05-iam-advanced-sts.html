@@ -1,0 +1,841 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 5 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/cat/Security-Identity-Compliance.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="5" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Nắm chắc <span class="t" data-vi="Logic đánh giá chính sách">policy evaluation logic</span> của AWS theo đúng thứ tự: explicit deny → RCP → SCP → resource-based policy → identity-based policy → permissions boundary → session policy.</li>
+          <li>Phân biệt khi nào các policy kết hợp theo kiểu <b>hợp (union)</b> và khi nào theo kiểu <b>giao (intersection)</b>; giải thích được vì sao “có Allow mà vẫn Access Denied”.</li>
+          <li>Dùng <span class="t" data-vi="Giới hạn quyền">permissions boundary</span> để <b>ủy quyền quản trị IAM an toàn</b> (developer tự tạo user/role nhưng không vượt quá giới hạn).</li>
+          <li>Hiểu <span class="t" data-vi="Dịch vụ cấp token bảo mật">AWS Security Token Service (AWS STS)</span> và so sánh các API: <code>AssumeRole</code>, <code>AssumeRoleWithSAML</code>, <code>AssumeRoleWithWebIdentity</code>, <code>GetFederationToken</code>, <code>GetSessionToken</code>.</li>
+          <li>Thiết kế <span class="t" data-vi="Truy cập liên tài khoản">cross-account access</span> và <span class="t" data-vi="Liên kết định danh">identity federation</span> (SAML 2.0, OIDC, IAM Identity Center, Amazon Cognito) đúng tình huống đề thi.</li>
+          <li>Biết <span class="t" data-vi="Bộ phân tích quyền truy cập IAM">IAM Access Analyzer</span> làm được gì: external/internal/unused access, policy validation, custom policy checks, policy generation.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Nối tiếp Bài 4</span>
+        <p>Bài 4 đã học IAM user/group/role, cấu trúc JSON policy, identity-based vs resource-based policy và quy tắc cơ bản “implicit deny – explicit deny thắng – cross-account cần Allow ở cả hai phía”. Bài này đi <b>sâu vào bên trong bộ máy đánh giá</b> (enforcement code) và các cơ chế nâng cao mà đề SAA-C03 hay đánh đố.</p></div>
+
+      <!-- ===================== PHẦN 1: POLICY EVALUATION LOGIC ===================== -->
+      <h2 id="evaluation"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Policy evaluation logic – AWS quyết định Allow/Deny thế nào?</h2>
+      <p class="lead">Khi một principal dùng AWS Management Console, AWS API hoặc AWS CLI, principal đó gửi một <b>request</b> tới AWS. Dịch vụ nhận request sẽ thực hiện ba bước: <b>(1) Authentication</b> – xác thực principal (một số dịch vụ như Amazon S3 cho phép request ẩn danh nên có thể bỏ qua); <b>(2) Processing the</b> <span class="t" data-vi="Ngữ cảnh của request">request context</span> – xác định policy nào áp dụng; <b>(3)</b> <span class="t" data-vi="Mã thực thi đánh giá quyền">enforcement code</span> đánh giá tất cả policy để ra quyết định cuối cùng.</p>
+
+      <h3>Ba nguyên tắc nền tảng</h3>
+      <ul>
+        <li><b>Mặc định mọi request đều bị từ chối</b> (<span class="t" data-vi="Từ chối ngầm định">implicit deny</span>) – <b>ngoại lệ duy nhất là root user</b> của tài khoản, có full access.</li>
+        <li>Request chỉ được phép khi được <b>Allow tường minh</b> bởi một policy hoặc một tập policy theo logic bên dưới.</li>
+        <li><span class="t" data-vi="Từ chối tường minh">Explicit deny</span> <b>luôn ghi đè</b> explicit allow.</li>
+      </ul>
+
+      <h3>Thứ tự đánh giá của enforcement code</h3>
+      <ol class="steps">
+        <li><b>Deny evaluation</b> – Enforcement code quét <b>tất cả</b> policy áp dụng cho request (SCP, RCP, resource-based, identity-based, permissions boundary, session policy) để tìm một statement <code>Deny</code> khớp. Tìm thấy <b>dù chỉ một</b> ⇒ quyết định cuối cùng <b>Deny</b>. Không có ⇒ đi tiếp.</li>
+        <li><b>AWS Organizations RCPs</b> (<span class="t" data-vi="Chính sách kiểm soát tài nguyên">resource control policies</span>) – áp dụng cho <b>resources</b> của tài khoản được gắn RCP. Không có Allow phù hợp ⇒ <b>Deny</b>. Khi bật RCP, AWS tự gắn policy <code>RCPFullAWSAccess</code> (không gỡ được) vào root, mọi OU và account – nên luôn có một Allow mặc định.</li>
+        <li><b>AWS Organizations SCPs</b> (<span class="t" data-vi="Chính sách kiểm soát dịch vụ">service control policies</span>) – áp dụng cho <b>principals</b> của tài khoản được gắn SCP. Không có Allow phù hợp ⇒ <b>Deny</b>. Không có SCP hoặc SCP cho phép ⇒ đi tiếp.</li>
+        <li><b>Resource-based policies</b> – trong cùng tài khoản, tùy loại principal, một Allow ở resource-based policy có thể <b>cho ra Allow cuối cùng ngay</b>, kể cả khi identity-based policy/permissions boundary/session policy chỉ có implicit deny (xem phần 2).</li>
+        <li><b>Identity-based policies</b> – kiểm tra policy của principal (với IAM user gồm cả policy của các group chứa user). Không có statement nào Allow ⇒ <b>implicit deny</b> ⇒ Deny.</li>
+        <li><b>IAM permissions boundaries</b> – nếu entity có boundary mà boundary không cho phép action ⇒ implicit deny ⇒ Deny.</li>
+        <li><b>Session policies</b> – nếu principal <b>không phải</b> session principal (role session hoặc STS federated user session) ⇒ <b>Allow</b>. Nếu là session principal: không truyền session policy ⇒ AWS tạo session policy mặc định ⇒ Allow; có session policy mà không cho phép action ⇒ Deny; có session policy cho phép ⇒ Allow.</li>
+      </ol>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 520" width="760" role="img" aria-label="Lưu đồ đánh giá chính sách IAM trong một tài khoản">
+          <defs><marker id="ah5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <!-- start -->
+          <image href="../assets/icons/res/User.svg" x="20" y="14" width="40" height="40"/>
+          <rect x="70" y="14" width="250" height="40" rx="20" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="195" y="39" font-size="13" font-weight="700" text-anchor="middle">Request (mặc định: implicit deny)</text>
+          <path class="line-o" d="M195 54 V74" marker-end="url(#ah5)"/>
+          <!-- step 1 -->
+          <rect x="70" y="76" width="250" height="44" rx="6" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <text x="195" y="96" font-size="12.5" font-weight="700" text-anchor="middle">① Có explicit Deny ở BẤT KỲ policy?</text>
+          <text x="195" y="112" font-size="11" text-anchor="middle" class="muted">SCP, RCP, resource, identity, boundary, session</text>
+          <path class="line-o" d="M320 98 H520" marker-end="url(#ah5)"/>
+          <text x="420" y="91" font-size="11" text-anchor="middle">Có</text>
+          <path class="line-o" d="M195 120 V140" marker-end="url(#ah5)"/>
+          <!-- step 2 -->
+          <rect x="70" y="142" width="250" height="40" rx="6" fill="none" stroke="#E7157B" stroke-width="2"/>
+          <text x="195" y="167" font-size="12.5" font-weight="700" text-anchor="middle">② RCP (resource) cho phép?</text>
+          <path class="line-o" d="M320 162 H520" marker-end="url(#ah5)"/>
+          <text x="420" y="155" font-size="11" text-anchor="middle">Không</text>
+          <path class="line-o" d="M195 182 V202" marker-end="url(#ah5)"/>
+          <!-- step 3 -->
+          <rect x="70" y="204" width="250" height="40" rx="6" fill="none" stroke="#E7157B" stroke-width="2"/>
+          <text x="195" y="229" font-size="12.5" font-weight="700" text-anchor="middle">③ SCP (principal) cho phép?</text>
+          <path class="line-o" d="M320 224 H520" marker-end="url(#ah5)"/>
+          <text x="420" y="217" font-size="11" text-anchor="middle">Không</text>
+          <path class="line-o" d="M195 244 V264" marker-end="url(#ah5)"/>
+          <!-- step 4 -->
+          <rect x="70" y="266" width="250" height="44" rx="6" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="195" y="286" font-size="12.5" font-weight="700" text-anchor="middle">④ Resource-based policy Allow</text>
+          <text x="195" y="302" font-size="11" text-anchor="middle" class="muted">trực tiếp cho user / role session?</text>
+          <path class="line-o" d="M70 288 H40 V480 H520" marker-end="url(#ah5)"/>
+          <text x="52" y="384" font-size="11" class="muted" transform="rotate(-90 52 384)" text-anchor="middle">Có (cùng account)</text>
+          <path class="line-o" d="M195 310 V330" marker-end="url(#ah5)"/>
+          <!-- step 5 -->
+          <rect x="70" y="332" width="250" height="40" rx="6" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="195" y="357" font-size="12.5" font-weight="700" text-anchor="middle">⑤ Identity-based policy Allow?</text>
+          <path class="line-o" d="M320 352 H520" marker-end="url(#ah5)"/>
+          <text x="420" y="345" font-size="11" text-anchor="middle">Không</text>
+          <path class="line-o" d="M195 372 V392" marker-end="url(#ah5)"/>
+          <!-- step 6 -->
+          <rect x="70" y="394" width="250" height="40" rx="6" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="195" y="419" font-size="12.5" font-weight="700" text-anchor="middle">⑥ Permissions boundary Allow?</text>
+          <path class="line-o" d="M320 414 H520" marker-end="url(#ah5)"/>
+          <text x="420" y="407" font-size="11" text-anchor="middle">Không</text>
+          <path class="line-o" d="M195 434 V454" marker-end="url(#ah5)"/>
+          <!-- step 7 -->
+          <rect x="70" y="456" width="250" height="44" rx="6" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="195" y="476" font-size="12.5" font-weight="700" text-anchor="middle">⑦ Session policy (nếu có) Allow?</text>
+          <text x="195" y="492" font-size="11" text-anchor="middle" class="muted">không phải session ⇒ bỏ qua</text>
+          <!-- results -->
+          <rect x="522" y="76" width="220" height="370" rx="8" fill="none" stroke="#DD344C" stroke-width="2.5"/>
+          <text x="632" y="240" font-size="22" font-weight="800" text-anchor="middle" style="fill:#DD344C">DENY</text>
+          <text x="632" y="264" font-size="11.5" text-anchor="middle" class="muted">explicit (①) hoặc implicit (②→⑦)</text>
+          <rect x="522" y="458" width="220" height="44" rx="8" fill="none" stroke="#7AA116" stroke-width="2.5"/>
+          <text x="632" y="486" font-size="20" font-weight="800" text-anchor="middle" style="fill:#7AA116">ALLOW</text>
+          <path class="line-o" d="M320 478 H520" marker-end="url(#ah5)"/>
+          <text x="420" y="471" font-size="11" text-anchor="middle">Có / không áp dụng</text>
+        </svg>
+        <figcaption><b>Hình 1.</b> Lưu đồ đánh giá chính sách trong <b>một tài khoản</b> (tóm tắt theo tài liệu “How AWS enforcement code logic evaluates requests”). Explicit Deny được kiểm tra trước tiên; sau đó mỗi “cổng” RCP, SCP, identity-based, boundary, session đều phải cho phép. Nhánh tắt ở bước ④: resource-based policy cấp quyền trực tiếp cho IAM user hoặc role session có thể cho Allow dù identity-based policy không có Allow.</figcaption>
+      </figure>
+
+      <h3>Khi nào “hợp” (union), khi nào “giao” (intersection)?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Kết hợp</th><th>Kiểu</th><th>Hệ quả (theo tài liệu IAM)</th></tr></thead>
+        <tbody>
+          <tr><td>Identity-based + resource-based (cùng account)</td><td class="yes">Hợp (union)</td><td>Allow ở identity-based, resource-based, <b>hoặc cả hai</b> ⇒ được phép. Explicit deny ở bất kỳ bên nào ghi đè.</td></tr>
+          <tr><td>Identity-based + permissions boundary</td><td class="no">Giao (intersection)</td><td>Thêm boundary có thể <b>giảm</b> quyền; gỡ boundary có thể <b>tăng</b> quyền.</td></tr>
+          <tr><td>Identity-based + SCP + RCP (resource không có resource-based policy)</td><td class="no">Giao</td><td>Action phải được <b>cả ba</b> cho phép.</td></tr>
+          <tr><td>Identity-based + boundary + SCP</td><td class="no">Giao</td><td>Chỉ Allow khi cả ba cùng cho phép.</td></tr>
+          <tr><td>Identity-based + boundary + session policy</td><td class="no">Giao</td><td>Session policy không thể cấp nhiều hơn identity-based policy của role.</td></tr>
+          <tr><td>Cross-account (trusted A + trusting B)</td><td class="no">Hai lần đánh giá</td><td>AWS đánh giá ở <b>cả hai</b> tài khoản; chỉ Allow khi <b>cả hai</b> đều ra Allow.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Hãy hình dung một request là một chiếc xe đi qua <b>nhiều trạm kiểm soát</b>. Trạm đầu tiên kiểm tra “danh sách cấm” (explicit deny) của <b>tất cả</b> các trạm – có tên là bị chặn ngay. Sau đó xe phải có “giấy thông hành” (Allow) ở <b>mỗi</b> trạm SCP, RCP, boundary… Chỉ cần một trạm không có giấy (implicit deny) là xe quay đầu. Riêng trạm identity-based và resource-based thì giống <b>hai cửa song song</b> trong cùng một tòa nhà: đi cửa nào cũng được.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>The user has an IAM policy that allows the action, but still gets AccessDenied</i>” ⇒ tìm <b>explicit Deny</b> (SCP, resource policy, boundary) hoặc một “cổng” giao (SCP/boundary/session policy) <b>thiếu Allow</b>.</li>
+          <li>SCP, RCP, permissions boundary, session policy <b>không bao giờ cấp quyền</b> – chúng chỉ đặt <b>quyền tối đa</b>. Đáp án “attach an SCP that allows S3 to grant the user access” là <b>sai</b> nếu user chưa có identity-based policy.</li>
+          <li>Root user của tài khoản <b>standalone</b> có full access mặc định; root user của <b>member account</b> trong Organizations vẫn bị SCP/RCP giới hạn.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: RESOURCE-BASED POLICY NUANCES & CROSS-ACCOUNT ===================== -->
+      <h2 id="resource-cross-account"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Resource-based policy, principal session và cross-account evaluation</h2>
+      <p class="lead">Bước ④ trong lưu đồ là chỗ dễ nhầm nhất. Trong <b>cùng một tài khoản</b>, cách <span class="t" data-vi="Chính sách gắn vào tài nguyên">resource-based policy</span> tác động lên quyết định cuối cùng <b>phụ thuộc vào principal được ghi trong policy</b> là IAM user, IAM role, hay <span class="t" data-vi="Phiên của vai trò đã assume">role session</span>.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Principal ghi trong resource-based policy</th><th>Ví dụ ARN</th><th>Có bị implicit deny ở identity/boundary/session giới hạn không?</th></tr></thead>
+        <tbody>
+          <tr><td><b>IAM user</b></td><td><code>arn:aws:iam::111122223333:user/exampleuser</code></td><td class="yes">Không – Allow trong resource policy đủ để được phép (identity-based policy và boundary chỉ có implicit deny không cản).</td></tr>
+          <tr><td><b>IAM role</b> (role ARN)</td><td><code>arn:aws:iam::111122223333:role/examplerole</code></td><td class="no">Có – bị giới hạn bởi implicit deny trong <b>permissions boundary</b> hoặc <b>session policy</b>. (Principal thực sự gửi request là role session.)</td></tr>
+          <tr><td><b>IAM role session</b></td><td><code>arn:aws:sts::111122223333:assumed-role/examplerole/session1</code></td><td class="yes">Không – quyền được cấp <b>trực tiếp cho session</b>, không bị identity-based/boundary/session policy (implicit deny) giới hạn.</td></tr>
+          <tr><td><b>AWS STS federated user</b> (từ <code>GetFederationToken</code>)</td><td><code>arn:aws:sts::111122223333:federated-user/exampleuser</code></td><td class="yes">Không – cấp trực tiếp cho session. Nhưng nếu resource policy ghi ARN của <b>IAM user đã tạo federation</b> thì lại bị boundary/session policy giới hạn.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Ngoại lệ: IAM role trust policy và KMS key policy</span>
+        <p>Với hầu hết tài nguyên, cùng tài khoản chỉ cần một Allow ở identity-based <i>hoặc</i> resource-based policy. Nhưng <b>IAM role trust policy</b> và <b>AWS KMS key policy</b> là ngoại lệ: chúng <b>phải Allow tường minh</b> cho principal – có quyền <code>sts:AssumeRole</code> hay <code>kms:Decrypt</code> trong identity-based policy là <b>chưa đủ</b> nếu trust policy / key policy không cho phép. Một số dịch vụ khác cũng có thể yêu cầu như vậy (xem tài liệu từng dịch vụ).</p></div>
+
+      <div class="callout note"><span class="ttl">Nhắc lại ví dụ Nikhil (tài liệu permissions boundary)</span>
+        <p>Nikhil có permissions boundary <b>Deny</b> mọi action trên bucket <code>logs</code>. Nếu ai đó thêm bucket policy cho Nikhil <code>PutObject</code> vào <code>logs</code> ⇒ <b>vẫn bị từ chối</b> (explicit deny thắng). Nhưng nếu resource policy của một secret trong AWS Secrets Manager cho Nikhil <code>secretsmanager:GetSecretValue</code> ⇒ Nikhil <b>lấy được secret</b>, vì boundary của anh chỉ có <b>implicit</b> deny với Secrets Manager, mà <b>implicit deny trong boundary không giới hạn resource-based policy</b> cấp cho IAM user.</p></div>
+
+      <h3>Cross-account: hai lần đánh giá</h3>
+      <p>Khi principal ở tài khoản này truy cập tài nguyên ở tài khoản khác: tài khoản chứa principal là <span class="t" data-vi="Tài khoản được tin cậy">trusted account</span>, tài khoản chứa tài nguyên là <span class="t" data-vi="Tài khoản tin cậy (sở hữu tài nguyên)">trusting account</span>. AWS thực hiện <b>hai lần đánh giá</b>:</p>
+      <ol class="steps">
+        <li><b>Ở trusted account (A)</b>: kiểm tra identity-based policy của requester và các policy giới hạn nó (permissions boundary, session policy, SCP).</li>
+        <li><b>Ở trusting account (B)</b>: kiểm tra resource-based policy gắn vào tài nguyên và các policy giới hạn nó (vd RCP).</li>
+        <li>Request chỉ được phép khi <b>cả hai</b> lần đánh giá đều trả về <b>Allow</b>. Explicit Deny ở bất kỳ tài khoản nào ⇒ Deny.</li>
+      </ol>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account A 111111111111 – trusted</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_Role.svg" alt="">Role Demo<small>Carlos (developer)</small></div>
+              <span class="arrow">đánh giá #1</span>
+              <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Identity-based policy<small>Allow s3:*Object* trên …-production/*<br>Deny s3:* trên *log*</small></div>
+            </div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account B 222222222222 – trusting</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/AWS-IoT_Policy.svg" alt="">Bucket policy<small>Principal: role/Demo<br>Allow GetObject*, PutObject*</small></div>
+              <span class="arrow">đánh giá #2</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">…-production<small>bucket</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> Ví dụ cross-account trong tài liệu IAM. Carlos ghi file vào bucket <code>…-production-logs</code> ⇒ đánh giá ở Account A trả về <b>Deny</b> (statement <code>DenyS3Logs</code> khớp <code>*log*</code>) ⇒ Deny cuối cùng. Ghi vào bucket <code>…-production</code> ⇒ A Allow (identity policy) và B Allow (bucket policy) ⇒ <b>Allow</b>. Lưu ý bucket policy chỉ cho tạo/sửa object, không cho xóa và không cho quản lý bucket.</figcaption>
+      </figure>
+
+      <h3>Hai cách cấp cross-account access (đã giới thiệu ở Bài 4)</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-IoT_Policy.svg" alt="">Resource-based policy</h4>
+          <ul>
+            <li>Gắn vào tài nguyên (S3, SQS, SNS, KMS, Lambda, Secrets Manager…), chỉ định principal ở account khác.</li>
+            <li>Principal <b>giữ nguyên quyền của mình</b> – vd đọc bucket B và ghi bucket A trong cùng một lệnh.</li>
+            <li>Chỉ dùng được với dịch vụ hỗ trợ resource-based policy.</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_Role.svg" alt="">Cross-account IAM role</h4>
+          <ul>
+            <li>Role ở account B có <b>trust policy</b> tin account/principal A; principal A cần quyền <code>sts:AssumeRole</code>.</li>
+            <li>Sau khi assume, dùng temporary credentials truy cập <b>nhiều tài nguyên</b> ở B theo permissions policy của role.</li>
+            <li>Principal <b>tạm bỏ quyền gốc</b> trong lúc dùng role.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Cross-account</span>
+        <ul>
+          <li>Bucket policy đã Allow principal ở account khác mà vẫn Access Denied ⇒ thiếu <b>identity-based policy</b> ở tài khoản của requester (hoặc bị SCP/boundary chặn ở đó).</li>
+          <li>Đọc object bị mã hóa SSE-KMS ở account khác ⇒ cần thêm quyền trên <b>KMS key policy</b> (key policy phải Allow tường minh) + quyền <code>kms:Decrypt</code> ở identity policy.</li>
+          <li>“<i>Allow all accounts in our organization to access the bucket, without listing each account ID</i>” ⇒ bucket policy với condition <code>aws:PrincipalOrgID</code> (kiến thức thi phổ biến).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: PERMISSIONS BOUNDARY ===================== -->
+      <h2 id="boundary"><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">Permissions boundary – đặt “trần” quyền cho user và role</h2>
+      <p class="lead"><span class="t" data-vi="Giới hạn quyền">Permissions boundary</span> là tính năng nâng cao: dùng một <b>managed policy</b> (AWS managed hoặc customer managed) để đặt <b>quyền tối đa</b> mà identity-based policy có thể cấp cho một <span class="t" data-vi="Thực thể IAM">IAM entity</span> (<b>user hoặc role</b>). Entity chỉ làm được những action <b>được cả identity-based policy lẫn boundary cho phép</b>.</p>
+
+      <div class="stats">
+        <div class="stat"><b>User + Role</b><span>chỉ đặt được boundary cho IAM user và IAM role – không đặt cho group, không đặt cho root user</span></div>
+        <div class="stat"><b>Managed</b><span>boundary phải là managed policy (AWS managed hoặc customer managed), không dùng inline</span></div>
+        <div class="stat"><b>0 quyền</b><span>boundary tự nó không cấp bất kỳ quyền nào</span></div>
+      </div>
+
+      <h3>Ví dụ Shirley</h3>
+      <p>Giả sử IAM user <b>Shirley</b> chỉ được quản lý Amazon S3, Amazon CloudWatch và Amazon EC2. Ta đặt boundary:</p>
+      <pre><span class="c">// Permissions boundary của Shirley</span>
+{
+  <span class="k">"Version"</span>: <span class="s">"2012-10-17"</span>,
+  <span class="k">"Statement"</span>: [{
+    <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+    <span class="k">"Action"</span>: [<span class="s">"s3:*"</span>, <span class="s">"cloudwatch:*"</span>, <span class="s">"ec2:*"</span>],
+    <span class="k">"Resource"</span>: <span class="s">"*"</span>
+  }]
+}</pre>
+      <p>Nếu gắn thêm cho Shirley một permissions policy cho phép <code>iam:CreateUser</code> thì khi Shirley tạo user, thao tác <b>thất bại</b> – boundary không cho phép <code>iam:CreateUser</code>. Với chỉ hai policy này, Shirley <b>không làm được gì cả</b> trên AWS: boundary cho S3/CloudWatch/EC2 nhưng identity policy không cấp các quyền đó; identity policy cấp IAM nhưng boundary chặn.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 700 300" width="700" role="img" aria-label="Quyền hiệu lực là phần giao giữa identity-based policy và permissions boundary">
+          <circle cx="270" cy="150" r="120" fill="rgba(20,126,186,.10)" stroke="#147EBA" stroke-width="2.5"/>
+          <circle cx="430" cy="150" r="120" fill="rgba(221,52,76,.10)" stroke="#DD344C" stroke-width="2.5"/>
+          <image href="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" x="170" y="70" width="40" height="40"/>
+          <text x="200" y="135" font-size="13" font-weight="700" text-anchor="middle" style="fill:#147EBA">Identity-based</text>
+          <text x="200" y="153" font-size="13" font-weight="700" text-anchor="middle" style="fill:#147EBA">policy</text>
+          <text x="200" y="178" font-size="11" text-anchor="middle" class="muted">vd iam:*, s3:ListBucket</text>
+          <image href="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" x="490" y="70" width="40" height="40"/>
+          <text x="500" y="135" font-size="13" font-weight="700" text-anchor="middle" style="fill:#DD344C">Permissions</text>
+          <text x="500" y="153" font-size="13" font-weight="700" text-anchor="middle" style="fill:#DD344C">boundary</text>
+          <text x="500" y="178" font-size="11" text-anchor="middle" class="muted">vd cloudwatch:*, ec2:*</text>
+          <text x="350" y="140" font-size="13" font-weight="800" text-anchor="middle">Effective</text>
+          <text x="350" y="158" font-size="13" font-weight="800" text-anchor="middle">permissions</text>
+          <text x="350" y="178" font-size="10.5" text-anchor="middle" class="muted">(phần giao)</text>
+          <text x="350" y="292" font-size="12" text-anchor="middle" class="muted">Explicit Deny ở bất kỳ vòng nào ⇒ luôn bị từ chối</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Quyền hiệu lực (effective permissions) của entity có boundary = <b>giao</b> của identity-based policy và permissions boundary. Áp dụng tương tự khi thêm SCP (giao 3 vòng) hoặc session policy (giao 3 vòng).</figcaption>
+      </figure>
+
+      <h3>Ủy quyền quản trị bằng boundary (ví dụ María &amp; Zhang)</h3>
+      <p>Đây là use case chính của boundary trong đề thi: <b>cho người khác tạo user/role mà không thể leo thang đặc quyền</b> (privilege escalation). María – admin công ty X – muốn giao việc tạo user cho Zhang, với quy tắc: user mới không được dùng IAM để tạo/quản lý user, group, role, policy; không truy cập bucket <code>logs</code> và instance <code>i-1234567890abcdef0</code>; không được gỡ boundary của chính mình.</p>
+      <ol class="steps">
+        <li><b>Tạo boundary cho user mới</b> – customer managed policy <code>XCompanyBoundaries</code>: Allow full S3/CloudWatch/EC2/DynamoDB; cho phép tự quản lý mật khẩu & access key của chính mình (<code>arn:aws:iam::*:user/${aws:username}</code>); <b>Deny</b> bucket <code>logs</code> và instance production.</li>
+        <li><b>Tạo boundary cho Zhang</b> – <code>DelegatedUserBoundary</code>: cho phép <code>iam:CreateUser</code>, <code>AttachUserPolicy</code>, <code>PutUserPermissionsBoundary</code>… <b>chỉ khi</b> điều kiện <code>iam:PermissionsBoundary</code> = ARN của <code>XCompanyBoundaries</code>; <b>Deny</b> sửa/xóa chính các policy boundary; <b>Deny</b> <code>iam:DeleteUserPermissionsBoundary</code>; không cho đụng vào user María (<code>NotResource</code>).</li>
+        <li><b>Gắn permissions policy cho Zhang</b> – <code>DelegatedUserPermissions</code>: <code>iam:*</code>, một số action CloudWatch đọc, <code>s3:ListBucket</code> trên ZhangBucket. Vì boundary của Zhang không có S3 ⇒ Zhang <b>không</b> làm được gì với S3, dù permissions policy cho phép.</li>
+        <li><b>Zhang tạo user Nikhil</b>: lần đầu quên chọn boundary ⇒ <b>Access denied</b>. Chọn <code>XCompanyBoundaries</code> làm boundary ⇒ tạo thành công. Nikhil có IAMFullAccess + AmazonS3ReadOnlyAccess nhưng thực tế chỉ đổi được mật khẩu của mình và đọc S3.</li>
+      </ol>
+
+      <pre><span class="c">// Trích DelegatedUserBoundary – chỉ được tạo user KÈM boundary bắt buộc</span>
+{
+  <span class="k">"Sid"</span>: <span class="s">"CreateOrChangeOnlyWithBoundary"</span>,
+  <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+  <span class="k">"Action"</span>: [<span class="s">"iam:CreateUser"</span>, <span class="s">"iam:AttachUserPolicy"</span>, <span class="s">"iam:PutUserPolicy"</span>,
+             <span class="s">"iam:DetachUserPolicy"</span>, <span class="s">"iam:DeleteUserPolicy"</span>, <span class="s">"iam:PutUserPermissionsBoundary"</span>],
+  <span class="k">"Resource"</span>: <span class="s">"*"</span>,
+  <span class="k">"Condition"</span>: { <span class="k">"StringEquals"</span>: {
+    <span class="k">"iam:PermissionsBoundary"</span>: <span class="s">"arn:aws:iam::123456789012:policy/XCompanyBoundaries"</span> } }
+},
+{ <span class="k">"Sid"</span>: <span class="s">"NoBoundaryUserDelete"</span>, <span class="k">"Effect"</span>: <span class="s">"Deny"</span>,
+  <span class="k">"Action"</span>: <span class="s">"iam:DeleteUserPermissionsBoundary"</span>, <span class="k">"Resource"</span>: <span class="s">"*"</span> }</pre>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp với boundary</span>
+        <ul>
+          <li>Boundary <b>không cấp quyền</b>: chỉ gắn boundary <code>s3:*</code> cho user mà không có identity policy ⇒ user vẫn không làm gì được với S3.</li>
+          <li>Boundary chỉ áp dụng cho <b>user và role</b> – “attach a permissions boundary to the Developers group” là <b>sai</b>.</li>
+          <li>Không dùng resource-based policy có <code>NotPrincipal</code> + <code>Deny</code> với principal có boundary: AWS cảnh báo nó <b>luôn deny</b> mọi principal có boundary, bất kể giá trị NotPrincipal. Hãy dùng <code>ArnNotEquals</code> với <code>aws:PrincipalArn</code>.</li>
+          <li>Ủy quyền mà quên <b>Deny sửa policy boundary</b> và <b>Deny gỡ boundary</b> ⇒ người được ủy quyền có thể tự nới trần quyền.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Boundary vs SCP</span>
+        <p>“<i>Allow developers to create IAM roles for their Lambda functions, but ensure those roles can never have more permissions than X</i>” ⇒ <b>permissions boundary</b> + điều kiện <code>iam:PermissionsBoundary</code> trên <code>iam:CreateRole</code>. “<i>Restrict what ALL users and roles in ALL accounts of the organization can do, including the root user of member accounts</i>” ⇒ <b>SCP</b> (Bài 6). Boundary = <b>một entity, trong một tài khoản</b>; SCP = <b>toàn bộ tài khoản/OU</b>.</p></div>
+
+      <!-- ===================== PHẦN 4: SESSION POLICIES & EFFECTIVE PERMISSIONS ===================== -->
+      <h2 id="session-policy"><img src="../assets/icons/res/AWS-Identity-Access-Management_Temporary-Security-Credential.svg" alt="">Session policy và tổng hợp quyền hiệu lực</h2>
+      <p class="lead"><span class="t" data-vi="Chính sách phiên">Session policy</span> là policy nâng cao mà bạn <b>truyền vào như một tham số</b> khi tạo phiên tạm thời bằng lập trình cho một role hoặc một STS federated user. Quyền của phiên = <b>giao</b> của identity-based policy của entity tạo phiên và session policy (và cả permissions boundary nếu có). Session policy <b>không thể cấp nhiều quyền hơn</b> identity-based policy của role được assume.</p>
+
+      <ul>
+        <li>Hỗ trợ trong các API: <code>AssumeRole</code>, <code>AssumeRoleWithSAML</code>, <code>AssumeRoleWithWebIdentity</code>, <code>GetFederationToken</code>. <b>Không hỗ trợ</b> trong <code>GetSessionToken</code>.</li>
+        <li>Truyền được 1 inline JSON policy và tối đa 10 managed policy ARN (giới hạn đã học ở Bài 4).</li>
+        <li>Use case: một ứng dụng dùng chung một role nhưng muốn <b>thu hẹp quyền theo từng người dùng/phiên</b>, vd chỉ cho phiên của user A truy cập prefix <code>s3://bucket/userA/</code>.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại policy</th><th>Cấp quyền?</th><th>Áp dụng cho</th><th>Kết hợp với identity-based</th></tr></thead>
+        <tbody>
+          <tr><td><b>Identity-based</b></td><td class="yes">Có</td><td>User, group, role</td><td>—</td></tr>
+          <tr><td><b>Resource-based</b></td><td class="yes">Có</td><td>Resource (principal có thể ở account khác)</td><td>Hợp (cùng account); cả hai phía (cross-account)</td></tr>
+          <tr><td><b>Permissions boundary</b></td><td class="no">Không</td><td>Một IAM user / role</td><td>Giao</td></tr>
+          <tr><td><b>SCP</b></td><td class="no">Không</td><td>Mọi <b>principal</b> trong account/OU (kể cả root của member account)</td><td>Giao</td></tr>
+          <tr><td><b>RCP</b></td><td class="no">Không</td><td>Mọi <b>resource</b> trong account/OU</td><td>Giao</td></tr>
+          <tr><td><b>Session policy</b></td><td class="no">Không</td><td>Một role session / federated user session</td><td>Giao</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>Thấy từ “<i>maximum permissions</i>”, “<i>guardrail</i>”, “<i>limit</i>”, “<i>cannot exceed</i>” ⇒ nghĩ tới <b>boundary / SCP / RCP / session policy</b> (không cấp quyền). Thấy “<i>grant</i>”, “<i>allow access</i>” ⇒ phải có <b>identity-based</b> hoặc <b>resource-based policy</b>.</p></div>
+
+      <!-- ===================== PHẦN 5: AWS STS ===================== -->
+      <h2 id="sts"><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-STS.svg" alt="">AWS STS và temporary security credentials</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ cấp token bảo mật">AWS Security Token Service (AWS STS)</span> tạo và cấp cho người dùng được tin cậy các <span class="t" data-vi="Thông tin xác thực bảo mật tạm thời">temporary security credentials</span> để kiểm soát truy cập tài nguyên AWS. Chúng hoạt động <b>gần như giống hệt</b> access key dài hạn, chỉ khác hai điểm: <b>ngắn hạn</b> (vài phút tới vài giờ, hết hạn là AWS không còn chấp nhận) và <b>không lưu cùng user</b> mà được <b>sinh động khi được yêu cầu</b>.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-STS.svg" alt="">
+          <div><h4>AWS STS</h4><span class="vi">Dịch vụ cấp token bảo mật</span><p>Cấp credentials tạm thời (access key ID + secret access key + session token). Mặc định là dịch vụ global với endpoint <code>https://sts.amazonaws.com</code>, có thêm Regional endpoints.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_Temporary-Security-Credential.svg" alt="">
+          <div><h4>Temporary credentials</h4><span class="vi">Thông tin xác thực tạm thời</span><p>Nền tảng của <b>IAM roles</b> và <b>identity federation</b>. Không cần nhúng key vào ứng dụng, không cần thu hồi thủ công khi hết dùng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Single-Sign-On.svg" alt="">
+          <div><h4>IAM Identity Center</h4><span class="vi">Đăng nhập một lần cho workforce</span><p>Cách AWS khuyến nghị để quản lý truy cập của con người vào <b>nhiều tài khoản</b> trong AWS Organizations, cấp short-term credentials.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">
+          <div><h4>Amazon Cognito</h4><span class="vi">Định danh cho người dùng ứng dụng</span><p><b>User pools</b>: sign-up/sign-in; <b>identity pools</b>: đổi token lấy IAM credentials qua <code>AssumeRoleWithWebIdentity</code>. Khuyến nghị cho mobile app.</p></div></div>
+      </div>
+
+      <h3>Ưu điểm so với long-term credentials (theo AWS)</h3>
+      <ul>
+        <li><b>Không phải phân phối hoặc nhúng</b> long-term credentials vào ứng dụng.</li>
+        <li>Cấp quyền truy cập cho người dùng <b>mà không cần tạo AWS identity</b> cho họ – đây là cơ sở của roles và federation.</li>
+        <li><b>Thời gian sống giới hạn</b>: không phải xoay vòng hay thu hồi tường minh; hết hạn thì không dùng lại được. Trước hoặc khi hết hạn, người dùng có thể xin credentials mới nếu vẫn còn quyền.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>15 phút</b><span>thời lượng tối thiểu của mọi loại STS credentials (DurationSeconds ≥ 900)</span></div>
+        <div class="stat"><b>1 giờ</b><span>mặc định cho AssumeRole*, tối đa = maximum session duration của role (≤ 12 giờ)</span></div>
+        <div class="stat"><b>36 giờ</b><span>tối đa của GetFederationToken / GetSessionToken khi gọi bằng IAM user (mặc định 12 giờ)</span></div>
+        <div class="stat"><b>Global</b><span>credentials lấy từ Regional endpoint nào cũng dùng được ở mọi Region</span></div>
+      </div>
+
+      <h3>So sánh các API của AWS STS</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>API</th><th>Ai gọi được</th><th>Thời lượng (min | max | default)</th><th>MFA</th><th>Session policy</th><th>Hạn chế / ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><b><code>AssumeRole</code></b></td><td>IAM user hoặc IAM role đã có temporary credentials</td><td>15 m | max session duration | 1 h</td><td class="yes">Có</td><td class="yes">Có</td><td>Cross-account, role switching, role chaining (≤ 1 h). Không gọi được GetFederationToken/GetSessionToken.</td></tr>
+          <tr><td><b><code>AssumeRoleWithSAML</code></b></td><td>Bất kỳ ai có SAML authentication response từ IdP đã biết</td><td>15 m | max session duration | 1 h</td><td class="no">Không</td><td class="yes">Có</td><td>Federation doanh nghiệp (AD FS, Shibboleth…).</td></tr>
+          <tr><td><b><code>AssumeRoleWithWebIdentity</code></b></td><td>Bất kỳ ai có JWT tương thích OIDC từ IdP đã biết</td><td>15 m | max session duration | 1 h</td><td class="no">Không</td><td class="yes">Có</td><td>GitHub Actions, mobile/web app (khuyến nghị đi qua Amazon Cognito).</td></tr>
+          <tr><td><b><code>GetFederationToken</code></b></td><td>IAM user hoặc root user</td><td>IAM user: 15 m | 36 h | 12 h<br>Root: 15 m | 1 h | 1 h</td><td class="no">Không</td><td class="yes">Có</td><td>Không gọi IAM API qua CLI/API; không gọi STS trừ GetCallerIdentity; <b>cho phép SSO vào console</b> (custom identity broker).</td></tr>
+          <tr><td><b><code>GetSessionToken</code></b></td><td>IAM user hoặc root user</td><td>IAM user: 15 m | 36 h | 12 h<br>Root: 15 m | 1 h | 1 h</td><td class="yes">Có</td><td class="no">Không</td><td>Dùng để <b>bảo vệ API bằng MFA</b>. Không gọi IAM API trừ khi kèm MFA; STS chỉ AssumeRole/GetCallerIdentity; không SSO console.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout note"><span class="ttl">GetCallerIdentity – “Tôi là ai?”</span>
+        <p><code>sts:GetCallerIdentity</code> <b>không cần quyền</b>: kể cả khi admin thêm explicit Deny cho action này, bạn vẫn gọi được, vì thông tin trả về giống hệt khi bị từ chối. Đây là lệnh debug kinh điển: <code>aws sts get-caller-identity</code> cho biết bạn đang dùng user/role nào.</p></div>
+
+      <h3>STS endpoints và Region</h3>
+      <p>Mặc định AWS STS là dịch vụ global với endpoint duy nhất <code>https://sts.amazonaws.com</code>, nhưng bạn có thể gọi tới endpoint ở bất kỳ Region được hỗ trợ nào để <b>giảm độ trễ</b>, hoặc chuyển sang Regional endpoint khác khi không liên lạc được endpoint ban đầu. <b>Credentials lấy từ Region nào cũng hoạt động toàn cầu.</b></p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Chọn API STS</span>
+        <ul>
+          <li>“<i>Users in another account / switch role</i>” ⇒ <code>AssumeRole</code>.</li>
+          <li>“<i>Corporate directory, Active Directory, SAML 2.0 IdP</i>” ⇒ <code>AssumeRoleWithSAML</code> (hoặc tốt hơn: IAM Identity Center).</li>
+          <li>“<i>Mobile app users sign in with Google/Facebook/Amazon</i>” ⇒ <b>Amazon Cognito identity pools</b> (bên dưới là <code>AssumeRoleWithWebIdentity</code>).</li>
+          <li>“<i>Require MFA for CLI/API calls by IAM users</i>” ⇒ <code>GetSessionToken</code> kèm MFA + condition <code>aws:MultiFactorAuthPresent</code>.</li>
+          <li>“<i>Reduce latency of STS calls / keep working if one endpoint is unreachable</i>” ⇒ dùng <b>Regional STS endpoints</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: ASSUMEROLE CROSS-ACCOUNT ===================== -->
+      <h2 id="assume-role"><img src="../assets/icons/res/AWS-Identity-Access-Management_Role.svg" alt="">AssumeRole trong thực tế: cross-account, EC2 và bên thứ ba</h2>
+      <p class="lead">Tài liệu STS gọi cross-account bằng role là cách tiếp cận <span class="t" data-vi="Ủy quyền">delegation</span>: định nghĩa user ở một tài khoản và dùng identity đó truy cập tài nguyên ở các tài khoản khác của tổ chức. Đây là kịch bản phổ biến nhất của <code>AssumeRole</code>.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/User.svg" alt="">Dev trong Account A<small>identity policy: Allow sts:AssumeRole<br>trên role/ProdReadOnly</small></div>
+          <span class="arrow">① AssumeRole</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-STS.svg" alt="">AWS STS<small>kiểm tra trust policy<br>của role ở Account B</small></div>
+          <span class="arrow">② temp creds</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_Temporary-Security-Credential.svg" alt="">AccessKeyId + Secret<br>+ SessionToken<small>hết hạn sau 15 m–12 h</small></div>
+          <span class="arrow">③ gọi API</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">Tài nguyên Account B<small>theo permissions policy<br>của role</small></div>
+        </div>
+        <figcaption><b>Hình 4.</b> Luồng AssumeRole cross-account: cần <b>hai nửa</b> – identity policy ở Account A cho phép <code>sts:AssumeRole</code> trên ARN role, và trust policy của role ở Account B tin principal/Account A. Request ③ được ký bằng temporary credentials; principal lúc này là <b>role session</b> <code>arn:aws:sts::B:assumed-role/ProdReadOnly/&lt;session-name&gt;</code>.</figcaption>
+      </figure>
+
+      <pre><span class="c">// Trust policy của role ProdReadOnly ở Account B (444455556666)</span>
+{
+  <span class="k">"Version"</span>: <span class="s">"2012-10-17"</span>,
+  <span class="k">"Statement"</span>: [{
+    <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+    <span class="k">"Principal"</span>: { <span class="k">"AWS"</span>: <span class="s">"arn:aws:iam::111122223333:root"</span> },
+    <span class="k">"Action"</span>: <span class="s">"sts:AssumeRole"</span>,
+    <span class="k">"Condition"</span>: { <span class="k">"Bool"</span>: { <span class="k">"aws:MultiFactorAuthPresent"</span>: <span class="s">"true"</span> } }
+  }]
+}</pre>
+      <p>Principal <code>arn:aws:iam::111122223333:root</code> nghĩa là <b>tin cả tài khoản A</b> (không phải chỉ root user): admin của A quyết định user/role nào trong A được phép gọi AssumeRole bằng identity policy. Điều kiện MFA buộc người assume phải đăng nhập bằng MFA.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Kịch bản</th><th>Cách dùng STS</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td>Nhân viên chuyển giữa Dev/Prod account</td><td><b>Switch role</b> (AssumeRole) hoặc IAM Identity Center</td><td>Không tạo IAM user ở mỗi account.</td></tr>
+          <tr><td>Ứng dụng trên EC2</td><td>Role gắn qua instance profile; credentials tạm thời có sẵn cho mọi ứng dụng trên instance</td><td>Không lưu credentials dài hạn trên instance.</td></tr>
+          <tr><td>Vendor SaaS bên thứ ba giám sát tài khoản</td><td>Cross-account role + <b>External ID</b> trong condition <code>sts:ExternalId</code></td><td>Chống confused deputy (Bài 4).</td></tr>
+          <tr><td>Kiểm tra role nào đang tin principal ngoài “zone of trust”</td><td><b>IAM Access Analyzer</b> (external access findings cho IAM roles)</td><td>Phần 8.</td></tr>
+          <tr><td>Role A → role B → role C</td><td>Role chaining</td><td>Session tối đa 1 giờ.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Temporary credentials đã cấp <b>vẫn hợp lệ tới khi hết hạn</b>. Khi credentials của role bị lộ, dùng tính năng <b>Revoke active sessions</b> trên IAM console – nó gắn inline policy Deny mọi request có <code>aws:TokenIssueTime</code> cũ hơn thời điểm thu hồi (kiến thức thi phổ biến). Chỉ sửa permissions policy hay đổi trust policy là chưa “đá” được phiên đang chạy theo cách mong muốn.</li>
+          <li>Trust policy chỉ nói “ai được assume”; với cross-account, user ở account A còn cần <b>identity policy ở A</b> Allow <code>sts:AssumeRole</code> – vì cross-account luôn cần Allow ở cả hai phía.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: FEDERATION ===================== -->
+      <h2 id="federation"><img src="../assets/icons/svc/AWS-Single-Sign-On.svg" alt="">Identity federation: IAM Identity Center, SAML 2.0, OIDC, Amazon Cognito</h2>
+      <p class="lead">Best practice: <b>yêu cầu người dùng là con người dùng federation với</b> <span class="t" data-vi="Nhà cung cấp định danh">identity provider (IdP)</span> thay vì tạo IAM user riêng lẻ. Với IdP, bạn quản lý định danh <b>bên ngoài AWS</b> và cấp quyền cho các định danh đó dùng tài nguyên AWS – hữu ích khi tổ chức đã có thư mục người dùng (corporate directory) hoặc khi xây mobile/web app cần truy cập AWS. Không cần viết code đăng nhập riêng, không phải nhúng access key.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại federation</th><th>Loại tài khoản</th><th>Quản lý truy cập của…</th><th>Identity source hỗ trợ</th></tr></thead>
+        <tbody>
+          <tr><td><b>IAM Identity Center</b> <span class="muted">(khuyến nghị cho con người)</span></td><td>Nhiều account trong AWS Organizations</td><td>Workforce – nhân viên</td><td>SAML 2.0, Managed Active Directory, Identity Center directory</td></tr>
+          <tr><td><b>Federation với IAM</b> (IAM identity provider)</td><td>Một account độc lập</td><td>Con người trong triển khai ngắn hạn, quy mô nhỏ; <b>machine users</b></td><td>SAML 2.0, OIDC</td></tr>
+          <tr><td><b>Amazon Cognito identity pools</b></td><td>Bất kỳ</td><td>Người dùng của <b>ứng dụng</b> cần IAM authorization</td><td>SAML 2.0, OIDC, một số social IdP OAuth 2.0 (Facebook, Google, Amazon)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>SAML 2.0 federation</h3>
+      <p><span class="t" data-vi="Ngôn ngữ đánh dấu xác nhận bảo mật 2.0">SAML 2.0</span> là chuẩn mở mà nhiều IdP dùng (Microsoft AD FS, Shibboleth…). Nó cho phép <b>federated single sign-on (SSO)</b> vào AWS Management Console hoặc gọi API <b>mà không cần tạo IAM user cho từng người</b>. Hai use case: (1) ứng dụng/người dùng gọi AWS API bằng <span class="t" data-vi="Xác nhận SAML">SAML assertion</span>; (2) web-based SSO vào console từ portal của tổ chức.</p>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Traditional-server.svg" alt="">Mạng nội bộ của tổ chức</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Client.svg" alt="">Client app<small>người dùng</small></div>
+              <span class="arrow">① xin xác thực</span>
+              <div class="node"><img src="../assets/icons/svc/AWS-Directory-Service.svg" alt="">IdP (AD FS…)<small>② xác thực với identity store<br>③ trả SAML assertion</small></div>
+            </div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Security-Identity-Compliance.svg" alt="">AWS Cloud</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-STS.svg" alt="">AWS STS<small>④ AssumeRoleWithSAML<br>(provider ARN + role ARN + assertion)</small></div>
+              <span class="arrow">⑥ temp creds</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Amazon S3<small>⑦ gọi API</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> Luồng SAML-based federation cho API access (ví dụ ứng dụng backup lên S3 trong tài liệu IAM): IdP xác thực người dùng và tạo SAML assertion → client gọi <code>AssumeRoleWithSAML</code> → (⑤ tùy chọn: STS giải mã assertion nếu bật SAML encryption) → nhận temporary credentials → gọi Amazon S3. Người dùng không có quyền truy cập AWS trực tiếp.</figcaption>
+      </figure>
+
+      <h3>Thiết lập trust giữa IdP và AWS (SAML)</h3>
+      <ol class="steps">
+        <li><b>Đăng ký AWS là service provider (SP)</b> trong IdP bằng SAML metadata của AWS: <code>https://&lt;region-code&gt;.signin.aws.amazon.com/static/saml-metadata.xml</code> (hoặc bản global <code>https://signin.aws.amazon.com/static/saml-metadata.xml</code>).</li>
+        <li><b>Tạo metadata XML của IdP</b> gồm issuer name, ngày tạo, ngày hết hạn và key để AWS kiểm tra assertion. Nếu dùng encrypted assertion thì tạo thêm private key (.pem) để STS giải mã.</li>
+        <li><b>Tạo SAML identity provider trong IAM</b> và upload metadata.</li>
+        <li><b>Tạo IAM role</b> với trust policy có <code>Principal: {"Federated": "arn:aws:iam::&lt;acct&gt;:saml-provider/&lt;name&gt;"}</code>, action <code>sts:AssumeRoleWithSAML</code>. SAML IdP dùng trong trust policy phải <b>cùng tài khoản</b> với role.</li>
+        <li><b>Định nghĩa assertion</b> trong IdP để map user/group của tổ chức sang các IAM role (nhóm khác nhau ⇒ role khác nhau).</li>
+        <li>Ứng dụng gọi <code>AssumeRoleWithSAML</code>; thành công ⇒ nhận temporary credentials để ký request.</li>
+      </ol>
+
+      <pre><span class="c">// Trust policy cho role SAML – chỉ người dùng có affiliation = staff</span>
+{
+  <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+  <span class="k">"Principal"</span>: { <span class="k">"Federated"</span>: <span class="s">"arn:aws:iam::111122223333:saml-provider/ExampleOrgSSOProvider"</span> },
+  <span class="k">"Action"</span>: <span class="s">"sts:AssumeRoleWithSAML"</span>,
+  <span class="k">"Condition"</span>: {
+    <span class="k">"StringEquals"</span>: { <span class="k">"saml:aud"</span>: <span class="s">"https://us-east-1.signin.aws.amazon.com/saml"</span> },
+    <span class="k">"ForAllValues:StringLike"</span>: { <span class="k">"saml:edupersonaffiliation"</span>: [<span class="s">"staff"</span>] }
+  }
+}</pre>
+      <ul>
+        <li><code>saml:aud</code> là URL sign-in endpoint – phải khớp recipient attribute của IdP. AWS <b>khuyến nghị dùng Regional sign-in endpoint</b> (và cấu hình nhiều endpoint) để tăng khả năng chịu lỗi của federation; chỉ cấu hình một endpoint thì nếu endpoint đó không khả dụng sẽ không federate được.</li>
+        <li>Để tạo thư mục S3 riêng cho từng người dùng federated, dùng policy variables <code>${saml:namequalifier}</code> và <code>${saml:sub}</code>, kèm điều kiện <code>saml:sub_type = persistent</code> (giá trị <code>transient</code> đổi mỗi phiên nên không dùng làm định danh).</li>
+        <li>IAM SAML federation hỗ trợ <b>encrypted SAML responses</b>; IAM Identity Center và Amazon Cognito thì không hỗ trợ encrypted assertion từ IAM SAML IdP.</li>
+      </ul>
+
+      <h3>OIDC federation</h3>
+      <p>Ví dụ AWS đưa ra: <b>GitHub Actions</b> cần truy cập Amazon S3 và DynamoDB. AWS <b>“strongly” khuyến nghị không lưu long-term credentials</b> trong ứng dụng chạy ngoài AWS; thay vào đó ứng dụng nhận một <span class="t" data-vi="Token web JSON">JSON Web Token (JWT)</span> từ OIDC IdP rồi đổi lấy temporary credentials gắn với một IAM role chỉ có đúng quyền cần thiết (<code>AssumeRoleWithWebIdentity</code>).</p>
+      <ul>
+        <li>Hỗ trợ cả <b>machine-to-machine</b> (CI/CD pipeline, script tự động, serverless) và người dùng là con người.</li>
+        <li>STS OIDC federation hỗ trợ Login with Amazon, Facebook, Google và mọi IdP tương thích OIDC.</li>
+        <li>JWT có claim <code>exp</code>; IAM chấp nhận thêm <b>5 phút</b> sau thời điểm hết hạn để bù lệch đồng hồ (clock skew) theo chuẩn OIDC Core 1.0.</li>
+        <li>Với <b>mobile app</b>, AWS khuyến nghị <b>Amazon Cognito</b>: tạo định danh duy nhất cho người dùng, hỗ trợ <b>truy cập khách (unauthenticated/guest)</b>, đồng bộ dữ liệu khi người dùng chuyển thiết bị.</li>
+      </ul>
+
+      <h3>Các lựa chọn khác</h3>
+      <ul>
+        <li><b>Custom identity broker</b>: hệ thống xác thực riêng của tổ chức gọi STS rồi gọi federation endpoint <code>https://signin.aws.amazon.com/federation</code> để tạo URL đăng nhập console không cần mật khẩu.</li>
+        <li><b>IAM Roles Anywhere</b>: cho máy chạy <b>ngoài AWS</b> lấy temporary credentials bằng chứng chỉ X.509 (Bài 4).</li>
+        <li><b>Account access manager</b>: tính năng IAM gán các IAM role sẵn có trong các account của tổ chức cho user/group của IAM Identity Center, dùng cùng hoặc thay cho permission sets.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Federation</span>
+        <ul>
+          <li>“<i>Employees use on-premises Active Directory, need SSO to multiple AWS accounts</i>” ⇒ <b>IAM Identity Center</b> (identity source: Active Directory hoặc external SAML IdP).</li>
+          <li>“<i>Single account, existing SAML 2.0 IdP</i>” ⇒ <b>IAM SAML identity provider + role</b> (<code>AssumeRoleWithSAML</code>).</li>
+          <li>“<i>CI/CD pipeline outside AWS (GitHub Actions) must deploy without storing access keys</i>” ⇒ <b>IAM OIDC identity provider</b> + role (<code>AssumeRoleWithWebIdentity</code>).</li>
+          <li>“<i>Mobile app users, social login, guest access</i>” ⇒ <b>Amazon Cognito</b> (user pools + identity pools).</li>
+          <li>“<i>On-premises servers with existing PKI</i>” ⇒ <b>IAM Roles Anywhere</b>.</li>
+        </ul></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Federation giống khách sạn chấp nhận <b>CCCD/hộ chiếu do nhà nước cấp</b> (IdP) thay vì tự làm thẻ căn cước riêng cho từng khách. Lễ tân (AWS STS) kiểm tra giấy tờ hợp lệ rồi phát <b>thẻ phòng tạm thời</b> (temporary credentials) chỉ mở đúng phòng (role), hết hạn khi trả phòng.</p></div>
+
+      <!-- ===================== PHẦN 8: IAM ACCESS ANALYZER ===================== -->
+      <h2 id="access-analyzer"><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-IAM-Access-Analyzer.svg" alt="">IAM Access Analyzer – kiểm tra ai đang truy cập được gì</h2>
+      <p class="lead"><span class="t" data-vi="Bộ phân tích quyền truy cập IAM">IAM Access Analyzer</span> dùng <b>suy luận logic (logic-based reasoning)</b> để phân tích policy, giúp phát hiện truy cập ngoài ý muốn, truy cập thừa và viết policy đúng chuẩn. Khi bật, bạn tạo một <span class="t" data-vi="Bộ phân tích">analyzer</span> cho <b>toàn organization</b> hoặc <b>một account</b> – phạm vi đó gọi là <span class="t" data-vi="Vùng tin cậy">zone of trust</span>; mọi truy cập từ principal trong zone of trust được coi là tin cậy.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-IAM-Access-Analyzer.svg" alt="">
+          <div><h4>External access analyzer</h4><span class="vi">Truy cập từ bên ngoài</span><p>Tìm tài nguyên được chia sẻ với thực thể <b>ngoài zone of trust</b> (account khác, anonymous/public…). Mỗi tài nguyên chia sẻ ra ngoài ⇒ một <b>finding</b>. Preview tác động trước khi deploy policy.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Security-Hub_Finding.svg" alt="">
+          <div><h4>Internal access analyzer</h4><span class="vi">Truy cập nội bộ</span><p>Với tài nguyên quan trọng được chọn (S3, RDS snapshot, DynamoDB…), cho biết <b>principal nào trong org/account</b> truy cập được.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">
+          <div><h4>Unused access analyzer</h4><span class="vi">Truy cập không dùng</span><p>Liên tục giám sát role/user: <b>unused roles, unused access keys, unused passwords</b>, dịch vụ/action không dùng. <b>Tính phí</b> theo số role/user mỗi tháng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Trusted-Advisor_Checklist-Security.svg" alt="">
+          <div><h4>Policy validation &amp; custom checks</h4><span class="vi">Kiểm tra policy</span><p>Validation theo grammar và best practices (security warnings, errors, general warnings, suggestions). Custom policy checks: policy mới có <b>cấp thêm quyền</b> so với bản cũ không, có cho phép action nhạy cảm không.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">
+          <div><h4>Policy generation</h4><span class="vi">Sinh policy</span><p>Phân tích <b>CloudTrail logs</b> trong khoảng thời gian chọn để sinh policy chỉ gồm action/dịch vụ entity thực sự dùng – tiến tới least privilege.</p></div></div>
+      </div>
+
+      <h3>Những điểm hay hỏi</h3>
+      <ul>
+        <li>External access analyzer là <b>Regional</b>: chỉ phân tích tài nguyên <b>trong Region nơi bật</b>. Muốn giám sát toàn bộ ⇒ tạo analyzer ở <b>mỗi Region</b> có dùng tài nguyên được hỗ trợ. Unused access analyzer thì findings <b>không phụ thuộc Region</b>, không cần tạo ở mỗi Region.</li>
+        <li>Policy mới/sửa được phân tích trong khoảng <b>30 phút</b>; trường hợp hiếm không nhận được thông báo thay đổi thì quét định kỳ trong vòng <b>24 giờ</b>; có thể <b>Rescan</b> thủ công (API <code>StartResourceScan</code>).</li>
+        <li>Tài nguyên hỗ trợ external access: <b>S3 buckets</b> (và directory buckets), <b>IAM roles</b>, <b>KMS keys</b>, <b>Lambda functions/layers</b>, <b>SQS queues</b>, <b>Secrets Manager secrets</b>, <b>SNS topics</b>, <b>EBS snapshots</b>, <b>RDS DB snapshots / DB cluster snapshots</b>, <b>ECR repositories</b>, <b>EFS file systems</b>, <b>DynamoDB streams/tables</b>.</li>
+        <li>Phí: unused access tính theo số IAM role/user được phân tích mỗi analyzer mỗi tháng (service-linked role không tính); internal access tính theo số tài nguyên giám sát; custom policy checks tính theo số API request.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Access Analyzer</span>
+        <ul>
+          <li>“<i>Identify S3 buckets, KMS keys or IAM roles shared with external accounts or the public</i>” ⇒ <b>IAM Access Analyzer external access</b> (nhớ bật ở mọi Region dùng tài nguyên).</li>
+          <li>“<i>Find unused IAM roles and access keys across the organization</i>” ⇒ <b>unused access analyzer</b>.</li>
+          <li>“<i>Create a least-privilege policy based on the role's activity over the last 90 days</i>” ⇒ <b>policy generation</b> từ CloudTrail.</li>
+          <li>“<i>Block a pipeline if a policy change grants new permissions</i>” ⇒ <b>custom policy checks</b> (CheckNoNewAccess).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: TỪ KHÓA ĐỀ ===================== -->
+      <h2 id="tu-khoa"><img src="../assets/icons/cat/Security-Identity-Compliance.svg" alt="">Từ khóa trong đề ⇒ đáp án</h2>
+      <p class="lead">Toàn bộ nội dung bài này thuộc <b>Domain 1 – Design Secure Architectures</b>, Task 1.1 “<i>Design secure access to AWS resources</i>”: cross-account access, federation với dịch vụ định danh, temporary credentials, chiến lược phân quyền linh hoạt.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cụm từ trong đề</th><th>Hướng đáp án</th></tr></thead>
+        <tbody>
+          <tr><td><i>Allowed by IAM policy but still AccessDenied</i></td><td>Explicit Deny ở đâu đó, hoặc SCP / boundary / session policy thiếu Allow</td></tr>
+          <tr><td><i>Delegate IAM administration without privilege escalation</i></td><td><b>Permissions boundary</b> + condition <code>iam:PermissionsBoundary</code></td></tr>
+          <tr><td><i>Limit an assumed-role session to a subset of the role's permissions</i></td><td><b>Session policy</b></td></tr>
+          <tr><td><i>Developers in account A need read access to resources in account B</i></td><td><b>Cross-account role</b> (trust policy + sts:AssumeRole) hoặc resource-based policy</td></tr>
+          <tr><td><i>Third-party vendor</i></td><td>Cross-account role + <b>External ID</b></td></tr>
+          <tr><td><i>Corporate Active Directory, SSO, multiple accounts</i></td><td><b>IAM Identity Center</b></td></tr>
+          <tr><td><i>SAML 2.0 IdP, single account</i></td><td>IAM SAML provider + <code>AssumeRoleWithSAML</code></td></tr>
+          <tr><td><i>GitHub Actions / external CI without long-term keys</i></td><td>IAM OIDC provider + <code>AssumeRoleWithWebIdentity</code></td></tr>
+          <tr><td><i>Mobile app, social identity providers, guest users</i></td><td><b>Amazon Cognito</b> identity pools</td></tr>
+          <tr><td><i>MFA-protected API access for IAM users</i></td><td><code>GetSessionToken</code> với MFA</td></tr>
+          <tr><td><i>Resources shared outside the organization/account</i></td><td><b>IAM Access Analyzer</b> external access</td></tr>
+          <tr><td><i>Compromised role credentials</i></td><td><b>Revoke active sessions</b> (Deny theo <code>aws:TokenIssueTime</code>)</td></tr>
+        </tbody>
+      </table></div>
+
+      <!-- TÓM TẮT -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li>Mặc định <b>implicit deny</b> (trừ root user có full access). Thứ tự: <b>explicit Deny ở bất kỳ policy nào ⇒ Deny</b> → RCP → SCP → resource-based → identity-based → permissions boundary → session policy.</li>
+          <li>Identity-based + resource-based (cùng account) = <b>hợp</b>. Identity-based với boundary / SCP / RCP / session policy = <b>giao</b>. Cross-account = <b>hai lần đánh giá</b>, cả hai phải Allow.</li>
+          <li>Cùng account: resource-based policy cấp trực tiếp cho <b>IAM user</b> hoặc <b>role session ARN</b> không bị implicit deny của identity/boundary/session giới hạn; cấp cho <b>role ARN</b> thì bị boundary/session policy giới hạn. Ngoại lệ: <b>role trust policy và KMS key policy</b> phải Allow tường minh.</li>
+          <li><b>Permissions boundary</b>: managed policy, chỉ cho <b>user và role</b>, đặt quyền tối đa, <b>không cấp quyền</b>. Dùng để ủy quyền tạo user/role an toàn với condition <code>iam:PermissionsBoundary</code> + Deny gỡ/sửa boundary.</li>
+          <li><b>Session policy</b>: truyền khi tạo session (AssumeRole*, GetFederationToken), chỉ thu hẹp quyền.</li>
+          <li><b>AWS STS</b>: credentials tạm thời = access key ID + secret + session token; tối thiểu 15 phút; AssumeRole* mặc định 1 giờ, tối đa = max session duration (≤ 12 giờ); GetFederationToken/GetSessionToken của IAM user tối đa 36 giờ (mặc định 12 giờ), của root tối đa 1 giờ.</li>
+          <li><code>AssumeRole</code> (cross-account, MFA được), <code>AssumeRoleWithSAML</code> (doanh nghiệp), <code>AssumeRoleWithWebIdentity</code> (OIDC/Cognito), <code>GetSessionToken</code> (MFA cho API, không session policy), <code>GetFederationToken</code> (custom broker, SSO console).</li>
+          <li>STS global endpoint <code>sts.amazonaws.com</code> + Regional endpoints (giảm độ trễ, dự phòng); credentials dùng được mọi Region.</li>
+          <li>Federation: <b>IAM Identity Center</b> cho workforce nhiều account; <b>IAM SAML/OIDC provider</b> cho một account hoặc machine; <b>Amazon Cognito</b> cho người dùng app/mobile; <b>IAM Roles Anywhere</b> cho máy ngoài AWS.</li>
+          <li><b>IAM Access Analyzer</b>: external access (Regional – bật mỗi Region), internal access, unused access (tính phí), policy validation, custom policy checks, policy generation từ CloudTrail.</li>
+        </ul></div>
+
+      <!-- THUẬT NGỮ -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Policy evaluation logic</dt><dd><b>Logic đánh giá chính sách</b> – quy trình AWS dùng để quyết định Allow/Deny cho một request.</dd></div>
+        <div><dt>Request context</dt><dd><b>Ngữ cảnh request</b> – action, resource, principal, môi trường, dữ liệu tài nguyên mà AWS thu thập để chọn policy áp dụng.</dd></div>
+        <div><dt>Enforcement code</dt><dd><b>Mã thực thi đánh giá quyền</b> – thành phần của AWS ra quyết định cuối cùng.</dd></div>
+        <div><dt>Implicit deny / Explicit deny</dt><dd><b>Từ chối ngầm định / tường minh</b> – không có Allow / có statement Deny khớp (luôn thắng).</dd></div>
+        <div><dt>Effective permissions</dt><dd><b>Quyền hiệu lực</b> – quyền thực sự sau khi kết hợp mọi loại policy áp dụng.</dd></div>
+        <div><dt>Union / Intersection</dt><dd><b>Hợp / Giao</b> – cách kết hợp quyền giữa các loại policy.</dd></div>
+        <div><dt>Service control policy (SCP)</dt><dd><b>Chính sách kiểm soát dịch vụ</b> – giới hạn quyền tối đa của principal trong account/OU (AWS Organizations).</dd></div>
+        <div><dt>Resource control policy (RCP)</dt><dd><b>Chính sách kiểm soát tài nguyên</b> – giới hạn quyền tối đa trên resource trong account/OU; mặc định có <code>RCPFullAWSAccess</code>.</dd></div>
+        <div><dt>Permissions boundary</dt><dd><b>Giới hạn quyền</b> – managed policy đặt quyền tối đa cho một IAM user/role, không cấp quyền.</dd></div>
+        <div><dt>Privilege escalation</dt><dd><b>Leo thang đặc quyền</b> – tự cấp thêm quyền vượt mức cho phép; boundary dùng để ngăn chặn.</dd></div>
+        <div><dt>Session policy</dt><dd><b>Chính sách phiên</b> – policy truyền khi tạo session, thu hẹp quyền của session.</dd></div>
+        <div><dt>Session principal</dt><dd><b>Chủ thể phiên</b> – role session hoặc STS federated user session.</dd></div>
+        <div><dt>Role session ARN</dt><dd><b>ARN phiên vai trò</b> – dạng <code>arn:aws:sts::acct:assumed-role/role/session</code>, là principal thực sự khi dùng role.</dd></div>
+        <div><dt>AWS STS federated user principal</dt><dd><b>Chủ thể người dùng liên kết qua STS</b> – session tạo bởi <code>GetFederationToken</code>.</dd></div>
+        <div><dt>AWS Security Token Service (AWS STS)</dt><dd><b>Dịch vụ cấp token bảo mật</b> – cấp temporary security credentials.</dd></div>
+        <div><dt>Session token</dt><dd><b>Token phiên</b> – phần thứ ba của temporary credentials, bắt buộc gửi kèm request.</dd></div>
+        <div><dt>AssumeRole / AssumeRoleWithSAML / AssumeRoleWithWebIdentity</dt><dd><b>Các API nhận role</b> – lần lượt cho IAM principal, SAML assertion, OIDC JWT.</dd></div>
+        <div><dt>GetSessionToken</dt><dd><b>API lấy token phiên</b> – cho IAM user/root, hỗ trợ MFA, không hỗ trợ session policy.</dd></div>
+        <div><dt>GetFederationToken</dt><dd><b>API lấy token liên kết</b> – cho custom identity broker, hỗ trợ session policy và SSO console.</dd></div>
+        <div><dt>STS Regional endpoint</dt><dd><b>Điểm cuối STS theo vùng</b> – giảm độ trễ và dự phòng so với global endpoint.</dd></div>
+        <div><dt>Trusted account / Trusting account</dt><dd><b>Tài khoản được tin cậy (chứa principal) / tài khoản tin cậy (chứa resource)</b>.</dd></div>
+        <div><dt>SAML 2.0</dt><dd><b>Ngôn ngữ đánh dấu xác nhận bảo mật 2.0</b> – chuẩn mở cho federated SSO.</dd></div>
+        <div><dt>SAML assertion</dt><dd><b>Xác nhận SAML</b> – thông tin người dùng do IdP ký, gửi cho STS.</dd></div>
+        <div><dt>Service provider (SP)</dt><dd><b>Nhà cung cấp dịch vụ</b> – bên tin cậy IdP (ở đây là AWS).</dd></div>
+        <div><dt>SAML identity provider (IAM)</dt><dd><b>Thực thể IdP SAML trong IAM</b> – lưu metadata để thiết lập trust với IdP.</dd></div>
+        <div><dt>OpenID Connect (OIDC)</dt><dd><b>Chuẩn định danh OpenID Connect</b> – federation dựa trên JWT (GitHub Actions, Google…).</dd></div>
+        <div><dt>JSON Web Token (JWT)</dt><dd><b>Token web JSON</b> – token do OIDC IdP cấp, đổi lấy credentials qua AssumeRoleWithWebIdentity.</dd></div>
+        <div><dt>Custom identity broker</dt><dd><b>Bộ môi giới định danh tùy chỉnh</b> – ứng dụng tự xác thực người dùng rồi gọi STS, tạo URL đăng nhập console.</dd></div>
+        <div><dt>Amazon Cognito user pool / identity pool</dt><dd><b>Kho người dùng / Kho định danh Cognito</b> – sign-up/sign-in / đổi token lấy IAM credentials.</dd></div>
+        <div><dt>Zone of trust</dt><dd><b>Vùng tin cậy</b> – account hoặc organization được chọn khi tạo analyzer.</dd></div>
+        <div><dt>Analyzer / Finding</dt><dd><b>Bộ phân tích / Phát hiện</b> – trong IAM Access Analyzer.</dd></div>
+        <div><dt>Unused access</dt><dd><b>Truy cập không dùng</b> – role, access key, password, action không được sử dụng.</dd></div>
+        <div><dt>Custom policy checks</dt><dd><b>Kiểm tra policy tùy chỉnh</b> – đối chiếu policy với tiêu chuẩn bảo mật riêng (vd không cấp quyền mới).</dd></div>
+        <div><dt>Revoke active sessions</dt><dd><b>Thu hồi phiên đang hoạt động</b> – Deny request có token cấp trước một thời điểm.</dd></div>
+      </dl>
+
+      <!-- CÂU HỎI -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A developer's IAM role has an identity-based policy that allows s3:PutObject on all buckets. The account is a member of an organization in AWS Organizations. When the developer tries to upload an object to a bucket in the same account, the request fails with an AccessDenied error. The bucket has no bucket policy. What is the MOST likely cause?</div>
+          <ol class="opts">
+            <li data-k="A">The bucket must have a bucket policy that allows the role, because same-account access always requires both policies.</li>
+            <li data-k="B">A service control policy (SCP) applied to the account does not allow, or explicitly denies, s3:PutObject.</li>
+            <li data-k="C">The role's trust policy does not include the s3:PutObject action.</li>
+            <li data-k="D">The developer must use an IAM user instead of a role to write to Amazon S3.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Với account thuộc Organizations, quyền là <b>giao</b> của identity-based policy và SCP (và RCP); SCP không Allow hoặc có Deny ⇒ Deny dù identity policy cho phép. <b>A sai</b>: trong cùng account chỉ cần một Allow ở identity-based <i>hoặc</i> resource-based (S3 không phải ngoại lệ như KMS/role trust). <b>C sai</b>: trust policy chỉ quy định ai được assume role (<code>sts:AssumeRole</code>), không chứa quyền S3. <b>D sai</b>: role hoàn toàn ghi S3 được; đổi sang IAM user trái best practice.</div>
+          <div class="trans">
+            <div class="tq">IAM role của một lập trình viên có identity-based policy cho phép s3:PutObject trên mọi bucket. Tài khoản này là thành viên của một tổ chức trong AWS Organizations. Khi lập trình viên thử tải một object lên bucket trong cùng tài khoản, request thất bại với lỗi AccessDenied. Bucket không có bucket policy. Nguyên nhân MOST likely (khả dĩ nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bucket phải có bucket policy cho phép role, vì truy cập trong cùng tài khoản luôn cần cả hai policy.</span><span class="why">Sai: trong cùng tài khoản chỉ cần một Allow ở identity-based hoặc resource-based policy; S3 không phải ngoại lệ như KMS key policy hay role trust policy.</span></li>
+              <li data-k="B"><span class="tv">Một service control policy (SCP) áp dụng cho tài khoản không cho phép, hoặc từ chối tường minh, s3:PutObject.</span><span class="why">Đúng: với tài khoản trong Organizations, quyền hiệu lực là giao của identity-based policy và SCP; SCP không Allow hoặc có Deny thì request bị từ chối dù identity policy cho phép.</span></li>
+              <li data-k="C"><span class="tv">Trust policy của role không chứa action s3:PutObject.</span><span class="why">Sai: trust policy chỉ quy định ai được assume role (sts:AssumeRole), không chứa quyền S3.</span></li>
+              <li data-k="D"><span class="tv">Lập trình viên phải dùng IAM user thay vì role để ghi vào Amazon S3.</span><span class="why">Sai: role hoàn toàn ghi được vào S3; chuyển sang IAM user còn trái best practice.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company wants to allow its application team leads to create IAM roles for AWS Lambda functions without involving the central security team. The security team must ensure that any role created by the team leads can never be granted permissions beyond a predefined set of services, and that the team leads cannot remove this restriction. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create an SCP that allows only the predefined services and attach it to the team leads' IAM user group.</li>
+            <li data-k="B">Ask the team leads to attach the AWS managed policy PowerUserAccess to every role they create.</li>
+            <li data-k="C">Use IAM Access Analyzer policy generation to create the roles for the team leads automatically.</li>
+            <li data-k="D">Create a managed policy to use as a permissions boundary. Allow iam:CreateRole only when the iam:PermissionsBoundary condition key equals that policy's ARN, and explicitly deny modifying the boundary policy and deleting permissions boundaries.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Đây đúng mô hình “María &amp; Zhang” trong tài liệu: boundary đặt trần quyền cho role mới; condition <code>iam:PermissionsBoundary</code> bắt buộc gắn boundary khi tạo; Deny sửa/xóa boundary chống leo thang đặc quyền. <b>A sai</b>: SCP gắn vào root/OU/account, <b>không gắn vào IAM group</b>, và không kiểm soát việc tạo role có boundary. <b>B sai</b>: PowerUserAccess quá rộng, không có cơ chế cưỡng chế. <b>C sai</b>: policy generation tạo policy từ CloudTrail, không phải cơ chế giới hạn bắt buộc.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn cho phép các trưởng nhóm ứng dụng tự tạo IAM role cho AWS Lambda function mà không cần nhóm bảo mật trung tâm can thiệp. Nhóm bảo mật phải đảm bảo bất kỳ role nào do trưởng nhóm tạo không bao giờ được cấp quyền vượt ra ngoài một tập dịch vụ định sẵn, và các trưởng nhóm không thể gỡ bỏ giới hạn này. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một SCP chỉ cho phép các dịch vụ định sẵn và gắn nó vào IAM user group của các trưởng nhóm.</span><span class="why">Sai: SCP chỉ gắn vào root/OU/account, không gắn được vào IAM group, và không kiểm soát việc tạo role có boundary.</span></li>
+              <li data-k="B"><span class="tv">Yêu cầu các trưởng nhóm gắn AWS managed policy PowerUserAccess cho mọi role họ tạo.</span><span class="why">Sai: PowerUserAccess quá rộng và chỉ là "yêu cầu" – không có cơ chế cưỡng chế, trưởng nhóm có thể gắn policy khác.</span></li>
+              <li data-k="C"><span class="tv">Dùng tính năng tạo policy (policy generation) của IAM Access Analyzer để tự động tạo role cho các trưởng nhóm.</span><span class="why">Sai: policy generation chỉ sinh policy từ hoạt động CloudTrail, không phải cơ chế giới hạn quyền bắt buộc.</span></li>
+              <li data-k="D"><span class="tv">Tạo một managed policy dùng làm permissions boundary. Chỉ cho phép iam:CreateRole khi condition key iam:PermissionsBoundary bằng ARN của policy đó, và từ chối tường minh việc sửa policy boundary cũng như xóa permissions boundary.</span><span class="why">Đúng: boundary đặt trần quyền cho role mới, điều kiện iam:PermissionsBoundary buộc phải gắn boundary khi tạo, và Deny sửa/xóa boundary chặn leo thang đặc quyền.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company has 25 AWS accounts managed in AWS Organizations. Employees authenticate with the company's on-premises Microsoft Active Directory. The company wants employees to sign in once and access the accounts they are assigned to with temporary credentials, with the LEAST operational overhead. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Enable AWS IAM Identity Center, connect it to Active Directory as the identity source, and assign permission sets to users and groups for each account.</li>
+            <li data-k="B">Create IAM users for every employee in each account and synchronize passwords with Active Directory using a script.</li>
+            <li data-k="C">Create a SAML identity provider and SAML federation roles separately in each of the 25 accounts.</li>
+            <li data-k="D">Create one IAM user per department and share the access keys with the employees in that department.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> AWS khuyến nghị IAM Identity Center để quản lý tập trung truy cập của workforce vào <b>nhiều account trong Organizations</b>, identity source có thể là Active Directory, cấp short-term credentials. <b>B sai</b>: IAM user cho từng người ở từng account là long-term credentials và overhead rất lớn. <b>C sai</b>: chạy được nhưng phải cấu hình SAML provider + role ở 25 account – IAM federation phù hợp cho một account độc lập, overhead cao hơn. <b>D sai</b>: chia sẻ access key vi phạm best practice và mất truy vết.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 25 tài khoản AWS được quản lý trong AWS Organizations. Nhân viên xác thực bằng Microsoft Active Directory on-premises của công ty. Công ty muốn nhân viên đăng nhập một lần (sign in once) và truy cập các tài khoản được phân công bằng credentials tạm thời, với LEAST operational overhead (ít gánh nặng vận hành nhất). Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật AWS IAM Identity Center, kết nối với Active Directory làm identity source, và gán permission set cho user và group ở từng tài khoản.</span><span class="why">Đúng: IAM Identity Center quản lý tập trung truy cập của nhân viên vào nhiều tài khoản trong Organizations, dùng AD làm nguồn định danh, cấp credentials ngắn hạn qua single sign-on.</span></li>
+              <li data-k="B"><span class="tv">Tạo IAM user cho mọi nhân viên ở từng tài khoản và đồng bộ mật khẩu với Active Directory bằng một script.</span><span class="why">Sai: IAM user là long-term credentials, và quản lý user ở 25 tài khoản bằng script là overhead rất lớn.</span></li>
+              <li data-k="C"><span class="tv">Tạo SAML identity provider và các role SAML federation riêng ở từng tài khoản trong 25 tài khoản.</span><span class="why">Sai: chạy được nhưng phải cấu hình riêng ở 25 tài khoản – overhead cao hơn nhiều so với Identity Center tập trung.</span></li>
+              <li data-k="D"><span class="tv">Tạo một IAM user cho mỗi phòng ban và chia sẻ access key cho nhân viên trong phòng ban đó.</span><span class="why">Sai: chia sẻ access key dài hạn vi phạm best practice và mất khả năng truy vết từng người.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company uses GitHub Actions, which runs outside AWS, to deploy infrastructure into an AWS account. The security team requires that no long-term AWS credentials be stored in GitHub. Which solution meets this requirement?</div>
+          <ol class="opts">
+            <li data-k="A">Create an IAM user for the pipeline and store its access keys as encrypted GitHub secrets, rotating them every 90 days.</li>
+            <li data-k="B">Use IAM Roles Anywhere with the GitHub-provided JWT as the X.509 certificate.</li>
+            <li data-k="C">Create an IAM OIDC identity provider for GitHub and an IAM role whose trust policy allows sts:AssumeRoleWithWebIdentity from that provider; the workflow exchanges its OIDC token for temporary credentials.</li>
+            <li data-k="D">Call GetSessionToken from the pipeline using the root user's credentials.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Tài liệu OIDC federation lấy chính ví dụ GitHub Actions: ứng dụng nhận JWT từ OIDC IdP và đổi lấy temporary credentials của một IAM role (<code>AssumeRoleWithWebIdentity</code>), không lưu long-term credentials. <b>A sai</b>: vẫn là long-term credentials. <b>B sai</b>: IAM Roles Anywhere dùng chứng chỉ X.509 từ PKI, JWT không phải chứng chỉ X.509. <b>D sai</b>: GetSessionToken cần long-term credentials để gọi, và dùng root user là vi phạm nghiêm trọng.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng GitHub Actions (chạy bên ngoài AWS) để triển khai hạ tầng vào một tài khoản AWS. Nhóm bảo mật yêu cầu không được lưu bất kỳ credentials AWS dài hạn nào trong GitHub. Giải pháp nào đáp ứng yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một IAM user cho pipeline và lưu access key của nó dưới dạng GitHub secret được mã hóa, xoay vòng mỗi 90 ngày.</span><span class="why">Sai: dù mã hóa và xoay vòng, đây vẫn là long-term credentials lưu trong GitHub.</span></li>
+              <li data-k="B"><span class="tv">Dùng IAM Roles Anywhere với JWT do GitHub cung cấp làm chứng chỉ X.509.</span><span class="why">Sai: IAM Roles Anywhere cần chứng chỉ X.509 từ PKI; JWT không phải chứng chỉ X.509.</span></li>
+              <li data-k="C"><span class="tv">Tạo một IAM OIDC identity provider cho GitHub và một IAM role có trust policy cho phép sts:AssumeRoleWithWebIdentity từ provider đó; workflow đổi OIDC token của nó lấy credentials tạm thời.</span><span class="why">Đúng: OIDC federation cho phép workflow đổi JWT lấy temporary credentials của IAM role qua AssumeRoleWithWebIdentity – không lưu key dài hạn nào.</span></li>
+              <li data-k="D"><span class="tv">Gọi GetSessionToken từ pipeline bằng credentials của root user.</span><span class="why">Sai: GetSessionToken cần long-term credentials để gọi, và dùng root user là vi phạm nghiêm trọng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,E">
+          <div class="qh">Which TWO statements about permissions boundaries are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">A permissions boundary sets the maximum permissions that identity-based policies can grant to an IAM user or role, but it does not grant permissions on its own.</li>
+            <li data-k="B">A permissions boundary can be attached to an IAM user group to limit all members of the group.</li>
+            <li data-k="C">A permissions boundary must be written as an inline policy.</li>
+            <li data-k="D">An explicit Deny in a resource-based policy is ignored if the user's permissions boundary allows the action.</li>
+            <li data-k="E">If a user has an identity-based policy allowing iam:CreateUser but the boundary allows only s3:*, cloudwatch:*, and ec2:*, the user cannot create IAM users.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, E.</b> Boundary là managed policy đặt quyền tối đa cho entity (user/role) và tự nó không cấp quyền; quyền hiệu lực là giao – ví dụ Shirley trong tài liệu không tạo được user vì boundary không có <code>iam:CreateUser</code>. <b>B sai</b>: boundary chỉ áp dụng cho user và role. <b>C sai</b>: boundary dùng AWS managed hoặc customer managed policy. <b>D sai</b>: explicit Deny ở bất kỳ policy nào cũng thắng.</div>
+          <div class="trans">
+            <div class="tq">HAI phát biểu nào về permissions boundary là đúng? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Permissions boundary đặt mức quyền tối đa mà identity-based policy có thể cấp cho một IAM user hoặc role, nhưng tự nó không cấp quyền.</span><span class="why">Đúng: boundary chỉ là "trần" quyền; quyền hiệu lực là giao giữa boundary và identity-based policy.</span></li>
+              <li data-k="B"><span class="tv">Permissions boundary có thể gắn vào một IAM user group để giới hạn mọi thành viên của group.</span><span class="why">Sai: boundary chỉ áp dụng cho IAM user và role, không gắn vào group.</span></li>
+              <li data-k="C"><span class="tv">Permissions boundary phải được viết dưới dạng inline policy.</span><span class="why">Sai: boundary dùng managed policy (AWS managed hoặc customer managed), không phải inline policy.</span></li>
+              <li data-k="D"><span class="tv">Một Deny tường minh trong resource-based policy sẽ bị bỏ qua nếu permissions boundary của user cho phép action đó.</span><span class="why">Sai: explicit Deny ở bất kỳ policy nào cũng luôn thắng.</span></li>
+              <li data-k="E"><span class="tv">Nếu một user có identity-based policy cho phép iam:CreateUser nhưng boundary chỉ cho phép s3:*, cloudwatch:* và ec2:*, thì user không thể tạo IAM user.</span><span class="why">Đúng: iam:CreateUser nằm ngoài boundary nên không thuộc phần giao – user không tạo được IAM user.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">An IAM role named Demo in account 111111111111 has an identity-based policy that allows s3:PutObject on arn:aws:s3:::reports-bucket/*. The bucket reports-bucket is in account 222222222222 and has no bucket policy. Users who assume the Demo role receive AccessDenied when uploading objects. What should the solutions architect do to allow the uploads?</div>
+          <ol class="opts">
+            <li data-k="A">Add a permissions boundary to the Demo role that allows s3:PutObject.</li>
+            <li data-k="B">Add an SCP to account 111111111111 that allows s3:PutObject.</li>
+            <li data-k="C">Add a bucket policy to reports-bucket in account 222222222222 that allows s3:PutObject for the principal arn:aws:iam::111111111111:role/Demo.</li>
+            <li data-k="D">Add s3:PutObject to the Demo role's trust policy.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Cross-account cần hai lần đánh giá: account 111… đã Allow qua identity policy, nhưng account 222… (trusting) không có resource-based policy cho phép ⇒ Deny. Thêm bucket policy chỉ định role Demo làm principal giải quyết vấn đề (giống ví dụ Carlos trong tài liệu). <b>A, B sai</b>: boundary và SCP không cấp quyền, và vấn đề nằm ở phía account sở hữu bucket. <b>D sai</b>: trust policy chỉ kiểm soát ai assume được role.</div>
+          <div class="trans">
+            <div class="tq">Một IAM role tên Demo ở tài khoản 111111111111 có identity-based policy cho phép s3:PutObject trên arn:aws:s3:::reports-bucket/*. Bucket reports-bucket nằm ở tài khoản 222222222222 và không có bucket policy. Người dùng assume role Demo nhận lỗi AccessDenied khi tải object lên. Solutions architect nên làm gì để cho phép tải lên?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một permissions boundary cho phép s3:PutObject vào role Demo.</span><span class="why">Sai: boundary không cấp quyền, và vấn đề nằm ở phía tài khoản sở hữu bucket.</span></li>
+              <li data-k="B"><span class="tv">Thêm một SCP cho phép s3:PutObject vào tài khoản 111111111111.</span><span class="why">Sai: SCP không cấp quyền, và phía tài khoản 111… vốn đã cho phép; thiếu là ở tài khoản 222….</span></li>
+              <li data-k="C"><span class="tv">Thêm bucket policy vào reports-bucket ở tài khoản 222222222222 cho phép s3:PutObject đối với principal arn:aws:iam::111111111111:role/Demo.</span><span class="why">Đúng: truy cập cross-account cần cả identity policy ở tài khoản gọi và resource-based policy ở tài khoản sở hữu bucket; thêm bucket policy là mảnh còn thiếu.</span></li>
+              <li data-k="D"><span class="tv">Thêm s3:PutObject vào trust policy của role Demo.</span><span class="why">Sai: trust policy chỉ kiểm soát ai được assume role, không cấp quyền S3.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company requires IAM users who work with the AWS CLI to authenticate with MFA before they can stop or terminate Amazon EC2 instances. The IAM users have long-term access keys configured on their laptops. Which approach meets this requirement?</div>
+          <ol class="opts">
+            <li data-k="A">Have the users call AssumeRoleWithWebIdentity with their MFA code.</li>
+            <li data-k="B">Add a condition aws:MultiFactorAuthPresent = true to the policy statement that allows ec2:StopInstances and ec2:TerminateInstances, and have users call sts:GetSessionToken with their MFA device serial number and code to obtain temporary credentials.</li>
+            <li data-k="C">Use GetFederationToken with the MFA code, because it is the only STS API that supports MFA.</li>
+            <li data-k="D">Enable MFA on the root user; this automatically requires MFA for all IAM users' CLI calls.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <code>GetSessionToken</code> hỗ trợ MFA – credentials tạm thời trả về mang thông tin đã xác thực MFA, nên điều kiện <code>aws:MultiFactorAuthPresent</code> trong policy được thỏa mãn. <b>A sai</b>: AssumeRoleWithWebIdentity dành cho OIDC JWT và không hỗ trợ MFA. <b>C sai</b>: theo bảng so sánh STS, GetFederationToken <b>không</b> hỗ trợ MFA; API hỗ trợ MFA là AssumeRole và GetSessionToken. <b>D sai</b>: MFA của root không ảnh hưởng IAM user.</div>
+          <div class="trans">
+            <div class="tq">Một công ty yêu cầu các IAM user làm việc với AWS CLI phải xác thực MFA trước khi có thể stop hoặc terminate Amazon EC2 instance. Các IAM user đã cấu hình access key dài hạn trên laptop của họ. Cách tiếp cận nào đáp ứng yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Yêu cầu user gọi AssumeRoleWithWebIdentity kèm mã MFA của họ.</span><span class="why">Sai: AssumeRoleWithWebIdentity dành cho token OIDC (JWT) và không hỗ trợ MFA.</span></li>
+              <li data-k="B"><span class="tv">Thêm điều kiện aws:MultiFactorAuthPresent = true vào policy statement cho phép ec2:StopInstances và ec2:TerminateInstances, và yêu cầu user gọi sts:GetSessionToken với số serial thiết bị MFA và mã MFA để lấy credentials tạm thời.</span><span class="why">Đúng: GetSessionToken hỗ trợ MFA – credentials tạm thời trả về mang thông tin đã xác thực MFA nên điều kiện trong policy được thỏa mãn.</span></li>
+              <li data-k="C"><span class="tv">Dùng GetFederationToken với mã MFA, vì đây là STS API duy nhất hỗ trợ MFA.</span><span class="why">Sai: GetFederationToken không hỗ trợ MFA; các API hỗ trợ MFA là AssumeRole và GetSessionToken.</span></li>
+              <li data-k="D"><span class="tv">Bật MFA cho root user; việc này tự động yêu cầu MFA cho mọi lệnh CLI của IAM user.</span><span class="why">Sai: MFA của root chỉ áp dụng cho root user, không ảnh hưởng IAM user.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A security team wants to be notified about any Amazon S3 bucket, AWS KMS key, or IAM role in the company's organization that grants access to principals outside the organization. The company uses resources in three AWS Regions. Which solution meets these requirements with the LEAST effort?</div>
+          <ol class="opts">
+            <li data-k="A">Run IAM credential reports daily in each account and review them.</li>
+            <li data-k="B">Create an IAM Access Analyzer unused access analyzer in one Region.</li>
+            <li data-k="C">Use IAM Access Analyzer policy generation for every role and bucket.</li>
+            <li data-k="D">Create an IAM Access Analyzer external access analyzer with the organization as the zone of trust in each of the three Regions.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> External access analyzer phát hiện tài nguyên chia sẻ với thực thể ngoài zone of trust (hỗ trợ S3, KMS keys, IAM roles…); vì nó <b>chỉ phân tích tài nguyên trong Region được bật</b>, phải tạo ở mỗi Region đang dùng. <b>A sai</b>: credential report chỉ liệt kê trạng thái credentials của IAM user. <b>B sai</b>: unused access tìm quyền không dùng, không tìm truy cập từ bên ngoài. <b>C sai</b>: policy generation sinh policy từ CloudTrail, không phát hiện chia sẻ ra ngoài.</div>
+          <div class="trans">
+            <div class="tq">Một nhóm bảo mật muốn được thông báo về bất kỳ bucket Amazon S3, AWS KMS key hay IAM role nào trong tổ chức của công ty cấp quyền truy cập cho principal bên ngoài tổ chức. Công ty dùng tài nguyên ở ba AWS Region. Giải pháp nào đáp ứng các yêu cầu này với LEAST effort (ít công sức nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chạy IAM credential report hằng ngày ở từng tài khoản và xem xét chúng.</span><span class="why">Sai: credential report chỉ liệt kê trạng thái credentials của IAM user, không phát hiện tài nguyên chia sẻ ra ngoài.</span></li>
+              <li data-k="B"><span class="tv">Tạo một IAM Access Analyzer loại unused access analyzer ở một Region.</span><span class="why">Sai: unused access analyzer tìm quyền không dùng, không tìm truy cập từ bên ngoài tổ chức.</span></li>
+              <li data-k="C"><span class="tv">Dùng tính năng tạo policy (policy generation) của IAM Access Analyzer cho mọi role và bucket.</span><span class="why">Sai: policy generation sinh policy từ CloudTrail, không phát hiện việc chia sẻ ra ngoài.</span></li>
+              <li data-k="D"><span class="tv">Tạo một IAM Access Analyzer loại external access analyzer với zone of trust là tổ chức, ở mỗi Region trong ba Region.</span><span class="why">Đúng: external access analyzer phát hiện S3, KMS key, IAM role… chia sẻ ra ngoài zone of trust; vì chỉ phân tích tài nguyên trong Region được bật nên phải tạo ở cả ba Region.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company is building a mobile application. Users must be able to sign in with Google or Facebook accounts, and some features must be available to guest users who have not signed in. The app needs to upload photos directly to Amazon S3. Which solution is the MOST secure and scalable?</div>
+          <ol class="opts">
+            <li data-k="A">Use Amazon Cognito identity pools with the social identity providers and unauthenticated access enabled, mapping users to IAM roles with least-privilege S3 permissions.</li>
+            <li data-k="B">Embed the access keys of an IAM user with s3:PutObject permission in the mobile application.</li>
+            <li data-k="C">Create an IAM user for every person who installs the app.</li>
+            <li data-k="D">Create a SAML 2.0 identity provider in IAM for Google and Facebook and call AssumeRoleWithSAML from the app.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Với mobile app, AWS khuyến nghị Amazon Cognito: hỗ trợ cùng các IdP như STS (Google, Facebook, Amazon…), hỗ trợ <b>unauthenticated (guest) access</b>, identity pools cấp temporary credentials của IAM role qua <code>AssumeRoleWithWebIdentity</code>. <b>B sai</b>: nhúng long-term key vào app có thể bị trích xuất. <b>C sai</b>: không mở rộng được (giới hạn 5.000 IAM user/account) và trái best practice. <b>D sai</b>: Google/Facebook là social/OIDC provider, không phải SAML IdP của doanh nghiệp, và không hỗ trợ guest.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang xây dựng ứng dụng di động. Người dùng phải đăng nhập được bằng tài khoản Google hoặc Facebook, và một số tính năng phải dùng được cho khách (guest) chưa đăng nhập. Ứng dụng cần tải ảnh trực tiếp lên Amazon S3. Giải pháp nào MOST secure and scalable (an toàn và mở rộng tốt nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng Amazon Cognito identity pool với các social identity provider và bật truy cập không xác thực (unauthenticated access), ánh xạ người dùng tới IAM role có quyền S3 tối thiểu.</span><span class="why">Đúng: Cognito identity pool hỗ trợ Google/Facebook và khách chưa đăng nhập, cấp temporary credentials của IAM role least-privilege – an toàn và mở rộng tới hàng triệu người dùng.</span></li>
+              <li data-k="B"><span class="tv">Nhúng access key của một IAM user có quyền s3:PutObject vào ứng dụng di động.</span><span class="why">Sai: key dài hạn nhúng trong app có thể bị trích xuất và lạm dụng.</span></li>
+              <li data-k="C"><span class="tv">Tạo một IAM user cho mỗi người cài đặt ứng dụng.</span><span class="why">Sai: không mở rộng được (giới hạn 5.000 IAM user mỗi tài khoản) và trái best practice.</span></li>
+              <li data-k="D"><span class="tv">Tạo một SAML 2.0 identity provider trong IAM cho Google và Facebook và gọi AssumeRoleWithSAML từ ứng dụng.</span><span class="why">Sai: Google/Facebook là social/OIDC provider, không phải SAML IdP doanh nghiệp, và cách này không hỗ trợ khách chưa đăng nhập.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,D">
+          <div class="qh">An application assumes a single IAM role that has read access to an entire Amazon S3 bucket. The company wants each end user's session to access only that user's own prefix in the bucket, without creating a separate role for each user. In addition, the security team wants to know which STS APIs support this approach. Which TWO statements are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Attach a permissions boundary to the S3 bucket that restricts each prefix.</li>
+            <li data-k="B">Pass a session policy that allows access only to the user's prefix when calling AssumeRole; the session's permissions are the intersection of the role's identity-based policy and the session policy.</li>
+            <li data-k="C">A session policy can grant the session additional S3 permissions that the role's identity-based policy does not include.</li>
+            <li data-k="D">Session policies can be passed with AssumeRole, AssumeRoleWithSAML, AssumeRoleWithWebIdentity, and GetFederationToken, but not with GetSessionToken.</li>
+            <li data-k="E">Session policies are evaluated before explicit Deny statements, so they can override a Deny in an SCP.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, D.</b> Session policy truyền khi tạo session, thu hẹp quyền = giao với identity-based policy của role – cách chuẩn để giới hạn theo từng phiên mà dùng chung một role; bảng so sánh STS ghi rõ GetSessionToken không hỗ trợ session policy. <b>A sai</b>: permissions boundary chỉ gắn vào IAM user/role, không gắn vào bucket. <b>C sai</b>: session policy không thể cấp nhiều quyền hơn identity-based policy. <b>E sai</b>: explicit Deny được kiểm tra đầu tiên và luôn thắng.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng assume một IAM role duy nhất có quyền đọc toàn bộ một bucket Amazon S3. Công ty muốn phiên làm việc (session) của mỗi người dùng cuối chỉ truy cập được prefix riêng của người đó trong bucket, mà không phải tạo role riêng cho từng người. Ngoài ra, nhóm bảo mật muốn biết những STS API nào hỗ trợ cách tiếp cận này. HAI phát biểu nào là đúng? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gắn một permissions boundary vào bucket S3 để giới hạn từng prefix.</span><span class="why">Sai: permissions boundary chỉ gắn vào IAM user/role, không gắn được vào bucket.</span></li>
+              <li data-k="B"><span class="tv">Truyền một session policy chỉ cho phép truy cập prefix của người dùng khi gọi AssumeRole; quyền của session là giao giữa identity-based policy của role và session policy.</span><span class="why">Đúng: session policy thu hẹp quyền theo từng phiên trong khi vẫn dùng chung một role – đúng yêu cầu đề bài.</span></li>
+              <li data-k="C"><span class="tv">Session policy có thể cấp thêm cho session các quyền S3 mà identity-based policy của role không có.</span><span class="why">Sai: session policy chỉ thu hẹp, không thể cấp nhiều quyền hơn identity-based policy của role.</span></li>
+              <li data-k="D"><span class="tv">Session policy có thể được truyền với AssumeRole, AssumeRoleWithSAML, AssumeRoleWithWebIdentity và GetFederationToken, nhưng không với GetSessionToken.</span><span class="why">Đúng: theo bảng so sánh STS API, GetSessionToken là API duy nhất trong nhóm này không hỗ trợ session policy.</span></li>
+              <li data-k="E"><span class="tv">Session policy được đánh giá trước các câu lệnh Deny tường minh, nên có thể ghi đè một Deny trong SCP.</span><span class="why">Sai: explicit Deny được kiểm tra đầu tiên và luôn thắng, không policy nào ghi đè được.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- NGUỒN -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic_policy-eval-denyallow.html" target="_blank" rel="noopener">How AWS enforcement code logic evaluates requests to allow or deny access</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic-cross-account.html" target="_blank" rel="noopener">Cross-account policy evaluation logic</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_sts-comparison.html" target="_blank" rel="noopener">Compare AWS STS credentials</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_saml.html" target="_blank" rel="noopener">SAML 2.0 federation</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_oidc.html" target="_blank" rel="noopener">OIDC federation</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/what-is-access-analyzer.html" target="_blank" rel="noopener">Using AWS IAM Access Analyzer</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

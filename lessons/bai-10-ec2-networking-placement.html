@@ -1,0 +1,954 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 10 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="10" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <span class="t" data-vi="Nhóm bảo mật – tường lửa ảo">Security Group</span> hoạt động thế nào: chỉ có rule <b>allow</b>, <b>stateful</b> nhờ <span class="t" data-vi="Theo dõi kết nối">connection tracking</span>, tham chiếu security group khác làm nguồn (<i>security group referencing</i>) và các quota quan trọng.</li>
+          <li>Phân biệt <b>private IPv4</b>, <b>public IPv4</b>, <b>IPv6</b> và <span class="t" data-vi="Địa chỉ IP tĩnh co giãn">Elastic IP address</span> – địa chỉ nào giữ nguyên, địa chỉ nào đổi khi stop/start, và chi phí public IPv4.</li>
+          <li>Dùng <span class="t" data-vi="Card mạng ảo co giãn">Elastic Network Interface (ENI)</span> cho management network, appliance, dual-homed instance và giải pháp failover “low-budget high availability”.</li>
+          <li>Chọn đúng <span class="t" data-vi="Nhóm sắp đặt">placement group</span>: <b>cluster</b> (độ trễ thấp), <b>partition</b> (hệ phân tán lớn, topology-aware), <b>spread</b> (ít instance quan trọng, tách phần cứng) – kèm các giới hạn hay thi.</li>
+          <li>Biết khi nào cần <span class="t" data-vi="Mạng tăng cường">enhanced networking</span> (ENA, ENA Express) và khi nào cần <span class="t" data-vi="Bộ điều hợp fabric co giãn">Elastic Fabric Adapter (EFA)</span> cho HPC/ML tightly coupled.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 2 – Compute</span>
+        <p>Bài 8 đã dạy instance type, AMI, user data, IMDS (địa chỉ link-local <code>169.254.169.254</code>), vòng đời và hibernate; Bài 9 dạy các phương thức mua (On-Demand Capacity Reservation được nhắc lại ở đây khi nói về cluster placement group). Bài này tập trung vào <b>lớp mạng gắn trực tiếp với instance</b>. Phần <b>VPC, subnet, route table, internet gateway, NAT</b> học ở <b>Bài 20</b>; so sánh chi tiết <b>Security Group vs Network ACL</b>, ephemeral ports, Flow Logs ở <b>Bài 21</b>; ELB ở <b>Bài 12</b>. Ở đây chỉ nhắc tới VPC/NACL ở mức đủ để hiểu security group và ENI.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Networking-Content-Delivery.svg" alt="">Bức tranh tổng thể: một EC2 instance “nối mạng” ra sao?</h2>
+      <p class="lead">Khi launch một instance vào một subnet của <span class="t" data-vi="Đám mây riêng ảo">VPC</span>, EC2 gắn cho nó một <b>card mạng ảo</b> (network interface) mang <b>địa chỉ IP</b>, được bảo vệ bởi một hoặc nhiều <b>security group</b>; tùy nhu cầu, bạn gắn thêm <b>Elastic IP</b>, thêm <b>ENI phụ</b>, bật <b>enhanced networking/EFA</b> và chọn <b>placement group</b> để ảnh hưởng tới vị trí vật lý. Đề SAA-C03 hỏi các mảnh này rải rác ở Domain 1 (bảo mật – security group) và Domain 3 (hiệu năng – placement group, EFA).</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Firewall.svg" alt="">
+          <div><h4>Security Group</h4><span class="vi">Tường lửa ảo, stateful</span><p>Kiểm soát traffic vào/ra instance (thực chất là ra/vào từng network interface). Chỉ rule allow. Miễn phí.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg" alt="">
+          <div><h4>Elastic Network Interface</h4><span class="vi">Card mạng ảo</span><p>Mang private IP, public IP, EIP, MAC, security group; tháo ra gắn sang instance khác cùng AZ được.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Elastic-IP-Address.svg" alt="">
+          <div><h4>Elastic IP address</h4><span class="vi">Public IPv4 tĩnh</span><p>Thuộc account cho tới khi release; remap sang instance khác để che lỗi. Mặc định 5/Region.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">
+          <div><h4>Placement Group</h4><span class="vi">Ảnh hưởng vị trí phần cứng</span><p>Cluster / Partition / Spread / Precision time. Miễn phí tạo.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Adapter.svg" alt="">
+          <div><h4>Enhanced networking (ENA)</h4><span class="vi">Mạng hiệu năng cao SR-IOV</span><p>Băng thông cao, PPS cao, độ trễ thấp ổn định; tới 100 Gbps. Không tốn thêm phí.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-ParallelCluster.svg" alt="">
+          <div><h4>Elastic Fabric Adapter</h4><span class="vi">Network device cho HPC/ML</span><p>OS-bypass qua Libfabric, giao thức SRD; dùng với MPI, NCCL. Không tốn thêm phí.</p></div></div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><b>5</b><span>security group mặc định / network interface (tăng tới 16)</span></div>
+        <div class="stat"><b>60</b><span>rule inbound + 60 rule outbound / security group (mặc định)</span></div>
+        <div class="stat"><b>5</b><span>Elastic IP / Region / account (mặc định, tăng được)</span></div>
+        <div class="stat"><b>7</b><span>partition / AZ (partition PG) &amp; 7 instance đang chạy / AZ (spread PG)</span></div>
+        <div class="stat"><b>10 Gbps</b><span>single-flow trong cluster PG (ngoài PG: 5 Gbps)</span></div>
+        <div class="stat"><b>100 Gbps</b><span>tốc độ tối đa của ENA trên instance hỗ trợ</span></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Networking-Content-Delivery.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+              <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" alt="">Internet gateway<small>đường ra Internet</small></div></div>
+              <div class="grp az"><span class="lbl">Availability Zone a</span>
+                <div class="row">
+                  <div class="grp pub"><span class="lbl">Public subnet 10.0.1.0/24</span>
+                    <div class="row center">
+                      <div class="node"><img src="../assets/icons/res/Amazon-EC2_Elastic-IP-Address.svg" alt="">Elastic IP<small>203.0.113.10</small></div>
+                      <div class="node"><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg" alt="">eth0 (primary ENI)<small>10.0.1.50 · sg-web</small></div>
+                      <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 instance<small>ENA bật sẵn (Nitro)</small></div>
+                    </div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet 10.0.2.0/24 (management)</span>
+                    <div class="row center">
+                      <div class="node"><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg" alt="">eth1 (secondary ENI)<small>10.0.2.50 · sg-mgmt (chỉ SSH)</small></div>
+                    </div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Một instance “dual-homed”: <b>eth0</b> (primary network interface, không tháo được) ở public subnet mang private IP và Elastic IP, gắn <code>sg-web</code>; <b>eth1</b> (secondary ENI) ở subnet quản trị <b>cùng AZ</b>, gắn <code>sg-mgmt</code> chỉ cho phép SSH. Security group gắn vào <b>từng network interface</b>, không gắn vào từng IP.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – một căn hộ trong chung cư</span>
+        <p><b>Instance</b> là căn hộ. <b>ENI</b> là <i>cửa ra vào có số nhà</i> (private IP) và <i>mã khóa riêng</i> (MAC) – căn hộ luôn có cửa chính (primary ENI), có thể mở thêm cửa phụ ra hành lang kỹ thuật (secondary ENI). <b>Security group</b> là <i>bảo vệ đứng ở mỗi cửa</i> cầm danh sách khách được vào; ai đã được vào thì lúc ra không cần kiểm tra lại (<b>stateful</b>). <b>Elastic IP</b> là <i>số hotline cố định</i> của căn hộ – chuyển nhà thì mang số theo. <b>Placement group</b> là <i>cách ban quản lý xếp các căn hộ</i>: dồn cạnh nhau cho dễ đi lại (cluster), chia theo tòa riêng điện nước (partition), hay mỗi căn một tòa khác nhau (spread).</p></div>
+
+      <!-- ===================== PHẦN 2: SECURITY GROUPS ===================== -->
+      <h2 id="security-groups"><img src="../assets/icons/res/Firewall.svg" alt="">Security Groups – tường lửa ảo của EC2</h2>
+      <p class="lead">Một <span class="t" data-vi="Nhóm bảo mật">security group</span> đóng vai trò <b>tường lửa ảo</b> cho EC2 instance, kiểm soát traffic đi vào và đi ra. <span class="t" data-vi="Quy tắc chiều vào">Inbound rules</span> kiểm soát traffic tới instance, <span class="t" data-vi="Quy tắc chiều ra">outbound rules</span> kiểm soát traffic rời instance. Khi launch bạn chỉ định một hoặc nhiều security group; nếu không chỉ định, EC2 dùng <b>default security group</b> của VPC. Sau khi launch vẫn đổi được security group. Dùng security group <b>không tốn thêm phí</b>.</p>
+
+      <h3>Đặc điểm cốt lõi (theo tài liệu)</h3>
+      <ul>
+        <li>Một instance gắn được <b>nhiều</b> security group, một security group gắn được cho <b>nhiều</b> instance. Khi quyết định cho traffic tới instance, EC2 <b>đánh giá tất cả rule của tất cả security group</b> gắn với instance – các rule được <b>gộp (aggregate)</b> thành một tập duy nhất.</li>
+        <li><b>Chỉ có rule allow, không có rule deny.</b> Muốn chặn một IP cụ thể ⇒ không làm được bằng security group (dùng Network ACL – Bài 21, hoặc AWS WAF ở tầng ứng dụng).</li>
+        <li>Security group <b>mới tạo</b>: <b>không có inbound rule</b> (chặn mọi traffic vào cho tới khi bạn thêm rule) và <b>có một outbound rule cho phép tất cả</b> traffic ra. Bạn có thể xóa rule outbound đó; khi không còn outbound rule nào thì không traffic nào được đi ra.</li>
+        <li>Thêm/sửa/xóa rule <b>tự áp dụng ngay</b> cho mọi instance đang gắn security group đó (không cần restart).</li>
+        <li><b>Stateful</b>: nếu instance gửi request ra, traffic phản hồi được phép đi vào <b>bất kể inbound rules</b>; ngược lại, phản hồi cho traffic inbound đã được allow được phép đi ra <b>bất kể outbound rules</b>.</li>
+        <li>Security group gắn ở mức <b>network interface</b>: mọi IP trên cùng một ENI chịu chung security group của ENI đó.</li>
+        <li>Mỗi rule được AWS gán một <b>ID duy nhất</b> (security group rule ID) để sửa/xóa qua API/CLI.</li>
+        <li>Security group thuộc về <b>một VPC</b> – chỉ dùng cho tài nguyên trong VPC đó (muốn dùng ở VPC khác phải tạo security group mới trong VPC đó).</li>
+        <li><b>Giới hạn</b>: security group <b>không chặn được DNS</b> tới Route 53 Resolver (địa chỉ “VPC+2” hay <code>AmazonProvidedDNS</code>) – muốn lọc DNS dùng <b>Route 53 Resolver DNS Firewall</b>. Traffic tới các địa chỉ link-local dành riêng (IMDS <code>169.254.169.254</code>, Time Sync <code>169.254.169.123</code>…) cũng <b>không</b> bị security group hay NACL lọc.</li>
+      </ul>
+
+      <h3>Thành phần của một rule</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Giá trị</th><th>Ví dụ</th></tr></thead>
+        <tbody>
+          <tr><td><b>Protocol</b></td><td>Giao thức cho phép; phổ biến nhất 6 (TCP), 17 (UDP), 1 (ICMP)</td><td>TCP</td></tr>
+          <tr><td><b>Port range</b></td><td>Một port hoặc một dải (với TCP, UDP, custom protocol)</td><td><code>22</code>, <code>7000-8000</code></td></tr>
+          <tr><td><b>ICMP type &amp; code</b></td><td>Với ICMP</td><td>type 8 = Echo Request (ping); ICMPv6 type 128</td></tr>
+          <tr><td rowspan="4"><b>Source</b> (inbound) / <b>Destination</b> (outbound)</td><td>Một IPv4 (bắt buộc <code>/32</code>) hoặc IPv6 (bắt buộc <code>/128</code>)</td><td><code>203.0.113.1/32</code></td></tr>
+          <tr><td>Một dải CIDR IPv4/IPv6</td><td><code>203.0.113.0/24</code>, <code>0.0.0.0/0</code>, <code>::/0</code></td></tr>
+          <tr><td>ID của một <span class="t" data-vi="Danh sách tiền tố được quản lý">prefix list</span></td><td><code>pl-1234abc1234abc123</code></td></tr>
+          <tr><td>ID của một <b>security group</b> khác (hoặc chính nó)</td><td><code>sg-1234567890abcdef0</code></td></tr>
+          <tr><td><b>Description</b></td><td>Tùy chọn, tối đa 255 ký tự</td><td>“SSH from office”</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Default security group</h3>
+      <p>Mỗi VPC (default VPC hay VPC bạn tạo) đi kèm một security group tên <code>default</code>. Bạn <b>sửa được rule</b> nhưng <b>không xóa được</b> nó (lỗi <code>Client.CannotDelete</code>). AWS khuyến nghị tạo security group riêng cho từng tài nguyên/nhóm tài nguyên thay vì dùng default.</p>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Firewall.svg" alt="">Default security group (của VPC)</h4>
+          <ul>
+            <li><b>Inbound</b>: All traffic, source = <b>chính security group này</b> ⇒ các instance cùng gắn default SG nói chuyện với nhau mọi port.</li>
+            <li><b>Outbound</b>: All traffic tới <code>0.0.0.0/0</code> (và <code>::/0</code> nếu VPC có IPv6).</li>
+            <li>Không nhận traffic từ Internet gateway hay NAT gateway (không có rule inbound từ ngoài).</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Firewall.svg" alt="">Security group bạn mới tạo</h4>
+          <ul>
+            <li><b>Inbound</b>: <b>trống</b> ⇒ chặn mọi traffic vào.</li>
+            <li><b>Outbound</b>: All traffic tới mọi nơi (xóa được).</li>
+            <li>Bạn tự thêm rule theo nguyên tắc <b>least privilege</b>.</li>
+          </ul></div>
+      </div>
+
+      <h3>Security group referencing – dùng security group làm nguồn</h3>
+      <p>Khi chỉ định một <b>security group làm source/destination</b>, rule áp dụng cho <b>mọi instance gắn security group được tham chiếu</b>; chúng giao tiếp bằng <b>private IP</b> của network interface, theo protocol/port đã chỉ định. Đây là cách “chuẩn” để cấu hình kiến trúc nhiều tầng mà <b>không cần biết IP</b> – đặc biệt hữu ích khi instance co giãn trong Auto Scaling group (IP thay đổi liên tục).</p>
+      <ul>
+        <li>Tham chiếu được trong <b>inbound rule</b> nếu hai security group: <b>cùng VPC</b>, hoặc hai VPC có <b>VPC peering</b>, hoặc nối qua <b>transit gateway</b>. Trong <b>outbound rule</b>: cùng VPC hoặc qua peering.</li>
+        <li>Rule của security group được tham chiếu <b>không</b> được “gộp” vào security group tham chiếu – chỉ là “tập instance nguồn”.</li>
+        <li>Một rule tham chiếu security group tính là <b>1 rule</b>, bất kể security group đó có bao nhiêu instance. Rule tham chiếu <b>customer-managed prefix list</b> tính bằng <b>max entries</b> của prefix list (vd max 20 ⇒ tính 20 rule).</li>
+        <li><span class="t" data-vi="Quy tắc lỗi thời">Stale security group rule</span>: rule tham chiếu security group ở VPC peer/shared VPC sẽ bị đánh dấu <i>stale</i> khi security group đó bị xóa hoặc peering bị xóa.</li>
+        <li>Giới hạn: nếu traffic giữa hai instance ở hai subnet đi qua một <b>middlebox appliance</b> (firewall trung gian), tham chiếu security group của instance kia <b>không</b> có tác dụng – phải dùng private IP hoặc CIDR subnet của instance kia làm source.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC – kiến trúc 3 tầng theo ví dụ tài liệu “Security group referencing”</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Users<small>Internet</small></div>
+            <span class="arrow">HTTP/HTTPS<br>source 0.0.0.0/0</span>
+            <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Application Load Balancer<small>sg-alb</small></div>
+            <span class="arrow">80/443<br>source = sg-alb</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">Web servers (ASG)<small>sg-web</small></div>
+            <span class="arrow">3306<br>source = sg-web</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">Database servers<small>sg-db</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> Chuỗi security group: <code>sg-alb</code> mở 80/443 cho Internet; <code>sg-web</code> chỉ nhận HTTP/HTTPS <b>từ sg-alb</b>; <code>sg-db</code> chỉ nhận cổng database <b>từ sg-web</b>. Web server mới do Auto Scaling launch tự động được DB chấp nhận vì nó mang <code>sg-web</code> – không cần sửa rule theo IP.</figcaption>
+      </figure>
+
+      <h3>Stateful &amp; connection tracking</h3>
+      <p>Security group dùng <b>connection tracking</b> để theo dõi trạng thái kết nối – vì vậy mới “stateful”. Ví dụ trong tài liệu: inbound cho phép ICMP từ máy nhà bạn; phản hồi từ instance được coi là <b>established connection</b> nên vẫn đi ra được, kể cả khi outbound rule hạn chế ICMP. Với giao thức khác TCP/UDP/ICMP, chỉ IP và protocol number được theo dõi; nếu host bên kia gửi cùng loại traffic về trong <b>600 giây</b>, security group coi đó là phản hồi và chấp nhận.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Tracked connection</th><th><span class="t" data-vi="Kết nối không được theo dõi">Untracked connection</span></th></tr></thead>
+        <tbody>
+          <tr><td>Khi nào?</td><td>Mặc định – vd SSH chỉ cho phép từ <code>203.0.113.1/32</code>; <b>ICMP luôn được track</b></td><td>Rule TCP/UDP mở cho <b>mọi địa chỉ</b> (<code>0.0.0.0/0</code> hoặc <code>::/0</code>) <b>và</b> chiều ngược lại cũng có rule mở mọi địa chỉ, mọi port (0–65535)</td></tr>
+          <tr><td>Sửa/xóa rule đang cho phép flow</td><td><b>Không cắt ngay</b> kết nối đang có – vẫn cho gói tin đi cho tới khi kết nối timeout</td><td><b>Cắt ngay lập tức</b> (không có thông tin tracking để giữ)</td></tr>
+          <tr><td>Phản hồi được allow dựa vào</td><td>Thông tin tracking</td><td>Rule ở chiều ngược lại</td></tr>
+        </tbody>
+      </table></div>
+      <p>Một số đường đi <b>luôn được track</b> (automatically tracked) dù cấu hình không đòi hỏi: egress-only internet gateway, Global Accelerator, NAT gateway, Network Firewall endpoint, <b>Network Load Balancer</b>, AWS PrivateLink (interface endpoint), Lambda (Hyperplane ENI), DynamoDB gateway endpoint (mỗi kết nối tốn 2 entry).</p>
+
+      <h4>Connection tracking allowance &amp; idle timeout</h4>
+      <ul>
+        <li>Mỗi instance có <b>số kết nối track tối đa</b> theo instance type; vượt mức ⇒ gói tin bị <b>drop</b> vì không thiết lập được kết nối mới. Theo dõi bằng metric <code>conntrack_allowance_available</code> và <code>conntrack_allowance_exceeded</code>. Sau ELB mà chạm trần ⇒ scale thêm instance hoặc dùng instance lớn hơn.</li>
+        <li>Timeout cấu hình được trên ENI (chỉ Nitro): <b>TCP established</b> 60–432.000 giây (mặc định <b>432.000 giây</b> = 5 ngày; riêng Nitro v6 mặc định <b>350 giây</b>); <b>UDP</b> 30–60 giây (mặc định 30); <b>UDP stream</b> 60–180 giây (mặc định 180). Kết nối dài hạn nên gửi TCP keepalive &lt; 5 phút.</li>
+        <li><span class="t" data-vi="Định tuyến bất đối xứng">Asymmetric routing</span> (vào một ENI, ra ENI khác) làm giảm hiệu năng khi flow được track – nên tránh.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – “đã xóa rule mà vẫn SSH được”</span>
+        <ul>
+          <li>Xóa rule SSH hẹp (vd <code>/32</code>) <b>không</b> ngắt phiên SSH đang mở vì kết nối đó <b>được track</b>. Muốn <b>chặn ngay lập tức</b> traffic đang diễn ra ⇒ thêm rule deny vào <b>Network ACL</b> của subnet (stateless – chặn cả kết nối đang có).</li>
+          <li>Đề cho “<i>block a specific malicious IP address</i>” ⇒ security group <b>không có deny</b> ⇒ đáp án là <b>Network ACL</b> (hoặc AWS WAF cho HTTP/HTTPS qua ALB/CloudFront).</li>
+          <li>Instance <b>không ra được Internet</b> dù route đúng? Kiểm tra outbound rule của security group (có thể đã bị xóa) và NACL – nhớ NACL stateless cần mở cả chiều về.</li>
+        </ul></div>
+
+      <h3>Quota quan trọng (Amazon VPC quotas)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Quota</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td>VPC security groups / Region</td><td><b>2.500</b></td><td>Tăng được</td></tr>
+          <tr><td>Inbound <i>hoặc</i> outbound rules / security group</td><td><b>60</b></td><td>Tính riêng inbound/outbound và riêng IPv4/IPv6 (60 inbound IPv4 + 60 inbound IPv6…)</td></tr>
+          <tr><td>Security groups / network interface</td><td><b>5</b></td><td>Tăng tới <b>16</b>. Tích (rules/SG × SG/ENI) <b>không vượt 1.000</b></td></tr>
+          <tr><td>Network interfaces / Region</td><td>5.000</td><td>Áp theo từng AZ</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>So nhanh với Network ACL (chi tiết ở Bài 21)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Security group</th><th>Network ACL</th></tr></thead>
+        <tbody>
+          <tr><td>Gắn vào</td><td>Network interface (instance)</td><td>Subnet</td></tr>
+          <tr><td>Rule</td><td class="no">Chỉ allow</td><td class="yes">Allow và deny</td></tr>
+          <tr><td>Trạng thái</td><td class="yes">Stateful – phản hồi tự cho qua</td><td>Stateless – phải mở cả chiều về</td></tr>
+          <tr><td>Đánh giá</td><td>Gộp tất cả rule</td><td>Theo thứ tự số rule</td></tr>
+          <tr><td>Sửa rule với kết nối đang có</td><td>Kết nối tracked không bị cắt ngay</td><td>Chặn là cắt ngay</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Security Groups</span>
+        <ul>
+          <li>“<i>Allow only the web tier to access the database, instances scale in and out</i>” ⇒ inbound rule của <b>sg-db</b> với <b>source = sg-web</b> (security group referencing), không dùng CIDR/IP.</li>
+          <li>“<i>Return traffic is automatically allowed</i>” ⇒ <b>stateful</b> ⇒ security group. “<i>Must explicitly allow return traffic / ephemeral ports</i>” ⇒ NACL.</li>
+          <li>“<i>Deny / block specific IP</i>” ⇒ <b>không</b> phải security group.</li>
+          <li>Instance mới launch không SSH được ⇒ security group mới tạo <b>không có inbound rule</b> ⇒ thêm rule TCP 22 từ IP của bạn (hoặc dùng EC2 Instance Connect Endpoint / Session Manager thay vì mở 22).</li>
+          <li>“<i>Filter DNS queries to Route 53 Resolver</i>” ⇒ <b>Route 53 Resolver DNS Firewall</b>, security group không làm được.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: ĐỊA CHỈ IP & ELASTIC IP ===================== -->
+      <h2 id="elastic-ip"><img src="../assets/icons/res/Amazon-EC2_Elastic-IP-Address.svg" alt="">Địa chỉ IP của instance &amp; Elastic IP</h2>
+      <p class="lead">Mỗi instance nhận một <b>primary private IPv4</b> từ dải CIDR của subnet (cấp qua DHCP) gán trên network interface index 0. Tùy cấu hình, instance có thêm <span class="t" data-vi="Địa chỉ IPv4 công cộng">public IPv4 address</span>, địa chỉ IPv6, hoặc một <span class="t" data-vi="Địa chỉ IP tĩnh co giãn">Elastic IP address</span>. Điều đề thi hay hỏi nhất: <b>địa chỉ nào thay đổi khi stop/start</b>.</p>
+
+      <h3>Bốn loại địa chỉ và vòng đời của chúng</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Private IPv4</th><th>Public IPv4 (tự gán)</th><th>Elastic IP</th><th>IPv6</th></tr></thead>
+        <tbody>
+          <tr><td>Nguồn</td><td>Dải CIDR của subnet</td><td>Pool public IPv4 của Amazon, <b>không thuộc account</b></td><td>Pool Amazon hoặc pool BYOIP của bạn; <b>thuộc account</b> tới khi release</td><td>Dải IPv6 của subnet (globally unique)</td></tr>
+          <tr><td>Truy cập từ Internet</td><td class="no">Không</td><td class="yes">Có</td><td class="yes">Có</td><td>Tùy route/SG/NACL (public hoặc private IPv6)</td></tr>
+          <tr><td>Stop/start, hibernate/start</td><td class="yes">Giữ nguyên</td><td class="no"><b>Bị release</b>, start lại nhận IP <b>mới</b></td><td class="yes">Giữ nguyên (vẫn gắn)</td><td class="yes">Giữ nguyên</td></tr>
+          <tr><td>Terminate</td><td>Release</td><td>Release</td><td>Tự disassociate, <b>vẫn thuộc account</b> (vẫn tính phí)</td><td>Release</td></tr>
+          <tr><td>Chuyển sang instance khác</td><td>Secondary private IP: được (nếu cho phép reassign); primary: không</td><td class="no">Không – không dùng lại, không chuyển thành EIP được</td><td class="yes">Remap nhanh sang instance/ENI khác</td><td>Phải unassign trước rồi mới gán nơi khác</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Public IPv4 tự gán – các quy tắc cần nhớ</h3>
+      <ul>
+        <li>Launch vào <b>default VPC</b> ⇒ mặc định có public IP. Launch vào subnet của <b>nondefault VPC</b> ⇒ phụ thuộc thuộc tính <i>auto-assign public IPv4</i> của subnet (mặc định <b>không</b> gán). Có thể ghi đè lúc launch, hoặc unassign sau khi launch.</li>
+        <li>Public IP bị release khi instance <b>stop, hibernate, terminate</b>, hoặc khi bạn <b>gắn Elastic IP</b> vào instance (khi gỡ EIP, instance nhận public IP mới).</li>
+        <li><b>Không</b> cấp lại public IP mới nếu instance có <b>secondary network interface</b>, hoặc có <b>secondary private IP đã gắn EIP</b>. Bạn cũng không bật auto-assign public IPv4 được nếu thêm secondary ENI ngay lúc launch.</li>
+        <li>Dùng dynamic DNS trỏ vào public IP mới có thể mất tới <b>24 giờ</b> để lan truyền ⇒ cần IP cố định thì dùng <b>Elastic IP</b>.</li>
+        <li>Public DNS hostname phân giải ra public IP/EIP khi hỏi từ <b>ngoài</b> mạng của instance, và ra <b>private IP</b> khi hỏi từ <b>trong</b> VPC. Hai instance ở hai VPC nói chuyện qua public IP thì traffic vẫn nằm trong mạng toàn cầu của AWS, không đi qua Internet công cộng.</li>
+      </ul>
+
+      <h3>Elastic IP – đặc điểm</h3>
+      <ul>
+        <li><b>Static</b> – không đổi theo thời gian; là <b>public IPv4</b>; <b>chỉ dùng trong một Region</b>, không chuyển sang Region khác. <b>Không có Elastic IP cho IPv6</b>.</li>
+        <li>Quy trình: <b>allocate</b> vào account ⇒ <b>associate</b> với instance hoặc network interface. Gắn với instance = gắn với primary ENI của nó. Mỗi private IPv4 trên ENI gắn được <b>một</b> EIP.</li>
+        <li><b>Disassociate</b> rồi associate sang tài nguyên khác được (nên đóng hết kết nối đang mở trước). EIP đã disassociate <b>vẫn thuộc account</b> cho tới khi bạn <b>release</b>.</li>
+        <li>Gắn EIP vào instance đang có public IPv4 ⇒ public IP cũ trả về pool, public DNS hostname đổi theo EIP.</li>
+        <li>Có thể gắn EIP với một <b>network border group</b> (nơi quảng bá CIDR); EIP chỉ dùng được trong network border group đó (liên quan Local Zones – Bài 1).</li>
+        <li>Các thao tác khác: <b>chuyển EIP giữa các AWS account</b>, tạo <b>reverse DNS record</b> (gửi email từ EC2), <b>BYOIP</b> (mang dải IPv4 của mình – EIP từ pool BYOIP không tính vào quota), cấp EIP <b>liên tiếp</b> từ pool <b>Amazon VPC IPAM</b>.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>5 EIP</b><span>quota mặc định mỗi Region (vì IPv4 khan hiếm); tăng qua Service Quotas</span></div>
+        <div class="stat"><b>Tính phí</b><span>mọi public IPv4 – cả EIP đang dùng, EIP nhàn rỗi và public IP của instance đang chạy</span></div>
+        <div class="stat"><b>0,005 USD</b><span>/giờ mỗi public IPv4 (đơn giá dùng trong công thức của tài liệu EC2)</span></div>
+      </div>
+
+      <div class="callout note"><span class="ttl">AWS khuyến nghị dùng Elastic IP một cách tiết chế</span>
+        <p>Tài liệu “strongly recommend” dùng EIP chủ yếu cho khả năng <b>remap sang instance khác khi instance lỗi</b>, còn giao tiếp giữa các node thì dùng <b>DNS hostname</b>. Kiến trúc hiện đại thường đặt instance ở <b>private subnet</b> sau <b>load balancer</b> (một ALB/NLB dùng ít public IP hơn nhiều instance) thay vì gắn EIP cho từng máy.</p></div>
+
+      <h3>Tối ưu chi phí public IPv4 (theo tài liệu)</h3>
+      <ol class="steps">
+        <li>Đặt instance sau <b>Elastic Load Balancer</b> và <b>tắt Auto-assign public IP</b> trên primary ENI; gộp bớt load balancer.</li>
+        <li>Chỉ cần SSH bảo trì ⇒ dùng <b>EC2 Instance Connect Endpoint</b> (kết nối từ Internet mà instance không cần public IPv4).</li>
+        <li>Chuyển instance sang <b>private subnet</b> + <b>NAT gateway</b> cho traffic ra (tài liệu đưa công thức so sánh: tổng chi phí NAT ÷ chi phí public IP &lt; 1 ⇒ NAT rẻ hơn).</li>
+        <li>Dùng <b>AWS PrivateLink</b> để gọi dịch vụ AWS/đối tác thay vì đi qua public IP + internet gateway.</li>
+        <li><b>BYOIP</b>, tắt auto-assign public IPv4 trên subnet, hoặc dùng <b>AWS Global Accelerator</b> trỏ tới instance ở private subnet.</li>
+        <li><b>Release</b> các EIP không còn dùng – EIP nhàn rỗi vẫn bị tính tiền.</li>
+      </ol>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – IP &amp; Elastic IP</span>
+        <ul>
+          <li>“<i>Partners whitelist a fixed public IP; IP must not change after stop/start or instance replacement</i>” ⇒ <b>Elastic IP</b> (hoặc, cho nhiều instance, NLB với EIP / NAT gateway với EIP cho traffic đi ra).</li>
+          <li>“<i>Public IP changed after the instance was stopped and started</i>” ⇒ đó là public IPv4 tự gán; giải pháp là <b>Elastic IP</b>.</li>
+          <li>“<i>Mask the failure of an instance by rapidly remapping the address</i>” ⇒ cụm từ nguyên văn mô tả <b>Elastic IP</b>.</li>
+          <li>“<i>Need more than 5 Elastic IPs</i>” ⇒ xin tăng <b>Service Quotas</b> (hoặc xem lại kiến trúc: load balancer, DNS).</li>
+          <li>“<i>Reduce public IPv4 charges</i>” ⇒ load balancer + private subnet, EC2 Instance Connect Endpoint, release EIP nhàn rỗi, IPv6.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: ENI ===================== -->
+      <h2 id="eni"><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg" alt="">Elastic Network Interface (ENI)</h2>
+      <p class="lead">Một <span class="t" data-vi="Card mạng ảo co giãn">elastic network interface</span> là thành phần mạng <b>logic trong VPC</b>, đại diện cho một <b>card mạng ảo</b>. Bạn tạo, cấu hình và gắn nó vào instance <b>trong cùng Availability Zone</b>. <b>Thuộc tính của ENI đi theo nó</b> khi được tháo ra và gắn sang instance khác – khi chuyển ENI, traffic được chuyển hướng từ instance cũ sang instance mới. (Console và API gọi tắt là “network interface”.)</p>
+
+      <h3>Thuộc tính một ENI có thể mang</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thuộc tính</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><b>Primary private IPv4</b></td><td>Từ dải IPv4 của subnet; giữ nguyên khi stop/start, release khi terminate</td></tr>
+          <tr><td><b>Primary IPv6</b> &amp; secondary IPv6</td><td>Từ dải IPv6 của subnet</td></tr>
+          <tr><td><span class="t" data-vi="Địa chỉ IPv4 riêng phụ">Secondary private IPv4</span></td><td>Khác primary: <b>reassign được</b> sang instance/ENI khác</td></tr>
+          <tr><td><b>Elastic IP</b></td><td>Một EIP cho <b>mỗi</b> private IPv4</td></tr>
+          <tr><td><b>Public IPv4</b></td><td>Một địa chỉ; ENI thừa hưởng thuộc tính auto-assign của subnet <b>tại thời điểm tạo</b></td></tr>
+          <tr><td><b>Security groups</b></td><td>Áp cho mọi IP trên ENI</td></tr>
+          <tr><td><b>MAC address</b></td><td>Đi theo ENI ⇒ quan trọng với phần mềm license gắn MAC</td></tr>
+          <tr><td><span class="t" data-vi="Kiểm tra nguồn/đích">Source/destination check</span> flag</td><td>Bật mặc định; <b>phải tắt</b> nếu instance làm NAT, router, firewall</td></tr>
+          <tr><td><b>Description</b>, termination behavior</td><td>Chọn có tự xóa ENI khi instance bị terminate hay không</td></tr>
+        </tbody>
+      </table></div>
+      <p>Bật <b>VPC Flow Logs</b> trên một ENI để ghi lại thông tin traffic vào/ra, xem trong CloudWatch Logs (chi tiết Bài 21).</p>
+
+      <h3>Primary vs secondary network interface &amp; cách gắn</h3>
+      <ul>
+        <li>Mỗi instance có một <span class="t" data-vi="Card mạng chính">primary network interface</span> (eth0, device index 0) – <b>không tháo được</b>. Bạn có thể gắn thêm <span class="t" data-vi="Card mạng phụ">secondary network interfaces</span>; <b>số ENI tối đa và số IP mỗi ENI phụ thuộc instance type</b>.</li>
+        <li>Ba thời điểm gắn: <b>hot attach</b> (instance đang <i>running</i>), <b>warm attach</b> (instance <i>stopped</i>), <b>cold attach</b> (lúc <i>launch</i>). Secondary ENI tháo được khi running hoặc stopped.</li>
+        <li>ENI phải <b>cùng AZ</b> với instance; có thể nằm ở <b>subnet khác</b>, thậm chí <b>VPC khác cùng account</b> (miễn cùng AZ) ⇒ tạo instance multi-homed qua nhiều VPC. <b>Không</b> làm được với VPC của account khác.</li>
+        <li><b>Không thể</b> gắn thêm ENI (kiểu NIC teaming) để <b>tăng gấp đôi băng thông</b> của instance.</li>
+        <li>Gắn nhiều ENI <b>cùng subnet</b> dễ gây asymmetric routing ⇒ nếu chỉ cần thêm IP, hãy thêm <b>secondary private IPv4</b> vào primary ENI.</li>
+        <li>Amazon Linux và Windows Server tự nhận và cấu hình ENI mới; OS khác có thể phải tự bật interface và sửa route table.</li>
+        <li>Secondary ENI khi tháo/gắn <b>mang theo</b> primary &amp; secondary private IPv4, EIP, IPv6.</li>
+      </ul>
+
+      <h3>Network cards</h3>
+      <p>Đa số instance type có <b>một network card</b>. Các type hỗ trợ <b>nhiều network card</b> (vd <code>c6in.32xlarge</code> = 2, <code>p4d.24xlarge</code> = 4, <code>p5.48xlarge</code> = 32, <code>trn1n.32xlarge</code> = 16) cho hiệu năng mạng cao hơn – <b>băng thông trên 100 Gbps</b> và packet rate tốt hơn. Primary ENI phải ở network card index 0. Mỗi network card gắn được <b>một</b> EFA (hoặc EFA-only) – EFA cũng tính là một ENI.</p>
+
+      <h3>Khi nào dùng nhiều ENI? (Multiple network interfaces scenarios)</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg" alt="">Management network</h4>
+          <ul>
+            <li>eth0 nhận traffic public (SG cho 80/443 từ 0.0.0.0/0 hoặc từ load balancer).</li>
+            <li>eth1 ở subnet quản trị <b>cùng AZ</b>, SG chỉ cho SSH từ dải IP cho phép, private subnet hoặc virtual private gateway.</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/Firewall.svg" alt="">Network &amp; security appliance</h4>
+          <ul>
+            <li>Load balancer, NAT server, proxy… thích có nhiều interface, mỗi interface có IP, SG, source/dest check riêng.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">Dual-homed instance</h4>
+          <ul>
+            <li>Web server có ENI nối vào mạng mid-tier nơi app server ở; app server có ENI nối tiếp vào backend subnet của DB.</li>
+            <li>Qua 2 VPC cùng account: vượt <b>CIDR chồng lấn</b> không peering được; nối tài nguyên giữa nhiều VPC.</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Low-budget high availability</h4>
+          <ul>
+            <li>Instance lỗi ⇒ tháo ENI gắn sang <b>hot standby</b> đã cấu hình sẵn. ENI giữ private IP, EIP, MAC ⇒ traffic chảy sang ngay, <b>không cần sửa route table hay DNS</b>.</li>
+          </ul></div>
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 300" width="760" role="img" aria-label="Failover bằng cách chuyển ENI sang instance dự phòng">
+          <defs><marker id="ah10a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="10" y="10" width="740" height="280" rx="8" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="24" y="32" font-size="13" font-weight="700" style="fill:#147EBA">Availability Zone a – cùng subnet 10.0.1.0/24</text>
+          <rect x="40" y="60" width="220" height="170" rx="8" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="118" y="76" width="64" height="64"/>
+          <text x="150" y="162" font-size="14" font-weight="700" text-anchor="middle">Instance chính</text>
+          <text x="150" y="182" font-size="12" text-anchor="middle" style="fill:#DD344C">✗ lỗi (impaired)</text>
+          <text x="150" y="212" font-size="11.5" text-anchor="middle" class="muted">eth0 riêng của nó vẫn ở lại</text>
+          <rect x="500" y="60" width="220" height="170" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="578" y="76" width="64" height="64"/>
+          <text x="610" y="162" font-size="14" font-weight="700" text-anchor="middle">Hot standby</text>
+          <text x="610" y="182" font-size="12" text-anchor="middle" style="fill:#7AA116">đã cài sẵn cùng vai trò</text>
+          <text x="610" y="212" font-size="11.5" text-anchor="middle" class="muted">nhận eth1 ⇒ phục vụ ngay</text>
+          <image href="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg" x="352" y="64" width="56" height="56"/>
+          <text x="380" y="138" font-size="13" font-weight="700" text-anchor="middle">ENI eth1</text>
+          <text x="380" y="156" font-size="11.5" text-anchor="middle" class="muted">10.0.1.100 · EIP · MAC</text>
+          <text x="380" y="172" font-size="11.5" text-anchor="middle" class="muted">sg-app</text>
+          <path class="line-o" d="M262 120 L345 96" marker-end="url(#ah10a)"/>
+          <path class="line-o" d="M415 96 L496 120" marker-end="url(#ah10a)"/>
+          <text x="300" y="88" font-size="11" text-anchor="middle" class="muted">① detach</text>
+          <text x="458" y="88" font-size="11" text-anchor="middle" class="muted">② attach</text>
+          <image href="../assets/icons/res/Users.svg" x="356" y="200" width="48" height="48"/>
+          <text x="380" y="270" font-size="12" text-anchor="middle" class="muted">Client vẫn gọi 10.0.1.100 / EIP – không đổi DNS, không đổi route table</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Giải pháp “low-budget, high-availability” trong tài liệu “Multiple network interfaces”: ENI phụ mang private IP, Elastic IP và <b>MAC address</b> được chuyển (thường bằng script/Lambda) sang instance dự phòng <b>cùng AZ</b>. Người dùng chỉ mất kết nối ngắn trong lúc chuyển. Hữu ích với phần mềm license gắn MAC. Kiến trúc HA “chuẩn” vẫn là ELB + Auto Scaling đa AZ (Bài 12–13).</figcaption>
+      </figure>
+
+      <h3>Requester-managed ENI, managed ENI &amp; prefix delegation</h3>
+      <ul>
+        <li><span class="t" data-vi="ENI do dịch vụ yêu cầu quản lý">Requester-managed network interface</span>: ENI do <b>dịch vụ AWS tạo trong VPC của bạn</b> thay bạn – vd cho <b>RDS DB instance</b>, <b>NAT gateway</b>, <b>interface VPC endpoint</b> (PrivateLink), ELB, Lambda, WorkSpaces. Bạn xem và gắn tag được nhưng <b>không</b> modify thuộc tính, attach/detach, gắn EIP, gán IP hay dùng nó khi launch instance. Xóa tài nguyên ⇒ dịch vụ tự detach và xóa ENI.</li>
+        <li><b>Managed network interface</b>: do service provider (vd Amazon EKS Auto Mode) quản lý, trường <i>Managed</i> = true, không sửa trực tiếp.</li>
+        <li><span class="t" data-vi="Ủy quyền tiền tố">Prefix delegation</span>: gán cả một <b>dải CIDR</b> (prefix) IPv4/IPv6 cho ENI thay vì từng IP lẻ ⇒ launch dịch vụ nhanh hơn, tăng mật độ IP (vd nhiều pod/container trên một node).</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – ENI</span>
+        <ul>
+          <li>ENI là tài nguyên <b>gắn với AZ</b>: không gắn được cho instance ở AZ khác ⇒ failover bằng ENI <b>không</b> chống được sự cố cả AZ.</li>
+          <li>Thêm ENI <b>không</b> tăng băng thông. Muốn băng thông cao ⇒ instance type lớn hơn / có hậu tố “n”, enhanced networking, nhiều network card.</li>
+          <li>Instance NAT tự dựng (NAT instance) mà quên <b>tắt source/destination check</b> ⇒ không chuyển tiếp được traffic.</li>
+          <li>Không detach được ENI của NAT gateway / ELB / Lambda – đó là <b>requester-managed</b>.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – ENI</span>
+        <ul>
+          <li>“<i>Software license tied to a MAC address; must fail over to a standby quickly</i>” ⇒ <b>secondary ENI</b> chuyển sang standby.</li>
+          <li>“<i>Separate management traffic from application traffic on the same instance</i>” ⇒ thêm <b>ENI thứ hai</b> ở subnet quản trị với security group riêng.</li>
+          <li>“<i>Host multiple websites/SSL certificates on one instance, each with its own IP</i>” ⇒ <b>secondary private IPv4</b> (mỗi IP có thể gắn một EIP).</li>
+          <li>“<i>Instance acts as NAT / firewall / router</i>” ⇒ <b>disable source/destination check</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: PLACEMENT GROUPS ===================== -->
+      <h2 id="placement-groups"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Placement Groups</h2>
+      <p class="lead">Để đáp ứng nhu cầu workload, bạn launch một nhóm instance <b>phụ thuộc nhau</b> vào một <span class="t" data-vi="Nhóm sắp đặt">placement group</span> để <b>ảnh hưởng tới vị trí phần cứng</b> của chúng. Placement group là <b>tùy chọn</b>: nếu không dùng, EC2 cố gắng trải các instance của bạn ra nhiều phần cứng để giảm <span class="t" data-vi="Lỗi tương quan">correlated failures</span>. Tạo placement group <b>miễn phí</b>.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 280" width="780" role="img" aria-label="So sánh cluster, partition và spread placement group">
+          <!-- Cluster -->
+          <text x="130" y="20" font-size="15" font-weight="700" text-anchor="middle" style="fill:#ED7100">Cluster</text>
+          <rect x="10" y="30" width="240" height="190" rx="6" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="20" y="48" font-size="11" font-weight="700" style="fill:#147EBA">1 AZ</text>
+          <rect x="28" y="62" width="204" height="124" rx="8" fill="none" stroke="#ED7100" stroke-width="2"/>
+          <text x="130" y="78" font-size="10.5" text-anchor="middle" class="muted">high-bisection bandwidth segment</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="42" y="88" width="34" height="34"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="88" y="88" width="34" height="34"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="134" y="88" width="34" height="34"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="180" y="88" width="34" height="34"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="42" y="138" width="34" height="34"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="88" y="138" width="34" height="34"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="134" y="138" width="34" height="34"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="180" y="138" width="34" height="34"/>
+          <text x="130" y="206" font-size="11.5" text-anchor="middle" class="muted">xếp sát nhau, không giới hạn 1 rack</text>
+          <text x="130" y="244" font-size="12" font-weight="700" text-anchor="middle">Độ trễ thấp, throughput cao</text>
+          <text x="130" y="262" font-size="11.5" text-anchor="middle" class="muted">HPC tightly coupled · 10 Gbps/flow</text>
+          <!-- Partition -->
+          <text x="390" y="20" font-size="15" font-weight="700" text-anchor="middle" style="fill:#7AA116">Partition</text>
+          <rect x="270" y="30" width="240" height="190" rx="6" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="280" y="48" font-size="11" font-weight="700" style="fill:#147EBA">1 AZ (có thể nhiều AZ)</text>
+          <rect x="282" y="60" width="68" height="146" rx="6" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <rect x="356" y="60" width="68" height="146" rx="6" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <rect x="430" y="60" width="68" height="146" rx="6" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="316" y="76" font-size="11" font-weight="700" text-anchor="middle">Partition 1</text>
+          <text x="390" y="76" font-size="11" font-weight="700" text-anchor="middle">Partition 2</text>
+          <text x="464" y="76" font-size="11" font-weight="700" text-anchor="middle">Partition 3</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="301" y="84" width="30" height="30"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="301" y="122" width="30" height="30"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="301" y="160" width="30" height="30"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="375" y="84" width="30" height="30"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="375" y="122" width="30" height="30"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="375" y="160" width="30" height="30"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="449" y="84" width="30" height="30"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="449" y="122" width="30" height="30"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="449" y="160" width="30" height="30"/>
+          <text x="390" y="244" font-size="12" font-weight="700" text-anchor="middle">Mỗi partition một bộ rack riêng</text>
+          <text x="390" y="262" font-size="11.5" text-anchor="middle" class="muted">≤ 7 partition/AZ · HDFS, HBase, Cassandra, Kafka</text>
+          <!-- Spread -->
+          <text x="650" y="20" font-size="15" font-weight="700" text-anchor="middle" style="fill:#DD344C">Spread</text>
+          <rect x="530" y="30" width="240" height="190" rx="6" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="540" y="48" font-size="11" font-weight="700" style="fill:#147EBA">1 AZ (có thể nhiều AZ)</text>
+          <rect x="542" y="60" width="50" height="146" rx="6" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <rect x="598" y="60" width="50" height="146" rx="6" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <rect x="654" y="60" width="50" height="146" rx="6" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <rect x="710" y="60" width="50" height="146" rx="6" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <text x="567" y="76" font-size="10.5" text-anchor="middle">Rack 1</text>
+          <text x="623" y="76" font-size="10.5" text-anchor="middle">Rack 2</text>
+          <text x="679" y="76" font-size="10.5" text-anchor="middle">Rack 3</text>
+          <text x="735" y="76" font-size="10.5" text-anchor="middle">Rack 4</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="552" y="118" width="30" height="30"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="608" y="118" width="30" height="30"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="664" y="118" width="30" height="30"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="720" y="118" width="30" height="30"/>
+          <text x="650" y="244" font-size="12" font-weight="700" text-anchor="middle">Mỗi instance một rack riêng</text>
+          <text x="650" y="262" font-size="11.5" text-anchor="middle" class="muted">≤ 7 instance đang chạy/AZ/group</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> Ba chiến lược placement chính. <b>Cluster</b> dồn instance gần nhau trong <b>một AZ</b> (cùng segment mạng băng thông bisection cao). <b>Partition</b> chia nhóm thành các partition logic, <b>không partition nào dùng chung rack</b> (mỗi rack có nguồn điện và mạng riêng). <b>Spread</b> đặt <b>từng instance</b> trên phần cứng (rack) khác nhau.</figcaption>
+      </figure>
+
+      <h3>Cluster placement group</h3>
+      <p>Nhóm logic các instance <b>trong một AZ</b> (không bị bó vào một rack). Instance trong cùng cluster PG có <b>giới hạn throughput mỗi flow TCP/IP cao hơn</b> và nằm cùng segment mạng <b>high-bisection bandwidth</b>. Khuyến nghị cho ứng dụng cần <b>độ trễ mạng thấp, throughput cao</b>, và khi <b>phần lớn traffic là giữa các instance trong nhóm</b>. Để có độ trễ thấp nhất và PPS cao nhất, chọn instance type hỗ trợ <b>enhanced networking</b>.</p>
+      <ul>
+        <li><b>Không span nhiều AZ</b>. Có thể span các <b>VPC peered cùng Region</b>.</li>
+        <li>Instance có enhanced networking: <b>tới 10 Gbps single-flow</b> trong cluster PG (ngoài PG: <b>5 Gbps</b>). Traffic tới <b>S3 cùng Region</b> (qua public IP hoặc VPC endpoint) dùng được toàn bộ băng thông tổng hợp của instance. Traffic ra <b>Internet</b> hoặc qua <b>Direct Connect</b> về on-premises giới hạn <b>5 Gbps</b>.</li>
+        <li>Throughput tối đa giữa hai instance bị giới hạn bởi <b>instance chậm hơn</b>.</li>
+        <li>Khuyến nghị: launch <b>đủ số instance trong một launch request</b> và dùng <b>cùng một instance type</b>. Thêm instance sau hoặc trộn type ⇒ tăng nguy cơ <b>insufficient capacity error</b>.</li>
+        <li>Gặp lỗi capacity khi nhóm đã có instance chạy ⇒ <b>stop rồi start tất cả instance</b> trong nhóm rồi thử lại (start có thể chuyển chúng sang phần cứng đủ chỗ cho toàn bộ).</li>
+        <li>Stop/start một instance thì nó vẫn ở trong placement group (start thất bại nếu không đủ capacity).</li>
+        <li>Muốn chắc chắn capacity ⇒ tạo <b>On-Demand Capacity Reservation trong cluster placement group</b>; <b>zonal RI không</b> giữ capacity riêng trong placement group được. <b>Capacity Blocks không hỗ trợ</b> placement group.</li>
+        <li>Hỗ trợ: instance <b>current generation</b> trừ <b>burstable (T2…)</b>, Mac1, M7i-flex; và một số previous generation (A1, C3, C4, I2, M4, R3, R4).</li>
+      </ul>
+
+      <h3>Partition placement group</h3>
+      <p>Giảm khả năng <b>lỗi phần cứng tương quan</b> cho ứng dụng. EC2 chia mỗi group thành các <b>partition</b> logic; mỗi partition có <b>bộ rack riêng</b>, mỗi rack có <b>nguồn điện và mạng riêng</b>; <b>không hai partition nào dùng chung rack</b> ⇒ một lỗi phần cứng chỉ ảnh hưởng một partition.</p>
+      <ul>
+        <li>Dùng cho workload <b>lớn, phân tán và có nhân bản</b>: <b>HDFS, HBase, Cassandra, Kafka</b> (Hadoop).</li>
+        <li>Tối đa <b>7 partition mỗi AZ</b>; có thể có partition ở <b>nhiều AZ cùng Region</b>. Số instance chỉ bị giới hạn bởi quota account (khác spread!).</li>
+        <li>EC2 cố gắng chia đều instance giữa các partition (không đảm bảo); bạn có thể launch vào <b>partition cụ thể</b>.</li>
+        <li><b>Visibility</b>: thấy instance nào thuộc partition nào ⇒ chia sẻ cho <span class="t" data-vi="Ứng dụng nhận biết cấu trúc liên kết">topology-aware applications</span> (HDFS, HBase, Cassandra) để quyết định nhân bản dữ liệu thông minh, tăng availability và durability.</li>
+        <li>Partition PG với <b>Dedicated Instances</b>: tối đa <b>2 partition</b>. Capacity Reservation <b>không</b> giữ capacity trong partition PG.</li>
+      </ul>
+
+      <h3>Spread placement group</h3>
+      <p>Nhóm instance mà <b>mỗi instance đặt trên phần cứng riêng biệt</b>. Khuyến nghị cho ứng dụng có <b>số ít instance quan trọng</b> cần tách rời nhau, giảm rủi ro <b>hỏng đồng thời</b> khi dùng chung thiết bị. Vì mỗi instance có phần cứng riêng, spread PG <b>phù hợp trộn nhiều instance type</b> hoặc <b>launch dần theo thời gian</b>.</p>
+      <ul>
+        <li><b>Rack-level spread</b>: có ở AWS Regions và Outposts; <b>host-level spread</b>: chỉ trên <b>AWS Outposts</b>.</li>
+        <li>Rack-level spread có thể span nhiều AZ cùng Region, tối đa <b>7 instance đang chạy mỗi AZ</b> mỗi group. Ví dụ: Region có 3 AZ ⇒ tối đa <b>21 instance</b>. Instance thứ 8 trong một AZ sẽ <b>không launch được</b>. Cần hơn 7/AZ ⇒ dùng <b>nhiều spread placement group</b> (không đảm bảo trải giữa các group, nhưng trải trong từng group).</li>
+        <li>Trên Outposts: rack-level spread chứa tối đa bằng số rack; host-level bằng số host.</li>
+        <li><b>Không hỗ trợ Dedicated Instances</b>. Capacity Reservation không giữ capacity trong spread PG.</li>
+        <li>Không đủ phần cứng riêng biệt ⇒ request thất bại; EC2 bổ sung phần cứng theo thời gian, thử lại sau.</li>
+      </ul>
+
+      <h3>Precision time placement group (mới)</h3>
+      <p>Đặt instance trên phần cứng có truy cập trực tiếp tới nguồn thời gian độ chính xác cao ⇒ dùng <b>enhanced Amazon Time Sync Service</b> (NTP cục bộ chính xác hơn), <b>PTP Hardware Clock</b> (đồng bộ cỡ micro giây, chỉ Linux), hardware packet timestamping (nano giây). Dùng cho database phân tán cần thứ tự giao dịch, dịch vụ tài chính cần timestamp chính xác. Có thể làm <b>parent</b> của cluster PG (<code>--parent-group-id</code>). Miễn phí.</p>
+
+      <h3>Bảng so sánh – đề rất hay hỏi</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Cluster</th><th>Partition</th><th>Spread (rack-level)</th></tr></thead>
+        <tbody>
+          <tr><td>Mục tiêu</td><td>Độ trễ thấp, throughput cao giữa các node</td><td>Cô lập lỗi theo nhóm rack cho hệ phân tán lớn</td><td>Cô lập lỗi cho <b>từng</b> instance quan trọng</td></tr>
+          <tr><td>Phạm vi AZ</td><td class="no">Chỉ 1 AZ</td><td class="yes">Nhiều AZ cùng Region</td><td class="yes">Nhiều AZ cùng Region</td></tr>
+          <tr><td>Giới hạn</td><td>Theo capacity (nên cùng type, 1 request)</td><td><b>7 partition/AZ</b>; instance không giới hạn (trừ quota)</td><td><b>7 instance đang chạy/AZ</b>/group</td></tr>
+          <tr><td>Rủi ro</td><td>Lỗi phần cứng/AZ ảnh hưởng nhiều instance</td><td>Lỗi rack chỉ ảnh hưởng 1 partition</td><td>Lỗi rack chỉ ảnh hưởng 1 instance</td></tr>
+          <tr><td>Dedicated Instances</td><td>—</td><td>Tối đa 2 partition</td><td class="no">Không hỗ trợ</td></tr>
+          <tr><td>Use case điển hình</td><td>HPC (MPI), CFD, big data cần mạng nhanh, ML training phân tán</td><td>HDFS, HBase, Cassandra, Kafka</td><td>Vài node DB chính/phụ, domain controller, ứng dụng nhỏ critical</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Quy tắc chung của placement group</h3>
+      <ul>
+        <li>Một instance chỉ ở <b>một</b> placement group tại một thời điểm. <b>Không merge</b> được các placement group.</li>
+        <li>Muốn <b>thêm/chuyển/gỡ</b> instance khỏi placement group ⇒ instance phải ở trạng thái <b>stopped</b> (Actions › Instance settings › Modify instance placement, hoặc <code>aws ec2 modify-instance-placement</code>).</li>
+        <li><b>Không</b> launch <b>Dedicated Hosts</b> vào placement group. <b>Không</b> launch Spot Instance cấu hình <b>stop/hibernate</b> khi bị interrupt vào placement group.</li>
+        <li>On-Demand Capacity Reservation và zonal RI khớp thuộc tính vẫn tự áp khi launch vào placement group (nhưng chỉ ODCR mới <i>tạo</i> được trong cluster PG).</li>
+        <li>Placement group <b>chia sẻ</b> được cho account khác (shared placement groups) qua AWS RAM.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Placement Groups</span>
+        <ul>
+          <li>“<i>HPC, tightly coupled, node-to-node, lowest latency, highest network throughput, MPI</i>” ⇒ <b>cluster placement group</b> (+ EFA nếu có trong đáp án).</li>
+          <li>“<i>Large distributed and replicated workload (Cassandra/HDFS/Kafka), hundreds of instances, isolate hardware failures, topology-aware</i>” ⇒ <b>partition placement group</b>.</li>
+          <li>“<i>Small number of critical instances, each on distinct hardware, reduce correlated failures</i>” ⇒ <b>spread placement group</b> (nhớ giới hạn 7/AZ).</li>
+          <li>“<i>Cluster placement group launch fails with insufficient capacity</i>” ⇒ launch tất cả trong <b>một request</b>, <b>cùng instance type</b>; hoặc stop/start toàn bộ nhóm rồi thử lại; tạo ODCR trong cluster PG.</li>
+          <li>Cluster PG đánh đổi <b>availability</b> lấy <b>hiệu năng</b>: đề yêu cầu “highly available across AZs” thì cluster PG <b>không</b> phải câu trả lời.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: ENHANCED NETWORKING & EFA ===================== -->
+      <h2 id="enhanced-networking"><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Adapter.svg" alt="">Enhanced networking, ENA Express &amp; Elastic Fabric Adapter</h2>
+      <p class="lead"><span class="t" data-vi="Mạng tăng cường">Enhanced networking</span> dùng <span class="t" data-vi="Ảo hóa I/O gốc đơn">single root I/O virtualization (SR-IOV)</span> – phương pháp ảo hóa thiết bị cho hiệu năng I/O cao hơn và CPU thấp hơn so với network interface ảo hóa truyền thống. Kết quả: <b>băng thông cao hơn</b>, <span class="t" data-vi="Số gói tin mỗi giây">packets per second (PPS)</span> cao hơn và <b>độ trễ thấp ổn định</b> giữa các instance. <b>Không tốn thêm phí</b>.</p>
+
+      <h3>Hai cơ chế enhanced networking</h3>
+      <div class="compare">
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Adapter.svg" alt="">Elastic Network Adapter (ENA)</h4>
+          <ul>
+            <li>Tốc độ <b>tới 100 Gbps</b> trên instance hỗ trợ.</li>
+            <li><b>Mọi instance Nitro</b> đều dùng ENA; cộng một số Xen-based: H1, I3, G3, <code>m4.16xlarge</code>, P3dn, R4.</li>
+            <li>Là lựa chọn mặc định hiện nay (current generation).</li>
+          </ul></div>
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/res/Traditional-server.svg" alt="">Intel 82599 Virtual Function (VF)</h4>
+          <ul>
+            <li>Tốc độ <b>tới 10 Gbps</b>.</li>
+            <li>Chỉ thế hệ cũ: C3, C4, D2, I2, M4 (trừ <code>m4.16xlarge</code>), R3.</li>
+          </ul></div>
+      </div>
+
+      <h3>ENA Express</h3>
+      <p><b>ENA Express</b> chạy trên công nghệ <span class="t" data-vi="Datagram tin cậy có khả năng mở rộng">Scalable Reliable Datagram (SRD)</span> của AWS: chia gói tin của <b>mỗi flow</b> ra nhiều đường mạng khác nhau, tự né đường tắc nghẽn, xử lý reorder và phần lớn retransmit ngay ở tầng mạng.</p>
+      <ul>
+        <li>Tăng <b>single-flow bandwidth từ 5 Gbps lên tới 25 Gbps</b> trong cùng Region (vẫn không vượt giới hạn tổng của instance – vd instance 12,5 Gbps thì single-flow tối đa 12,5).</li>
+        <li><b>Giảm tail latency</b> giữa các instance cùng AZ, nhất là khi mạng tải cao. Dùng được cả giữa các AZ trong cùng Region (trừ vài Region).</li>
+        <li>Điều kiện: <b>cả hai</b> instance gửi/nhận đều là type hỗ trợ và đều bật ENA Express; cùng Region; đường đi <b>không qua middlebox</b>; không dùng trong Local Zone. Không thỏa ⇒ tự quay về ENA thường.</li>
+        <li>Lúc mạng nhàn rỗi median latency có thể tăng nhẹ (vài chục micro giây) – ứng dụng cần PPS rất cao và tối ưu latency lúc không tắc nghẽn thì enhanced networking thường phù hợp hơn.</li>
+      </ul>
+
+      <h3>Elastic Fabric Adapter (EFA)</h3>
+      <p>Một <span class="t" data-vi="Bộ điều hợp fabric co giãn">Elastic Fabric Adapter</span> là <b>network device</b> gắn vào EC2 instance để <b>tăng tốc ứng dụng AI, ML và HPC</b> – đạt hiệu năng như cluster on-premises nhưng có tính co giãn của cloud. EFA cho độ trễ <b>thấp và ổn định hơn</b>, throughput cao hơn cho giao tiếp <b>giữa các instance</b> – yếu tố quyết định khi scale ứng dụng tightly coupled.</p>
+      <ul>
+        <li>Tích hợp <b>Libfabric</b>; hỗ trợ <b>NCCL</b>, NIXL cho AI/ML và <b>Open MPI 4.1+</b>, <b>Intel MPI 2019 Update 5+</b> cho HPC; AWS Neuron SDK (Trainium/Inferentia).</li>
+        <li><span class="t" data-vi="Bỏ qua hệ điều hành">OS-bypass</span>: ứng dụng (qua MPI/NCCL) gọi <b>Libfabric API</b> giao tiếp <b>trực tiếp với EFA device</b>, bỏ qua kernel/TCP-IP stack ⇒ giảm overhead. Có congestion control nhờ giao thức <b>SRD</b>.</li>
+        <li>Hỗ trợ <b>RDMA</b> read/write trên instance Nitro v4 trở lên; GPUDirect RDMA trên GPU NVIDIA.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 330" width="760" role="img" aria-label="So sánh software stack truyền thống và EFA OS-bypass">
+          <defs><marker id="ah10b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <text x="190" y="22" font-size="14" font-weight="700" text-anchor="middle">Không có EFA (chỉ ENA)</text>
+          <text x="570" y="22" font-size="14" font-weight="700" text-anchor="middle">Có EFA (EFA with ENA)</text>
+          <rect x="90" y="36" width="200" height="34" rx="6" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="190" y="58" font-size="12.5" text-anchor="middle">Ứng dụng HPC / ML</text>
+          <rect x="90" y="86" width="200" height="34" rx="6" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="190" y="108" font-size="12.5" text-anchor="middle">MPI / NCCL</text>
+          <rect x="90" y="136" width="200" height="34" rx="6" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <text x="190" y="158" font-size="12.5" text-anchor="middle">TCP/IP stack (kernel)</text>
+          <rect x="90" y="186" width="200" height="34" rx="6" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <text x="190" y="208" font-size="12.5" text-anchor="middle">ENA driver (kernel)</text>
+          <image href="../assets/icons/res/Amazon-VPC_Elastic-Network-Adapter.svg" x="166" y="236" width="48" height="48"/>
+          <text x="190" y="302" font-size="12.5" font-weight="700" text-anchor="middle">ENA device</text>
+          <path class="line-o" d="M190 70 V84" marker-end="url(#ah10b)"/>
+          <path class="line-o" d="M190 120 V134" marker-end="url(#ah10b)"/>
+          <path class="line-o" d="M190 170 V184" marker-end="url(#ah10b)"/>
+          <path class="line-o" d="M190 220 V234" marker-end="url(#ah10b)"/>
+          <line x1="380" y1="30" x2="380" y2="320" stroke="#999" stroke-dasharray="4 4"/>
+          <rect x="470" y="36" width="200" height="34" rx="6" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="570" y="58" font-size="12.5" text-anchor="middle">Ứng dụng HPC / ML</text>
+          <rect x="470" y="86" width="200" height="34" rx="6" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="570" y="108" font-size="12.5" text-anchor="middle">MPI / NCCL</text>
+          <rect x="470" y="136" width="200" height="34" rx="6" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="570" y="158" font-size="12.5" text-anchor="middle">Libfabric (user space)</text>
+          <rect x="470" y="186" width="200" height="34" rx="6" fill="none" stroke="#999" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="570" y="208" font-size="12" text-anchor="middle" class="muted">kernel – bị bỏ qua (OS-bypass)</text>
+          <image href="../assets/icons/svc/AWS-ParallelCluster.svg" x="546" y="236" width="48" height="48"/>
+          <text x="570" y="302" font-size="12.5" font-weight="700" text-anchor="middle">EFA device (SRD)</text>
+          <path class="line-o" d="M570 70 V84" marker-end="url(#ah10b)"/>
+          <path class="line-o" d="M570 120 V134" marker-end="url(#ah10b)"/>
+          <path class="line-o" d="M680 153 C 720 153, 720 260, 600 260" marker-end="url(#ah10b)"/>
+          <text x="712" y="210" font-size="11" text-anchor="middle" class="muted">trực tiếp</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Theo trang “Elastic Fabric Adapter”: bình thường MPI/NCCL đi qua TCP/IP stack của OS và ENA driver. Với EFA, MPI/NCCL gọi <b>Libfabric API</b>, Libfabric <b>bỏ qua kernel</b> và nói chuyện trực tiếp với EFA device ⇒ giảm overhead, độ trễ thấp và ổn định. Traditional EFA interface vẫn có ENA device cho traffic IP thông thường.</figcaption>
+      </figure>
+
+      <h3>ENA vs EFA vs EFA-only</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>ENA</th><th>EFA (EFA with ENA)</th><th>EFA-only</th></tr></thead>
+        <tbody>
+          <tr><td>IP networking</td><td class="yes">Có</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Gán IPv4/IPv6</td><td class="yes">Có</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Làm primary network interface</td><td class="yes">Có</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Tính vào giới hạn ENI của instance</td><td>Có</td><td>Có</td><td>Có</td></tr>
+          <tr><td>Instance hỗ trợ</td><td>Mọi instance Nitro</td><td colspan="2">Danh sách riêng (vd c5n, m5n, p4d, p5, trn1, hpc6a, hpc7a… thường là size lớn nhất / metal)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Giới hạn của EFA – rất hay thành bẫy</h3>
+      <ul>
+        <li><b>EFA traffic không đi xuyên AZ hoặc VPC</b>, và <b>không routable</b> (traffic IP thường qua ENA device của EFA interface vẫn routable bình thường) ⇒ các node HPC dùng EFA phải ở <b>cùng AZ</b> – thường kết hợp <b>cluster placement group</b>.</li>
+        <li>Một EFA mỗi instance (instance nhiều network card: một EFA mỗi card).</li>
+        <li><b>Không hỗ trợ trên AWS Outposts</b>. Trên <b>Windows</b>, EFA device chỉ dùng cho ứng dụng AWS CDI SDK; ứng dụng khác thì EFA hoạt động như ENA.</li>
+        <li>EFA traffic giữa P4d/P4de/DL1 và instance type khác chưa được hỗ trợ.</li>
+        <li>Thực hành chuẩn (từ hướng dẫn “Get started with EFA”): security group của EFA phải <b>cho phép mọi traffic inbound và outbound tới/từ chính security group đó</b> (self-referencing) để các node trao đổi.</li>
+        <li>EFA là tính năng mạng tùy chọn, <b>không tốn thêm phí</b>.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Enhanced networking &amp; EFA</span>
+        <ul>
+          <li>“<i>Higher bandwidth, higher PPS, lower latency, at no extra cost</i>” ⇒ <b>enhanced networking (ENA)</b> trên instance type hỗ trợ.</li>
+          <li>“<i>HPC with MPI / distributed ML training with NCCL, inter-node communication, OS-bypass, low-latency</i>” ⇒ <b>EFA</b> + <b>cluster placement group</b>.</li>
+          <li>“<i>Increase single TCP flow bandwidth between instances beyond 5 Gbps</i>” ⇒ <b>ENA Express</b> (tới 25 Gbps) hoặc đặt trong <b>cluster PG</b> (10 Gbps).</li>
+          <li>EFA ⇒ nhớ “<b>same AZ / same subnet-level</b>” (không cross-AZ). Đáp án trải EFA cluster qua nhiều AZ là <b>sai</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: KẾT HỢP ===================== -->
+      <h2 id="ket-hop"><img src="../assets/icons/cat/Compute.svg" alt="">Kết hợp thành kiến trúc: chọn gì cho tình huống nào?</h2>
+      <p class="lead">Đề SAA-C03 hiếm khi hỏi riêng từng tính năng; thường là một <b>tình huống</b> đòi kết hợp đúng: security group + placement + mạng hiệu năng cao + IP. Bảng dưới đây gom các mẫu hay gặp nhất của bài.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tình huống trong đề</th><th>Thiết kế đúng</th><th>Phương án gây nhiễu hay gặp</th></tr></thead>
+        <tbody>
+          <tr><td>HPC/CFD chạy MPI, hàng trăm node trao đổi liên tục</td><td><b>Cluster PG</b> trong 1 AZ + instance hỗ trợ <b>EFA</b> + cùng instance type, launch 1 request (+ ODCR nếu cần chắc capacity)</td><td>Spread PG; trải nhiều AZ; thêm nhiều ENI để “tăng băng thông”</td></tr>
+          <tr><td>Cassandra/HDFS/Kafka hàng trăm node, cần biết node nằm “rack” nào để đặt replica</td><td><b>Partition PG</b> (tới 7 partition/AZ, có thể nhiều AZ)</td><td>Spread PG (giới hạn 7 instance/AZ không đủ)</td></tr>
+          <tr><td>3–6 instance critical (vd primary/secondary DB tự quản, quorum node) không được hỏng cùng lúc</td><td><b>Spread PG</b> (trải nhiều AZ nếu được)</td><td>Cluster PG (tăng rủi ro hỏng đồng thời)</td></tr>
+          <tr><td>Web 3 tầng co giãn trong ASG</td><td>Security group chain: ALB ⇐ 0.0.0.0/0; web ⇐ <b>sg-alb</b>; DB ⇐ <b>sg-web</b></td><td>Rule theo IP từng instance; mở DB cho 0.0.0.0/0</td></tr>
+          <tr><td>Ứng dụng legacy license theo MAC, cần failover nhanh, ngân sách thấp</td><td><b>Secondary ENI</b> chuyển sang hot standby cùng AZ</td><td>Elastic IP (không giữ MAC); đổi DNS</td></tr>
+          <tr><td>Đối tác whitelist một public IP cố định</td><td><b>Elastic IP</b> (một instance) / NAT gateway có EIP (traffic ra từ nhiều instance) / NLB với EIP (traffic vào)</td><td>Public IPv4 tự gán (đổi khi stop/start)</td></tr>
+          <tr><td>Chặn ngay một IP đang tấn công</td><td><b>Network ACL</b> deny (hoặc AWS WAF với HTTP)</td><td>Security group (không có deny, kết nối tracked không cắt ngay)</td></tr>
+          <tr><td>Instance tự làm NAT/firewall</td><td>Tắt <b>source/destination check</b> trên ENI</td><td>Thêm security group</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – tổ chức một đội bóng</span>
+        <p><b>Cluster PG</b> là cho cả đội tập chung một sân để chuyền bóng nhanh nhất – nhưng sân ngập nước thì cả đội nghỉ. <b>Partition PG</b> là chia đội thành nhiều tổ, mỗi tổ tập ở một sân riêng (có điện, nước riêng), huấn luyện viên biết ai ở sân nào để xếp người dự bị hợp lý. <b>Spread PG</b> là giữ mấy cầu thủ ngôi sao ở các khách sạn khác nhau – ít người thôi, nhưng không bao giờ cùng ngộ độc một lúc. <b>EFA</b> là bộ đàm nội bộ nói thẳng với nhau không qua tổng đài (OS-bypass).</p></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>Security group</b>: tường lửa ảo gắn ở <b>network interface</b>; <b>chỉ allow</b>; <b>stateful</b>; gộp rule của mọi SG; SG mới = không inbound, outbound all; default SG = inbound từ chính nó, outbound all, không xóa được; mặc định 5 SG/ENI (tới 16), 60 rule mỗi chiều.</li>
+          <li><b>Security group referencing</b> (source = sg-xxx) cho kiến trúc nhiều tầng co giãn; dùng được qua peering/transit gateway (inbound).</li>
+          <li>Sửa rule <b>không cắt</b> kết nối đang được track; cần chặn ngay ⇒ <b>NACL</b>. SG không lọc DNS tới Route 53 Resolver ⇒ DNS Firewall.</li>
+          <li><b>Public IPv4 tự gán</b> đổi khi stop/start/hibernate; <b>private IPv4</b>, <b>IPv6</b>, <b>Elastic IP</b> giữ nguyên. EIP: static, một Region, 5/Region, <b>tính phí cả khi nhàn rỗi</b>; mọi public IPv4 đều tính phí.</li>
+          <li><b>ENI</b>: gắn với <b>AZ</b>; hot/warm/cold attach; primary không tháo được; mang private IP, EIP, MAC, SG ⇒ failover giá rẻ, management network, dual-homed; <b>không</b> tăng băng thông; NAT/firewall ⇒ tắt source/dest check; requester-managed ENI không detach được.</li>
+          <li><b>Cluster PG</b>: 1 AZ, độ trễ thấp, 10 Gbps/flow, cùng type + 1 request. <b>Partition PG</b>: ≤ 7 partition/AZ, rack riêng, topology-aware (HDFS/Cassandra/Kafka). <b>Spread PG</b>: ≤ 7 instance đang chạy/AZ, mỗi instance một rack. Đổi placement ⇒ instance phải <b>stopped</b>; không merge; không Dedicated Host.</li>
+          <li><b>Enhanced networking</b> (SR-IOV): ENA tới 100 Gbps (mọi Nitro), Intel 82599 VF tới 10 Gbps (đời cũ); miễn phí. <b>ENA Express</b> (SRD): single-flow 5 ⇒ 25 Gbps.</li>
+          <li><b>EFA</b>: OS-bypass qua Libfabric cho <b>MPI/NCCL</b>; EFA traffic <b>không cross-AZ/VPC, không routable</b>; không Outposts; miễn phí ⇒ kết hợp cluster PG cho HPC/ML.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Security group</dt><dd><b>Nhóm bảo mật / tường lửa ảo</b> gắn vào network interface, chỉ có rule allow, stateful.</dd></div>
+        <div><dt>Inbound rule / Outbound rule</dt><dd><b>Quy tắc chiều vào / chiều ra</b> (ingress / egress).</dd></div>
+        <div><dt>Stateful / Stateless</dt><dd><b>Có trạng thái / Không trạng thái</b> – có tự cho phép traffic phản hồi hay không.</dd></div>
+        <div><dt>Default security group</dt><dd><b>Nhóm bảo mật mặc định</b> của VPC – inbound từ chính nó, outbound all; không xóa được.</dd></div>
+        <div><dt>Security group referencing</dt><dd><b>Tham chiếu nhóm bảo mật</b> – dùng ID security group khác làm source/destination.</dd></div>
+        <div><dt>Prefix list (managed prefix list)</dt><dd><b>Danh sách tiền tố được quản lý</b> – tập CIDR dùng lại trong rule; tính theo max entries.</dd></div>
+        <div><dt>Stale security group rule</dt><dd><b>Quy tắc lỗi thời</b> – tham chiếu SG ở VPC peer/shared đã bị xóa.</dd></div>
+        <div><dt>Connection tracking</dt><dd><b>Theo dõi kết nối</b> – cơ chế làm security group stateful.</dd></div>
+        <div><dt>Tracked / Untracked connection</dt><dd><b>Kết nối được / không được theo dõi</b> – untracked bị cắt ngay khi rule bị xóa.</dd></div>
+        <div><dt>Connection tracking allowance</dt><dd><b>Hạn mức kết nối được theo dõi</b> mỗi instance; vượt ⇒ drop gói tin.</dd></div>
+        <div><dt>Idle connection tracking timeout</dt><dd><b>Thời gian chờ kết nối nhàn rỗi</b> – TCP established, UDP, UDP stream.</dd></div>
+        <div><dt>Asymmetric routing</dt><dd><b>Định tuyến bất đối xứng</b> – vào một interface, ra interface khác.</dd></div>
+        <div><dt>Route 53 Resolver DNS Firewall</dt><dd><b>Tường lửa DNS</b> – lọc truy vấn DNS mà security group không chặn được.</dd></div>
+        <div><dt>Private IPv4 / Public IPv4 address</dt><dd><b>Địa chỉ IPv4 riêng / công cộng</b> – public tự gán bị đổi khi stop/start.</dd></div>
+        <div><dt>Elastic IP address (EIP)</dt><dd><b>Địa chỉ IP tĩnh co giãn</b> – public IPv4 tĩnh thuộc account, remap được.</dd></div>
+        <div><dt>Allocate / Associate / Disassociate / Release</dt><dd><b>Cấp phát / Gắn / Gỡ / Trả lại</b> Elastic IP.</dd></div>
+        <div><dt>Bring Your Own IP (BYOIP)</dt><dd><b>Mang dải IP của mình</b> lên AWS.</dd></div>
+        <div><dt>Reverse DNS record</dt><dd><b>Bản ghi DNS ngược</b> – IP ⇒ tên, dùng khi gửi email từ EC2.</dd></div>
+        <div><dt>Public DNS hostname</dt><dd><b>Tên DNS công cộng</b> – phân giải public IP từ ngoài, private IP từ trong VPC.</dd></div>
+        <div><dt>Elastic network interface (ENI)</dt><dd><b>Card mạng ảo co giãn</b> trong VPC, gắn với một AZ.</dd></div>
+        <div><dt>Primary / Secondary network interface</dt><dd><b>Card mạng chính (eth0, không tháo được) / Card mạng phụ</b>.</dd></div>
+        <div><dt>Hot / Warm / Cold attach</dt><dd><b>Gắn khi đang chạy / khi đã dừng / khi launch</b>.</dd></div>
+        <div><dt>Secondary private IPv4 address</dt><dd><b>Địa chỉ IPv4 riêng phụ</b> – reassign được sang ENI khác.</dd></div>
+        <div><dt>Source/destination check</dt><dd><b>Kiểm tra nguồn/đích</b> – tắt khi làm NAT, router, firewall.</dd></div>
+        <div><dt>Requester-managed network interface</dt><dd><b>ENI do dịch vụ AWS tạo và quản lý</b> trong VPC của bạn (RDS, NAT gateway, VPC endpoint…).</dd></div>
+        <div><dt>Prefix delegation</dt><dd><b>Ủy quyền tiền tố</b> – gán một dải CIDR cho ENI.</dd></div>
+        <div><dt>Network card</dt><dd><b>Card mạng vật lý (logic)</b> – instance nhiều card có băng thông &gt; 100 Gbps.</dd></div>
+        <div><dt>Dual-homed / Multi-homed instance</dt><dd><b>Instance nối hai / nhiều mạng</b> qua nhiều ENI.</dd></div>
+        <div><dt>Placement group</dt><dd><b>Nhóm sắp đặt</b> – ảnh hưởng vị trí phần cứng của instance.</dd></div>
+        <div><dt>Cluster placement group</dt><dd><b>Nhóm sắp đặt dồn cụm</b> – 1 AZ, độ trễ thấp, throughput cao.</dd></div>
+        <div><dt>Partition placement group</dt><dd><b>Nhóm sắp đặt phân vùng</b> – partition có rack riêng, ≤ 7/AZ.</dd></div>
+        <div><dt>Spread placement group</dt><dd><b>Nhóm sắp đặt trải rộng</b> – mỗi instance phần cứng riêng, ≤ 7 instance/AZ.</dd></div>
+        <div><dt>Precision time placement group</dt><dd><b>Nhóm sắp đặt thời gian chính xác</b> – truy cập nguồn thời gian độ chính xác cao.</dd></div>
+        <div><dt>Correlated failure</dt><dd><b>Lỗi tương quan</b> – nhiều instance hỏng cùng lúc vì chung phần cứng.</dd></div>
+        <div><dt>Rack</dt><dd><b>Tủ máy chủ</b> – có nguồn điện và mạng riêng.</dd></div>
+        <div><dt>Topology-aware application</dt><dd><b>Ứng dụng nhận biết cấu trúc liên kết</b> (HDFS, HBase, Cassandra).</dd></div>
+        <div><dt>High-bisection bandwidth</dt><dd><b>Băng thông chia đôi cao</b> – segment mạng của cluster PG.</dd></div>
+        <div><dt>Enhanced networking</dt><dd><b>Mạng tăng cường</b> – SR-IOV, băng thông/PPS cao, độ trễ thấp.</dd></div>
+        <div><dt>SR-IOV</dt><dd><b>Ảo hóa I/O gốc đơn</b> – ảo hóa thiết bị hiệu năng cao.</dd></div>
+        <div><dt>Elastic Network Adapter (ENA)</dt><dd><b>Bộ điều hợp mạng co giãn</b> – tới 100 Gbps, mọi Nitro instance.</dd></div>
+        <div><dt>Intel 82599 VF</dt><dd><b>Giao diện Virtual Function của Intel</b> – tới 10 Gbps, đời cũ.</dd></div>
+        <div><dt>ENA Express</dt><dd><b>ENA tăng tốc bằng SRD</b> – single-flow tới 25 Gbps, giảm tail latency.</dd></div>
+        <div><dt>Scalable Reliable Datagram (SRD)</dt><dd><b>Giao thức datagram tin cậy có khả năng mở rộng</b> của AWS.</dd></div>
+        <div><dt>Packets per second (PPS)</dt><dd><b>Số gói tin mỗi giây</b>.</dd></div>
+        <div><dt>Single-flow bandwidth</dt><dd><b>Băng thông một luồng</b> (một kết nối TCP/UDP).</dd></div>
+        <div><dt>Tail latency</dt><dd><b>Độ trễ đuôi</b> – độ trễ của các request chậm nhất (p99…).</dd></div>
+        <div><dt>Elastic Fabric Adapter (EFA) / EFA-only</dt><dd><b>Bộ điều hợp fabric co giãn</b> cho HPC/ML / bản chỉ có EFA device, không IP.</dd></div>
+        <div><dt>OS-bypass</dt><dd><b>Bỏ qua hệ điều hành</b> – ứng dụng nói chuyện trực tiếp với thiết bị mạng.</dd></div>
+        <div><dt>Libfabric / MPI / NCCL</dt><dd><b>Thư viện fabric (OFI) / Giao diện truyền thông điệp (HPC) / Thư viện giao tiếp tập thể NVIDIA (ML)</b>.</dd></div>
+        <div><dt>RDMA</dt><dd><b>Truy cập bộ nhớ từ xa trực tiếp</b>.</dd></div>
+        <div><dt>Tightly coupled</dt><dd><b>Liên kết chặt</b> – các node phụ thuộc, trao đổi liên tục.</dd></div>
+      </dl>
+
+      <!-- ===================== CÂU HỎI ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A research company runs a computational fluid dynamics (CFD) application on Amazon EC2. The application uses MPI, and the nodes exchange large amounts of data continuously during each simulation. The company needs the LOWEST possible inter-node latency and the highest network throughput. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Launch the instances in a spread placement group across three Availability Zones.</li>
+            <li data-k="B">Launch EFA-enabled instances of the same instance type in a cluster placement group in a single Availability Zone.</li>
+            <li data-k="C">Launch the instances in a partition placement group and attach two additional network interfaces to each instance.</li>
+            <li data-k="D">Launch burstable performance instances in an Auto Scaling group across multiple Availability Zones.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Workload HPC <b>tightly coupled</b> dùng MPI ⇒ <b>cluster placement group</b> (cùng segment high-bisection bandwidth, 10 Gbps/flow) + <b>EFA</b> (OS-bypass qua Libfabric cho MPI); dùng cùng instance type giảm nguy cơ thiếu capacity. <b>A sai</b>: spread PG tách instance ra các rack và AZ khác nhau – tăng độ trễ, lại giới hạn 7 instance/AZ. <b>C sai</b>: partition PG để cô lập lỗi chứ không tối ưu độ trễ; gắn thêm ENI <b>không</b> tăng băng thông. <b>D sai</b>: instance burstable không hỗ trợ cluster PG; trải nhiều AZ làm tăng độ trễ.</div>
+          <div class="trans">
+            <div class="tq">Một công ty nghiên cứu chạy một ứng dụng mô phỏng động lực học chất lưu (CFD) trên Amazon EC2. Ứng dụng dùng MPI, và các node trao đổi lượng lớn dữ liệu liên tục trong mỗi lần mô phỏng. Công ty cần độ trễ giữa các node LOWEST possible (thấp nhất có thể) và thông lượng mạng cao nhất. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Khởi chạy các instance trong một spread placement group trải trên ba Availability Zone.</span><span class="why">Sai: spread placement group tách instance ra các rack và AZ khác nhau nên làm tăng độ trễ, lại giới hạn 7 instance/AZ.</span></li>
+              <li data-k="B"><span class="tv">Khởi chạy các instance hỗ trợ EFA, cùng instance type, trong một cluster placement group ở một Availability Zone duy nhất.</span><span class="why">Đúng: workload HPC tightly coupled dùng MPI cần cluster placement group (băng thông cao, độ trễ thấp) kết hợp EFA (OS-bypass cho MPI); cùng instance type giảm nguy cơ thiếu capacity.</span></li>
+              <li data-k="C"><span class="tv">Khởi chạy các instance trong một partition placement group và gắn thêm hai network interface vào mỗi instance.</span><span class="why">Sai: partition placement group dùng để cô lập lỗi chứ không tối ưu độ trễ, và gắn thêm ENI không làm tăng băng thông.</span></li>
+              <li data-k="D"><span class="tv">Khởi chạy các burstable performance instance trong một Auto Scaling group trải trên nhiều Availability Zone.</span><span class="why">Sai: instance burstable không hỗ trợ cluster placement group, và trải nhiều AZ làm tăng độ trễ giữa các node.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company is deploying a self-managed Apache Cassandra cluster of 150 nodes on Amazon EC2. The company wants to minimize the impact of underlying hardware failures and wants Cassandra to make replica-placement decisions based on which nodes share the same hardware. Which deployment strategy should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">A cluster placement group</li>
+            <li data-k="B">A spread placement group in each Availability Zone</li>
+            <li data-k="C">Dedicated Hosts with host affinity</li>
+            <li data-k="D">A partition placement group with partitions across multiple Availability Zones</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Partition placement group</b> dành cho workload lớn, phân tán, có nhân bản (HDFS, HBase, <b>Cassandra</b>): mỗi partition có rack riêng, và có <b>visibility</b> instance nào ở partition nào để ứng dụng <b>topology-aware</b> đặt replica; số instance chỉ giới hạn bởi quota account; partition trải được nhiều AZ. <b>A sai</b>: cluster PG dồn instance lại – tăng rủi ro lỗi tương quan. <b>B sai</b>: spread PG chỉ chạy tối đa 7 instance/AZ mỗi group – không đủ 150 node. <b>C sai</b>: Dedicated Host phục vụ license/tuân thủ, không cung cấp cô lập theo rack cho cả cụm, lại không launch vào placement group được.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang triển khai một cụm Apache Cassandra tự quản lý gồm 150 node trên Amazon EC2. Công ty muốn giảm thiểu ảnh hưởng của lỗi phần cứng bên dưới và muốn Cassandra đưa ra quyết định đặt replica dựa trên việc node nào dùng chung phần cứng. Solutions architect nên đề xuất chiến lược triển khai nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một cluster placement group</span><span class="why">Sai: cluster placement group dồn instance sát nhau, làm tăng rủi ro một lỗi phần cứng ảnh hưởng nhiều node cùng lúc.</span></li>
+              <li data-k="B"><span class="tv">Một spread placement group trong mỗi Availability Zone</span><span class="why">Sai: spread placement group chỉ cho tối đa 7 instance đang chạy mỗi AZ trong một group – không đủ cho 150 node, và không cung cấp thông tin partition cho Cassandra.</span></li>
+              <li data-k="C"><span class="tv">Dedicated Hosts với host affinity</span><span class="why">Sai: Dedicated Host phục vụ license/tuân thủ, không cung cấp cô lập theo rack và thông tin topology cho cả cụm.</span></li>
+              <li data-k="D"><span class="tv">Một partition placement group với các partition trải trên nhiều Availability Zone</span><span class="why">Đúng: mỗi partition có rack riêng, và ứng dụng thấy được instance nào thuộc partition nào để đặt replica theo topology (topology-aware); hỗ trợ cụm lớn như Cassandra.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company runs a small, critical application on five Amazon EC2 instances in one Availability Zone. The company must ensure that a single hardware failure (for example, a rack failure) affects no more than one instance. Which solution meets this requirement?</div>
+          <ol class="opts">
+            <li data-k="A">Launch the instances in a spread placement group.</li>
+            <li data-k="B">Launch the instances in a cluster placement group.</li>
+            <li data-k="C">Attach a secondary elastic network interface to each instance.</li>
+            <li data-k="D">Assign an Elastic IP address to each instance.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Spread placement group</b> đặt <b>mỗi instance trên phần cứng (rack) riêng</b>, khuyến nghị cho “số ít instance quan trọng” – 5 instance nằm trong giới hạn 7 instance đang chạy/AZ. <b>B sai</b>: cluster PG xếp sát nhau, ngược mục tiêu. <b>C sai</b>: ENI không ảnh hưởng vị trí phần cứng. <b>D sai</b>: Elastic IP chỉ là địa chỉ, không cô lập lỗi phần cứng.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng nhỏ nhưng quan trọng trên năm Amazon EC2 instance trong một Availability Zone. Công ty phải đảm bảo rằng một lỗi phần cứng đơn lẻ (ví dụ lỗi một rack) ảnh hưởng không quá một instance. Giải pháp nào đáp ứng yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Khởi chạy các instance trong một spread placement group.</span><span class="why">Đúng: spread placement group đặt mỗi instance trên phần cứng (rack) riêng; 5 instance nằm trong giới hạn 7 instance đang chạy mỗi AZ.</span></li>
+              <li data-k="B"><span class="tv">Khởi chạy các instance trong một cluster placement group.</span><span class="why">Sai: cluster placement group xếp instance sát nhau, một lỗi phần cứng có thể ảnh hưởng nhiều instance – ngược mục tiêu.</span></li>
+              <li data-k="C"><span class="tv">Gắn một elastic network interface phụ vào mỗi instance.</span><span class="why">Sai: ENI không ảnh hưởng đến vị trí phần cứng của instance.</span></li>
+              <li data-k="D"><span class="tv">Gán một Elastic IP address cho mỗi instance.</span><span class="why">Sai: Elastic IP chỉ là địa chỉ IP, không cô lập lỗi phần cứng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A web application runs on Amazon EC2 instances in an Auto Scaling group behind an Application Load Balancer. The application stores data in a MySQL database that runs on EC2 instances in private subnets. The database must accept connections on port 3306 only from the web servers, whose IP addresses change frequently as the group scales. What is the MOST secure and operationally efficient solution?</div>
+          <ol class="opts">
+            <li data-k="A">Add an inbound rule to the database security group that allows port 3306 from 0.0.0.0/0, because the database is in a private subnet.</li>
+            <li data-k="B">Use a Lambda function to update the database security group with the private IP address of each new web server.</li>
+            <li data-k="C">Add an inbound rule to the database security group that allows port 3306 with the web servers' security group as the source.</li>
+            <li data-k="D">Add a deny rule to the database security group for all traffic that does not come from the web servers.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Security group referencing</b>: source là security group của web tier ⇒ mọi instance mang SG đó (kể cả instance mới do Auto Scaling launch) được truy cập bằng private IP, không phải sửa rule. <b>A sai</b>: mở 0.0.0.0/0 vi phạm least privilege, private subnet không thay thế cho kiểm soát truy cập. <b>B sai</b>: chạy được nhưng phức tạp, tốn công vận hành, dễ chạm quota 60 rule. <b>D sai</b>: security group <b>không có rule deny</b>.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng web chạy trên các Amazon EC2 instance trong một Auto Scaling group phía sau một Application Load Balancer. Ứng dụng lưu dữ liệu trong một cơ sở dữ liệu MySQL chạy trên các EC2 instance trong private subnet. Cơ sở dữ liệu chỉ được nhận kết nối trên port 3306 từ các web server, mà địa chỉ IP của chúng thay đổi thường xuyên khi group scale. Giải pháp MOST secure and operationally efficient (an toàn và hiệu quả vận hành nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một inbound rule vào security group của cơ sở dữ liệu cho phép port 3306 từ 0.0.0.0/0, vì cơ sở dữ liệu nằm trong private subnet.</span><span class="why">Sai: mở 0.0.0.0/0 vi phạm least privilege; nằm trong private subnet không thay thế được kiểm soát truy cập ở security group.</span></li>
+              <li data-k="B"><span class="tv">Dùng một Lambda function để cập nhật security group của cơ sở dữ liệu với private IP của từng web server mới.</span><span class="why">Sai: chạy được nhưng phức tạp, tốn công vận hành và dễ chạm quota số rule của security group.</span></li>
+              <li data-k="C"><span class="tv">Thêm một inbound rule vào security group của cơ sở dữ liệu cho phép port 3306 với nguồn (source) là security group của các web server.</span><span class="why">Đúng: tham chiếu security group cho phép mọi instance mang SG của web tier (kể cả instance mới do Auto Scaling tạo) truy cập mà không phải sửa rule khi IP thay đổi.</span></li>
+              <li data-k="D"><span class="tv">Thêm một deny rule vào security group của cơ sở dữ liệu cho mọi lưu lượng không đến từ các web server.</span><span class="why">Sai: security group không hỗ trợ rule deny, chỉ có rule allow.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">Which TWO statements about Amazon EC2 security groups are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">If an inbound request is allowed, the response traffic is allowed to flow out regardless of the outbound rules.</li>
+            <li data-k="B">Security group rules are evaluated in order by rule number, and the first match is applied.</li>
+            <li data-k="C">A newly created security group has no inbound rules and has an outbound rule that allows all traffic.</li>
+            <li data-k="D">Changes to security group rules apply only to instances launched after the change.</li>
+            <li data-k="E">Security groups can include deny rules to block specific IP addresses.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> Security group <b>stateful</b> – phản hồi của traffic được allow tự đi qua bất kể chiều ngược lại; security group mới tạo <b>không có inbound rule</b> và có outbound rule allow all. <b>B sai</b>: đánh giá theo thứ tự số rule là đặc điểm của <b>Network ACL</b>; security group <b>gộp tất cả rule</b>. <b>D sai</b>: thay đổi rule tự áp dụng ngay cho mọi instance đang gắn SG. <b>E sai</b>: security group chỉ có rule allow.</div>
+          <div class="trans">
+            <div class="tq">HAI phát biểu nào về Amazon EC2 security group là đúng? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Nếu một request inbound được cho phép, lưu lượng phản hồi được phép đi ra bất kể các outbound rule.</span><span class="why">Đúng: security group là stateful – phản hồi của lưu lượng đã được allow tự động được cho qua theo chiều ngược lại.</span></li>
+              <li data-k="B"><span class="tv">Các rule của security group được đánh giá theo thứ tự số rule, và rule khớp đầu tiên được áp dụng.</span><span class="why">Sai: đánh giá theo thứ tự số rule là đặc điểm của Network ACL; security group gộp tất cả rule lại để quyết định.</span></li>
+              <li data-k="C"><span class="tv">Một security group mới tạo không có inbound rule nào và có một outbound rule cho phép mọi lưu lượng.</span><span class="why">Đúng: security group mới mặc định chặn mọi inbound (không có rule) và có outbound rule allow all.</span></li>
+              <li data-k="D"><span class="tv">Thay đổi rule của security group chỉ áp dụng cho các instance được khởi chạy sau khi thay đổi.</span><span class="why">Sai: thay đổi rule được áp dụng ngay lập tức cho mọi instance đang gắn security group đó.</span></li>
+              <li data-k="E"><span class="tv">Security group có thể chứa deny rule để chặn các địa chỉ IP cụ thể.</span><span class="why">Sai: security group chỉ có rule allow; muốn chặn IP cụ thể phải dùng Network ACL.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company hosts an application on a single Amazon EC2 instance in a public subnet. A partner allows traffic only from a fixed list of public IP addresses. The company must be able to replace the instance quickly if it fails without asking the partner to update its allow list. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Use the public IPv4 address that is automatically assigned to the instance and enable termination protection.</li>
+            <li data-k="B">Assign a secondary private IPv4 address to the instance and share it with the partner.</li>
+            <li data-k="C">Stop and start the instance to obtain a new public IPv4 address when a failure occurs.</li>
+            <li data-k="D">Allocate an Elastic IP address, associate it with the instance, and remap it to the replacement instance when needed.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Elastic IP</b> là public IPv4 <b>tĩnh</b>, thuộc account cho tới khi release, và có thể “<i>mask the failure of an instance by rapidly remapping the address to another instance</i>”. <b>A sai</b>: public IP tự gán bị release khi stop/terminate và không chuyển sang instance khác được; termination protection không giải quyết. <b>B sai</b>: private IP không truy cập được từ Internet. <b>C sai</b>: stop/start cho IP <b>mới</b> – đối tác phải cập nhật lại allow list.</div>
+          <div class="trans">
+            <div class="tq">Một công ty host một ứng dụng trên một Amazon EC2 instance duy nhất trong public subnet. Một đối tác chỉ cho phép lưu lượng từ một danh sách cố định các địa chỉ public IP. Công ty phải có khả năng thay thế instance nhanh chóng nếu nó gặp sự cố mà không cần yêu cầu đối tác cập nhật allow list. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng địa chỉ public IPv4 được tự động gán cho instance và bật termination protection.</span><span class="why">Sai: public IP tự gán bị thu hồi khi instance stop/terminate và không chuyển được sang instance thay thế; termination protection không giải quyết vấn đề này.</span></li>
+              <li data-k="B"><span class="tv">Gán một địa chỉ private IPv4 phụ cho instance và chia sẻ nó với đối tác.</span><span class="why">Sai: private IP không truy cập được từ Internet nên đối tác không dùng được.</span></li>
+              <li data-k="C"><span class="tv">Stop và start instance để nhận địa chỉ public IPv4 mới khi xảy ra sự cố.</span><span class="why">Sai: stop/start cấp public IP mới, đối tác lại phải cập nhật allow list.</span></li>
+              <li data-k="D"><span class="tv">Cấp phát một Elastic IP address, gắn nó với instance, và gắn lại (remap) sang instance thay thế khi cần.</span><span class="why">Đúng: Elastic IP là public IPv4 tĩnh thuộc account, có thể remap nhanh sang instance khác để che giấu sự cố mà địa chỉ không đổi.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs a legacy application on an Amazon EC2 instance. The application's license is bound to the MAC address of the network interface. The company needs a low-cost way to recover quickly by moving the workload to a pre-configured standby instance in the same Availability Zone if the primary instance fails. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Associate an Elastic IP address with the primary instance and move it to the standby instance on failure.</li>
+            <li data-k="B">Attach a secondary elastic network interface to the primary instance for the application traffic, and move that network interface to the standby instance on failure.</li>
+            <li data-k="C">Create an AMI of the primary instance and launch a new instance from the AMI in another Region on failure.</li>
+            <li data-k="D">Detach the primary network interface from the failed instance and attach it to the standby instance.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> ENI <b>mang theo MAC address</b>, private IP, Elastic IP và security group khi được chuyển sang instance khác <b>cùng AZ</b> ⇒ license vẫn hợp lệ, không cần đổi route table/DNS – đúng kịch bản “low-budget, high-availability” trong tài liệu. <b>A sai</b>: Elastic IP chuyển được địa chỉ nhưng <b>không</b> mang MAC address. <b>C sai</b>: instance mới có ENI mới (MAC mới), lại chậm và khác Region. <b>D sai</b>: <b>primary network interface không tháo được</b>.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng cũ trên một Amazon EC2 instance. License của ứng dụng gắn với MAC address của network interface. Công ty cần một cách chi phí thấp để khôi phục nhanh bằng cách chuyển workload sang một instance dự phòng (standby) đã cấu hình sẵn trong cùng Availability Zone nếu instance chính gặp sự cố. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gắn một Elastic IP address với instance chính và chuyển nó sang instance dự phòng khi có sự cố.</span><span class="why">Sai: Elastic IP chuyển được địa chỉ IP nhưng không mang theo MAC address, nên license không còn hợp lệ.</span></li>
+              <li data-k="B"><span class="tv">Gắn một elastic network interface phụ vào instance chính cho lưu lượng ứng dụng, và chuyển network interface đó sang instance dự phòng khi có sự cố.</span><span class="why">Đúng: ENI phụ mang theo MAC address, private IP, Elastic IP và security group khi chuyển sang instance khác cùng AZ – license vẫn hợp lệ, chi phí thấp.</span></li>
+              <li data-k="C"><span class="tv">Tạo một AMI của instance chính và khởi chạy instance mới từ AMI đó ở một Region khác khi có sự cố.</span><span class="why">Sai: instance mới có ENI mới (MAC mới) nên license mất hiệu lực, lại chậm và sai yêu cầu cùng AZ.</span></li>
+              <li data-k="D"><span class="tv">Tháo primary network interface khỏi instance bị lỗi và gắn nó vào instance dự phòng.</span><span class="why">Sai: primary network interface (eth0) không thể tháo khỏi instance.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A security engineer detects malicious SSH activity from a single IP address to EC2 instances in a subnet. The security group allows SSH only from the company's IP range, which includes the malicious address. The engineer removes the address range from the security group, but the existing SSH sessions remain active. The engineer must immediately terminate the existing sessions from that IP address. What should the engineer do?</div>
+          <ol class="opts">
+            <li data-k="A">Add a deny rule for the IP address to the security group.</li>
+            <li data-k="B">Remove the outbound rule from the security group.</li>
+            <li data-k="C">Add an inbound deny rule for the IP address to the subnet's network ACL.</li>
+            <li data-k="D">Enable VPC Flow Logs on the instances' network interfaces.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Kết nối SSH từ dải IP hẹp là <b>tracked connection</b>: sửa rule security group <b>không</b> ngắt kết nối đang có. Tài liệu khuyến nghị dùng <b>network ACL</b> (stateless) – thêm rule chặn sẽ <b>cắt ngay</b> kết nối hiện tại, và NACL hỗ trợ <b>deny</b>. <b>A sai</b>: security group không có deny rule. <b>B sai</b>: kết nối đã tracked nên phản hồi vẫn được cho ra; xóa outbound còn làm hỏng traffic hợp lệ. <b>D sai</b>: Flow Logs chỉ ghi nhận, không chặn.</div>
+          <div class="trans">
+            <div class="tq">Một kỹ sư bảo mật phát hiện hoạt động SSH độc hại từ một địa chỉ IP duy nhất tới các EC2 instance trong một subnet. Security group chỉ cho phép SSH từ dải IP của công ty, vốn bao gồm địa chỉ độc hại. Kỹ sư đã xóa dải địa chỉ khỏi security group, nhưng các phiên SSH hiện có vẫn hoạt động. Kỹ sư phải chấm dứt ngay lập tức các phiên hiện có từ địa chỉ IP đó. Kỹ sư nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một deny rule cho địa chỉ IP đó vào security group.</span><span class="why">Sai: security group không hỗ trợ deny rule.</span></li>
+              <li data-k="B"><span class="tv">Xóa outbound rule khỏi security group.</span><span class="why">Sai: kết nối đã được tracked nên phản hồi vẫn được cho ra; xóa outbound rule còn làm hỏng lưu lượng hợp lệ khác.</span></li>
+              <li data-k="C"><span class="tv">Thêm một inbound deny rule cho địa chỉ IP đó vào network ACL của subnet.</span><span class="why">Đúng: network ACL là stateless và hỗ trợ deny, nên rule chặn cắt ngay cả các kết nối đang tồn tại – điều mà sửa security group không làm được với tracked connection.</span></li>
+              <li data-k="D"><span class="tv">Bật VPC Flow Logs trên các network interface của instance.</span><span class="why">Sai: Flow Logs chỉ ghi nhận lưu lượng, không chặn hay ngắt kết nối.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company runs a latency-sensitive distributed application on Amazon EC2 instances in one Availability Zone. The instances communicate heavily with each other. The company wants to improve packet-per-second performance and reduce inter-instance latency at no additional networking cost. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Attach multiple network interfaces to each instance to double the bandwidth.</li>
+            <li data-k="B">Use current-generation instance types that support enhanced networking with the Elastic Network Adapter (ENA).</li>
+            <li data-k="C">Move the instances into a spread placement group across multiple Availability Zones.</li>
+            <li data-k="D">Associate an Elastic IP address with each instance and communicate over the public IP addresses.</li>
+            <li data-k="E">Launch the instances into a cluster placement group.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> <b>Enhanced networking (ENA)</b> dùng SR-IOV cho băng thông cao, PPS cao, độ trễ thấp ổn định và <b>không tốn thêm phí</b>; <b>cluster placement group</b> đặt instance trong cùng segment mạng high-bisection bandwidth, phù hợp khi phần lớn traffic là giữa các instance (tạo PG miễn phí). <b>A sai</b>: tài liệu nêu rõ không thể gắn thêm ENI (NIC teaming) để tăng gấp đôi băng thông. <b>C sai</b>: spread PG và đa AZ làm tăng độ trễ. <b>D sai</b>: giao tiếp qua public IP không giảm độ trễ, lại tốn phí public IPv4 và data transfer.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng phân tán nhạy cảm với độ trễ trên các Amazon EC2 instance trong một Availability Zone. Các instance giao tiếp với nhau rất nhiều. Công ty muốn cải thiện hiệu năng packet-per-second (PPS) và giảm độ trễ giữa các instance mà không tốn thêm chi phí mạng. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gắn nhiều network interface vào mỗi instance để tăng gấp đôi băng thông.</span><span class="why">Sai: gắn thêm ENI (NIC teaming) không làm tăng gấp đôi băng thông của instance.</span></li>
+              <li data-k="B"><span class="tv">Dùng các instance type thế hệ hiện tại hỗ trợ enhanced networking với Elastic Network Adapter (ENA).</span><span class="why">Đúng: enhanced networking (ENA) dùng SR-IOV cho băng thông cao, PPS cao, độ trễ thấp và không tốn thêm phí.</span></li>
+              <li data-k="C"><span class="tv">Chuyển các instance vào một spread placement group trải trên nhiều Availability Zone.</span><span class="why">Sai: spread placement group và trải nhiều AZ làm tăng độ trễ (và phát sinh phí data transfer giữa AZ).</span></li>
+              <li data-k="D"><span class="tv">Gắn một Elastic IP address cho mỗi instance và giao tiếp qua địa chỉ public IP.</span><span class="why">Sai: giao tiếp qua public IP không giảm độ trễ, lại tốn phí public IPv4 và data transfer.</span></li>
+              <li data-k="E"><span class="tv">Khởi chạy các instance vào một cluster placement group.</span><span class="why">Đúng: cluster placement group đặt instance trong cùng segment mạng băng thông cao, độ trễ thấp, phù hợp khi phần lớn lưu lượng là giữa các instance, và tạo placement group miễn phí.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company runs 40 web servers on Amazon EC2 in public subnets. Each instance has an automatically assigned public IPv4 address, and the company also holds 10 Elastic IP addresses that are no longer associated with any resource. The company wants to reduce its public IPv4 address costs while keeping the website reachable from the internet. Which solution will meet these requirements MOST cost-effectively?</div>
+          <ol class="opts">
+            <li data-k="A">Place the web servers in private subnets behind an Application Load Balancer, disable auto-assign public IPv4, and release the unused Elastic IP addresses.</li>
+            <li data-k="B">Keep the unassociated Elastic IP addresses because AWS charges only for Elastic IP addresses that are associated with running instances.</li>
+            <li data-k="C">Replace each automatically assigned public IPv4 address with an Elastic IP address.</li>
+            <li data-k="D">Attach a secondary network interface with a public IPv4 address to each web server.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> AWS <b>tính phí mọi public IPv4</b> (public IP của instance đang chạy, EIP đang dùng và EIP nhàn rỗi). Tài liệu “Public IPv4 address optimization” khuyến nghị đặt instance sau <b>load balancer</b> và tắt auto-assign public IP, đồng thời release EIP không dùng. <b>B sai</b>: EIP <b>nhàn rỗi vẫn bị tính phí</b>. <b>C sai</b>: số public IPv4 không giảm, chi phí không giảm. <b>D sai</b>: thêm public IP còn tốn hơn (và instance có secondary ENI sẽ không được cấp lại public IP sau stop/start).</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy 40 web server trên Amazon EC2 trong các public subnet. Mỗi instance có một địa chỉ public IPv4 được tự động gán, và công ty cũng đang giữ 10 Elastic IP address không còn gắn với tài nguyên nào. Công ty muốn giảm chi phí địa chỉ public IPv4 trong khi website vẫn truy cập được từ Internet. Giải pháp nào đáp ứng các yêu cầu này MOST cost-effectively (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt các web server vào private subnet phía sau một Application Load Balancer, tắt auto-assign public IPv4, và release các Elastic IP address không dùng.</span><span class="why">Đúng: AWS tính phí mọi public IPv4; đặt instance sau load balancer cho phép bỏ public IP của 40 instance, và release EIP nhàn rỗi loại bỏ thêm chi phí, website vẫn truy cập được qua ALB.</span></li>
+              <li data-k="B"><span class="tv">Giữ các Elastic IP address chưa gắn vì AWS chỉ tính phí Elastic IP address gắn với instance đang chạy.</span><span class="why">Sai: Elastic IP nhàn rỗi (không gắn) vẫn bị tính phí như mọi public IPv4 khác.</span></li>
+              <li data-k="C"><span class="tv">Thay mỗi địa chỉ public IPv4 tự động gán bằng một Elastic IP address.</span><span class="why">Sai: số lượng public IPv4 không giảm nên chi phí không giảm.</span></li>
+              <li data-k="D"><span class="tv">Gắn một network interface phụ có địa chỉ public IPv4 vào mỗi web server.</span><span class="why">Sai: thêm public IPv4 chỉ làm tăng chi phí thay vì giảm.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/security-group-rules.html" target="_blank" rel="noopener">Security group rules (Amazon VPC User Guide)</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/default-security-group.html" target="_blank" rel="noopener">Default security groups for your VPCs</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/security-group-connection-tracking.html" target="_blank" rel="noopener">Amazon EC2 security group connection tracking</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/amazon-vpc-limits.html" target="_blank" rel="noopener">Amazon VPC quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-instance-addressing.html" target="_blank" rel="noopener">Amazon EC2 instance IP addressing</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/network-interface-attachments.html" target="_blank" rel="noopener">Network interface attachments for your EC2 instance</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/scenarios-enis.html" target="_blank" rel="noopener">Multiple network interfaces for your Amazon EC2 instances</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/requester-managed-eni.html" target="_blank" rel="noopener">Requester-managed network interfaces</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/placement-strategies.html" target="_blank" rel="noopener">Placement strategies for your placement groups</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/change-instance-placement-group.html" target="_blank" rel="noopener">Change the placement for an EC2 instance</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/enhanced-networking.html" target="_blank" rel="noopener">Enhanced networking on Amazon EC2 instances</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ena-express.html" target="_blank" rel="noopener">Improve network performance between EC2 instances with ENA Express</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html" target="_blank" rel="noopener">Elastic Fabric Adapter for AI/ML and HPC workloads on Amazon EC2</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

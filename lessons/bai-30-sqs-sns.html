@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 30 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Simple-Queue-Service.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="30" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Giải thích vì sao phải <b>decouple</b> (tách rời) các thành phần của ứng dụng và phân biệt vai trò của <b>Amazon SQS</b> (hàng đợi, kéo – <i>pull</i>), <b>Amazon SNS</b> (pub/sub, đẩy – <i>push</i>) và <b>Amazon MQ</b> (broker cho ứng dụng cũ).</li>
+          <li>Chọn đúng <b>Standard queue</b> (throughput gần như không giới hạn, at-least-once, best-effort ordering) hay <b>FIFO queue</b> (đúng thứ tự trong message group, exactly-once, 300 / 3.000 / high-throughput TPS).</li>
+          <li>Cấu hình đúng các tham số hay thi: <b>visibility timeout</b> (mặc định 30 giây, tối đa 12 giờ), <b>long polling</b> (tối đa 20 giây), <b>delay queue</b> (tối đa 15 phút), <b>retention</b> (60 giây – 14 ngày, mặc định 4 ngày), kích thước message (tối đa <b>1 MiB</b>).</li>
+          <li>Dùng <b>dead-letter queue (DLQ)</b> với <code>maxReceiveCount</code> và <b>redrive</b> để cô lập “poison message”; hiểu DLQ của SNS gắn vào <b>subscription</b>.</li>
+          <li>Thiết kế mẫu <b>fan-out SNS + SQS</b> (queue access policy, cross-account, raw message delivery) và <b>message filtering</b> bằng subscription filter policy.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 6 – Application Integration &amp; Serverless</span>
+        <p>Đây là bài mở đầu Module 6. Bài này chỉ tập trung vào <b>SQS</b> và <b>SNS</b>. Các nội dung liên quan được dạy ở bài khác và chỉ nhắc ngắn ở đây: <b>scale Auto Scaling group theo độ dài hàng đợi (backlog per instance)</b> – Bài 13; <b>EventBridge, Step Functions, Amazon MQ</b> – Bài 31; <b>Lambda</b> (event source mapping, concurrency) – Bài 32; <b>API Gateway</b> và kiến trúc serverless – Bài 33; <b>Kinesis</b> (streaming, replay) – Bài 35; <b>KMS</b> chi tiết – Bài về mã hóa.</p></div>
+
+      <!-- ===================== PHẦN 1: DECOUPLING ===================== -->
+      <h2 id="decoupling"><img src="../assets/icons/cat/Application-Integration.svg" alt="">Decoupling: vì sao cần hàng đợi và thông báo?</h2>
+      <p class="lead">Trong một ứng dụng <span class="t" data-vi="Gắn chặt">tightly coupled</span>, thành phần A gọi <b>đồng bộ</b> (synchronous) thành phần B: nếu B chậm, quá tải hay sập thì A cũng lỗi theo, và hai bên phải scale cùng nhịp. <span class="t" data-vi="Tách rời (giảm phụ thuộc)">Decouple</span> nghĩa là đặt một lớp trung gian <b>bất đồng bộ</b> (<span class="t" data-vi="Bất đồng bộ">asynchronous</span>) – hàng đợi hoặc topic – để A chỉ cần “gửi và quên”, B xử lý theo tốc độ của riêng mình.</p>
+
+      <p>AWS cung cấp ba dịch vụ messaging được quản lý hoàn toàn (theo tài liệu SQS):</p>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Simple-Queue-Service.svg" alt="">
+          <div><h4>Amazon SQS</h4><span class="vi">Dịch vụ hàng đợi tin nhắn</span><p>Hàng đợi hosted, bền vững, sẵn sàng cao. Consumer <b>chủ động kéo</b> (poll) message; thường <b>một consumer xử lý một message</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" alt="">
+          <div><h4>Amazon SNS</h4><span class="vi">Dịch vụ thông báo pub/sub</span><p>Publisher gửi tới <b>topic</b>, SNS <b>đẩy</b> (push) bản sao tới <b>nhiều subscriber</b>: SQS, Lambda, HTTP(S), email, SMS, mobile push, Firehose.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">
+          <div><h4>Queue</h4><span class="vi">Hàng đợi</span><p>Lưu message dự phòng trên nhiều server/AZ tới khi consumer xử lý xong và <b>xóa</b> (tối đa 14 ngày).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Notification-Service_Topic.svg" alt="">
+          <div><h4>Topic</h4><span class="vi">Chủ đề (kênh phát)</span><p>Điểm truy cập logic; mỗi message publish vào topic được nhân bản tới mọi subscription phù hợp.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-MQ.svg" alt="">
+          <div><h4>Amazon MQ</h4><span class="vi">Message broker được quản lý</span><p>ActiveMQ / RabbitMQ – cho ứng dụng <b>đang dùng broker cũ</b> (JMS, AMQP, MQTT, OpenWire, STOMP). Học ở Bài 31.</p></div></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp plain"><span class="lbl">Trước: gọi đồng bộ (tightly coupled)</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng<small>upload video</small></div>
+            <span class="arrow">HTTP</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Web tier<small>chờ encode xong mới trả lời</small></div>
+            <span class="arrow">gọi trực tiếp</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Encoding tier<small>quá tải ⇒ web tier lỗi theo</small></div>
+          </div>
+        </div>
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Application-Integration.svg" alt="">Sau: decouple bằng Amazon SQS</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng<small>nhận phản hồi ngay</small></div>
+            <span class="arrow">HTTP</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Web tier (producer)<small>SendMessage</small></div>
+            <span class="arrow">message</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">SQS queue<small>đệm, lưu tới 14 ngày</small></div>
+            <span class="arrow dashed">ReceiveMessage (poll)</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">Worker ASG (consumer)<small>scale theo backlog</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Đặt hàng đợi SQS giữa web tier và worker tier: web tier trả lời người dùng ngay, worker xử lý theo tốc độ riêng; nếu worker sập, message vẫn nằm an toàn trong queue. Worker ASG có thể scale theo số message tồn đọng (Bài 13).</figcaption>
+      </figure>
+
+      <h3>So sánh SQS, SNS và Amazon MQ (bảng trong tài liệu AWS)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại tài nguyên</th><th>Amazon SNS</th><th>Amazon SQS</th><th>Amazon MQ</th></tr></thead>
+        <tbody>
+          <tr><td>Synchronous (đồng bộ)</td><td class="no">Không</td><td class="no">Không</td><td class="yes">Có</td></tr>
+          <tr><td>Asynchronous (bất đồng bộ)</td><td class="yes">Có</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Queues (hàng đợi)</td><td class="no">Không</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Publisher-subscriber messaging</td><td class="yes">Có</td><td class="no">Không</td><td class="yes">Có</td></tr>
+          <tr><td>Message broker</td><td class="no">Không</td><td class="no">Không</td><td class="yes">Có</td></tr>
+          <tr><td>Mô hình nhận</td><td>Push tới subscriber</td><td>Pull (consumer poll)</td><td>Theo protocol broker</td></tr>
+          <tr><td>Khuyến nghị của AWS</td><td colspan="2"><b>Ứng dụng mới</b> – scale gần như không giới hạn, API đơn giản, trả theo dùng, rẻ cho khối lượng lớn</td><td><b>Migrate</b> ứng dụng đang dùng broker (JMS, AMQP, MQTT, OpenWire, STOMP)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – quầy nhận đơn và loa phát thanh</span>
+        <p><b>SQS</b> giống <b>khay phiếu order</b> trong bếp nhà hàng: phục vụ ghi phiếu bỏ vào khay rồi quay lại tiếp khách; đầu bếp nào rảnh thì <b>tự lấy</b> một phiếu, nấu xong mới xé phiếu (delete). Nếu đầu bếp ngất giữa chừng, phiếu “hiện lại” cho người khác lấy. <b>SNS</b> giống <b>loa phát thanh</b>: một thông báo phát ra, <b>mọi người đang nghe</b> (subscriber) đều nhận cùng lúc – nhưng ai không có mặt thì lỡ, trừ khi có “hộp thư” (SQS) nhận hộ.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Decouple</i>”, “<i>loosely coupled</i>”, “<i>buffer requests</i>”, “<i>absorb spikes / sudden bursts</i>”, “<i>process asynchronously</i>”, “<i>do not lose orders if the processing tier fails</i>” ⇒ <b>Amazon SQS</b>.</li>
+          <li>“<i>Notify multiple systems / subscribers</i>”, “<i>push</i>”, “<i>send email / SMS alerts</i>”, “<i>one event processed by several independent services in parallel</i>” ⇒ <b>Amazon SNS</b> (thường + SQS ⇒ fan-out).</li>
+          <li>“<i>Migrate an on-premises application that uses JMS / AMQP / MQTT / ActiveMQ / RabbitMQ with minimal code changes</i>” ⇒ <b>Amazon MQ</b>, không phải SQS/SNS.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: SQS CƠ BẢN ===================== -->
+      <h2 id="sqs"><img src="../assets/icons/svc/Amazon-Simple-Queue-Service.svg" alt="">Amazon SQS: kiến trúc, vòng đời message và giới hạn</h2>
+      <p class="lead">Theo tài liệu, <b>Amazon Simple Queue Service (SQS)</b> cung cấp một <span class="t" data-vi="Hàng đợi được AWS vận hành">hosted queue</span> an toàn, bền vững, sẵn sàng cao để tích hợp và decouple các hệ thống phân tán. Không cần cấp phát gì: SQS <b>tự scale minh bạch</b> theo tải và các đợt tăng đột biến.</p>
+
+      <h3>Ba thành phần của hệ thống messaging phân tán</h3>
+      <ul>
+        <li><span class="t" data-vi="Bên gửi">Producer</span>: thành phần gửi message vào queue (<code>SendMessage</code>, <code>SendMessageBatch</code> tối đa <b>10</b> message/lần).</li>
+        <li><b>Queue</b>: phân tán trên các server SQS; message được <b>lưu dự phòng trên nhiều server</b> (standard queue: nhiều bản sao trên <b>nhiều AZ</b>).</li>
+        <li><span class="t" data-vi="Bên nhận / xử lý">Consumer</span>: thành phần nhận message (<code>ReceiveMessage</code>, tối đa 10 message/lần), xử lý rồi <b>xóa</b> (<code>DeleteMessage</code>). Nhiều producer và nhiều consumer có thể làm việc đồng thời vì SQS “khóa” message trong lúc xử lý.</li>
+      </ul>
+
+      <h3>Vòng đời một message (theo tài liệu)</h3>
+      <ol class="steps">
+        <li><b>Producer gửi</b> message A vào queue; message được phân tán dự phòng trên các server SQS.</li>
+        <li><b>Consumer nhận</b> message A. Trong lúc xử lý, A <b>vẫn nằm trong queue</b> nhưng <b>không được trả về</b> cho các lần receive khác trong suốt <b>visibility timeout</b> (phần 4).</li>
+        <li><b>Consumer xóa</b> message A khỏi queue để nó không bị nhận và xử lý lại khi visibility timeout hết hạn. Nếu không xóa, A sẽ “hiện lại” cho consumer khác.</li>
+        <li>Message nằm trong queue quá <b>message retention period</b> sẽ bị SQS <b>tự xóa</b> (mặc định <b>4 ngày</b>, đặt được từ <b>60 giây</b> tới <b>14 ngày</b>).</li>
+      </ol>
+
+      <div class="stats">
+        <div class="stat"><b>1 MiB</b><span>kích thước message tối đa (lớn hơn ⇒ S3 + Extended Client, tới 2 GB)</span></div>
+        <div class="stat"><b>4 ngày</b><span>retention mặc định (60 giây – 14 ngày)</span></div>
+        <div class="stat"><b>30 giây</b><span>visibility timeout mặc định (0 giây – 12 giờ)</span></div>
+        <div class="stat"><b>20 giây</b><span>thời gian chờ long polling tối đa</span></div>
+        <div class="stat"><b>15 phút</b><span>delay tối đa (delay queue / message timer)</span></div>
+        <div class="stat"><b>10</b><span>message mỗi batch · message attribute mỗi message</span></div>
+      </div>
+
+      <h3>Các quota message quan trọng (theo tài liệu)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Quota</th><th>Giá trị</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td>Kích thước message</td><td>1 byte – <b>1.048.576 byte (1 MiB)</b></td><td>Lớn hơn: <b>Amazon SQS Extended Client Library</b> (Java, Python) lưu payload trên <b>Amazon S3</b>, message chỉ chứa con trỏ; payload tối đa <b>2 GB</b>. Hoặc tách nhỏ message.</td></tr>
+          <tr><td>Nội dung message</td><td>XML, JSON, text không định dạng</td><td>Ký tự Unicode ngoài danh sách cho phép bị từ chối</td></tr>
+          <tr><td>Message attributes</td><td>Tối đa <b>10</b> / message</td><td>Metadata có cấu trúc kèm message</td></tr>
+          <tr><td>Message batch</td><td>Tối đa <b>10</b> message / request</td><td>Batch giảm số API call ⇒ tăng throughput, giảm chi phí</td></tr>
+          <tr><td>Message retention</td><td>Mặc định <b>4 ngày</b>; 60 giây – <b>1.209.600 giây (14 ngày)</b></td><td>Đặt bằng <code>SetQueueAttributes</code></td></tr>
+          <tr><td>Visibility timeout</td><td>Mặc định <b>30 giây</b>; 0 giây – <b>12 giờ</b></td><td>Có thể đặt riêng cho từng message</td></tr>
+          <tr><td>Message timer / delay</td><td>0 – <b>15 phút</b></td><td>Lâu hơn ⇒ <b>EventBridge Scheduler</b> (Bài 31)</td></tr>
+          <tr><td>In-flight messages (standard)</td><td>Khoảng <b>120.000</b></td><td>Đã nhận nhưng chưa xóa; vượt ⇒ lỗi <code>OverLimit</code> (short polling)</td></tr>
+          <tr><td><code>MessageGroupId</code></td><td>Tối đa 128 ký tự</td><td><b>Bắt buộc</b> với FIFO queue</td></tr>
+          <tr><td>Queue policy</td><td>8.192 byte, 20 statement, 50 principal, 10 condition</td><td>Resource-based policy của queue</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Bảo mật SQS</h3>
+      <ul>
+        <li><b>Kiểm soát truy cập</b>: IAM policy (identity-based) và <span class="t" data-vi="Chính sách truy cập hàng đợi">SQS access policy</span> (resource-based) – cách duy nhất để cấp quyền cho <b>account khác</b> hoặc cho <b>dịch vụ AWS</b> như SNS, S3 event notification gửi vào queue.</li>
+        <li><b>Mã hóa at rest</b>: <span class="t" data-vi="Mã hóa phía máy chủ">server-side encryption (SSE)</span> dùng <b>SSE-SQS</b> (khóa do SQS quản lý, mặc định) hoặc <b>SSE-KMS</b> (khóa trong AWS KMS – có thể là customer managed key để kiểm soát, audit qua CloudTrail).</li>
+        <li><b>Mã hóa in transit</b>: endpoint HTTPS (TLS). Truy cập riêng tư từ VPC: <b>interface VPC endpoint</b> (AWS PrivateLink, Bài 22) – SQS <b>không có</b> gateway endpoint.</li>
+      </ul>
+
+      <h3>SQS trong các kiến trúc thường gặp</h3>
+      <ul>
+        <li><b>Worker tier trên EC2 Auto Scaling</b>: scale theo metric <code>ApproximateNumberOfMessagesVisible</code> hoặc tốt hơn là <b>backlog per instance</b> với target tracking (Bài 13).</li>
+        <li><b>AWS Lambda</b> làm consumer qua <b>event source mapping</b>: Lambda tự poll, gom batch, xóa message khi hàm chạy thành công (chi tiết Bài 32).</li>
+        <li><b>S3 event notification → SQS</b>: đệm sự kiện upload để worker xử lý (thumbnail, quét virus…).</li>
+        <li><b>Buffer ghi vào database</b>: hấp thụ spike ghi trước khi vào RDS/DynamoDB, tránh quá tải DB.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>SQS <b>không tự xóa</b> message sau khi consumer nhận – consumer <b>phải gọi DeleteMessage</b> (hoặc SDK/Lambda xóa tự động khi xử lý thành công). Quên xóa ⇒ message bị xử lý lặp lại.</li>
+          <li>Retention tối đa chỉ <b>14 ngày</b>. Đề yêu cầu “giữ message 30 ngày / replay lại dữ liệu cũ nhiều lần” ⇒ SQS không đáp ứng (nghĩ tới Kinesis – Bài 35, hoặc lưu S3).</li>
+          <li>Message &gt; 1 MiB (video, file lớn) ⇒ lưu object trên <b>S3</b>, message chỉ chứa key/con trỏ (Extended Client Library).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: STANDARD vs FIFO ===================== -->
+      <h2 id="standard-fifo"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">Standard queue vs FIFO queue</h2>
+      <p class="lead">SQS có hai loại queue. Loại queue được chọn <b>lúc tạo</b> và <b>không đổi được</b> sau đó (muốn chuyển phải tạo queue mới – kiến thức phổ biến). Tên FIFO queue bắt buộc kết thúc bằng hậu tố <code>.fifo</code>.</p>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">Standard queue</h4>
+          <ul>
+            <li><b>Unlimited throughput</b>: số API call/giây gần như <b>không giới hạn</b> cho mỗi action (Send/Receive/Delete).</li>
+            <li><span class="t" data-vi="Giao ít nhất một lần">At-least-once delivery</span>: mỗi message được giao ít nhất một lần, <b>đôi khi nhiều hơn một lần</b> (retry, độ trễ mạng) ⇒ ứng dụng phải <span class="t" data-vi="Lũy đẳng (xử lý lặp không đổi kết quả)">idempotent</span>.</li>
+            <li><span class="t" data-vi="Cố gắng giữ thứ tự (không bảo đảm)">Best-effort ordering</span>: cố gắng giữ thứ tự gửi nhưng <b>không bảo đảm</b>.</li>
+            <li>Lưu nhiều bản sao mỗi message trên <b>nhiều AZ</b>.</li>
+            <li>Use case: tách request người dùng khỏi xử lý nền (resize/encode media), phân phối việc cho nhiều worker (xác thực thẻ tín dụng), gom message để ghi batch vào DB.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Message.svg" alt="">FIFO queue (<code>.fifo</code>)</h4>
+          <ul>
+            <li><span class="t" data-vi="Vào trước ra trước">First-in-first-out</span>: đúng thứ tự gửi <b>trong mỗi message group</b>; nhiều group xử lý song song.</li>
+            <li><span class="t" data-vi="Xử lý đúng một lần">Exactly-once processing</span>: không đưa message trùng vào queue trong <b>khoảng khử trùng 5 phút</b>.</li>
+            <li>Throughput: <b>300</b> API call/giây mỗi action (không batch) ⇒ <b>3.000</b> message/giây với batch 10.</li>
+            <li><b>High throughput mode</b>: tới <b>70.000 TPS</b> không batch / <b>700.000</b> message/giây có batch ở us-east-1, us-west-2, eu-west-1 (các Region khác thấp hơn, mặc định 2.400 TPS).</li>
+            <li>Use case: lệnh người dùng phải chạy đúng thứ tự, cập nhật giá sản phẩm theo đúng trình tự, phải đăng ký tài khoản trước khi ghi danh khóa học.</li>
+          </ul></div>
+      </div>
+
+      <h3>Message group ID và deduplication ID</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thuộc tính FIFO</th><th>Ý nghĩa</th><th>Chi tiết thi</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Mã nhóm message">MessageGroupId</span></td><td>Message <b>cùng group</b> được xử lý <b>tuần tự nghiêm ngặt</b>; khác group xử lý <b>song song</b></td><td><b>Bắt buộc</b> khi gửi vào FIFO queue. Khi một message của group đang in-flight, message kế tiếp của group đó chưa được giao tới khi message trước bị xóa hoặc hết visibility timeout. Muốn tăng song song ⇒ dùng <b>nhiều group ID</b> (vd theo <code>customerId</code>).</td></tr>
+          <tr><td><span class="t" data-vi="Mã khử trùng lặp">MessageDeduplicationId</span></td><td>Token khử trùng: gửi lại cùng ID trong <b>5 phút</b> ⇒ SQS nhận nhưng <b>không</b> đưa bản trùng vào queue</td><td>Producer tự cung cấp, <b>hoặc</b> bật <b>content-based deduplication</b>.</td></tr>
+          <tr><td><span class="t" data-vi="Khử trùng dựa trên nội dung">Content-based deduplication</span></td><td>SQS tự tạo deduplication ID bằng <b>băm SHA-256 phần body</b></td><td>Chỉ băm <b>body</b>, <b>không</b> tính message attributes.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Order must be preserved</i>”, “<i>process in the exact order received</i>”, “<i>no duplicates</i>”, “<i>exactly-once</i>” ⇒ <b>SQS FIFO</b> (và SNS FIFO nếu cần fan-out).</li>
+          <li>“<i>Maximum throughput</i>”, “<i>millions of messages</i>”, thứ tự không quan trọng ⇒ <b>Standard</b> (rẻ hơn, không giới hạn) + consumer <b>idempotent</b>.</li>
+          <li>“<i>Order per customer / per device</i>” nhưng cần song song ⇒ FIFO với <b>MessageGroupId = customerId / deviceId</b>.</li>
+          <li>Chuyển standard ⇒ FIFO: <b>không đổi tại chỗ được</b> – tạo FIFO queue mới (tên <code>.fifo</code>) và đổi producer/consumer sang queue mới.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“Standard queue nhưng message bị xử lý 2 lần” là <b>hành vi bình thường</b> (at-least-once) – giải pháp: xử lý idempotent (vd lưu message ID đã xử lý vào DynamoDB với điều kiện ghi) hoặc chuyển FIFO; còn nếu do xử lý quá lâu ⇒ tăng <b>visibility timeout</b>.</li>
+          <li>FIFO 300 TPS là <b>mỗi API action</b> (không batch). Đề đòi 3.000 msg/s ⇒ dùng <b>batching</b>; cao hơn nữa ⇒ <b>high throughput mode</b> + nhiều message group.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: VISIBILITY / POLLING / DELAY ===================== -->
+      <h2 id="visibility-polling"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Message.svg" alt="">Visibility timeout, long polling và delay queue</h2>
+      <p class="lead">Ba tham số này quyết định <b>khi nào</b> consumer thấy một message. Đề SAA-C03 rất hay đưa triệu chứng (“message bị xử lý trùng”, “quá nhiều empty response”, “cần hoãn xử lý vài phút”) và hỏi chỉnh tham số nào.</p>
+
+      <h3>Visibility timeout</h3>
+      <p>Khi consumer nhận một message, message <b>vẫn ở trong queue</b> nhưng tạm thời <b>vô hình</b> với consumer khác trong khoảng <span class="t" data-vi="Thời gian ẩn message">visibility timeout</span>. Đồng hồ bắt đầu chạy ngay khi message được giao. Trong khoảng này consumer phải xử lý và <b>xóa</b> message; nếu không, message <b>hiện lại</b> trong queue và có thể được consumer khác (hoặc chính nó) nhận lại – nhờ vậy message không bị mất khi consumer crash.</p>
+      <ul>
+        <li>Mặc định <b>30 giây</b>, đặt được từ <b>0 giây</b> tới <b>12 giờ</b> ở cấp queue; đặt riêng cho từng message bằng <code>ChangeMessageVisibility</code>.</li>
+        <li><b>Kéo dài</b> khi xử lý lâu hơn dự kiến: gọi <code>ChangeMessageVisibility</code> định kỳ (cơ chế <span class="t" data-vi="Nhịp tim (gia hạn định kỳ)">heartbeat</span>). Giới hạn <b>12 giờ</b> tính từ lần nhận đầu tiên và <b>không bị reset</b> khi gia hạn; việc dài hơn ⇒ <b>AWS Step Functions</b> (Bài 31) hoặc chia nhỏ tác vụ.</li>
+        <li><b>Từ bỏ</b> message: đặt <code>VisibilityTimeout = 0</code> ⇒ message hiện lại ngay cho consumer khác.</li>
+        <li>Best practice: đặt bằng <b>thời gian tối đa</b> ứng dụng thường cần để xử lý + xóa. Đặt quá ngắn ⇒ xử lý trùng; đặt quá dài ⇒ message lỗi lâu mới được retry.</li>
+        <li><span class="t" data-vi="Message đang được xử lý">In-flight message</span> = đã nhận chưa xóa. Standard queue: khoảng <b>120.000</b>; vượt ⇒ short polling trả lỗi <code>OverLimit</code>, long polling thì không lỗi mà không trả message mới. FIFO: phụ thuộc số message group đang active.</li>
+        <li>Kể cả với visibility timeout, do mô hình at-least-once, standard queue <b>không bảo đảm tuyệt đối</b> một message không bị giao hơn một lần trong khoảng timeout.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 720 250" width="720" role="img" aria-label="Dòng thời gian visibility timeout và delay queue">
+          <defs><marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <path class="line-o" d="M20 130 H700" marker-end="url(#ah1)"/>
+          <text x="690" y="152" font-size="12" text-anchor="end" class="muted">thời gian</text>
+          <image href="../assets/icons/res/Amazon-Simple-Queue-Service_Message.svg" x="22" y="78" width="36" height="36"/>
+          <text x="40" y="70" font-size="12" text-anchor="middle" font-weight="700">SendMessage</text>
+          <rect x="60" y="112" width="150" height="36" rx="4" fill="#8C4FFF" fill-opacity="0.18" stroke="#8C4FFF"/>
+          <text x="135" y="135" font-size="12" text-anchor="middle" font-weight="600">Delay (0–15 phút)</text>
+          <text x="135" y="175" font-size="11" text-anchor="middle" class="muted">ẩn ngay khi vào queue</text>
+          <rect x="210" y="112" width="120" height="36" rx="4" fill="#7AA116" fill-opacity="0.18" stroke="#7AA116"/>
+          <text x="270" y="135" font-size="12" text-anchor="middle" font-weight="600">Visible</text>
+          <text x="270" y="175" font-size="11" text-anchor="middle" class="muted">chờ consumer poll</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="312" y="62" width="36" height="36"/>
+          <text x="330" y="54" font-size="12" text-anchor="middle" font-weight="700">ReceiveMessage</text>
+          <rect x="330" y="112" width="230" height="36" rx="4" fill="#147EBA" fill-opacity="0.18" stroke="#147EBA"/>
+          <text x="445" y="135" font-size="12" text-anchor="middle" font-weight="600">Visibility timeout (mặc định 30 s)</text>
+          <text x="445" y="175" font-size="11" text-anchor="middle" class="muted">in-flight: ẩn với consumer khác</text>
+          <text x="445" y="195" font-size="11" text-anchor="middle" class="muted">ChangeMessageVisibility để gia hạn (≤ 12 giờ)</text>
+          <text x="590" y="94" font-size="12" text-anchor="middle" font-weight="700">DeleteMessage ⇒ xong</text>
+          <text x="610" y="210" font-size="12" text-anchor="middle" font-weight="700">Không xóa ⇒ visible lại</text>
+          <text x="610" y="228" font-size="11" text-anchor="middle" class="muted">ReceiveCount +1 ⇒ có thể vào DLQ</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Dòng thời gian của một message: <b>delay</b> ẩn message ngay khi vào queue; <b>visibility timeout</b> chỉ ẩn message sau khi đã được nhận. Hết visibility timeout mà chưa xóa ⇒ message hiện lại và số lần nhận tăng lên (cơ sở để chuyển vào DLQ).</figcaption>
+      </figure>
+
+      <h3>Short polling vs long polling</h3>
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">Short polling (mặc định)</h4>
+          <ul>
+            <li><code>ReceiveMessage</code> chỉ hỏi <b>một tập con server</b> (phân phối ngẫu nhiên có trọng số) và <b>trả lời ngay</b>, kể cả khi không có message.</li>
+            <li>Có thể <b>không trả đủ</b> message; nếu queue &lt; 1.000 message thì lần gọi sau sẽ lấy được.</li>
+            <li>Xảy ra khi <code>WaitTimeSeconds = 0</code> hoặc không đặt mà thuộc tính queue <code>ReceiveMessageWaitTimeSeconds = 0</code>.</li>
+            <li>Nhiều <b>empty response</b> ⇒ tốn API call ⇒ tốn tiền và CPU.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Message.svg" alt="">Long polling (khuyến nghị)</h4>
+          <ul>
+            <li>Bật khi wait time &gt; 0, tối đa <b>20 giây</b> – đặt ở cấp queue (<code>ReceiveMessageWaitTimeSeconds</code>) hoặc từng request (<code>WaitTimeSeconds</code>).</li>
+            <li>Hỏi <b>tất cả server</b>; trả về ngay khi có ít nhất 1 message (tới mức tối đa yêu cầu), chỉ trả rỗng khi hết thời gian chờ.</li>
+            <li>Giảm <b>empty response</b> và <b>false empty response</b> ⇒ <b>giảm chi phí</b>, nhận message nhanh ngay khi có.</li>
+            <li>Không cần đổi code nếu đặt ở cấp queue.</li>
+          </ul></div>
+      </div>
+
+      <h3>Delay queue và message timer</h3>
+      <ul>
+        <li><span class="t" data-vi="Hàng đợi trì hoãn">Delay queue</span>: mọi message mới gửi vào queue bị <b>ẩn</b> trong khoảng delay. Mặc định (tối thiểu) <b>0 giây</b>, tối đa <b>15 phút</b>.</li>
+        <li>Đổi delay của <b>standard queue</b> <b>không hồi tố</b> (message đã có trong queue không bị ảnh hưởng); với <b>FIFO queue</b> thì <b>có hồi tố</b>.</li>
+        <li><span class="t" data-vi="Bộ hẹn giờ cho từng message">Message timer</span>: đặt <code>DelaySeconds</code> cho <b>từng message</b> (0 – 15 phút), ghi đè delay của queue (kiến thức phổ biến: FIFO queue không hỗ trợ delay riêng từng message, chỉ cấp queue).</li>
+        <li>Cần hẹn giờ <b>xa hơn 15 phút</b> hoặc lặp lại ⇒ <b>Amazon EventBridge Scheduler</b> (tài liệu SQS khuyến nghị; học ở Bài 31).</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tham số</th><th>Ẩn message khi nào?</th><th>Mặc định</th><th>Tối đa</th><th>Dùng khi</th></tr></thead>
+        <tbody>
+          <tr><td><b>Delay queue</b> / message timer</td><td>Ngay khi message <b>vào queue</b></td><td>0 giây</td><td>15 phút</td><td>Consumer cần thời gian chuẩn bị; hoãn xử lý (vd chờ thanh toán xác nhận)</td></tr>
+          <tr><td><b>Visibility timeout</b></td><td>Sau khi message <b>được nhận</b></td><td>30 giây</td><td>12 giờ</td><td>Ngăn consumer khác xử lý trùng trong lúc đang xử lý</td></tr>
+          <tr><td><b>Receive wait time</b> (long polling)</td><td>Không ẩn – là thời gian <b>consumer chờ</b> message</td><td>0 (short polling)</td><td>20 giây</td><td>Giảm empty response, giảm chi phí</td></tr>
+          <tr><td><b>Retention period</b></td><td>Không ẩn – thời gian message <b>được giữ</b></td><td>4 ngày</td><td>14 ngày</td><td>Consumer có thể ngừng hoạt động lâu</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Messages are processed more than once</i>” + “<i>processing takes longer than X seconds</i>” ⇒ <b>tăng visibility timeout</b> (≥ thời gian xử lý) hoặc gọi <code>ChangeMessageVisibility</code>.</li>
+          <li>“<i>Many empty ReceiveMessage responses</i>”, “<i>reduce cost of polling</i>”, “<i>reduce latency of receiving</i>” ⇒ <b>long polling</b> (<code>ReceiveMessageWaitTimeSeconds</code> tới 20 giây).</li>
+          <li>“<i>Postpone delivery of new messages for a few minutes</i>” ⇒ <b>delay queue</b> (≤ 15 phút); “<i>hours/days later</i>” ⇒ EventBridge Scheduler.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: DLQ ===================== -->
+      <h2 id="dlq"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">Dead-letter queue (DLQ) và redrive</h2>
+      <p class="lead"><span class="t" data-vi="Hàng đợi thư chết">Dead-letter queue (DLQ)</span> là một SQS queue bình thường mà <b>source queue</b> trỏ tới để chứa các message <b>xử lý không thành công</b> nhiều lần (<span class="t" data-vi="Message “độc” – luôn làm consumer lỗi">poison message</span>). DLQ giúp <b>debug</b>: cô lập message lỗi để tìm nguyên nhân, đồng thời không để chúng quay vòng mãi trong queue chính.</p>
+
+      <h3>Redrive policy và maxReceiveCount</h3>
+      <ul>
+        <li>Cấu hình trên <b>source queue</b> bằng <span class="t" data-vi="Chính sách chuyển hướng">redrive policy</span>: ARN của DLQ + <code>maxReceiveCount</code> – <b>số lần</b> một message được nhận từ source queue mà chưa bị xóa trước khi bị chuyển sang DLQ.</li>
+        <li><code>maxReceiveCount = 1</code> ⇒ chỉ một lần lỗi là vào DLQ. AWS khuyên đặt <b>đủ cao</b> để có đủ số lần retry.</li>
+        <li>Standard queue với <code>maxReceiveCount</code> &gt; 3: message đã nhận ≥ 3 lần mà chưa xóa bị SQS đưa xuống <b>cuối queue</b>.</li>
+        <li><span class="t" data-vi="Chính sách cho phép redrive">Redrive allow policy</span> (đặt trên DLQ): quy định source queue nào được dùng nó làm DLQ – <code>allowAll</code> (mặc định), <code>byQueue</code> (tối đa <b>10</b> source queue ARN) hoặc <code>denyAll</code>.</li>
+        <li>DLQ phải ở <b>cùng account và cùng Region</b> với source queue; DLQ của FIFO queue phải là <b>FIFO queue</b>, của standard queue là <b>standard queue</b>.</li>
+        <li><span class="t" data-vi="Đẩy message từ DLQ về lại queue nguồn">DLQ redrive</span>: sau khi sửa lỗi, chuyển message từ DLQ <b>về lại source queue</b> (hoặc queue khác) để xử lý lại – làm trên console hoặc API.</li>
+      </ul>
+
+      <h3>Retention trong DLQ – chi tiết dễ bị hỏi</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại queue</th><th>Enqueue timestamp khi vào DLQ</th><th>Ví dụ: 1 ngày ở source, DLQ retention 4 ngày</th></tr></thead>
+        <tbody>
+          <tr><td>Standard</td><td class="no"><b>Giữ nguyên</b> timestamp gốc</td><td>Bị xóa khỏi DLQ sau <b>3 ngày</b> ⇒ best practice: <b>retention của DLQ dài hơn</b> retention của source queue</td></tr>
+          <tr><td>FIFO</td><td class="yes"><b>Reset</b> khi chuyển vào DLQ</td><td>Bị xóa khỏi DLQ sau <b>4 ngày</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Application-Integration.svg" alt="">AWS Cloud – cùng account, cùng Region</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Producer<small>SendMessage</small></div>
+            <span class="arrow">message</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">Source queue<small>redrive policy: maxReceiveCount = 5</small></div>
+            <span class="arrow">nhận / lỗi / visible lại</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Consumer<small>lỗi khi xử lý message hỏng</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">Source queue<small>lần nhận thứ 6</small></div>
+            <span class="arrow">chuyển tự động</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">Dead-letter queue<small>retention 14 ngày</small></div>
+            <span class="arrow dashed">ApproximateNumberOfMessagesVisible ≥ 1</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">CloudWatch alarm<small>báo đội vận hành qua SNS</small></div>
+            <span class="arrow dashed">sửa lỗi xong: DLQ redrive</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">Source queue<small>xử lý lại</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Message bị nhận quá <code>maxReceiveCount</code> lần mà không bị xóa sẽ được chuyển vào DLQ. Đặt CloudWatch alarm trên metric <code>ApproximateNumberOfMessagesVisible</code> của DLQ (không dùng <code>NumberOfMessagesSent</code>, vì metric đó không đếm message bị chuyển vào do lỗi xử lý); sau khi sửa lỗi dùng DLQ redrive đưa message về lại.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Tài liệu AWS: <b>không dùng DLQ với FIFO queue</b> nếu không muốn phá vỡ thứ tự chính xác của các thao tác (vd danh sách lệnh dựng video, đổi thứ tự sẽ đổi ngữ cảnh lệnh sau).</li>
+          <li>DLQ phải <b>cùng account + Region</b> – đề nói “DLQ ở Region khác để DR” là sai.</li>
+          <li>DLQ chỉ <b>giữ</b> message lỗi, không tự sửa hay tự retry – phải có người/quy trình xử lý (alarm + redrive).</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>A malformed message keeps failing and blocks / wastes consumer resources</i>”, “<i>isolate messages that can't be processed for later analysis</i>” ⇒ <b>dead-letter queue</b> + <code>maxReceiveCount</code>.</li>
+          <li>“<i>Reprocess failed messages after fixing the bug</i>” ⇒ <b>DLQ redrive</b> về source queue.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: SNS ===================== -->
+      <h2 id="sns"><img src="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" alt="">Amazon SNS: topic, subscription và cơ chế giao nhận</h2>
+      <p class="lead">Theo tài liệu, <b>Amazon Simple Notification Service (SNS)</b> là dịch vụ fully managed giao message từ <span class="t" data-vi="Bên phát hành">publisher</span> (producer) tới <span class="t" data-vi="Bên đăng ký nhận">subscriber</span> (consumer). Publisher giao tiếp <b>bất đồng bộ</b> với subscriber bằng cách gửi message tới một <span class="t" data-vi="Chủ đề – kênh giao tiếp logic">topic</span>. Mỗi endpoint đăng ký nhận từ topic gọi là một <span class="t" data-vi="Đăng ký nhận">subscription</span>.</p>
+
+      <h3>Các loại endpoint (protocol) của subscription</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Simple-Queue-Service.svg" alt="">
+          <div><h4>Amazon SQS</h4><span class="vi">A2A</span><p>Lưu bền message để xử lý sau – nền tảng của <b>fan-out</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">
+          <div><h4>AWS Lambda</h4><span class="vi">A2A</span><p>Gọi hàm xử lý ngay khi có message (Bài 32).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Notification-Service_HTTP-Notification.svg" alt="">
+          <div><h4>HTTP / HTTPS</h4><span class="vi">A2A</span><p>Webhook tới server của bạn; protocol duy nhất có <b>delivery policy tùy chỉnh</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">
+          <div><h4>Amazon Data Firehose</h4><span class="vi">A2A</span><p>Lưu trữ/phân tích message: đổ vào S3, Redshift, OpenSearch… (Bài 35).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Notification-Service_Email-Notification.svg" alt="">
+          <div><h4>Email / Email-JSON</h4><span class="vi">A2P</span><p>Gửi thông báo tới hộp thư; tối đa <b>10 message/giây</b> mỗi subscription (hard limit).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Mobile-client.svg" alt="">
+          <div><h4>SMS &amp; Mobile push</h4><span class="vi">A2P</span><p>Tin nhắn văn bản tới số điện thoại; push notification tới app di động.</p></div></div>
+      </div>
+      <p>SNS hỗ trợ cả <span class="t" data-vi="Ứng dụng tới ứng dụng">Application-to-Application (A2A)</span> và <span class="t" data-vi="Ứng dụng tới con người">Application-to-Person (A2P)</span>. Ngoài ra các nhà cung cấp dịch vụ đối tác (Datadog, MongoDB, Splunk…) cũng có thể là subscriber. Giá: không phí trả trước, trả theo số message publish, số notification giao (tùy loại endpoint) và API call quản lý.</p>
+
+      <h3>Kịch bản dùng SNS (theo tài liệu)</h3>
+      <ul>
+        <li><b>Application integration – fan-out</b>: một message được nhân bản và đẩy tới nhiều endpoint (SQS, Lambda, HTTP(S), Firehose) để <b>xử lý song song</b> (phần 7).</li>
+        <li><b>Application alerts</b>: cảnh báo khi vượt ngưỡng – <b>CloudWatch alarm</b>, thay đổi trong <b>EC2 Auto Scaling group</b>, file mới upload lên <b>S3</b> – gửi qua SMS/email.</li>
+        <li><b>User notifications</b>: email/SMS xác nhận đơn hàng tới cá nhân hoặc nhóm.</li>
+        <li><b>Mobile push notifications</b>: thông báo cập nhật app kèm link tải bản mới.</li>
+      </ul>
+
+      <h3>Standard topic vs FIFO topic</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Standard topic</th><th>FIFO topic (<code>.fifo</code>)</th></tr></thead>
+        <tbody>
+          <tr><td>Thứ tự / trùng lặp</td><td>Best-effort ordering, at-least-once</td><td class="yes">Thứ tự nghiêm ngặt theo <b>message group</b>, khử trùng lặp</td></tr>
+          <tr><td>Loại subscriber</td><td class="yes">Mọi loại: SQS, Lambda, HTTP(S), email, SMS, mobile push, Firehose</td><td class="no">Chỉ <b>SQS queue</b> (FIFO <b>hoặc standard</b>). <b>Không</b> email, SMS, mobile, HTTP(S) – subscribe sẽ lỗi. Muốn tới Lambda: SNS FIFO → SQS → Lambda.</td></tr>
+          <tr><td>Số topic / account (mặc định)</td><td>100.000</td><td>1.000</td></tr>
+          <tr><td>Subscription / topic</td><td>12.500.000</td><td>100</td></tr>
+          <tr><td>Throughput</td><td>Publish theo Region/account: vd 30.000 msg/s ở us-east-1; 9.000 ở us-west-2, eu-west-1 (soft quota)</td><td>Mặc định <b>3.000 msg/s hoặc 20 MB/s</b> mỗi topic; <b>300 msg/s mỗi message group</b>; vượt mức topic khi đặt <code>FifoThroughputScope = MessageGroup</code></td></tr>
+          <tr><td>Message filtering</td><td colspan="2">Cả hai đều hỗ trợ subscription filter policy</td></tr>
+          <tr><td>Message archiving &amp; replay</td><td class="no">Không</td><td class="yes">Có (<code>ArchivePolicy</code>, <code>ReplayPolicy</code>)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Giới hạn SNS đáng nhớ</h3>
+      <div class="stats">
+        <div class="stat"><b>256 KiB</b><span>message mặc định; nâng tới 1 MiB (<code>MaximumMessageSize</code>); lớn hơn ⇒ Extended Client (tới 2 GB)</span></div>
+        <div class="stat"><b>10</b><span>message mỗi <code>PublishBatch</code></span></div>
+        <div class="stat"><b>200</b><span>filter policy mỗi topic (10.000 / account)</span></div>
+        <div class="stat"><b>100.015</b><span>lần thử giao tới SQS/Lambda, trong 23 ngày</span></div>
+        <div class="stat"><b>50</b><span>lần thử giao tới email/SMS/mobile, trong 6 giờ</span></div>
+        <div class="stat"><b>12,5 triệu</b><span>subscription mỗi standard topic</span></div>
+      </div>
+
+      <h3>Delivery retry và dead-letter queue của SNS</h3>
+      <p>SNS áp <span class="t" data-vi="Chính sách giao nhận (retry)">delivery policy</span> cho từng protocol khi gặp <b>lỗi phía server</b> (hệ thống chứa endpoint không sẵn sàng) – gồm 4 pha: immediate retry → pre-backoff → backoff → post-backoff, có jitter. Chỉ <b>HTTP/S</b> cho phép tùy chỉnh policy (ở cấp topic hoặc subscription; tổng thời gian retry ≤ <b>3.600 giây</b>; <code>maxReceivesPerSecond</code> để bóp lưu lượng tới server).</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhóm endpoint</th><th>Protocol</th><th>Retry mặc định</th></tr></thead>
+        <tbody>
+          <tr><td><b>AWS managed</b></td><td>Amazon SQS, AWS Lambda</td><td>3 lần ngay + 2 lần cách 1 s + 10 lần backoff 1–20 s + 100.000 lần cách 20 s ⇒ <b>100.015 lần trong 23 ngày</b></td></tr>
+          <tr><td><b>Customer managed</b></td><td>SMTP (email), SMS, mobile push</td><td>2 lần cách 10 s + 10 lần backoff 10–600 s + 38 lần cách 10 phút ⇒ <b>50 lần trong 6 giờ</b></td></tr>
+          <tr><td>HTTP/S</td><td>HTTP, HTTPS</td><td>Tùy chỉnh (ví dụ tài liệu: 50 lần); lỗi <b>5XX và 429</b> được retry, lỗi khác coi là vĩnh viễn</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Hết retry, hoặc gặp <b>lỗi phía client</b> (endpoint bị xóa, policy của endpoint chặn SNS – SNS <b>không retry</b> loại lỗi này) ⇒ SNS <b>bỏ message</b>, trừ khi subscription có <b>DLQ</b>.</li>
+        <li>DLQ của SNS là một <b>SQS queue</b>, gắn vào <b>subscription</b> (không phải topic) qua redrive policy (<code>deadLetterTargetArn</code>) – vì việc giao diễn ra ở cấp subscription, giúp biết message vốn định tới endpoint nào.</li>
+        <li>DLQ phải <b>cùng account + Region</b> với subscription; subscription của FIFO topic dùng FIFO queue làm DLQ. AWS khuyên đặt retention của DLQ là <b>14 ngày</b>. Dùng queue đã mã hóa làm DLQ ⇒ phải là <b>customer managed KMS key</b> có key policy cấp quyền cho SNS.</li>
+        <li>Lấy message ra khỏi DLQ: gắn DLQ làm event source cho Lambda, hoặc tự viết consumer bằng SDK/CLI.</li>
+      </ul>
+
+      <h3>Bảo mật SNS</h3>
+      <ul>
+        <li><b>Topic access policy</b> (resource-based) cho phép account khác / dịch vụ AWS publish vào topic; IAM policy cho user/role (<code>sns:Publish</code>, <code>sns:Subscribe</code>).</li>
+        <li><b>SSE</b> bằng AWS KMS cho topic; in transit qua HTTPS; interface VPC endpoint để publish từ subnet private không ra internet (kiến thức phổ biến).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Send an email / SMS to the operations team when a CloudWatch alarm fires</i>” ⇒ CloudWatch alarm → <b>SNS topic</b> với subscription email/SMS.</li>
+          <li>“<i>Fan-out with strict ordering and deduplication</i>” ⇒ <b>SNS FIFO topic → SQS FIFO queues</b>.</li>
+          <li>“<i>Capture notifications that could not be delivered to a subscriber</i>” ⇒ <b>SNS DLQ</b> (SQS queue gắn vào subscription).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: FAN-OUT & FILTERING ===================== -->
+      <h2 id="fanout"><img src="../assets/icons/res/Amazon-Simple-Notification-Service_Topic.svg" alt="">Fan-out SNS + SQS và message filtering</h2>
+      <p class="lead"><span class="t" data-vi="Phát tán một sự kiện tới nhiều consumer">Fan-out</span> là khi một message publish vào SNS topic được <b>nhân bản và đẩy</b> tới nhiều endpoint để xử lý <b>song song, bất đồng bộ</b>. Kết hợp với SQS, ta có cả hai ưu điểm: SNS <b>đẩy tức thì</b> (không cần poll), còn SQS <b>lưu bền</b> message để từng ứng dụng xử lý theo tốc độ riêng – kể cả khi ứng dụng đó đang offline.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 330" width="760" role="img" aria-label="Sơ đồ fan-out SNS tới nhiều SQS queue với filter policy">
+          <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="150" y="10" width="600" height="310" rx="6" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="162" y="30" font-size="13" font-weight="700" style="fill:#147EBA">Region</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="20" y="130" width="56" height="56"/>
+          <text x="48" y="204" font-size="12" text-anchor="middle" font-weight="600">Order service</text>
+          <text x="48" y="220" font-size="11" text-anchor="middle" class="muted">Publish 1 lần</text>
+          <path class="line-o" d="M80 158 H200" marker-end="url(#ah2)"/>
+          <image href="../assets/icons/res/Amazon-Simple-Notification-Service_Topic.svg" x="205" y="128" width="60" height="60"/>
+          <text x="235" y="206" font-size="12" text-anchor="middle" font-weight="600">SNS topic</text>
+          <text x="235" y="222" font-size="11" text-anchor="middle" class="muted">"orders"</text>
+          <path class="line-o" d="M270 150 C330 150 330 60 400 60" marker-end="url(#ah2)"/>
+          <path class="line-o" d="M270 158 H400" marker-end="url(#ah2)"/>
+          <path class="line-o" d="M270 166 C330 166 330 258 400 258" marker-end="url(#ah2)"/>
+          <text x="335" y="48" font-size="10" text-anchor="middle" class="muted">không filter</text>
+          <text x="340" y="150" font-size="10" text-anchor="middle" class="muted">filter: type=paid</text>
+          <text x="335" y="282" font-size="10" text-anchor="middle" class="muted">filter: country=VN</text>
+          <image href="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" x="405" y="36" width="48" height="48"/>
+          <text x="429" y="98" font-size="11" text-anchor="middle" font-weight="600">Queue: analytics</text>
+          <image href="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" x="405" y="134" width="48" height="48"/>
+          <text x="429" y="196" font-size="11" text-anchor="middle" font-weight="600">Queue: fulfillment</text>
+          <image href="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" x="405" y="234" width="48" height="48"/>
+          <text x="429" y="296" font-size="11" text-anchor="middle" font-weight="600">Queue: VN-shipping</text>
+          <path class="line-o" d="M460 60 H580" marker-end="url(#ah2)"/>
+          <path class="line-o" d="M460 158 H580" marker-end="url(#ah2)"/>
+          <path class="line-o" d="M460 258 H580" marker-end="url(#ah2)"/>
+          <text x="520" y="52" font-size="10" text-anchor="middle" class="muted">poll</text>
+          <text x="520" y="150" font-size="10" text-anchor="middle" class="muted">event source</text>
+          <text x="520" y="250" font-size="10" text-anchor="middle" class="muted">poll</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instances.svg" x="585" y="36" width="48" height="48"/>
+          <text x="690" y="64" font-size="11" text-anchor="middle">Data warehouse</text>
+          <image href="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" x="585" y="134" width="48" height="48"/>
+          <text x="690" y="162" font-size="11" text-anchor="middle">Lambda xử lý đơn</text>
+          <image href="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" x="585" y="234" width="48" height="48"/>
+          <text x="690" y="262" font-size="11" text-anchor="middle">Worker giao hàng</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> Mẫu fan-out: Order service chỉ publish <b>một lần</b> vào SNS topic; mỗi SQS queue subscribe nhận <b>bản sao riêng</b> và có thể gắn <b>filter policy</b> để chỉ nhận message phù hợp. Thêm consumer mới chỉ cần thêm queue + subscription, không sửa producer.</figcaption>
+      </figure>
+
+      <h3>Ví dụ trong tài liệu AWS</h3>
+      <p>Một ứng dụng publish message vào SNS topic mỗi khi có đơn hàng. Các SQS queue subscribe topic nhận <b>thông báo giống hệt nhau</b>: một EC2 instance gắn với queue thứ nhất xử lý/fulfill đơn, một instance khác gắn với queue thứ hai đưa đơn vào <b>data warehouse</b> để phân tích. Có thể subscribe thêm queue thứ ba gắn với <b>môi trường test</b> để thử nghiệm bằng dữ liệu production thật (cân nhắc quyền riêng tư và bảo mật dữ liệu).</p>
+
+      <h3>Thiết lập fan-out tới SQS – các bước (theo tài liệu)</h3>
+      <ol class="steps">
+        <li>Lấy <b>ARN</b> của queue và của topic.</li>
+        <li>Đặt <b>SQS access policy</b> trên queue cho phép principal dịch vụ <code>sns.amazonaws.com</code> thực hiện <code>sqs:SendMessage</code>, kèm điều kiện <code>aws:SourceArn</code> = ARN topic (hoặc <code>aws:SourceAccount</code>) để chống <b>confused deputy</b>. Queue subscribe nhiều topic ⇒ mỗi topic một statement.</li>
+        <li><b>Subscribe</b> queue vào topic (protocol <i>Amazon SQS</i>, endpoint = ARN queue). Chủ queue tự subscribe ⇒ <b>tự xác nhận</b>; queue ở <b>account khác</b> ⇒ subscription phải được <b>xác nhận</b>.</li>
+        <li>Cấp IAM cho user/ứng dụng: <code>sns:Publish</code> trên topic; <code>sqs:ReceiveMessage</code>, <code>sqs:DeleteMessage</code> trên queue. Cấp cho account khác ⇒ chỉ có thể dùng resource-based policy trên topic/queue.</li>
+        <li><b>Kiểm thử</b>: publish vào topic, poll queue thấy message kiểu <code>"Type": "Notification"</code>.</li>
+      </ol>
+
+<pre><code>{
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": { "Service": "sns.amazonaws.com" },
+    "Action": "sqs:SendMessage",
+    "Resource": "arn:aws:sqs:us-east-2:123456789012:MyQueue",
+    "Condition": { "ArnEquals": { "aws:SourceArn": "arn:aws:sns:us-east-2:123456789012:MyTopic" } }
+  }]
+}</code></pre>
+
+      <h3>Raw message delivery</h3>
+      <p>Mặc định message tới SQS được bọc trong <b>JSON của SNS</b> (Type, MessageId, TopicArn, Subject, Message, Timestamp, Signature…). Bật <span class="t" data-vi="Giao message nguyên bản">raw message delivery</span> trên subscription (<code>RawMessageDelivery = true</code>) ⇒ SNS <b>bỏ metadata</b>, gửi nguyên nội dung – consumer không phải parse lớp JSON bọc ngoài. Áp dụng cho endpoint <b>SQS, HTTP/S và Firehose</b>. Với SQS bật raw delivery: tối đa <b>10 message attributes</b>; nhiều hơn ⇒ message bị bỏ (coi là lỗi phía client).</p>
+
+      <h3>Message filtering – subscription filter policy</h3>
+      <p>Mặc định mỗi subscriber nhận <b>mọi</b> message của topic. Để chỉ nhận một phần, gán <span class="t" data-vi="Chính sách lọc của subscription">filter policy</span> – một đối tượng JSON – cho subscription. Khi có message, SNS so khớp với filter policy của <b>từng</b> subscription và <b>chỉ giao</b> cho subscription khớp; subscription không có filter policy nhận tất cả.</p>
+      <ul>
+        <li><b>Filter policy scope</b>: <code>MessageAttributes</code> (lọc theo message attributes) hoặc <code>MessageBody</code> (lọc theo thuộc tính trong body – body phải là JSON hợp lệ).</li>
+        <li>Logic: mọi <b>tên thuộc tính</b> trong policy phải khớp (<b>AND</b>); với mỗi thuộc tính, chỉ cần <b>một giá trị</b> trong danh sách khớp (<b>OR</b>). Thuộc tính không nêu trong policy bị bỏ qua.</li>
+        <li>Toán tử: so khớp chuỗi chính xác, <code>anything-but</code>, <code>prefix</code>, <code>suffix</code>, <code>equals-ignore-case</code>, địa chỉ IP, số chính xác / anything-but / khoảng số (<code>numeric</code>), key matching (<code>exists</code>), toán tử <code>$or</code>.</li>
+        <li>Thêm/sửa filter policy cần tới <b>15 phút</b> để có hiệu lực hoàn toàn (eventual consistency). Quota: <b>200</b> filter policy / topic, <b>10.000</b> / account.</li>
+        <li>FIFO topic hỗ trợ filtering giống standard topic.</li>
+      </ul>
+<pre><code>{
+  "order_type": ["paid"],
+  "country": ["VN", "TH"],
+  "amount": [{ "numeric": [">=", 100] }]
+}</code></pre>
+      <p>Policy trên chỉ giao message có <code>order_type = paid</code> <b>và</b> <code>country</code> là VN <b>hoặc</b> TH <b>và</b> <code>amount ≥ 100</code>.</p>
+
+      <div class="callout note"><span class="ttl">Fan-out với S3 event notification</span>
+        <p>Một S3 event notification (cùng loại sự kiện + prefix) chỉ gửi được tới <b>một đích</b> – muốn nhiều hệ thống cùng xử lý một lần upload, đẩy event vào <b>SNS topic</b> rồi fan-out tới nhiều SQS queue (kiến thức thi phổ biến; S3 event notification học ở Bài 15). Cách khác: gửi event sang EventBridge (Bài 31).</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>One event must be processed by multiple independent services</i>”, “<i>add new consumers without changing the producer</i>”, “<i>each consumer must not miss messages even if temporarily offline</i>” ⇒ <b>SNS + nhiều SQS queue (fan-out)</b>.</li>
+          <li>“<i>Each subscriber should receive only a subset of messages</i>”, “<i>without changing the publisher / without extra routing code</i>” ⇒ <b>SNS subscription filter policy</b>.</li>
+          <li>Fan-out tới queue mã hóa SSE-KMS ⇒ dùng <b>customer managed key</b> có key policy cho phép <code>sns.amazonaws.com</code> gọi <code>kms:GenerateDataKey</code> + <code>kms:Decrypt</code> (key policy của AWS managed key <code>aws/sqs</code> không sửa được) – kiến thức thi phổ biến.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Đẩy thẳng từ SNS tới HTTP endpoint của worker mà <b>không có SQS</b> ⇒ worker lỗi lâu thì message bị bỏ sau khi hết retry. Muốn bền ⇒ SNS → <b>SQS</b> (+ DLQ).</li>
+          <li>Quên <b>SQS access policy</b> cho SNS ⇒ subscription tồn tại nhưng message không vào queue.</li>
+          <li>Cho <b>nhiều service đọc chung một queue</b> để “service nào cũng nhận” là sai: trong SQS mỗi message chỉ được <b>một</b> consumer xử lý thành công rồi xóa. Mỗi service cần <b>queue riêng</b> ⇒ fan-out.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: CHỌN DỊCH VỤ ===================== -->
+      <h2 id="chon-dich-vu"><img src="../assets/icons/cat/Serverless.svg" alt="">Chọn đúng dịch vụ tích hợp trong đề thi</h2>
+      <p class="lead">SQS và SNS thường xuất hiện cạnh các đáp án gây nhiễu như Amazon MQ, EventBridge, Kinesis. Bảng dưới giúp nhận diện nhanh (EventBridge/MQ/Step Functions học kỹ ở Bài 31, Kinesis ở Bài 35).</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu trong đề</th><th>Lựa chọn</th><th>Lý do</th></tr></thead>
+        <tbody>
+          <tr><td>Đệm công việc giữa hai tier, một consumer xử lý mỗi message, scale worker theo tồn đọng</td><td class="yes"><b>SQS Standard</b></td><td>Pull, lưu bền tới 14 ngày, throughput gần như không giới hạn</td></tr>
+          <tr><td>Giữ đúng thứ tự, không trùng lặp</td><td class="yes"><b>SQS FIFO</b></td><td>Message group + deduplication 5 phút</td></tr>
+          <tr><td>Thông báo tức thì tới nhiều subscriber / email / SMS / mobile push</td><td class="yes"><b>SNS</b></td><td>Push, pub/sub, A2A + A2P</td></tr>
+          <tr><td>Một sự kiện → nhiều hệ thống, không mất message</td><td class="yes"><b>SNS + SQS (fan-out)</b></td><td>Push + lưu bền riêng cho từng consumer</td></tr>
+          <tr><td>Định tuyến sự kiện theo nội dung từ dịch vụ AWS / SaaS, lập lịch</td><td>EventBridge (Bài 31)</td><td>Event bus, rule, schema, scheduler</td></tr>
+          <tr><td>Migrate ứng dụng dùng JMS/AMQP/MQTT, ActiveMQ/RabbitMQ</td><td>Amazon MQ (Bài 31)</td><td>Tương thích protocol, ít sửa code</td></tr>
+          <tr><td>Streaming thời gian thực, nhiều consumer đọc lại (replay) cùng dữ liệu</td><td>Kinesis Data Streams (Bài 35)</td><td>Shard có thứ tự, retention dài, replay</td></tr>
+          <tr><td>Điều phối nhiều bước, xử lý &gt; 12 giờ, có nhánh/retry</td><td>Step Functions (Bài 31)</td><td>State machine</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – xử lý message từ queue</span>
+        <ul>
+          <li>“<i>Scale EC2 workers based on the number of messages waiting in the queue</i>” ⇒ target tracking với metric <b>backlog per instance</b> = <code>ApproximateNumberOfMessagesVisible</code> ÷ số instance InService (Bài 13).</li>
+          <li>“<i>Serverless processing of queue messages with least operational overhead</i>” ⇒ <b>SQS + Lambda event source mapping</b> (Bài 32) thay vì EC2 tự poll.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>Decouple</b> = đặt lớp bất đồng bộ giữa các thành phần. <b>SQS</b>: queue, consumer <b>pull</b>, mỗi message một consumer. <b>SNS</b>: pub/sub, <b>push</b> tới nhiều subscriber. <b>Amazon MQ</b>: migrate broker cũ (JMS, AMQP, MQTT).</li>
+          <li>Vòng đời SQS: Send → Receive (ẩn trong visibility timeout) → <b>Delete</b>. Retention mặc định <b>4 ngày</b> (60 s – <b>14 ngày</b>); message tối đa <b>1 MiB</b> (lớn hơn ⇒ S3 + Extended Client, tới 2 GB); batch 10.</li>
+          <li><b>Standard</b>: throughput gần như không giới hạn, <b>at-least-once</b>, best-effort ordering ⇒ consumer idempotent. <b>FIFO</b> (<code>.fifo</code>): thứ tự theo <b>MessageGroupId</b>, <b>exactly-once</b> (dedup 5 phút, content-based = SHA-256 body), 300 TPS / 3.000 msg/s có batch, high throughput mode cao hơn nhiều.</li>
+          <li><b>Visibility timeout</b>: 30 s mặc định, 0 s – 12 giờ; xử lý lâu ⇒ tăng hoặc <code>ChangeMessageVisibility</code>. <b>Long polling</b>: tới 20 s, giảm empty response &amp; chi phí. <b>Delay queue / message timer</b>: 0 – 15 phút (dài hơn ⇒ EventBridge Scheduler).</li>
+          <li><b>DLQ</b>: redrive policy + <code>maxReceiveCount</code>; cùng account/Region, cùng loại queue; retention DLQ nên dài hơn source (standard giữ enqueue timestamp gốc); <b>DLQ redrive</b> để xử lý lại; alarm trên <code>ApproximateNumberOfMessagesVisible</code>.</li>
+          <li><b>SNS</b>: topic + subscription (SQS, Lambda, HTTP/S, Firehose, email, SMS, mobile push). Message 256 KiB (nâng tới 1 MiB). Retry tới SQS/Lambda 100.015 lần/23 ngày; email/SMS/mobile 50 lần/6 giờ; <b>DLQ gắn vào subscription</b>.</li>
+          <li><b>SNS FIFO</b>: chỉ subscriber là SQS (FIFO hoặc standard), 3.000 msg/s/topic, 300 msg/s/group, có archive &amp; replay.</li>
+          <li><b>Fan-out SNS + SQS</b>: publish một lần, mỗi queue một bản sao; cần <b>SQS access policy</b> cho <code>sns.amazonaws.com</code> (+ <code>aws:SourceArn</code>); <b>raw message delivery</b> bỏ JSON bọc ngoài; <b>filter policy</b> (MessageAttributes / MessageBody, AND giữa thuộc tính, OR giữa giá trị, hiệu lực sau ≤ 15 phút).</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Decouple / Loosely coupled</dt><dd><b>Tách rời / Ghép lỏng</b> – các thành phần giao tiếp qua lớp trung gian bất đồng bộ.</dd></div>
+        <div><dt>Amazon SQS</dt><dd><b>Dịch vụ hàng đợi tin nhắn</b> – queue được quản lý hoàn toàn, consumer poll.</dd></div>
+        <div><dt>Amazon SNS</dt><dd><b>Dịch vụ thông báo pub/sub</b> – đẩy message từ topic tới nhiều subscriber.</dd></div>
+        <div><dt>Producer / Consumer</dt><dd><b>Bên gửi / Bên nhận – xử lý</b> message.</dd></div>
+        <div><dt>Publisher / Subscriber</dt><dd><b>Bên phát hành / Bên đăng ký nhận</b> trong mô hình pub/sub.</dd></div>
+        <div><dt>Topic / Subscription</dt><dd><b>Chủ đề / Đăng ký nhận</b> – kênh logic của SNS / một endpoint nhận message từ topic.</dd></div>
+        <div><dt>Standard queue</dt><dd><b>Hàng đợi tiêu chuẩn</b> – throughput gần như không giới hạn, at-least-once, best-effort ordering.</dd></div>
+        <div><dt>FIFO queue / FIFO topic</dt><dd><b>Hàng đợi / Chủ đề vào trước ra trước</b> – thứ tự theo message group, khử trùng lặp.</dd></div>
+        <div><dt>Best-effort ordering</dt><dd><b>Cố gắng giữ thứ tự</b> – không bảo đảm thứ tự.</dd></div>
+        <div><dt>Exactly-once processing</dt><dd><b>Xử lý đúng một lần</b> – FIFO không đưa bản trùng vào queue trong 5 phút.</dd></div>
+        <div><dt>Idempotent</dt><dd><b>Lũy đẳng</b> – xử lý lặp một message không làm đổi kết quả.</dd></div>
+        <div><dt>MessageGroupId</dt><dd><b>Mã nhóm message</b> – message cùng nhóm xử lý tuần tự; bắt buộc với FIFO.</dd></div>
+        <div><dt>MessageDeduplicationId / Content-based deduplication</dt><dd><b>Mã khử trùng lặp / Khử trùng dựa trên nội dung</b> – SHA-256 của body.</dd></div>
+        <div><dt>High throughput mode (FIFO)</dt><dd><b>Chế độ thông lượng cao</b> – vượt giới hạn 300 TPS của FIFO.</dd></div>
+        <div><dt>Visibility timeout</dt><dd><b>Thời gian ẩn message</b> – sau khi được nhận; 30 s mặc định, tối đa 12 giờ.</dd></div>
+        <div><dt>In-flight message</dt><dd><b>Message đang được xử lý</b> – đã nhận nhưng chưa xóa.</dd></div>
+        <div><dt>Heartbeat (ChangeMessageVisibility)</dt><dd><b>Nhịp tim</b> – gia hạn visibility timeout định kỳ trong lúc xử lý.</dd></div>
+        <div><dt>Short polling / Long polling</dt><dd><b>Thăm dò ngắn / Thăm dò dài</b> – trả lời ngay / chờ tới 20 s cho tới khi có message.</dd></div>
+        <div><dt>Empty response</dt><dd><b>Phản hồi rỗng</b> – ReceiveMessage không có message; long polling giảm số lần này.</dd></div>
+        <div><dt>Delay queue / Message timer</dt><dd><b>Hàng đợi trì hoãn / Bộ hẹn giờ cho từng message</b> – ẩn message mới tối đa 15 phút.</dd></div>
+        <div><dt>Message retention period</dt><dd><b>Thời gian lưu giữ message</b> – 60 s tới 14 ngày, mặc định 4 ngày.</dd></div>
+        <div><dt>Dead-letter queue (DLQ)</dt><dd><b>Hàng đợi thư chết</b> – chứa message xử lý/giao không thành công.</dd></div>
+        <div><dt>Redrive policy / maxReceiveCount</dt><dd><b>Chính sách chuyển hướng / Số lần nhận tối đa</b> – vượt thì chuyển sang DLQ.</dd></div>
+        <div><dt>Redrive allow policy</dt><dd><b>Chính sách cho phép redrive</b> – source queue nào được dùng DLQ này.</dd></div>
+        <div><dt>DLQ redrive</dt><dd><b>Đẩy message từ DLQ về lại queue nguồn</b> để xử lý lại.</dd></div>
+        <div><dt>Poison message</dt><dd><b>Message “độc”</b> – luôn làm consumer xử lý lỗi.</dd></div>
+        <div><dt>Extended Client Library</dt><dd><b>Thư viện client mở rộng</b> – lưu payload lớn trên S3, message chứa con trỏ (tới 2 GB).</dd></div>
+        <div><dt>Application-to-Application (A2A) / Application-to-Person (A2P)</dt><dd><b>Ứng dụng tới ứng dụng / Ứng dụng tới con người</b>.</dd></div>
+        <div><dt>Delivery policy</dt><dd><b>Chính sách giao nhận</b> – cách SNS retry theo từng protocol.</dd></div>
+        <div><dt>Raw message delivery</dt><dd><b>Giao message nguyên bản</b> – bỏ JSON metadata của SNS.</dd></div>
+        <div><dt>Subscription filter policy / Filter policy scope</dt><dd><b>Chính sách lọc của subscription / Phạm vi lọc</b> – MessageAttributes hoặc MessageBody.</dd></div>
+        <div><dt>Fan-out</dt><dd><b>Phát tán một sự kiện tới nhiều consumer</b> – SNS ⇒ nhiều SQS.</dd></div>
+        <div><dt>Confused deputy</dt><dd><b>Bên ủy quyền bị lợi dụng</b> – chống bằng điều kiện <code>aws:SourceArn</code> / <code>aws:SourceAccount</code>.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a web application that accepts video uploads. The web tier calls the video-encoding tier synchronously, and during traffic spikes the encoding tier becomes overloaded, causing upload requests to fail. The company wants to ensure that no upload jobs are lost and that each tier can scale independently. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Place an Application Load Balancer between the web tier and the encoding tier.</li>
+            <li data-k="B">Publish each job to an Amazon SNS topic with an HTTP subscription that points to the encoding tier.</li>
+            <li data-k="C">Have the web tier send each job to an Amazon SQS queue, and have encoding instances in an Auto Scaling group poll the queue and scale based on the queue backlog.</li>
+            <li data-k="D">Increase the instance size of the encoding tier and enable detailed monitoring.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> SQS <b>decouple</b> hai tier: web tier gửi message và trả lời ngay; message được <b>lưu bền</b> (tới 14 ngày) tới khi worker xử lý và xóa; worker ASG scale theo <b>backlog per instance</b>. <b>A sai</b>: ALB vẫn là gọi đồng bộ – encoding quá tải thì request vẫn lỗi, không đệm. <b>B sai</b>: SNS push tới HTTP; nếu encoding tier quá tải lâu, message bị bỏ sau khi hết số lần retry của delivery policy – không lưu bền, không để worker kéo theo tốc độ riêng. <b>D sai</b>: scale up không loại bỏ ràng buộc đồng bộ và không chống mất job.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng web nhận video tải lên. Web tier gọi tier mã hóa video (encoding tier) một cách đồng bộ, và khi lưu lượng tăng đột biến thì encoding tier bị quá tải, khiến các yêu cầu tải lên thất bại. Công ty muốn bảo đảm không có job tải lên nào bị mất và mỗi tier có thể scale độc lập. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt một Application Load Balancer giữa web tier và encoding tier.</span><span class="why">Sai: ALB chỉ phân phối request đồng bộ, không có bộ đệm; khi encoding tier quá tải thì request vẫn lỗi và job vẫn mất.</span></li>
+              <li data-k="B"><span class="tv">Publish mỗi job lên một Amazon SNS topic với HTTP subscription trỏ tới encoding tier.</span><span class="why">Sai: SNS đẩy (push) message tới HTTP endpoint; nếu endpoint quá tải lâu, message bị bỏ sau khi hết retry – không lưu bền để worker tự kéo theo tốc độ của mình.</span></li>
+              <li data-k="C"><span class="tv">Cho web tier gửi mỗi job vào một Amazon SQS queue, và cho các instance mã hóa trong một Auto Scaling group poll queue và scale dựa trên lượng message tồn đọng (backlog).</span><span class="why">Đúng: SQS decouple hai tier – job được lưu bền trong queue tới khi worker xử lý xong, và Auto Scaling group scale theo backlog nên mỗi tier scale độc lập.</span></li>
+              <li data-k="D"><span class="tv">Tăng kích thước instance của encoding tier và bật detailed monitoring.</span><span class="why">Sai: scale up vẫn giữ lời gọi đồng bộ, đỉnh tải lớn hơn vẫn làm lỗi request và mất job; detailed monitoring chỉ là giám sát.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">An order-processing application uses an Amazon SQS standard queue. Processing a single order takes up to 2 minutes. The operations team notices that some orders are processed twice by different consumer instances. The queue uses default settings. What is the MOST likely cause, and how should it be fixed?</div>
+          <ol class="opts">
+            <li data-k="A">The visibility timeout is shorter than the processing time; increase the queue's visibility timeout to longer than the maximum processing time.</li>
+            <li data-k="B">Long polling is disabled; set ReceiveMessageWaitTimeSeconds to 20 seconds.</li>
+            <li data-k="C">The message retention period is too short; increase it to 14 days.</li>
+            <li data-k="D">The queue has no delay; configure a delay queue of 2 minutes.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Visibility timeout mặc định là <b>30 giây</b>; xử lý mất tới 2 phút nên message <b>hiện lại</b> trước khi bị xóa và consumer khác nhận lại ⇒ xử lý trùng. Tăng visibility timeout (hoặc dùng <code>ChangeMessageVisibility</code> làm heartbeat). <b>B sai</b>: long polling giảm empty response, không ảnh hưởng xử lý trùng. <b>C sai</b>: retention quyết định message được giữ bao lâu, không liên quan tới việc message hiện lại. <b>D sai</b>: delay chỉ ẩn message <b>khi mới vào queue</b>, không ẩn sau khi được nhận.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng xử lý đơn hàng dùng Amazon SQS standard queue. Xử lý một đơn hàng mất tới 2 phút. Đội vận hành nhận thấy một số đơn hàng bị xử lý hai lần bởi các consumer instance khác nhau. Queue đang dùng cấu hình mặc định. Nguyên nhân MOST likely (khả dĩ nhất) là gì, và nên khắc phục thế nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Visibility timeout ngắn hơn thời gian xử lý; tăng visibility timeout của queue lên dài hơn thời gian xử lý tối đa.</span><span class="why">Đúng: visibility timeout mặc định 30 giây &lt; 2 phút xử lý, nên message hiện lại và consumer khác nhận lại trước khi bị xóa; tăng timeout vượt thời gian xử lý sẽ hết trùng.</span></li>
+              <li data-k="B"><span class="tv">Long polling đang tắt; đặt ReceiveMessageWaitTimeSeconds thành 20 giây.</span><span class="why">Sai: long polling chỉ giảm số lần nhận rỗng (empty response), không ngăn message hiện lại khi đang xử lý.</span></li>
+              <li data-k="C"><span class="tv">Thời gian lưu giữ message (retention period) quá ngắn; tăng lên 14 ngày.</span><span class="why">Sai: retention quyết định message tồn tại bao lâu trong queue, không liên quan tới việc message hiện lại cho consumer khác.</span></li>
+              <li data-k="D"><span class="tv">Queue không có độ trễ; cấu hình delay queue 2 phút.</span><span class="why">Sai: delay queue chỉ ẩn message lúc mới được gửi vào queue, không ẩn message sau khi đã được một consumer nhận.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A financial application sends account transactions to a queue. Transactions for the same account must be processed in the exact order in which they were sent, and duplicate transactions must not be introduced if the producer retries. Transactions for different accounts should be processed in parallel. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Use an Amazon SQS standard queue and include a sequence number in each message.</li>
+            <li data-k="B">Use an Amazon SQS FIFO queue and set the same MessageGroupId for all messages.</li>
+            <li data-k="C">Use an Amazon SNS standard topic with an Amazon SQS standard queue subscribed.</li>
+            <li data-k="D">Use an Amazon SQS FIFO queue, set MessageGroupId to the account ID, and enable content-based deduplication or provide a MessageDeduplicationId.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> FIFO queue giữ thứ tự <b>trong mỗi message group</b>; dùng <b>account ID làm MessageGroupId</b> ⇒ đúng thứ tự từng tài khoản, các tài khoản khác nhau xử lý <b>song song</b>. Deduplication (content-based hoặc ID tự cung cấp) ngăn bản trùng khi retry trong 5 phút. <b>A sai</b>: standard queue at-least-once, best-effort ordering – tự sắp xếp phức tạp và vẫn có trùng. <b>B sai</b>: một group duy nhất ⇒ mọi message tuần tự, mất khả năng song song. <b>C sai</b>: standard topic/queue không bảo đảm thứ tự, không khử trùng.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng tài chính gửi các giao dịch tài khoản vào một queue. Các giao dịch của cùng một tài khoản phải được xử lý đúng chính xác thứ tự đã gửi, và không được phát sinh giao dịch trùng lặp nếu producer gửi lại (retry). Các giao dịch của những tài khoản khác nhau nên được xử lý song song. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng Amazon SQS standard queue và đưa số thứ tự (sequence number) vào mỗi message.</span><span class="why">Sai: standard queue chỉ giao at-least-once với thứ tự best-effort, nên vẫn có bản trùng và consumer phải tự sắp xếp lại rất phức tạp.</span></li>
+              <li data-k="B"><span class="tv">Dùng Amazon SQS FIFO queue và đặt cùng một MessageGroupId cho tất cả message.</span><span class="why">Sai: một message group duy nhất buộc mọi giao dịch xử lý tuần tự, mất khả năng xử lý song song giữa các tài khoản.</span></li>
+              <li data-k="C"><span class="tv">Dùng Amazon SNS standard topic với một Amazon SQS standard queue đã subscribe.</span><span class="why">Sai: standard topic và standard queue đều không bảo đảm thứ tự và không khử trùng.</span></li>
+              <li data-k="D"><span class="tv">Dùng Amazon SQS FIFO queue, đặt MessageGroupId bằng account ID, và bật content-based deduplication hoặc cung cấp MessageDeduplicationId.</span><span class="why">Đúng: FIFO giữ thứ tự trong từng message group (mỗi tài khoản một group) và các group khác nhau chạy song song; deduplication loại bản trùng khi retry trong cửa sổ 5 phút.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company's consumers poll an Amazon SQS queue in a tight loop. CloudWatch shows that most ReceiveMessage calls return no messages, which increases cost. Messages arrive irregularly. What should a solutions architect do to reduce cost with the LEAST effort?</div>
+          <ol class="opts">
+            <li data-k="A">Configure a delay queue with a delay of 15 minutes.</li>
+            <li data-k="B">Set the queue's ReceiveMessageWaitTimeSeconds attribute to 20 seconds to enable long polling.</li>
+            <li data-k="C">Increase the visibility timeout to 12 hours.</li>
+            <li data-k="D">Convert the queue to a FIFO queue.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Long polling</b> (tối đa 20 giây) khiến SQS chờ tới khi có message mới trả lời và truy vấn <b>mọi server</b> ⇒ giảm empty response và false empty response ⇒ giảm số API call tính tiền. Đặt ở cấp queue nên không cần sửa code. <b>A sai</b>: delay làm chậm việc xử lý, không giảm empty response. <b>C sai</b>: visibility timeout chỉ ảnh hưởng message đã nhận. <b>D sai</b>: không đổi loại queue tại chỗ được và FIFO không giải quyết polling rỗng.</div>
+          <div class="trans">
+            <div class="tq">Các consumer của một công ty poll một Amazon SQS queue trong một vòng lặp liên tục. CloudWatch cho thấy phần lớn lời gọi ReceiveMessage không trả về message nào, làm tăng chi phí. Message đến không đều đặn. Solutions architect nên làm gì để giảm chi phí với LEAST effort (ít công sức nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình delay queue với độ trễ 15 phút.</span><span class="why">Sai: delay queue chỉ làm message xuất hiện muộn hơn, consumer vẫn poll và vẫn nhận phản hồi rỗng.</span></li>
+              <li data-k="B"><span class="tv">Đặt thuộc tính ReceiveMessageWaitTimeSeconds của queue thành 20 giây để bật long polling.</span><span class="why">Đúng: long polling cho SQS chờ tới 20 giây đến khi có message mới trả lời, giảm mạnh empty response và số API call tính tiền; chỉ cần đổi một thuộc tính queue, không sửa code.</span></li>
+              <li data-k="C"><span class="tv">Tăng visibility timeout lên 12 giờ.</span><span class="why">Sai: visibility timeout chỉ áp dụng cho message đã được nhận, không giảm số lần poll rỗng.</span></li>
+              <li data-k="D"><span class="tv">Chuyển queue thành FIFO queue.</span><span class="why">Sai: không thể đổi loại queue tại chỗ (phải tạo queue mới, tốn công), và FIFO cũng không giải quyết vấn đề poll rỗng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company processes messages from an Amazon SQS standard queue with an AWS Lambda function. A few malformed messages repeatedly cause the function to fail, and they keep returning to the queue, wasting compute resources. The company wants to isolate these messages for later analysis and reprocess them after the bug is fixed. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Reduce the queue's message retention period to 60 seconds.</li>
+            <li data-k="B">Create a dead-letter queue and configure a redrive policy on the source queue with an appropriate maxReceiveCount.</li>
+            <li data-k="C">Create a dead-letter queue in a different AWS Region for disaster recovery.</li>
+            <li data-k="D">Enable long polling on the source queue.</li>
+            <li data-k="E">After fixing the bug, use dead-letter queue redrive to move the messages back to the source queue.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> <b>DLQ</b> + <code>maxReceiveCount</code> (B) tự chuyển message bị nhận quá số lần mà không xóa sang queue riêng để phân tích; <b>DLQ redrive</b> (E) đưa message về source queue để xử lý lại sau khi sửa lỗi. <b>A sai</b>: retention 60 giây sẽ làm <b>mất</b> cả message hợp lệ. <b>C sai</b>: DLQ phải <b>cùng account và Region</b> với source queue. <b>D sai</b>: long polling không liên quan tới message lỗi.</div>
+          <div class="trans">
+            <div class="tq">Một công ty xử lý message từ Amazon SQS standard queue bằng một AWS Lambda function. Một vài message sai định dạng liên tục làm function thất bại, và chúng cứ quay lại queue, gây lãng phí tài nguyên tính toán. Công ty muốn cô lập các message này để phân tích sau và xử lý lại chúng sau khi sửa lỗi. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Giảm thời gian lưu giữ message của queue xuống 60 giây.</span><span class="why">Sai: retention 60 giây sẽ xóa luôn cả message hợp lệ chưa kịp xử lý, và message lỗi bị mất thay vì được giữ lại để phân tích.</span></li>
+              <li data-k="B"><span class="tv">Tạo một dead-letter queue và cấu hình redrive policy trên source queue với maxReceiveCount phù hợp.</span><span class="why">Đúng: khi message bị nhận quá maxReceiveCount lần mà không xóa được, SQS tự chuyển nó sang DLQ – cô lập message lỗi để phân tích và ngừng lãng phí compute.</span></li>
+              <li data-k="C"><span class="tv">Tạo dead-letter queue ở một AWS Region khác để phục vụ disaster recovery.</span><span class="why">Sai: DLQ của SQS phải nằm cùng account và cùng Region với source queue.</span></li>
+              <li data-k="D"><span class="tv">Bật long polling trên source queue.</span><span class="why">Sai: long polling chỉ giảm empty response, không xử lý hay cô lập message lỗi.</span></li>
+              <li data-k="E"><span class="tv">Sau khi sửa lỗi, dùng dead-letter queue redrive để chuyển các message trở lại source queue.</span><span class="why">Đúng: DLQ redrive đưa message từ DLQ về source queue để được xử lý lại, đáp ứng yêu cầu reprocess sau khi sửa bug.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">When a new order is placed, an e-commerce application must notify three independent systems: a fulfillment service, an analytics pipeline, and a fraud detection service. Each system processes messages at its own pace and must not lose messages if it is temporarily unavailable. New systems will be added in the future without changing the order service. Which architecture meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Publish each order to an Amazon SNS topic and subscribe a separate Amazon SQS queue for each system to the topic.</li>
+            <li data-k="B">Send each order to a single Amazon SQS queue that all three systems poll.</li>
+            <li data-k="C">Have the order service call each system's API directly in sequence.</li>
+            <li data-k="D">Publish each order to an Amazon SNS topic with an email subscription for each system.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Mẫu <b>fan-out SNS + SQS</b>: order service publish một lần; mỗi hệ thống có <b>queue riêng</b> nhận bản sao, lưu bền tới khi xử lý, kể cả khi hệ thống tạm offline; thêm hệ thống mới chỉ cần thêm queue + subscription. <b>B sai</b>: trong một queue, mỗi message chỉ được <b>một</b> consumer xử lý rồi xóa – các hệ thống sẽ “giành” message thay vì mỗi bên đều nhận. <b>C sai</b>: gắn chặt, đồng bộ, phải sửa producer khi thêm hệ thống. <b>D sai</b>: email là A2P, không phù hợp tích hợp giữa ứng dụng.</div>
+          <div class="trans">
+            <div class="tq">Khi có đơn hàng mới, một ứng dụng thương mại điện tử phải thông báo cho ba hệ thống độc lập: dịch vụ giao hàng (fulfillment), pipeline phân tích (analytics) và dịch vụ phát hiện gian lận (fraud detection). Mỗi hệ thống xử lý message theo tốc độ riêng và không được mất message nếu tạm thời không khả dụng. Trong tương lai sẽ thêm hệ thống mới mà không thay đổi order service. Kiến trúc nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Publish mỗi đơn hàng lên một Amazon SNS topic và subscribe một Amazon SQS queue riêng cho từng hệ thống vào topic đó.</span><span class="why">Đúng: fan-out SNS + SQS – mỗi hệ thống nhận một bản sao trong queue riêng, lưu bền khi hệ thống offline và xử lý theo tốc độ riêng; thêm hệ thống chỉ cần thêm queue + subscription.</span></li>
+              <li data-k="B"><span class="tv">Gửi mỗi đơn hàng vào một Amazon SQS queue duy nhất mà cả ba hệ thống cùng poll.</span><span class="why">Sai: trong một queue, mỗi message chỉ được một consumer nhận rồi xóa, nên ba hệ thống tranh nhau message thay vì mỗi bên đều nhận đủ.</span></li>
+              <li data-k="C"><span class="tv">Cho order service gọi trực tiếp API của từng hệ thống theo tuần tự.</span><span class="why">Sai: gắn chặt và đồng bộ – hệ thống nào offline thì mất thông báo, và thêm hệ thống mới phải sửa order service.</span></li>
+              <li data-k="D"><span class="tv">Publish mỗi đơn hàng lên một Amazon SNS topic với một email subscription cho mỗi hệ thống.</span><span class="why">Sai: email là kênh A2P dành cho con người, không phù hợp để tích hợp giữa các ứng dụng và không lưu bền để xử lý tự động.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company publishes all order events to an Amazon SNS topic that has several Amazon SQS queues subscribed. The shipping team's queue should receive only events where the message attribute order_status equals "paid" and the country is either "VN" or "TH". The publisher must not be modified, and the company wants the LEAST operational overhead. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Subscribe an AWS Lambda function that inspects each message and forwards matching messages to the shipping queue.</li>
+            <li data-k="B">Create a separate SNS topic for the shipping team and modify the publisher to publish matching events to it.</li>
+            <li data-k="C">Have the shipping consumers read every message and delete the ones that do not match.</li>
+            <li data-k="D">Apply a subscription filter policy to the shipping queue's subscription that matches order_status "paid" and country "VN" or "TH".</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Subscription filter policy</b> do SNS đánh giá: mọi thuộc tính trong policy phải khớp (AND), mỗi thuộc tính chỉ cần một giá trị trong danh sách khớp (OR) ⇒ <code>{"order_status":["paid"],"country":["VN","TH"]}</code>. Không cần code, không sửa publisher. <b>A sai</b>: thêm Lambda định tuyến ⇒ thêm code và vận hành. <b>B sai</b>: vi phạm yêu cầu không sửa publisher. <b>C sai</b>: tốn chi phí xử lý và API call, overhead cao.</div>
+          <div class="trans">
+            <div class="tq">Một công ty publish tất cả sự kiện đơn hàng lên một Amazon SNS topic có nhiều Amazon SQS queue đã subscribe. Queue của đội vận chuyển chỉ nên nhận các sự kiện có message attribute order_status bằng "paid" và country là "VN" hoặc "TH". Không được sửa publisher, và công ty muốn LEAST operational overhead (ít công sức vận hành nhất). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Subscribe một AWS Lambda function để kiểm tra từng message và chuyển tiếp các message khớp sang queue vận chuyển.</span><span class="why">Sai: dùng được nhưng phải viết và vận hành thêm code Lambda, không phải LEAST operational overhead.</span></li>
+              <li data-k="B"><span class="tv">Tạo một SNS topic riêng cho đội vận chuyển và sửa publisher để publish các sự kiện khớp lên topic đó.</span><span class="why">Sai: vi phạm yêu cầu không được sửa publisher.</span></li>
+              <li data-k="C"><span class="tv">Cho consumer của đội vận chuyển đọc mọi message và xóa các message không khớp.</span><span class="why">Sai: tốn chi phí xử lý và API call cho message không cần, đồng thời phải viết thêm logic lọc – overhead cao.</span></li>
+              <li data-k="D"><span class="tv">Áp dụng một subscription filter policy lên subscription của queue vận chuyển, khớp order_status "paid" và country "VN" hoặc "TH".</span><span class="why">Đúng: SNS tự lọc theo filter policy (các thuộc tính kết hợp AND, giá trị trong danh sách là OR) – không cần code, không sửa publisher.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company uses an Amazon SNS FIFO topic to distribute price updates that must be processed in strict order without duplicates. A new requirement is to process the updates with an AWS Lambda function and to send an email to the pricing team for each update. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Subscribe the Lambda function and an email address directly to the SNS FIFO topic.</li>
+            <li data-k="B">Convert the SNS FIFO topic to a standard topic in place, and then subscribe Lambda and email.</li>
+            <li data-k="C">Subscribe an Amazon SQS FIFO queue to the SNS FIFO topic and configure it as the event source for the Lambda function; have the function publish email notifications to a separate SNS standard topic.</li>
+            <li data-k="D">Subscribe an Amazon SQS standard queue to the topic and enable content-based deduplication on the queue.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Theo tài liệu, <b>SNS FIFO topic chỉ giao tới SQS queue</b>; không hỗ trợ email, SMS, mobile, HTTP(S) và muốn tới Lambda phải đi qua SQS (FIFO giữ thứ tự) rồi cấu hình queue kích hoạt hàm. Email gửi qua một <b>standard topic</b> riêng. <b>A sai</b>: subscribe endpoint email vào FIFO topic sẽ lỗi; Lambda cũng không subscribe trực tiếp. <b>B sai</b>: không đổi loại topic tại chỗ, và standard topic mất bảo đảm thứ tự. <b>D sai</b>: content-based deduplication chỉ có ở FIFO queue; standard queue không giữ thứ tự.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng Amazon SNS FIFO topic để phân phối các cập nhật giá, vốn phải được xử lý theo đúng thứ tự nghiêm ngặt và không trùng lặp. Yêu cầu mới là xử lý các cập nhật bằng một AWS Lambda function và gửi email cho đội định giá với mỗi cập nhật. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Subscribe trực tiếp Lambda function và một địa chỉ email vào SNS FIFO topic.</span><span class="why">Sai: SNS FIFO topic chỉ giao tới SQS queue; không hỗ trợ subscription email và Lambda cũng không subscribe trực tiếp được.</span></li>
+              <li data-k="B"><span class="tv">Chuyển SNS FIFO topic thành standard topic tại chỗ, rồi subscribe Lambda và email.</span><span class="why">Sai: không thể đổi loại topic tại chỗ, và standard topic làm mất bảo đảm thứ tự, không khử trùng.</span></li>
+              <li data-k="C"><span class="tv">Subscribe một Amazon SQS FIFO queue vào SNS FIFO topic và cấu hình queue này làm event source cho Lambda function; cho function publish thông báo email lên một SNS standard topic riêng.</span><span class="why">Đúng: SQS FIFO queue nhận từ SNS FIFO và giữ thứ tự khi kích hoạt Lambda; email đi qua một standard topic riêng vì chỉ standard topic hỗ trợ email.</span></li>
+              <li data-k="D"><span class="tv">Subscribe một Amazon SQS standard queue vào topic và bật content-based deduplication trên queue.</span><span class="why">Sai: content-based deduplication chỉ có ở FIFO queue, và standard queue không giữ thứ tự.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A solutions architect subscribed an Amazon SQS queue to an Amazon SNS topic in the same account. Messages published to the topic never arrive in the queue. The queue is encrypted with the AWS managed key for Amazon SQS (aws/sqs). Which TWO changes are required for messages to be delivered? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Add a statement to the queue's access policy that allows the sns.amazonaws.com service principal to perform sqs:SendMessage, with an aws:SourceArn condition for the topic ARN.</li>
+            <li data-k="B">Enable raw message delivery on the subscription.</li>
+            <li data-k="C">Re-encrypt the queue with a customer managed AWS KMS key whose key policy allows the SNS service principal to use kms:GenerateDataKey and kms:Decrypt.</li>
+            <li data-k="D">Enable long polling on the queue.</li>
+            <li data-k="E">Attach an IAM role to the SNS topic that allows sqs:ReceiveMessage.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> SNS cần quyền <code>sqs:SendMessage</code> trên queue qua <b>SQS access policy</b> với principal <code>sns.amazonaws.com</code> (A, theo tài liệu fan-out). Queue mã hóa KMS: SNS phải dùng được khóa – key policy của AWS managed key <code>aws/sqs</code> không sửa được ⇒ dùng <b>customer managed key</b> cấp quyền cho SNS (C). <b>B sai</b>: raw delivery chỉ đổi định dạng message. <b>D sai</b>: long polling liên quan tới consumer, không ảnh hưởng việc SNS ghi vào queue. <b>E sai</b>: SNS cần quyền <b>gửi</b>, không phải nhận, và quyền cấp qua resource policy của queue.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect đã subscribe một Amazon SQS queue vào một Amazon SNS topic trong cùng account. Message publish lên topic không bao giờ tới được queue. Queue được mã hóa bằng AWS managed key của Amazon SQS (aws/sqs). HAI thay đổi nào là bắt buộc để message được giao? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một statement vào access policy của queue cho phép service principal sns.amazonaws.com thực hiện sqs:SendMessage, với điều kiện aws:SourceArn là ARN của topic.</span><span class="why">Đúng: SNS cần quyền sqs:SendMessage trên queue, cấp qua resource policy (access policy) của queue với principal sns.amazonaws.com.</span></li>
+              <li data-k="B"><span class="tv">Bật raw message delivery trên subscription.</span><span class="why">Sai: raw message delivery chỉ thay đổi định dạng message (bỏ JSON bao ngoài), không giải quyết vấn đề quyền.</span></li>
+              <li data-k="C"><span class="tv">Mã hóa lại queue bằng một customer managed AWS KMS key có key policy cho phép SNS service principal dùng kms:GenerateDataKey và kms:Decrypt.</span><span class="why">Đúng: SNS phải dùng được khóa KMS để ghi vào queue mã hóa; key policy của aws/sqs không sửa được nên phải dùng customer managed key cấp quyền cho SNS.</span></li>
+              <li data-k="D"><span class="tv">Bật long polling trên queue.</span><span class="why">Sai: long polling ảnh hưởng phía consumer nhận message, không liên quan việc SNS ghi vào queue.</span></li>
+              <li data-k="E"><span class="tv">Gắn một IAM role vào SNS topic cho phép sqs:ReceiveMessage.</span><span class="why">Sai: SNS cần quyền gửi (SendMessage) chứ không phải nhận, và quyền này được cấp qua resource policy của queue.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">An application sends messages to an Amazon SQS queue. Some messages include image payloads of up to 50 MB. The messages must be processed asynchronously by worker instances. Which solution meets these requirements with the LEAST development effort?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the SQS maximum message size quota to 50 MB through Service Quotas.</li>
+            <li data-k="B">Use the Amazon SQS Extended Client Library to store the payloads in Amazon S3 and send a reference to the object in the SQS message.</li>
+            <li data-k="C">Send the images through an Amazon SNS topic, which supports messages up to 2 GB natively.</li>
+            <li data-k="D">Base64-encode the images and split them across message attributes.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Message SQS tối đa <b>1 MiB</b>. Tài liệu chỉ ra <b>Amazon SQS Extended Client Library</b> (Java, Python) lưu payload trên <b>Amazon S3</b> và message chỉ chứa tham chiếu – payload tới <b>2 GB</b>. <b>A sai</b>: kích thước message không tăng vượt 1 MiB qua Service Quotas. <b>C sai</b>: SNS mặc định 256 KiB (tối đa 1 MiB); 2 GB cũng chỉ đạt được nhờ Extended Client + S3. <b>D sai</b>: tối đa 10 message attributes và vẫn bị giới hạn tổng kích thước message.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng gửi message vào một Amazon SQS queue. Một số message chứa payload hình ảnh lên tới 50 MB. Các message phải được worker instance xử lý bất đồng bộ. Giải pháp nào đáp ứng các yêu cầu này với LEAST development effort (ít công phát triển nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng quota kích thước message tối đa của SQS lên 50 MB qua Service Quotas.</span><span class="why">Sai: kích thước message SQS tối đa 1 MiB là giới hạn cứng, không tăng được qua Service Quotas.</span></li>
+              <li data-k="B"><span class="tv">Dùng Amazon SQS Extended Client Library để lưu payload trên Amazon S3 và gửi tham chiếu tới object trong SQS message.</span><span class="why">Đúng: thư viện có sẵn tự lưu payload lớn (tới 2 GB) lên S3 và chỉ gửi tham chiếu qua SQS – ít code nhất mà vẫn xử lý bất đồng bộ.</span></li>
+              <li data-k="C"><span class="tv">Gửi hình ảnh qua một Amazon SNS topic, vốn hỗ trợ sẵn message tới 2 GB.</span><span class="why">Sai: SNS mặc định chỉ 256 KiB (tối đa 1 MiB); 2 GB cũng chỉ đạt được nhờ Extended Client + S3.</span></li>
+              <li data-k="D"><span class="tv">Mã hóa Base64 hình ảnh và chia nhỏ vào các message attribute.</span><span class="why">Sai: tối đa 10 message attribute và chúng vẫn tính vào giới hạn tổng kích thước message 1 MiB; Base64 còn làm dữ liệu to thêm.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-queue-types.html" target="_blank" rel="noopener">Amazon SQS queue types (standard vs FIFO)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/FIFO-queues-exactly-once-processing.html" target="_blank" rel="noopener">Exactly-once processing in Amazon SQS</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html" target="_blank" rel="noopener">Amazon SQS message quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-short-and-long-polling.html" target="_blank" rel="noopener">Amazon SQS short and long polling</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html" target="_blank" rel="noopener">Using dead-letter queues in Amazon SQS</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-delay-queues.html" target="_blank" rel="noopener">Amazon SQS delay queues</a></li>
+        <li><a href="https://docs.aws.amazon.com/sns/latest/dg/sns-message-filtering.html" target="_blank" rel="noopener">Amazon SNS message filtering</a></li>
+        <li><a href="https://docs.aws.amazon.com/sns/latest/dg/sns-subscription-filter-policies.html" target="_blank" rel="noopener">Amazon SNS subscription filter policies</a></li>
+        <li><a href="https://docs.aws.amazon.com/sns/latest/dg/fifo-message-delivery.html" target="_blank" rel="noopener">Amazon SNS message delivery for FIFO topics</a></li>
+        <li><a href="https://docs.aws.amazon.com/sns/latest/dg/sns-message-delivery-retries.html" target="_blank" rel="noopener">Amazon SNS message delivery retries</a></li>
+        <li><a href="https://docs.aws.amazon.com/sns/latest/dg/sns-dead-letter-queues.html" target="_blank" rel="noopener">Amazon SNS dead-letter queues</a></li>
+        <li><a href="https://docs.aws.amazon.com/sns/latest/dg/sns-large-payload-raw-message-delivery.html" target="_blank" rel="noopener">Amazon SNS raw message delivery</a></li>
+        <li><a href="https://docs.aws.amazon.com/sns/latest/dg/subscribe-sqs-queue-to-sns-topic.html" target="_blank" rel="noopener">Subscribing an Amazon SQS queue to an Amazon SNS topic</a></li>
+        <li><a href="https://docs.aws.amazon.com/general/latest/gr/sns.html" target="_blank" rel="noopener">Amazon SNS endpoints and quotas</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

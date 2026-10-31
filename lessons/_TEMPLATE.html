@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài N | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/cat/Customer-Enablement.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<!--
+  ============================================================
+  FILE MẪU – KHÔNG XÓA. Lệnh /aws-bai copy cấu trúc này.
+  - data-lesson = id bài trong assets/syllabus.js
+  - #hero, #toc, #lesson-nav do app.js tự sinh từ syllabus.
+  - Mỗi <h2> = 1 phần lớn (tự đánh số & đưa vào mục lục phải).
+  - Thuật ngữ: <span class="t" data-vi="nghĩa Việt">English Term</span>
+      => hiển thị: English Term (nghĩa Việt)
+  ============================================================
+-->
+<body data-page="lesson" data-lesson="1" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <span class="t" data-vi="Vùng địa lý">Region</span> và <span class="t" data-vi="Vùng sẵn sàng">Availability Zone</span> là gì.</li>
+          <li>Biết khi nào dùng <span class="t" data-vi="Vị trí biên">Edge Location</span>.</li>
+        </ul>
+      </div>
+
+      <!-- 2. PHẦN NỘI DUNG -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">Tổng quan</h2>
+      <p class="lead">Đoạn mở đầu ngắn, dịch sát từ tài liệu AWS.</p>
+      <p>Mỗi <span class="t" data-vi="Vùng địa lý">Region</span> gồm nhiều <span class="t" data-vi="Vùng sẵn sàng">Availability Zones (AZs)</span> tách biệt về vật lý.
+        Lần xuất hiện sau của cùng thuật ngữ trong cùng phần có thể viết <span class="t no-vi">Region</span> không kèm nghĩa.</p>
+
+      <div class="stats">
+        <div class="stat"><b>3+</b><span>AZ tối thiểu trong mỗi Region</span></div>
+        <div class="stat"><b>99.999999999%</b><span>độ bền dữ liệu S3 (11 số 9)</span></div>
+      </div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Region giống một thành phố, mỗi AZ là một khu công nghiệp có điện/nước riêng.</p></div>
+
+      <h3>Tiểu mục</h3>
+      <ul><li>Gạch đầu dòng…</li></ul>
+
+      <!-- Thẻ dịch vụ -->
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Local-Zones.svg" alt="">
+          <div><h4>AWS Local Zones</h4><span class="vi">Vùng cục bộ</span><p>Đưa compute/storage đến gần người dùng cuối để có độ trễ thấp.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Outposts.svg" alt="">
+          <div><h4>AWS Outposts</h4><span class="vi">Hạ tầng AWS tại chỗ</span><p>Rack phần cứng AWS đặt trong data center của bạn.</p></div></div>
+      </div>
+
+      <!-- SƠ ĐỒ KIỂU 1: nhóm lồng nhau theo chuẩn AWS (cloud > region > vpc > az > subnet) -->
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">Availability Zone A</span>
+                  <div class="grp pub"><span class="lbl">Public subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">NAT Gateway</div></div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 instance</div></div></div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone B</span>
+                  <div class="grp pub"><span class="lbl">Public subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">NAT Gateway</div></div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 instance</div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Kiến trúc Multi-AZ – mỗi AZ có subnet public/private riêng.</figcaption>
+      </figure>
+
+      <!-- SƠ ĐỒ KIỂU 2: luồng ngang node → node -->
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Users<small>Người dùng</small></div>
+          <span class="arrow">HTTPS</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">CloudFront<small>CDN</small></div>
+          <span class="arrow">cache miss</span>
+          <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB</div>
+          <span class="arrow dashed">target group</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">Auto Scaling group</div>
+        </div>
+        <figcaption><b>Hình 2.</b> Luồng request qua CDN và load balancer.</figcaption>
+      </figure>
+
+      <!-- SƠ ĐỒ KIỂU 3: SVG tự vẽ (dùng khi cần đường nối phức tạp). Dùng <image href> để chèn icon AWS. -->
+      <figure class="diagram">
+        <svg viewBox="0 0 640 220" width="640" role="img" aria-label="Sơ đồ đồng bộ dữ liệu giữa 2 AZ">
+          <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="20" y="20" width="220" height="180" rx="6" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="32" y="42" font-size="13" font-weight="700" style="fill:#147EBA">AZ A</text>
+          <image href="../assets/icons/svc/Amazon-RDS.svg" x="98" y="70" width="64" height="64"/>
+          <text x="130" y="158" font-size="13" text-anchor="middle" font-weight="600">Primary DB</text>
+          <rect x="400" y="20" width="220" height="180" rx="6" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="412" y="42" font-size="13" font-weight="700" style="fill:#147EBA">AZ B</text>
+          <image href="../assets/icons/svc/Amazon-RDS.svg" x="478" y="70" width="64" height="64"/>
+          <text x="510" y="158" font-size="13" text-anchor="middle" font-weight="600">Standby DB</text>
+          <path class="line-o" d="M170 102 H470" marker-end="url(#ah)"/>
+          <text x="320" y="92" font-size="12" text-anchor="middle" class="muted">synchronous replication</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Sao chép đồng bộ giữa 2 AZ.</figcaption>
+      </figure>
+
+      <!-- So sánh dạng cột -->
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">Lựa chọn A</h4><ul><li>Ưu điểm…</li><li>Dùng khi…</li></ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lựa chọn B</h4><ul><li>Ưu điểm…</li><li>Dùng khi…</li></ul></div>
+      </div>
+
+      <!-- Bảng so sánh -->
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>A</th><th>B</th></tr></thead>
+        <tbody>
+          <tr><td>Tính sẵn sàng</td><td class="yes">Cao</td><td class="no">Thấp</td></tr>
+        </tbody>
+      </table></div>
+
+      <!-- Các bước -->
+      <ol class="steps">
+        <li><b>Bước 1</b> – mô tả…</li>
+        <li><b>Bước 2</b> – mô tả…</li>
+      </ol>
+
+      <!-- Callouts -->
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>Đề hỏi “<i>highly available</i>” ⇒ nghĩ ngay đến Multi-AZ.</p></div>
+      <div class="callout note"><span class="ttl">Lưu ý</span><p>…</p></div>
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span><p>…</p></div>
+
+      <!-- 3. TÓM TẮT -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul><li>Ý chính 1</li><li>Ý chính 2</li></ul></div>
+
+      <!-- 4. THUẬT NGỮ -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Availability Zone (AZ)</dt><dd><b>Vùng sẵn sàng</b> – một hoặc nhiều data center tách biệt trong một Region.</dd></div>
+      </dl>
+
+      <!-- 5. CÂU HỎI ÔN TẬP (phong cách đề SAA-C03) -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="B">
+          <div class="qh">A company needs … Which solution meets these requirements MOST cost-effectively?</div>
+          <ol class="opts">
+            <li data-k="A">…</li><li data-k="B">…</li><li data-k="C">…</li><li data-k="D">…</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Giải thích tiếng Việt, vì sao A/C/D sai…</div>
+          <div class="trans">
+            <div class="tq">Dịch đề sang tiếng Việt (giữ thuật ngữ AWS)…</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dịch phương án A…</span><span class="why">Sai: lý do…</span></li>
+              <li data-k="B"><span class="tv">Dịch phương án B…</span><span class="why">Đúng: lý do…</span></li>
+              <li data-k="C"><span class="tv">Dịch phương án C…</span><span class="why">Sai: lý do…</span></li>
+              <li data-k="D"><span class="tv">Dịch phương án D…</span><span class="why">Sai: lý do…</span></li>
+            </ul>
+          </div>
+        </div>
+        <div class="q" data-answer="A,D">
+          <div class="qh">Which TWO actions … ? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">…</li><li data-k="B">…</li><li data-k="C">…</li><li data-k="D">…</li><li data-k="E">…</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> …</div>
+        </div>
+      </div>
+
+      <!-- 6. NGUỒN (app.js tự thêm các link docs của bài từ syllabus) -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources"></ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

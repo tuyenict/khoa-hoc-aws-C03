@@ -1,0 +1,943 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 43 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Database-Migration-Service.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="43" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Phân biệt rõ <b>7 chiến lược di chuyển (7 Rs)</b>: <b>Retire, Retain, Rehost, Relocate, Repurchase, Replatform, Refactor</b> – và nhận ra chiến lược đúng từ từ khóa trong đề.</li>
+          <li>Biết cách <b>khám phá và lập kế hoạch</b> trước khi di chuyển: <b>AWS Application Discovery Service</b> (Agentless Collector vs Discovery Agent), <b>AWS Migration Hub</b> (home Region), <b>DMS Fleet Advisor</b>.</li>
+          <li>Hiểu cách <b>AWS Application Migration Service (MGN)</b> rehost máy chủ: replication agent, staging area, port 443/1500, test → cutover → finalize, cửa sổ cutover tính bằng phút.</li>
+          <li>Nắm kiến trúc <b>AWS DMS</b>: replication instance / DMS Serverless, endpoint, task, ba kiểu migration <b>Full load</b>, <b>Full load + CDC</b>, <b>CDC only</b>.</li>
+          <li>Hiểu <b>Change Data Capture (CDC)</b> đọc transaction log thế nào, và cách dùng nó để di chuyển database <b>gần như không downtime</b>.</li>
+          <li>Chọn đúng công cụ chuyển đổi schema cho migration <b>heterogeneous</b>: <b>DMS Schema Conversion</b> hoặc <b>AWS SCT</b>.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 10</span>
+        <p><b>Bài 18</b> đã dạy cách đưa <b>dữ liệu dạng file/object</b> lên AWS (DataSync, Snow Family, Transfer Family, Storage Gateway); <b>Bài 26–29</b> dạy RDS, Aurora, DynamoDB và các database chuyên dụng làm <b>đích</b>; <b>Bài 42</b> dạy <b>AWS Elastic Disaster Recovery</b> – “anh em sinh đôi” của MGN. Bài này tập trung vào <b>chiến lược di chuyển ứng dụng</b> (7 Rs) và ba dịch vụ di chuyển chính: <b>Application Migration Service</b> cho máy chủ, <b>Database Migration Service</b> cho database, <b>Migration Hub / Application Discovery Service</b> cho khám phá và theo dõi. Phần tối ưu chi phí sau khi đã lên AWS học ở <b>Bài 44</b>.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Migration-Transfer.svg" alt="">Bức tranh tổng quan về migration lên AWS</h2>
+      <p class="lead"><span class="t" data-vi="Di chuyển hệ thống">Migration</span> là việc đưa ứng dụng, máy chủ và dữ liệu từ môi trường nguồn (data center on-premises, cloud khác, hoặc một VPC/account/Region khác) lên AWS. Đề SAA-C03 không hỏi bạn từng nút bấm trên console, mà hỏi: <b>chọn chiến lược nào</b> cho từng ứng dụng, và <b>dùng dịch vụ nào</b> để di chuyển máy chủ, database, file với <b>ít downtime nhất</b>, <b>ít công vận hành nhất</b> hoặc <b>chi phí thấp nhất</b>.</p>
+
+      <h3>Ba giai đoạn của một dự án migration lớn</h3>
+      <p>AWS Prescriptive Guidance mô tả các dự án migration lớn theo ba giai đoạn (đây là khung quen thuộc của AWS, nêu ở đây để định hướng):</p>
+      <ol class="steps">
+        <li><b>Assess</b> (đánh giá) – xác định lý do kinh doanh, ước tính chi phí, đánh giá mức sẵn sàng của tổ chức.</li>
+        <li><b>Mobilize</b> (chuẩn bị) – <b>khám phá danh mục ứng dụng</b> (portfolio discovery), phân tích phụ thuộc, chọn <b>chiến lược di chuyển</b> (7 Rs) cho từng ứng dụng, dựng <span class="t" data-vi="Vùng hạ cánh">landing zone</span> (nhiều account, mạng, bảo mật – Bài 5).</li>
+        <li><b>Migrate &amp; modernize</b> (di chuyển và hiện đại hóa) – di chuyển theo từng <span class="t" data-vi="Đợt di chuyển">wave</span>, rồi tối ưu/hiện đại hóa sau khi đã chạy trên AWS.</li>
+      </ol>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Application-Discovery-Service.svg" alt="">
+          <div><h4>AWS Application Discovery Service</h4><span class="vi">Khám phá máy chủ on-prem</span><p>Thu thập cấu hình, mức sử dụng CPU/RAM/disk, kết nối mạng giữa các server để <b>lập kế hoạch</b> và nhóm thành ứng dụng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Migration-Hub.svg" alt="">
+          <div><h4>AWS Migration Hub</h4><span class="vi">Trung tâm theo dõi migration</span><p>Một nơi duy nhất để xem server đã khám phá, nhóm thành ứng dụng và <b>theo dõi tiến độ</b> từ MGN và DMS; dữ liệu lưu ở <b>home Region</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/CloudEndure-Migration.svg" alt="">
+          <div><h4>AWS Application Migration Service (MGN)</h4><span class="vi">Rehost máy chủ</span><p>Sao chép <b>block-level liên tục</b> máy chủ vật lý, ảo, cloud khác lên EC2; cutover trong vài phút. Dịch vụ khuyến nghị cho <b>lift-and-shift</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Database-Migration-Service.svg" alt="">
+          <div><h4>AWS Database Migration Service (DMS)</h4><span class="vi">Di chuyển database</span><p>Di chuyển dữ liệu giữa các database cùng hoặc khác engine; <b>full load + CDC</b> giữ nguồn và đích đồng bộ cho tới lúc chuyển.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Database-Migration-Service_Database-migration-workflow-job.svg" alt="">
+          <div><h4>DMS Schema Conversion / AWS SCT</h4><span class="vi">Chuyển đổi lược đồ</span><p>Đánh giá và chuyển <b>schema + code</b> (view, stored procedure, function) sang engine đích khác loại, vd Oracle → Aurora PostgreSQL.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-DataSync.svg" alt="">
+          <div><h4>DataSync, Snow Family, Transfer Family</h4><span class="vi">Chuyển file/object (Bài 18)</span><p>Dùng cho <b>dữ liệu file/object</b> (NFS, SMB, HDFS, S3…), không phải để di chuyển máy chủ hay database đang chạy.</p></div></div>
+      </div>
+
+      <div class="callout warn"><span class="ttl">Cập nhật quan trọng về tên gọi và tình trạng dịch vụ</span>
+        <ul>
+          <li>Tài liệu hiện tại gọi MGN là <b>AWS Transform MGN</b>; trong đề thi và nhiều tài liệu vẫn là <b>AWS Application Migration Service (AWS MGN)</b> – cùng một dịch vụ. MGN là thế hệ kế tiếp của <b>CloudEndure Migration</b> và thay cho <b>AWS Server Migration Service (SMS)</b> cũ (kiến thức phổ biến).</li>
+          <li><b>AWS Migration Hub</b> không còn mở cho khách hàng mới từ <b>7/11/2025</b>; <b>AWS Application Discovery Service</b> cũng không còn mở cho khách hàng mới. AWS khuyến nghị <b>AWS Transform</b> cho năng lực tương tự. Đề SAA-C03 vẫn có thể nhắc tới hai dịch vụ này, nên bạn vẫn cần biết chúng làm gì.</li>
+        </ul></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Chuyển nhà là một ví dụ dễ hình dung. Trước hết bạn <b>kiểm kê</b> đồ đạc, xem món nào đi cùng món nào (Discovery). Rồi quyết định với từng món: <b>vứt bỏ</b> (Retire), <b>để lại nhà cũ</b> (Retain), <b>khiêng nguyên si</b> sang (Rehost), <b>chở nguyên cả thùng container</b> (Relocate), <b>bán đi mua cái mới</b> (Repurchase), <b>sửa nhẹ cho vừa nhà mới</b> (Replatform), hay <b>đóng lại tủ mới hoàn toàn</b> theo thiết kế nhà mới (Refactor). Cuối cùng là một tờ <b>bảng theo dõi</b> món nào đã chuyển xong (Migration Hub).</p></div>
+
+      <!-- ===================== PHẦN 2: 7 Rs ===================== -->
+      <h2 id="7rs"><img src="../assets/icons/svc/AWS-Migration-Hub.svg" alt="">Bảy chiến lược di chuyển: 7 Rs</h2>
+      <p class="lead">Theo AWS, một <span class="t" data-vi="Chiến lược di chuyển">migration strategy</span> là cách tiếp cận dùng để di chuyển một workload lên AWS Cloud. Có <b>bảy</b> chiến lược, gọi chung là <b>7 Rs</b>. Mỗi ứng dụng trong danh mục được gán một chiến lược – thường trong giai đoạn mobilize hoặc đánh giá danh mục ban đầu.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Chiến lược</th><th>Tên gọi khác</th><th>Làm gì</th><th>Ví dụ / công cụ</th></tr></thead>
+        <tbody>
+          <tr><td><b>Retire</b></td><td>—</td><td>Ngừng hoặc lưu trữ ứng dụng, tắt các server của stack đó</td><td>Ứng dụng “zombie”, không còn giá trị kinh doanh</td></tr>
+          <tr><td><b>Retain</b></td><td>Revisit</td><td>Giữ lại ở môi trường nguồn, có thể di chuyển sau</td><td>Mainframe, phần cứng đặc thù, vừa nâng cấp xong, yêu cầu data residency</td></tr>
+          <tr><td><b>Rehost</b></td><td><b>Lift and shift</b></td><td>Chuyển lên AWS <b>không thay đổi</b> ứng dụng</td><td><b>AWS MGN</b>, Cloud Migration Factory, <b>VM Import/Export</b></td></tr>
+          <tr><td><b>Relocate</b></td><td>—</td><td>Chuyển nhiều server cùng lúc từ nền tảng on-prem sang <b>phiên bản cloud của cùng nền tảng</b>; hoặc chuyển tài nguyên sang VPC/Region/account khác</td><td>VMware on-prem → nền tảng VMware trên AWS; RDS DB instance sang VPC/account khác</td></tr>
+          <tr><td><b>Repurchase</b></td><td><b>Drop and shop</b></td><td>Thay bằng phiên bản/sản phẩm khác, thường là <b>SaaS</b></td><td>CRM tự host → SaaS CRM; license truyền thống → SaaS</td></tr>
+          <tr><td><b>Replatform</b></td><td><b>Lift, tinker, and shift</b> / lift and reshape</td><td>Chuyển lên và <b>tối ưu một phần</b> để tận dụng cloud, không đổi kiến trúc lõi</td><td>SQL Server tự quản → <b>Amazon RDS for SQL Server</b>; VM → container (App2Container); Windows → Linux; Graviton</td></tr>
+          <tr><td><b>Refactor</b></td><td><b>Re-architect</b></td><td>Thiết kế lại kiến trúc, tận dụng tối đa <b>cloud-native</b></td><td>Monolith → microservices/serverless; mainframe → kiến trúc mới</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 330" width="800" role="img" aria-label="Phổ 7 Rs theo mức độ thay đổi">
+          <defs><marker id="a43r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <text x="400" y="22" font-size="14" font-weight="700" text-anchor="middle">Ứng dụng có được di chuyển lên AWS không?</text>
+          <rect x="20" y="40" width="170" height="92" rx="10" fill="#7D8998" fill-opacity="0.12" stroke="#7D8998"/>
+          <text x="105" y="66" font-size="14" font-weight="700" text-anchor="middle">Retire</text>
+          <text x="105" y="86" font-size="11" text-anchor="middle">Tắt hẳn / lưu trữ</text>
+          <text x="105" y="104" font-size="11" text-anchor="middle">CPU &amp; RAM &lt; 5% ⇒ zombie</text>
+          <text x="105" y="122" font-size="11" text-anchor="middle">Không di chuyển</text>
+          <rect x="20" y="146" width="170" height="92" rx="10" fill="#7D8998" fill-opacity="0.12" stroke="#7D8998"/>
+          <text x="105" y="172" font-size="14" font-weight="700" text-anchor="middle">Retain</text>
+          <text x="105" y="192" font-size="11" text-anchor="middle">Giữ lại ở nguồn</text>
+          <text x="105" y="210" font-size="11" text-anchor="middle">Mainframe, data residency</text>
+          <text x="105" y="228" font-size="11" text-anchor="middle">Có thể xem xét lại sau</text>
+          <rect x="210" y="40" width="570" height="198" rx="10" fill="#ED7100" fill-opacity="0.06" stroke="#ED7100" stroke-dasharray="6 4"/>
+          <text x="495" y="58" font-size="12" font-weight="700" text-anchor="middle" fill="#ED7100">Có di chuyển – mức độ thay đổi tăng dần →</text>
+          <rect x="222" y="70" width="104" height="156" rx="8" fill="#7AA116" fill-opacity="0.12" stroke="#7AA116"/>
+          <image href="../assets/icons/svc/CloudEndure-Migration.svg" x="250" y="78" width="44" height="44"/>
+          <text x="274" y="142" font-size="13" font-weight="700" text-anchor="middle">Relocate</text>
+          <text x="274" y="162" font-size="10.5" text-anchor="middle">Cùng nền tảng</text>
+          <text x="274" y="178" font-size="10.5" text-anchor="middle">(VMware, VPC,</text>
+          <text x="274" y="194" font-size="10.5" text-anchor="middle">Region, account)</text>
+          <rect x="336" y="70" width="104" height="156" rx="8" fill="#7AA116" fill-opacity="0.12" stroke="#7AA116"/>
+          <image href="../assets/icons/res/Traditional-server.svg" x="366" y="78" width="44" height="44"/>
+          <text x="388" y="142" font-size="13" font-weight="700" text-anchor="middle">Rehost</text>
+          <text x="388" y="162" font-size="10.5" text-anchor="middle">Lift and shift</text>
+          <text x="388" y="178" font-size="10.5" text-anchor="middle">Không đổi code</text>
+          <text x="388" y="194" font-size="10.5" text-anchor="middle">AWS MGN</text>
+          <rect x="450" y="70" width="104" height="156" rx="8" fill="#147EBA" fill-opacity="0.12" stroke="#147EBA"/>
+          <image href="../assets/icons/svc/Amazon-RDS.svg" x="480" y="78" width="44" height="44"/>
+          <text x="502" y="142" font-size="13" font-weight="700" text-anchor="middle">Replatform</text>
+          <text x="502" y="162" font-size="10.5" text-anchor="middle">Lift, tinker</text>
+          <text x="502" y="178" font-size="10.5" text-anchor="middle">and shift</text>
+          <text x="502" y="194" font-size="10.5" text-anchor="middle">→ managed service</text>
+          <rect x="564" y="70" width="104" height="156" rx="8" fill="#E7157B" fill-opacity="0.12" stroke="#E7157B"/>
+          <image href="../assets/icons/svc/AWS-Marketplace_Light.svg" x="594" y="78" width="44" height="44"/>
+          <text x="616" y="142" font-size="13" font-weight="700" text-anchor="middle">Repurchase</text>
+          <text x="616" y="162" font-size="10.5" text-anchor="middle">Drop and shop</text>
+          <text x="616" y="178" font-size="10.5" text-anchor="middle">→ SaaS</text>
+          <text x="616" y="194" font-size="10.5" text-anchor="middle">Bỏ app cũ</text>
+          <rect x="678" y="70" width="94" height="156" rx="8" fill="#DD344C" fill-opacity="0.12" stroke="#DD344C"/>
+          <image href="../assets/icons/svc/AWS-Lambda.svg" x="703" y="78" width="44" height="44"/>
+          <text x="725" y="142" font-size="13" font-weight="700" text-anchor="middle">Refactor</text>
+          <text x="725" y="162" font-size="10.5" text-anchor="middle">Re-architect</text>
+          <text x="725" y="178" font-size="10.5" text-anchor="middle">Cloud-native</text>
+          <text x="725" y="194" font-size="10.5" text-anchor="middle">Phức tạp nhất</text>
+          <line x1="222" y1="262" x2="772" y2="262" stroke="#545B64" stroke-width="2" marker-end="url(#a43r)"/>
+          <text x="222" y="284" font-size="12">Nhanh, ít rủi ro, ít tối ưu</text>
+          <text x="772" y="284" font-size="12" text-anchor="end">Chậm, tốn công, lợi ích cloud-native lớn nhất</text>
+          <text x="400" y="316" font-size="11" text-anchor="middle">Thứ tự trên trục là định hướng tương đối; Repurchase thay đổi “sản phẩm” chứ không sửa code ứng dụng cũ.</text>
+        </svg>
+        <figcaption><b>Hình 1.</b> Phân loại 7 Rs. Retire và Retain là hai quyết định <b>không di chuyển</b>. Năm chiến lược còn lại đi từ ít thay đổi (Relocate, Rehost) tới thay đổi nhiều nhất (Refactor). AWS khuyến nghị với migration lớn: <b>rehost / relocate / replatform trước, hiện đại hóa sau</b>.</figcaption>
+      </figure>
+
+      <h3>Retire – ngừng sử dụng</h3>
+      <p>Dành cho ứng dụng muốn <b>ngừng hoạt động hoặc lưu trữ</b>; bạn có thể tắt các server của stack đó. Các trường hợp điển hình theo tài liệu:</p>
+      <ul>
+        <li>Không còn giá trị kinh doanh khi giữ lại hay đưa lên cloud; muốn <b>bỏ chi phí</b> duy trì và hosting.</li>
+        <li>Giảm rủi ro bảo mật khi ứng dụng dùng hệ điều hành/thành phần <b>hết hỗ trợ</b>.</li>
+        <li>Theo hiệu năng: ứng dụng có CPU và memory trung bình <b>dưới 5%</b> gọi là <span class="t" data-vi="Ứng dụng xác sống">zombie application</span>; trong khoảng <b>5–20%</b> trong <b>90 ngày</b> gọi là <span class="t" data-vi="Ứng dụng nhàn rỗi">idle application</span>. Dữ liệu sử dụng lấy từ công cụ discovery.</li>
+        <li>Không có kết nối inbound nào tới ứng dụng trong <b>90 ngày</b> gần nhất.</li>
+      </ul>
+
+      <h3>Retain – giữ lại</h3>
+      <p>Giữ ứng dụng ở môi trường nguồn, hoặc ứng dụng <b>chưa sẵn sàng</b> di chuyển (có thể di chuyển sau). Các lý do tài liệu liệt kê:</p>
+      <ul>
+        <li><b>Bảo mật và tuân thủ</b> – yêu cầu <b>data residency</b>.</li>
+        <li><b>Rủi ro cao</b> – cần đánh giá và lập kế hoạch chi tiết trước.</li>
+        <li><b>Phụ thuộc</b> – phải di chuyển ứng dụng khác trước.</li>
+        <li><b>Vừa nâng cấp</b> – hoãn tới đợt làm mới công nghệ tiếp theo.</li>
+        <li><b>Không có giá trị khi di chuyển</b> – vd ứng dụng chỉ vài người dùng nội bộ.</li>
+        <li><b>Đợi bản SaaS</b> – nhà cung cấp sắp ra phiên bản SaaS (sau đó Repurchase).</li>
+        <li><b>Phụ thuộc vật lý chưa giải quyết</b> – phần cứng đặc thù không có tương đương trên cloud, vd máy móc trong nhà máy.</li>
+        <li><b>Mainframe, mid-range, Unix không phải x86</b> (vd IBM AS/400, Oracle Solaris) – cần đánh giá kỹ trước.</li>
+      </ul>
+
+      <h3>Rehost – lift and shift</h3>
+      <p>Chuyển ứng dụng từ môi trường nguồn lên AWS <b>không thay đổi gì</b> ở ứng dụng. Theo tài liệu, rehost giúp di chuyển <b>số lượng lớn máy</b> từ nhiều nền tảng (vật lý, ảo, cloud khác) mà <b>không lo về tương thích, gián đoạn hiệu năng, cửa sổ cutover dài</b> hay sao chép dữ liệu đường dài. Ứng dụng <b>vẫn phục vụ người dùng</b> trong lúc di chuyển; downtime phụ thuộc chiến lược cutover. Rehost không tối ưu cloud ngay, nhưng ứng dụng đã chạy trên cloud thì <b>dễ tối ưu hoặc re-architect hơn</b> về sau. Công cụ tự động hóa: <b>AWS MGN</b>, <b>AWS Cloud Migration Factory Solution</b>, <b>VM Import/Export</b>.</p>
+
+      <h3>Relocate – chuyển nguyên nền tảng</h3>
+      <p>Chuyển <b>một số lượng lớn server</b> (một hoặc nhiều ứng dụng) cùng lúc từ nền tảng on-premises sang <b>phiên bản cloud của chính nền tảng đó</b>. Cũng dùng relocate để chuyển instance/object sang <b>VPC, Region hoặc account khác</b> – vd chuyển một <b>RDS DB instance</b> sang VPC hoặc account khác. Relocate <b>không cần mua phần cứng mới, viết lại ứng dụng hay đổi quy trình vận hành</b>; ứng dụng vẫn phục vụ trong lúc chuyển. Tài liệu gọi đây là cách <b>nhanh nhất</b> để di chuyển và vận hành workload trên cloud vì không ảnh hưởng kiến trúc tổng thể.</p>
+
+      <h3>Repurchase – drop and shop</h3>
+      <p>Thay ứng dụng bằng <b>phiên bản hoặc sản phẩm khác</b> mang lại nhiều giá trị hơn: truy cập từ mọi nơi, không phải bảo trì hạ tầng, giá pay-as-you-go. Thường <b>giảm chi phí bảo trì, hạ tầng và license</b>. Trường hợp dùng: chuyển từ license truyền thống sang <b>SaaS</b>; nâng cấp lên phiên bản mới hoặc sản phẩm bên thứ ba tương đương trên cloud; thay ứng dụng tự viết bằng SaaS để khỏi viết lại. Sau khi mua cần: đào tạo người dùng, <b>di chuyển dữ liệu</b> sang ứng dụng mới, tích hợp xác thực (vd Microsoft Active Directory), cấu hình mạng an toàn.</p>
+
+      <h3>Replatform – lift, tinker, and shift</h3>
+      <p>Chuyển ứng dụng lên cloud và <b>tối ưu ở một mức độ</b> để vận hành hiệu quả, giảm chi phí hoặc tận dụng năng lực cloud. Ví dụ kinh điển trong tài liệu: chuyển <b>Microsoft SQL Server</b> sang <b>Amazon RDS for SQL Server</b>. Các trường hợp khác:</p>
+      <ul>
+        <li>Chuyển sang dịch vụ <b>fully managed hoặc serverless</b> để tiết kiệm thời gian và chi phí.</li>
+        <li>Nâng cấp hệ điều hành lên bản mới nhất để cải thiện bảo mật, tuân thủ.</li>
+        <li>Dùng <b>AWS Graviton</b> để giảm chi phí.</li>
+        <li>Chuyển từ Windows sang Linux; port .NET Framework sang .NET Core (công cụ <b>Porting Assistant for .NET</b>).</li>
+        <li>Đưa VM vào <b>container</b> mà <b>không sửa code</b> – công cụ <b>AWS App2Container</b> cho ứng dụng .NET và Java.</li>
+      </ul>
+
+      <h3>Refactor / re-architect</h3>
+      <p>Chuyển ứng dụng và <b>thay đổi kiến trúc</b>, tận dụng tối đa tính năng cloud-native để cải thiện agility, hiệu năng, khả năng mở rộng. Thường xuất phát từ nhu cầu kinh doanh mạnh: scale, ra tính năng nhanh hơn, giảm chi phí. Các trường hợp: mainframe không đáp ứng được hoặc quá đắt; <b>monolith</b> cản trở việc giao sản phẩm; ứng dụng cũ không ai biết bảo trì hoặc <b>mất source code</b>; khó kiểm thử; hoặc vì tuân thủ phải <b>tách một số bảng</b> (vd thông tin bệnh nhân) ở lại on-prem. Đây là chiến lược <b>phức tạp và tốn kém nhất</b>.</p>
+
+      <div class="callout key"><span class="ttl">Khuyến nghị của AWS cho migration lớn</span>
+        <p>Các chiến lược phổ biến cho migration lớn: <b>rehost, replatform, relocate, retire</b>. <b>Refactor không được khuyến nghị</b> cho migration lớn vì phải hiện đại hóa ngay trong lúc di chuyển – phức tạp nhất và khó quản lý khi có nhiều ứng dụng. Thay vào đó: <b>rehost / relocate / replatform trước, rồi hiện đại hóa sau khi migration hoàn tất</b>. Chỉ refactor khi các chiến lược khác không chấp nhận được.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Migrate as quickly as possible… without changing the application / no code changes</i>” ⇒ <b>Rehost</b> (MGN).</li>
+          <li>“<i>Move the self-managed database to a managed service to reduce operational overhead, minimal code changes</i>” ⇒ <b>Replatform</b> (vd → Amazon RDS / Aurora).</li>
+          <li>“<i>Break the monolith into microservices / use serverless / cloud-native</i>” ⇒ <b>Refactor</b>.</li>
+          <li>“<i>Replace with a SaaS product</i>” ⇒ <b>Repurchase</b>. “<i>Application is no longer used</i>” ⇒ <b>Retire</b>. “<i>Must stay on premises for compliance / mainframe</i>” ⇒ <b>Retain</b>.</li>
+          <li>“<i>Move VMware workloads to the cloud without converting VMs or changing operations</i>” hoặc “<i>move an RDS instance to another account/VPC</i>” ⇒ <b>Relocate</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>Rehost ≠ Replatform</b>: cài lại SQL Server trên EC2 vẫn là rehost (về bản chất); chuyển sang <b>RDS</b> mới là replatform vì đổi nền tảng vận hành sang managed.</li>
+          <li><b>Replatform ≠ Refactor</b>: replatform giữ kiến trúc lõi, chỉ “tinker” (vd đổi DB sang managed, đưa VM vào container không sửa code). Refactor đổi kiến trúc (vd tách microservices, dùng Lambda + DynamoDB).</li>
+          <li>Đề hỏi “<i>least effort / fastest</i>” mà bạn chọn refactor là sai; refactor chỉ đúng khi đề nhấn mạnh <b>agility, scalability, cloud-native</b> và chấp nhận công sức lớn.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: DISCOVERY ===================== -->
+      <h2 id="discovery"><img src="../assets/icons/svc/AWS-Application-Discovery-Service.svg" alt="">Khám phá &amp; lập kế hoạch: Application Discovery Service, Migration Hub</h2>
+      <p class="lead">Không thể chọn 7 Rs hay chia wave nếu không biết <b>mình đang có gì</b>. <span class="t" data-vi="Dịch vụ khám phá ứng dụng">AWS Application Discovery Service</span> giúp lập kế hoạch migration bằng cách <b>thu thập dữ liệu sử dụng và cấu hình</b> của server và database on-premises. Dịch vụ tích hợp với <b>AWS Migration Hub</b> và <b>AWS DMS Fleet Advisor</b>.</p>
+
+      <h3>Ba cách thu thập dữ liệu</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/AWS-License-Manager_Application-Discovery.svg" alt=""><span class="t" data-vi="Bộ thu thập không cần agent">Agentless Collector</span></h4>
+          <ul>
+            <li>Triển khai <b>một file OVA</b> qua <b>VMware vCenter</b> – <b>không cài agent</b> trên từng VM.</li>
+            <li>Thu thập cấu hình tĩnh: hostname, IP, MAC, disk, <b>phiên bản database engine và schema</b>; mức dùng trung bình/đỉnh CPU, RAM, Disk I/O.</li>
+            <li><b>Không “nhìn vào bên trong” VM</b> ⇒ không biết process đang chạy (tài liệu: dùng thêm Discovery Agent khi cần chi tiết này).</li>
+            <li>Chỉ VMware VM (không cho physical server); chu kỳ thu thập ~<b>60 phút</b>.</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/res/Traditional-server.svg" alt=""><span class="t" data-vi="Agent khám phá">Discovery Agent</span></h4>
+          <ul>
+            <li>Cài <b>trên từng VM và physical server</b>, có bản Windows và Linux.</li>
+            <li>Thu thập cấu hình tĩnh, <b>time-series hiệu năng chi tiết</b>, <b>kết nối mạng inbound/outbound</b>, <b>process đang chạy</b>.</li>
+            <li>Chu kỳ thu thập ~<b>15 giây</b>; export dữ liệu sang <b>Amazon Athena</b> hoặc CSV để phân tích sâu.</li>
+            <li>Dùng khi cần <b>bản đồ phụ thuộc</b> chi tiết giữa các server.</li>
+          </ul></div>
+      </div>
+      <p>Cách thứ ba là <b>file-based import</b> (template của Migration Hub, hoặc export từ RVTools) – nhập trực tiếp thông tin môi trường mà không cần collector hay agent. Ngoài ra các giải pháp discovery của <b>AWS Partner Network</b> có thể ghi dữ liệu vào Application Discovery Service qua API công khai.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí (theo bảng so sánh của AWS)</th><th>Agentless Collector</th><th>Discovery Agent</th><th>Import (template / RVTools)</th></tr></thead>
+        <tbody>
+          <tr><td>VMware VM</td><td class="yes">Có</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Physical server</td><td class="no">Không</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Triển khai</td><td>Một lần mỗi vCenter</td><td>Mỗi server</td><td>Không triển khai</td></tr>
+          <tr><td>Kết nối mạng giữa server (TCP)</td><td class="yes">Có</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Process đang chạy</td><td class="no">Không</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Chu kỳ thu thập</td><td>~60 phút</td><td>~15 giây</td><td>Một snapshot</td></tr>
+          <tr><td>Export time-series / Athena</td><td class="no">Không</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Thông tin database (Oracle, SQL Server, MySQL, PostgreSQL)</td><td class="yes">Có (module database &amp; analytics)</td><td class="no">Không</td><td class="no">Không</td></tr>
+        </tbody>
+      </table></div>
+
+      <p>Dữ liệu sử dụng và hiệu năng export được để <b>đưa vào mô hình chi phí</b> (ước tính chi phí chạy trên AWS), và dữ liệu kết nối mạng giúp xác định <b>phụ thuộc giữa các server</b> để <b>nhóm thành ứng dụng</b> – di chuyển các server phụ thuộc chặt cùng một wave. Từ dữ liệu này có thể tạo <b>khuyến nghị EC2</b> (instance type phù hợp) dựa trên profile hoặc dữ liệu sử dụng.</p>
+
+      <h3>AWS Migration Hub và home Region</h3>
+      <p><span class="t" data-vi="Trung tâm di chuyển">AWS Migration Hub</span> cung cấp <b>một nơi duy nhất</b> để khám phá server hiện có, lập kế hoạch và <b>theo dõi trạng thái migration</b> của từng ứng dụng, <b>bất kể bạn dùng công cụ di chuyển nào</b>. Nó nhận cập nhật trạng thái từ <b>AWS MGN</b> và <b>AWS DMS</b>.</p>
+      <ul>
+        <li><span class="t" data-vi="Vùng gốc">Home Region</span>: lần đầu dùng, bạn phải chọn home Region – nơi lưu <b>dữ liệu theo dõi migration</b> và <b>mọi dữ liệu discovery</b> của Application Discovery Service. Phải chọn <b>trước</b> mọi thao tác ghi và trước khi discovery.</li>
+        <li>Chỉ <b>dữ liệu theo dõi</b> nằm ở home Region – bạn vẫn <b>di chuyển vào bất kỳ Region nào</b> mà công cụ di chuyển hỗ trợ.</li>
+        <li>Agent, collector, import chỉ dùng được ở home Region đã chọn.</li>
+        <li>Các thành phần đi kèm: <b>Strategy Recommendations</b> (gợi ý chiến lược di chuyển/hiện đại hóa cho từng ứng dụng), <b>Refactor Spaces</b> (điểm khởi đầu để refactor dần sang microservices), <b>Migration Hub Orchestrator</b> (template workflow tự động hóa migration).</li>
+      </ul>
+
+      <h3>DMS Fleet Advisor – khám phá database</h3>
+      <p><b>DMS Fleet Advisor</b> thu thập dữ liệu từ nhiều môi trường database on-premises <b>từ một hoặc vài vị trí trung tâm</b>, không cần cài trên từng máy, rồi lập <b>inventory</b> server, database, schema để đánh giá tính khả thi của migration. Hiện hỗ trợ <b>Microsoft SQL Server, MySQL, Oracle, PostgreSQL</b>. Từ đó có thể tạo <b>khuyến nghị đích</b> (target recommendations) cho database nguồn.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Collect server utilization and dependency data from on-premises VMware environment to plan migration</i>”: không được cài agent ⇒ <b>Agentless Collector</b>; cần <b>process và network connection chi tiết</b> trên cả physical server ⇒ <b>Discovery Agent</b>.</li>
+          <li>“<i>Single place to track migration progress across multiple tools / applications</i>” ⇒ <b>AWS Migration Hub</b>.</li>
+          <li>“<i>Analyze discovered data with SQL</i>” ⇒ export dữ liệu Discovery Agent sang <b>Amazon Athena</b>.</li>
+          <li>“<i>Right-size EC2 instances before migrating based on on-premises utilization</i>” ⇒ dữ liệu từ Application Discovery Service → <b>khuyến nghị EC2</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: MGN ===================== -->
+      <h2 id="mgn"><img src="../assets/icons/svc/CloudEndure-Migration.svg" alt="">AWS Application Migration Service (MGN): rehost máy chủ</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ di chuyển ứng dụng">AWS Application Migration Service (MGN)</span> tự động hóa việc di chuyển <b>máy chủ vật lý, ảo và cloud</b> lên AWS với downtime tối thiểu – theo tài liệu, <b>cửa sổ cutover thường chỉ vài phút</b>. MGN thực hiện <span class="t" data-vi="Sao chép mức khối liên tục">continuous block-level replication</span> các source server và <b>chuyển đổi</b> chúng để chạy native trên AWS, nhờ đó di chuyển số lượng lớn server <b>không gặp vấn đề tương thích hay gián đoạn hiệu năng</b>. Migration Hub mô tả MGN là <b>dịch vụ chính được khuyến nghị cho lift-and-shift</b>.</p>
+
+      <div class="stats">
+        <div class="stat"><b>Phút</b><span>cửa sổ cutover điển hình</span></div>
+        <div class="stat"><b>TCP 1500</b><span>source server → replication server (dữ liệu sao chép)</span></div>
+        <div class="stat"><b>TCP 443</b><span>source server &amp; staging subnet → MGN API endpoint</span></div>
+        <div class="stat"><b>≥ 2 tuần</b><span>nên test trước ngày cutover dự kiến</span></div>
+        <div class="stat"><b>100</b><span>source server tối đa mỗi lần launch test/cutover</span></div>
+      </div>
+
+      <h3>Kiến trúc và luồng dữ liệu</h3>
+      <ol class="steps">
+        <li><b>Cài AWS Replication Agent</b> lên từng <span class="t" data-vi="Máy chủ nguồn">source server</span> (Windows Server và nhiều bản Linux; IPv4 và IPv6). Agent sao chép toàn bộ disk rồi tiếp tục sao chép <b>mọi thay đổi block</b> liên tục.</li>
+        <li>Dữ liệu đi tới các <b>replication server</b> (EC2 nhỏ, chạy Amazon Linux 2023) trong <span class="t" data-vi="Subnet vùng trung chuyển">staging area subnet</span> – best practice là <b>subnet riêng</b> dành cho việc này – và được ghi vào <b>EBS volume giá rẻ</b>.</li>
+        <li>Khi <b>launch test hoặc cutover</b>, MGN dùng <b>conversion server</b> chuyển đổi disk (driver, boot) để boot được trên EC2, rồi tạo instance trong <b>operational subnet</b> theo <b>EC2 launch template</b> của từng server. Replication agent <b>bị gỡ bỏ</b> khỏi test/cutover instance.</li>
+        <li>Sau khi cutover thành công, <b>finalize cutover</b> ⇒ dừng sao chép, bỏ dữ liệu sao chép và <b>terminate toàn bộ tài nguyên replication</b>.</li>
+      </ol>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">Data center nguồn (vật lý / VMware / Hyper-V / cloud khác)</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">Web server<small>+ Replication Agent</small></div>
+              <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">App server<small>+ Replication Agent</small></div>
+              <div class="node"><img src="../assets/icons/res/Generic-database.svg" alt="">DB server<small>+ Replication Agent</small></div>
+            </div>
+          </div>
+          <div class="grp region"><span class="lbl">AWS Region đích</span>
+            <div class="grp vpc"><span class="lbl">VPC</span>
+              <div class="grp priv"><span class="lbl">Staging area subnet (chi phí thấp)</span>
+                <div class="flow">
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Replication servers<small>EC2 nhỏ</small></div>
+                  <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" alt="">EBS staging<small>giá rẻ</small></div>
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Conversion server<small>tạm thời khi launch</small></div>
+                </div>
+              </div>
+              <div class="grp pub"><span class="lbl">Operational subnet (theo launch template)</span>
+                <div class="flow">
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Test instances<small>kiểm thử, launch lại tùy ý</small></div>
+                  <span class="arrow dashed">ngày cutover</span>
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Cutover instances<small>production mới</small></div>
+                </div>
+              </div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/svc/CloudEndure-Migration.svg" alt="">MGN API endpoint<small>mgn.&lt;region&gt;.amazonaws.com</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Amazon S3<small>phần mềm agent/replication</small></div>
+            </div>
+          </div>
+        </div>
+        <div class="flow">
+          <span class="arrow">TCP 1500: block data, mã hóa + nén, TLS 1.2</span>
+          <span class="arrow">TCP 443: điều khiển, trạng thái, metric</span>
+        </div>
+        <figcaption><b>Hình 2.</b> Kiến trúc AWS MGN. Agent trên source server gửi dữ liệu block-level qua <b>TCP 1500</b> vào replication server trong staging area subnet (EBS giá rẻ). Source server và replication server đều liên lạc với MGN API qua <b>TCP 443</b>. Khi test/cutover, conversion server chuyển đổi disk để boot native trên EC2; instance được tạo theo EC2 launch template. Đường truyền có thể là Internet, <b>Site-to-Site VPN</b> hoặc <b>Direct Connect</b>.</figcaption>
+      </figure>
+
+      <h3>Yêu cầu mạng</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Luồng</th><th>Port</th><th>Mục đích</th></tr></thead>
+        <tbody>
+          <tr><td>Source server → MGN API endpoint</td><td><b>TCP 443</b></td><td>Tải/nâng cấp agent, hiển thị trạng thái replication, metric CPU/RAM, báo sự kiện (vd thay đổi disk), gửi thông tin phần cứng/ứng dụng, chuẩn bị test/cutover</td></tr>
+          <tr><td>Source server → staging area subnet</td><td><b>TCP 1500</b></td><td>Truyền <b>dữ liệu sao chép</b>; mã hóa tại nguồn, nén, <b>TLS 1.2 end-to-end</b>, giải mã ở staging trước khi ghi vào volume</td></tr>
+          <tr><td>Staging area subnet → MGN API, EC2 endpoint</td><td><b>TCP 443</b></td><td>Replication server tải phần mềm, báo trạng thái, metric, sự kiện. Ra Internet bằng <b>public IP + Internet gateway</b> hoặc <b>private IP + NAT gateway</b></td></tr>
+          <tr><td>Staging area subnet → Amazon S3</td><td>HTTPS</td><td>Replication và conversion server cần kho package AL2023 trên S3; subnet cô lập thì dùng <b>S3 gateway endpoint</b> với policy cho phép các bucket cần thiết</td></tr>
+        </tbody>
+      </table></div>
+      <p>Tài liệu lưu ý: <b>không áp dụng SSL interception</b> cho kết nối giữa source/replication server và MGN API. Với server <b>domain-joined</b>, VPC đích phải có kết nối và DNS tới domain controller; khi test, <b>cô lập test VPC khỏi mạng production</b> để client production không “bám” nhầm vào domain controller vừa launch.</p>
+
+      <h3>Template và quản lý ở quy mô lớn</h3>
+      <ul>
+        <li>Ba loại template: <b>replication</b> (staging subnet, cấu hình replication server…), <b>launch</b> (EC2 launch template: subnet, instance type, security group, license…), <b>post-launch</b> (hành động sau khi launch, vd chạy SSM document). Template áp cho mỗi server mới thêm vào, có thể <b>override</b> từng server.</li>
+        <li>Nhóm server thành <span class="t" data-vi="Ứng dụng (nhóm server)">application</span> và application thành <span class="t" data-vi="Đợt di chuyển">wave</span>; launch, cutover, archive thực hiện được ở <b>mức server, application hoặc wave</b>.</li>
+        <li>Sao chép vào <b>AZ thường hoặc Local Zone</b> không cần cấu hình đặc biệt (khuyến nghị đặt staging subnet ở Region cha).</li>
+        <li>Sau khi rehost, có thể dùng dịch vụ AWS để <b>replatform hoặc refactor</b> – rehost là bước đầu nhanh để tiến tới hiện đại hóa.</li>
+      </ul>
+
+      <h3>Vòng đời: test → cutover → finalize</h3>
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">Thêm source server<small>cài agent</small></div>
+          <span class="arrow">initial sync</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Ready for testing</div>
+          <span class="arrow">launch test</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Test instance<small>SSH/RDP kiểm tra; revert, test lại tùy ý</small></div>
+          <span class="arrow">mark ready</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Ready for cutover</div>
+          <span class="arrow">launch cutover</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Cutover instance<small>trạng thái mới nhất</small></div>
+          <span class="arrow">finalize</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Backup_Backup-Restore.svg" alt="">Cutover complete<small>dừng replication → archive</small></div>
+        </div>
+        <figcaption><b>Hình 3.</b> Vòng đời migration của một source server trong MGN. Mỗi lần test hoặc cutover mới, MGN <b>xóa test instance cũ</b> và launch instance mới phản ánh <b>trạng thái mới nhất</b> của source. Sau test/cutover, <b>sao chép vẫn tiếp tục</b> vào staging (không vào instance đã launch) cho tới khi bạn <b>finalize</b>.</figcaption>
+      </figure>
+      <ul>
+        <li><b>Test</b>: best practice là test <b>ít nhất hai tuần</b> trước ngày cutover để kịp phát hiện và sửa lỗi. Launch tối đa <b>100 source server</b> mỗi thao tác. Windows source server cần ít nhất <b>2 GB</b> dung lượng trống để launch test. Test instance tính phí EC2/EBS bình thường – terminate khi xác nhận xong.</li>
+        <li><b>Cutover</b>: thực hiện vào ngày giờ định sẵn. Thực tế: dừng ứng dụng nguồn, chờ sao chép bắt kịp, launch cutover instance, rồi chuyển DNS/traffic sang AWS – downtime chỉ bằng khoảng thời gian này.</li>
+        <li><b>Finalize cutover</b>: trạng thái thành <b>Cutover complete</b>, <b>dừng sao chép</b>, bỏ dữ liệu sao chép, <b>terminate mọi tài nguyên replication</b>; data replication thành <b>Disconnected</b>, bước tiếp theo là <b>Mark as archived</b>.</li>
+        <li><b>Agentless replication</b> (qua MGN vCenter Client, dạng snapshot) <b>không còn cho triển khai mới</b>; AWS khuyến nghị agent-based vì hỗ trợ <b>CDP (continuous data protection)</b> và cửa sổ cutover ngắn nhất.</li>
+      </ul>
+
+      <h3>Chi phí</h3>
+      <p>Theo trang giá, MGN có <b>thời gian sử dụng miễn phí</b> cho mỗi source server (tài liệu học thường nêu <b>90 ngày</b> ≈ 2.160 giờ – <i>trang giá hiện không ghi rõ con số</i>). Bạn <b>vẫn trả tiền</b> cho hạ tầng sao chép (replication server EC2, EBS staging) trong lúc sao chép – kể cả trong thời gian miễn phí – và cho EC2/EBS của test/cutover instance. Vì vậy hãy <b>finalize cutover</b> sớm để dừng chi phí staging.</p>
+
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/CloudEndure-Migration.svg" alt="">AWS MGN</h4>
+          <ul>
+            <li>Mục đích: <b>di chuyển hẳn</b> (rehost) lên AWS, rồi tắt nguồn.</li>
+            <li>Sao chép liên tục <b>tạm thời</b> – kết thúc khi finalize cutover.</li>
+            <li>Từ khóa: “<i>lift-and-shift</i>”, “<i>migrate hundreds of servers</i>”, “<i>minimal downtime cutover</i>”.</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/svc/CloudEndure-Disaster-Recovery.svg" alt="">AWS Elastic Disaster Recovery (Bài 42)</h4>
+          <ul>
+            <li>Mục đích: <b>DR liên tục</b> – nguồn vẫn chạy, AWS là site dự phòng.</li>
+            <li>Sao chép <b>lâu dài</b>, PIT snapshot, drill, failback.</li>
+            <li>Cùng kiến trúc agent/staging/TCP 1500 – đừng nhầm mục đích.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">VM Import/Export</h4>
+          <ul>
+            <li>Nhập <b>image VM</b> (VMware, Hyper-V…) thành <b>AMI</b> / EC2 instance; export ngược lại.</li>
+            <li>Dựa trên file image, <b>không sao chép liên tục</b> ⇒ thay đổi sau lúc export không được mang theo, downtime dài hơn (kiến thức phổ biến).</li>
+            <li>Hợp với số ít VM, hoặc khi muốn giữ image chuẩn từ on-prem.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Migrate hundreds of on-premises VMware and physical servers to Amazon EC2 with minimal downtime and least operational overhead, no application changes</i>” ⇒ <b>AWS Application Migration Service</b>.</li>
+          <li>“<i>Validate the migrated servers before cutover without affecting the source</i>” ⇒ <b>launch test instances</b> trong MGN (không gián đoạn nguồn).</li>
+          <li>Thấy “<i>AWS Server Migration Service (SMS)</i>” hoặc “<i>CloudEndure Migration</i>” ⇒ dịch vụ cũ; đáp án hiện đại là <b>MGN</b>.</li>
+          <li>Replication bị kẹt ⇒ kiểm tra firewall cho <b>TCP 1500</b> (source → staging) và <b>TCP 443</b> (tới MGN endpoint).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: DMS ===================== -->
+      <h2 id="dms"><img src="../assets/icons/svc/AWS-Database-Migration-Service.svg" alt="">AWS Database Migration Service (DMS): kiến trúc</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ di chuyển cơ sở dữ liệu">AWS Database Migration Service (AWS DMS)</span> là dịch vụ cloud giúp di chuyển <b>relational database, data warehouse, NoSQL database</b> và các data store khác – lên AWS hoặc giữa các tổ hợp cloud và on-premises. Ở mức cơ bản, DMS là <b>một server trên AWS chạy phần mềm replication</b>: bạn tạo kết nối nguồn và đích, rồi lên lịch một task chạy trên server đó để di chuyển dữ liệu. DMS tự tạo bảng và primary key ở đích nếu chưa có.</p>
+
+      <h3>Các thành phần</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Vai trò</th><th>Chi tiết đáng nhớ</th></tr></thead>
+        <tbody>
+          <tr><td><b>Database discovery</b> (DMS Fleet Advisor)</td><td>Kiểm kê database on-prem</td><td>SQL Server, MySQL, Oracle, PostgreSQL</td></tr>
+          <tr><td><b>Schema conversion</b> (DMS Schema Conversion)</td><td>Chuyển schema + code cho engine khác loại</td><td>Instance profile, data provider, migration project</td></tr>
+          <tr><td><span class="t" data-vi="Instance sao chép">Replication instance</span></td><td><b>EC2 instance được quản lý</b> chạy một hoặc nhiều replication task</td><td>Kèm <b>50 GB hoặc 100 GB</b> storage tùy instance class; migration lớn/nhiều task ⇒ instance lớn vì DMS tốn nhiều CPU/RAM; hỗ trợ <b>Multi-AZ</b> (standby đồng bộ ở AZ khác, tự failover)</td></tr>
+          <tr><td><span class="t" data-vi="Điểm kết nối">Endpoint</span></td><td>Thông tin kết nối tới source hoặc target</td><td>Loại (source/target), engine, server, port, <b>SSL mode</b>, credential; console bắt buộc <b>test connection</b> thành công; một endpoint dùng được cho nhiều task</td></tr>
+          <tr><td><span class="t" data-vi="Tác vụ sao chép">Replication task</span></td><td>Di chuyển một tập dữ liệu từ source endpoint tới target endpoint</td><td>Chọn migration type, target table preparation mode, LOB mode, table mapping, transformation, <b>data validation</b>, CloudWatch logging</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">On-premises</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Generic-database.svg" alt="">Oracle nguồn<small>redo / archive log</small></div>
+            </div>
+          </div>
+          <div class="grp region"><span class="lbl">AWS Region</span>
+            <div class="grp vpc"><span class="lbl">VPC</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/AWS-Database-Migration-Service_Database-migration-workflow-job.svg" alt="">Source endpoint</div>
+                <span class="arrow">extract</span>
+                <div class="node"><img src="../assets/icons/svc/AWS-Database-Migration-Service.svg" alt="">Replication instance<small>Multi-AZ · task full load + CDC</small></div>
+                <span class="arrow">load / apply</span>
+                <div class="node"><img src="../assets/icons/res/AWS-Database-Migration-Service_Database-migration-workflow-job.svg" alt="">Target endpoint</div>
+                <div class="node"><img src="../assets/icons/res/Amazon-Aurora-PostgreSQL-Instance.svg" alt="">Aurora PostgreSQL đích</div>
+              </div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/svc/AWS-Secrets-Manager.svg" alt="">Secrets Manager<small>credential</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">CloudWatch<small>log, CDCLatencySource/Target</small></div>
+            </div>
+          </div>
+        </div>
+        <div class="flow"><span class="arrow">Site-to-Site VPN / Direct Connect · SSL in-flight · KMS at rest</span></div>
+        <figcaption><b>Hình 4.</b> Kiến trúc AWS DMS: replication instance (EC2 được quản lý, trong VPC) đọc từ <b>source endpoint</b>, ghi vào <b>target endpoint</b>. Một replication instance chạy được nhiều task; một endpoint dùng được cho nhiều task. Dữ liệu at rest mã hóa bằng <b>AWS KMS</b>, in-flight dùng <b>SSL</b>. Với migration heterogeneous, schema được chuyển trước bằng DMS Schema Conversion/SCT.</figcaption>
+      </figure>
+
+      <h3>Ba kiểu migration của một task</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Migration type</th><th>Làm gì</th><th>Khi nào dùng</th></tr></thead>
+        <tbody>
+          <tr><td><b>Full load</b> (migrate existing data)</td><td>Copy dữ liệu hiện có từ nguồn sang đích, tạo bảng khi cần</td><td>Chấp nhận được <b>outage đủ dài</b> để copy hết dữ liệu</td></tr>
+          <tr><td><b>Full load + CDC</b> (migrate existing data and replicate ongoing changes)</td><td>Full load <b>đồng thời ghi nhận thay đổi</b> ở nguồn; xong full load thì apply thay đổi đã ghi; tiếp tục sao chép tới trạng thái ổn định</td><td>Migration <b>downtime tối thiểu</b> – lựa chọn phổ biến nhất trong đề</td></tr>
+          <tr><td><b>CDC only</b> (replicate data changes only)</td><td>Chỉ sao chép thay đổi từ một thời điểm</td><td>Bulk load bằng <b>công cụ native</b> (thường hiệu quả hơn khi homogeneous), rồi DMS đồng bộ thay đổi; hoặc sao chép liên tục sang hệ thống khác</td></tr>
+        </tbody>
+      </table></div>
+
+      <ul>
+        <li><b>Target table preparation mode</b>: <i>Do nothing</i> (bảng đã tạo sẵn), <i>Drop tables on target</i> (xóa và tạo lại), <i>Truncate</i> (xóa dữ liệu trước khi migrate).</li>
+        <li><b>LOB mode</b>: <i>Don't include LOB columns</i>; <i>Full LOB mode</i> (migrate LOB đầy đủ theo từng chunk – <b>chậm hơn</b>); <i>Limited LOB mode</i> (cắt LOB theo Max LOB Size – <b>nhanh hơn</b>).</li>
+        <li><b>Table mapping và transformation</b>: chọn bảng/schema cần chuyển, đổi tên schema/bảng/cột, định nghĩa primary key và unique index ở đích.</li>
+        <li><b>Views</b> chỉ migrate được bằng task <b>full load only</b>; task có CDC chỉ gồm bảng.</li>
+        <li>DMS là <b>pay-as-you-go</b>, tự quản lý hardware/software và patch; <b>automatic failover</b> sang replication server dự phòng khi server chính lỗi (Multi-AZ).</li>
+      </ul>
+
+      <h3>AWS DMS Serverless</h3>
+      <p>Thay vì tự chọn và quản lý replication instance, <b>DMS Serverless</b> tự động <b>provision, scale</b>, có <b>high availability</b> tích hợp và tính tiền theo mức dùng – bỏ việc ước tính capacity, quản lý phiên bản engine, patch. Bạn tạo <b>replication</b> (thay cho instance + task) với min/max <span class="t" data-vi="Đơn vị năng lực DMS">DMS capacity units (DCU)</span>.</p>
+      <div class="stats">
+        <div class="stat"><b>1 DCU = 2 GB</b><span>RAM; tính tiền theo DCU đang dùng</span></div>
+        <div class="stat"><b>1 DCU</b><span>minimum mặc định nếu bỏ trống</span></div>
+        <div class="stat"><b>100 GB</b><span>storage ban đầu; tự tăng khi dùng tới 90% (kiểm tra mỗi 15 phút)</span></div>
+        <div class="stat"><b>48 giờ</b><span>replication dừng mà không resume trong 48 giờ ⇒ tài nguyên bị thu hồi</span></div>
+      </div>
+      <ul>
+        <li>Quy trình: Initializing → Testing Connection → Fetching Metadata → <b>Calculating Capacity</b> → <b>Provisioning Capacity</b> → Replication Starting → Running. Lần đầu có thể mất tới <b>40 phút</b> để khởi tạo tài nguyên.</li>
+        <li>Autoscale giữa min và max DCU; <b>không scale down trong lúc full load</b>. Khuyến nghị đặt max cao, min đủ cho các đợt tăng đột biến.</li>
+        <li>Tùy chọn <b>MultiAZ</b>: khuyến nghị bật nếu dùng CDC/ongoing replication.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Migrate an on-premises database to Amazon RDS / Aurora with minimal downtime</i>” ⇒ <b>AWS DMS full load + CDC</b> (cùng engine: không cần chuyển schema).</li>
+          <li>“<i>Avoid capacity planning / managing replication instances</i>” ⇒ <b>DMS Serverless</b>.</li>
+          <li>“<i>High availability for a long-running DMS migration</i>” ⇒ replication instance <b>Multi-AZ</b>.</li>
+          <li>Cùng engine: công cụ native (dump/restore, backup/restore) có thể nạp lần đầu nhanh hơn, rồi dùng <b>CDC only</b> để bắt kịp.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: CDC ===================== -->
+      <h2 id="cdc"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Replication.svg" alt="">Continuous replication (CDC): di chuyển database gần như không downtime</h2>
+      <p class="lead"><span class="t" data-vi="Thu thập dữ liệu thay đổi">Change data capture (CDC)</span> – còn gọi là <span class="t" data-vi="Sao chép liên tục">ongoing replication</span> – là việc DMS ghi nhận các thay đổi liên tục ở data store nguồn và áp dụng sang đích. DMS làm điều này bằng cách <b>đọc transaction log</b> của database thông qua <b>API native của engine</b>, nên <b>không phải query lại bảng</b> và ít ảnh hưởng tới nguồn.</p>
+
+      <h3>DMS đọc thay đổi từ đâu?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Engine nguồn</th><th>Cơ chế CDC</th><th>Cấu hình cần có</th></tr></thead>
+        <tbody>
+          <tr><td>Oracle</td><td><b>Oracle LogMiner API</b> hoặc binary reader; đọc online/archive <b>redo log</b> theo <b>SCN</b></td><td><b>Supplemental logging</b></td></tr>
+          <tr><td>Microsoft SQL Server</td><td>MS-Replication hoặc <b>MS-CDC</b>; đọc transaction log theo <b>LSN</b></td><td>Bật MS-CDC / publication</td></tr>
+          <tr><td>MySQL / MariaDB / Aurora MySQL</td><td>Đọc <b>row-based binary log (binlog)</b></td><td><b>Row-level binlog</b>; với RDS cần bật <b>automated backup</b></td></tr>
+          <tr><td>PostgreSQL / Aurora PostgreSQL</td><td><b>Logical replication slot</b> + plugin <code>test_decoding</code></td><td>RDS/Aurora PostgreSQL tự giữ WAL cần thiết</td></tr>
+          <tr><td>Amazon RDS (nói chung)</td><td>Như engine tương ứng</td><td>Bật backup; giữ change log đủ lâu – <b>24 giờ thường là đủ</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>CDC hoạt động bên trong replication instance</h3>
+      <ul>
+        <li>Task stream thay đổi từ nguồn sang đích bằng <b>bộ đệm trong bộ nhớ</b>. Nếu bộ đệm cạn – vd DMS bắt thay đổi <b>nhanh hơn</b> tốc độ ghi vào đích – thay đổi được <b>tràn xuống Change Cache trên disk</b>. Khi đó <b>target latency</b> vượt <b>source latency</b> (metric <code>CDCLatencyTarget</code> &gt; <code>CDCLatencySource</code>) ⇒ cần tối ưu phía đích (vd đích thiếu primary key/index, thiếu tài nguyên).</li>
+        <li>CDC có thể làm dữ liệu ghi ra disk ⇒ migration có <b>transaction lớn hoặc nhiều thay đổi</b> nên tăng storage của replication instance.</li>
+        <li><b>Quan trọng</b>: tài liệu ghi rõ DMS CDC <b>không phải sao chép real-time</b>, <b>không có SLA</b> về độ trễ; độ trễ có thể lên <b>vài phút hoặc hơn</b> tùy workload nguồn, mạng, tài nguyên replication, khả năng ghi của đích.</li>
+        <li>Điểm bắt đầu CDC: theo <b>thời gian tùy chọn</b> (DMS đổi sang native point như LSN/SCN; PostgreSQL không hỗ trợ), theo <b>native start point</b> (LSN, SCN, binlog file:position) hoặc theo <b>checkpoint</b> DMS ghi lại (dùng để khôi phục task lỗi hoặc mở task CDC mới cho đích khác). Điểm bắt đầu cố định sau khi tạo task.</li>
+        <li><b>Bidirectional replication</b>: hai task ngược chiều (A→B, B→A) với <b>loopback prevention</b>; hỗ trợ Oracle, SQL Server, MySQL, PostgreSQL, Aurora MySQL/PostgreSQL. Tài liệu nhấn mạnh <b>không phải giải pháp multi-master</b>: không phát hiện/giải quyết xung đột – chỉ dùng khi dữ liệu ở mỗi node được tách biệt về nghiệp vụ.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 270" width="800" role="img" aria-label="Dòng thời gian migration full load cộng CDC">
+          <defs><marker id="a43c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <line x1="20" y1="150" x2="780" y2="150" stroke="#545B64" stroke-width="2" marker-end="url(#a43c)"/>
+          <text x="772" y="172" font-size="12" text-anchor="end">thời gian</text>
+          <image href="../assets/icons/res/Generic-database.svg" x="22" y="20" width="36" height="36"/>
+          <text x="66" y="44" font-size="12" font-weight="700">Nguồn on-prem: ứng dụng vẫn đọc/ghi bình thường</text>
+          <rect x="60" y="66" width="560" height="22" rx="4" fill="#7AA116" fill-opacity="0.25" stroke="#7AA116"/>
+          <text x="340" y="82" font-size="11" text-anchor="middle">Ứng dụng chạy trên database nguồn (không downtime)</text>
+          <rect x="60" y="100" width="240" height="34" rx="6" fill="#147EBA" fill-opacity="0.18" stroke="#147EBA"/>
+          <text x="180" y="122" font-size="12" font-weight="700" text-anchor="middle">① Full load + ghi nhận thay đổi</text>
+          <rect x="300" y="100" width="110" height="34" rx="6" fill="#ED7100" fill-opacity="0.18" stroke="#ED7100"/>
+          <text x="355" y="116" font-size="11" font-weight="700" text-anchor="middle">② Apply</text>
+          <text x="355" y="129" font-size="10" text-anchor="middle">cached changes</text>
+          <rect x="410" y="100" width="210" height="34" rx="6" fill="#E7157B" fill-opacity="0.15" stroke="#E7157B"/>
+          <text x="515" y="122" font-size="12" font-weight="700" text-anchor="middle">③ CDC ongoing – đồng bộ</text>
+          <rect x="620" y="94" width="50" height="46" rx="6" fill="#DD344C" fill-opacity="0.2" stroke="#DD344C"/>
+          <text x="645" y="114" font-size="11" font-weight="700" text-anchor="middle">④</text>
+          <text x="645" y="130" font-size="9.5" text-anchor="middle">cutover</text>
+          <rect x="670" y="66" width="100" height="22" rx="4" fill="#7AA116" fill-opacity="0.25" stroke="#7AA116"/>
+          <text x="720" y="82" font-size="11" text-anchor="middle">App → đích</text>
+          <image href="../assets/icons/res/Amazon-Aurora-Instance.svg" x="726" y="20" width="36" height="36"/>
+          <text x="20" y="200" font-size="11.5">① Copy bulk dữ liệu hiện có, đồng thời đệm mọi thay đổi xảy ra trong lúc copy.</text>
+          <text x="20" y="218" font-size="11.5">② Áp dụng các thay đổi đã đệm. ③ Sao chép liên tục tới “steady state” – nguồn và đích gần như trùng nhau.</text>
+          <text x="20" y="236" font-size="11.5">④ Dừng ghi ở ứng dụng, chờ thay đổi cuối chảy sang đích, trỏ ứng dụng sang đích và khởi động lại.</text>
+          <text x="20" y="256" font-size="11.5" font-weight="700">Downtime = chỉ khoảng ④ (thường vài phút), không phụ thuộc kích thước database.</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Migration database downtime tối thiểu với DMS <b>full load + CDC</b>. Tài liệu mô tả: sau khi full load xong, thay đổi đã ghi nhận được áp dụng; khi đạt trạng thái ổn định, bạn <b>tắt ứng dụng, để các thay đổi còn lại chảy sang đích, rồi khởi động lại ứng dụng trỏ vào đích</b>.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Keep the source database operational during migration / minimize downtime / replicate ongoing changes</i>” ⇒ DMS với <b>CDC</b> (full load + CDC).</li>
+          <li>“<i>Continuously replicate changes from an on-premises database to Amazon S3 / Redshift / Kinesis for analytics</i>” ⇒ DMS <b>CDC</b> với đích S3/Redshift/Kinesis (DMS Serverless hỗ trợ cả Kinesis Data Streams, MSK, OpenSearch, Neptune làm đích).</li>
+          <li>CDC trên RDS MySQL nguồn thất bại ⇒ kiểm tra đã bật <b>automated backups</b> và <b>binlog row format</b>, thời gian giữ binlog đủ (~24 giờ).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Đề yêu cầu “<i>real-time, guaranteed sub-second replication</i>” hoặc “<i>multi-Region DR cho Aurora</i>” ⇒ DMS <b>không</b> phải đáp án (không có SLA latency); dùng Aurora Global Database / read replica (Bài 27, 42).</li>
+          <li>Bidirectional DMS <b>không giải quyết xung đột</b> ⇒ không dùng cho multi-master ghi cùng dữ liệu.</li>
+          <li>Đồng bộ <b>file share/NFS</b> lên AWS ⇒ DataSync (Bài 18), không phải DMS.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: SCHEMA CONVERSION ===================== -->
+      <h2 id="schema"><img src="../assets/icons/res/AWS-Database-Migration-Service_Database-migration-workflow-job.svg" alt="">Homogeneous vs heterogeneous: DMS Schema Conversion và AWS SCT</h2>
+      <p class="lead">Khi engine nguồn và đích <b>giống nhau</b> (<span class="t" data-vi="Di chuyển cùng loại engine">homogeneous migration</span>, vd MySQL → Amazon RDS for MySQL), schema tương thích sẵn – chỉ cần di chuyển dữ liệu. Khi engine <b>khác nhau</b> (<span class="t" data-vi="Di chuyển khác loại engine">heterogeneous migration</span>, vd Oracle → Aurora PostgreSQL), bạn phải <b>chuyển đổi schema và code</b> (stored procedure, function, view, trigger) trước, rồi mới dùng DMS chuyển dữ liệu.</p>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp plain"><span class="lbl">Homogeneous: 1 bước</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Generic-database.svg" alt="">MySQL on-prem</div>
+              <span class="arrow">DMS (hoặc native tool)</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-Aurora-MySQL-Instance.svg" alt="">RDS / Aurora MySQL</div>
+            </div>
+          </div>
+          <div class="grp plain"><span class="lbl">Heterogeneous: 2 bước</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Generic-database.svg" alt="">Oracle on-prem</div>
+              <span class="arrow">① DMS Schema Conversion / SCT: schema + code</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-Aurora-PostgreSQL-Instance.svg" alt="">Aurora PostgreSQL<small>schema đã chuyển</small></div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Generic-database.svg" alt="">Oracle on-prem</div>
+              <span class="arrow">② DMS: full load + CDC (dữ liệu)</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-Aurora-PostgreSQL-Instance.svg" alt="">Aurora PostgreSQL<small>dữ liệu đồng bộ</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 6.</b> Migration homogeneous chỉ cần di chuyển dữ liệu. Migration heterogeneous cần <b>hai bước</b>: (1) chuyển schema và code bằng <b>DMS Schema Conversion</b> hoặc <b>AWS SCT</b>; (2) di chuyển dữ liệu bằng <b>AWS DMS</b>. DMS Schema Conversion <b>chỉ chuyển schema, không chuyển dữ liệu</b>.</figcaption>
+      </figure>
+
+      <h3>DMS Schema Conversion</h3>
+      <ul>
+        <li>Tính năng <b>fully managed, chạy trên web</b> của DMS, dựa trên <b>engine chuyển đổi của AWS SCT</b>; chuyển schema nguồn sang định dạng tương thích với <b>Aurora, Amazon RDS hoặc Amazon Redshift</b>.</li>
+        <li>Ba tài nguyên: <b>instance profile</b> (mạng, bảo mật, mã hóa), <b>data provider</b> (thông tin kết nối một database), <b>migration project</b> (ghép source + target data provider + instance profile, credential trong <b>AWS Secrets Manager</b>).</li>
+        <li><b>Assessment report</b>: cho biết phần nào chuyển tự động, phần nào phải làm tay ⇒ <b>ước tính công sức</b> trước khi cam kết migration.</li>
+        <li>Chuyển đổi bằng <b>rule-based engine</b> (kết quả nhất quán, lặp lại được); phần rule không chuyển hết có thể dùng <b>generative AI</b> để chuyển thêm (ở một số cặp như Oracle/SQL Server/Db2/SAP ASE → PostgreSQL).</li>
+        <li>Apply code đã chuyển vào đích hoặc <b>export SQL script ra S3</b>; tính năng nguồn mà đích không có thì dùng <b>extension pack</b> để giả lập.</li>
+        <li>Chưa có đích? Dùng <b>virtual target</b> rồi thêm database thật trước khi apply.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nguồn</th><th>Đích được hỗ trợ (DMS Schema Conversion)</th></tr></thead>
+        <tbody>
+          <tr><td>Oracle</td><td>Aurora/RDS for PostgreSQL, Aurora/RDS for MySQL, <b>Amazon Redshift</b></td></tr>
+          <tr><td>SQL Server</td><td>Aurora/RDS for PostgreSQL, Aurora/RDS for MySQL</td></tr>
+          <tr><td>PostgreSQL</td><td>Aurora/RDS for MySQL</td></tr>
+          <tr><td>MySQL</td><td>Aurora/RDS for PostgreSQL</td></tr>
+          <tr><td>IBM Db2 for LUW</td><td>Aurora/RDS for PostgreSQL</td></tr>
+          <tr><td>IBM Db2 for z/OS</td><td>Aurora/RDS for PostgreSQL, Amazon RDS for Db2 (chỉ qua API/CLI)</td></tr>
+          <tr><td>SAP ASE</td><td>Aurora/RDS for PostgreSQL</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/AWS-Database-Migration-Service.svg" alt="">DMS Schema Conversion</h4>
+          <ul>
+            <li><b>Managed, trên console</b>, không cài đặt; dùng được qua CLI/SDK.</li>
+            <li>Tích hợp sẵn trong DMS (migration project, data provider).</li>
+            <li>Lựa chọn mặc định khi đề nói “<i>least operational overhead</i>”.</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/res/Client.svg" alt="">AWS Schema Conversion Tool (AWS SCT)</h4>
+          <ul>
+            <li>Ứng dụng <b>tải về cài trên máy tính cá nhân</b> để chuyển schema.</li>
+            <li>Là engine gốc mà DMS Schema Conversion dựa vào.</li>
+            <li>Đề cũ hay nhắc “<i>use AWS SCT to convert the schema, then AWS DMS to migrate the data</i>”.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Migrate Oracle / SQL Server to Aurora PostgreSQL / MySQL</i>” (đổi engine) ⇒ <b>AWS SCT hoặc DMS Schema Conversion</b> cho schema + <b>AWS DMS</b> cho dữ liệu. Thiếu bước chuyển schema là phương án sai.</li>
+          <li>“<i>Migrate an on-premises data warehouse (Oracle, Teradata…) to Amazon Redshift</i>” ⇒ chuyển schema (SCT/DMS SC) + DMS.</li>
+          <li>“<i>Estimate the effort/complexity of converting the database</i>” ⇒ <b>assessment report</b> của DMS Schema Conversion / SCT.</li>
+          <li>Homogeneous (MySQL → RDS MySQL) ⇒ <b>không cần</b> SCT.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: CHỌN CÔNG CỤ ===================== -->
+      <h2 id="chon-cong-cu"><img src="../assets/icons/cat/Migration-Transfer.svg" alt="">Tổng hợp: từ khóa trong đề ⇒ công cụ di chuyển</h2>
+      <p class="lead">Đề migration thường trộn nhiều loại tài nguyên trong cùng một tình huống: máy chủ ứng dụng, database, file share, dữ liệu lưu trữ lâu năm. Hãy tách từng loại và chọn công cụ phù hợp cho mỗi loại.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cái cần di chuyển / yêu cầu</th><th>Dịch vụ</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td>Nhiều máy chủ (vật lý, VMware, Hyper-V, cloud khác) lên EC2, không sửa ứng dụng, downtime phút</td><td><b>AWS MGN</b></td><td>Rehost; block-level liên tục, test rồi cutover</td></tr>
+          <tr><td>Một vài image VM thành AMI</td><td><b>VM Import/Export</b></td><td>Không sao chép liên tục</td></tr>
+          <tr><td>Database cùng engine, downtime tối thiểu</td><td><b>AWS DMS</b> full load + CDC</td><td>Hoặc native tool + DMS CDC only</td></tr>
+          <tr><td>Database khác engine (Oracle → PostgreSQL)</td><td><b>DMS Schema Conversion / AWS SCT</b> + <b>AWS DMS</b></td><td>Schema trước, dữ liệu sau</td></tr>
+          <tr><td>Kiểm kê server, mức sử dụng, phụ thuộc mạng</td><td><b>Application Discovery Service</b></td><td>Agentless Collector (VMware) / Discovery Agent (chi tiết, cả physical)</td></tr>
+          <tr><td>Kiểm kê database on-prem</td><td><b>DMS Fleet Advisor</b></td><td>SQL Server, MySQL, Oracle, PostgreSQL</td></tr>
+          <tr><td>Theo dõi tiến độ migration nhiều ứng dụng/công cụ</td><td><b>AWS Migration Hub</b></td><td>Home Region; nhận trạng thái từ MGN, DMS</td></tr>
+          <tr><td>File share NFS/SMB, HDFS, object storage → S3/EFS/FSx qua mạng</td><td><b>AWS DataSync</b> (Bài 18)</td><td>Online, có lịch, kiểm tra toàn vẹn</td></tr>
+          <tr><td>Hàng trăm TB, băng thông yếu, offline</td><td><b>Snow Family</b> (Bài 18)</td><td>Chuyển vật lý</td></tr>
+          <tr><td>Đối tác vẫn gửi file qua SFTP/FTPS</td><td><b>AWS Transfer Family</b> (Bài 18)</td><td>Endpoint SFTP được quản lý</td></tr>
+          <tr><td>Đưa VM vào container không sửa code</td><td><b>AWS App2Container</b></td><td>Replatform .NET/Java</td></tr>
+          <tr><td>Chuyển ứng dụng sang SaaS</td><td>Repurchase</td><td>Không phải dịch vụ di chuyển máy chủ</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Câu hỏi kiểu “<i>company wants to migrate a three-tier application: web/app servers + Oracle DB + NFS share</i>” ⇒ thường là <b>MGN</b> (server) + <b>DMS (+ SCT nếu đổi engine)</b> (DB) + <b>DataSync</b> (file) – mỗi tầng một công cụ.</li>
+          <li>Database chạy trên VM có thể đi theo MGN (rehost nguyên VM), nhưng nếu đề muốn <b>giảm operational overhead / managed database</b> ⇒ replatform sang RDS/Aurora bằng <b>DMS</b>.</li>
+          <li>“<i>Least operational overhead</i>” + migration ⇒ ưu tiên dịch vụ managed (MGN, DMS Serverless, DMS Schema Conversion) hơn script tự viết hay công cụ tự cài.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>7 Rs</b>: <b>Retire</b> (tắt – zombie &lt; 5% CPU/RAM), <b>Retain</b> (giữ lại – mainframe, data residency, mới nâng cấp), <b>Rehost</b> (lift and shift – MGN), <b>Relocate</b> (cùng nền tảng, VPC/Region/account khác – nhanh nhất), <b>Repurchase</b> (drop and shop – SaaS), <b>Replatform</b> (lift, tinker, and shift – vd SQL Server → RDS), <b>Refactor</b> (re-architect – cloud-native, phức tạp nhất).</li>
+          <li>Migration lớn: <b>rehost/relocate/replatform trước, hiện đại hóa sau</b>; không khuyến nghị refactor trong lúc di chuyển.</li>
+          <li><b>Application Discovery Service</b>: Agentless Collector (OVA trên vCenter, ~60 phút, không thấy process) vs Discovery Agent (mỗi server, ~15 giây, có process + kết nối mạng, export Athena). Dữ liệu lưu ở <b>Migration Hub home Region</b>.</li>
+          <li><b>Migration Hub</b>: một nơi theo dõi tiến độ từ MGN và DMS; home Region chỉ chứa dữ liệu theo dõi. (Không còn mở cho khách hàng mới từ 7/11/2025 – thay bằng AWS Transform.)</li>
+          <li><b>AWS MGN</b>: agent → replication server trong staging subnet (TCP 1500, TLS 1.2; TCP 443 tới API) → conversion server → test/cutover instance theo launch template. Test ≥ 2 tuần trước cutover; tối đa 100 server mỗi lần launch; finalize ⇒ dừng sao chép, xóa tài nguyên staging. Nhóm theo application/wave.</li>
+          <li><b>AWS DMS</b>: replication instance (EC2 được quản lý, 50/100 GB, Multi-AZ) + source/target endpoint + task. Migration type: <b>Full load</b> / <b>Full load + CDC</b> / <b>CDC only</b>. <b>DMS Serverless</b>: DCU = 2 GB RAM, autoscale min–max.</li>
+          <li><b>CDC</b> đọc transaction log bằng API native (Oracle LogMiner, SQL Server MS-CDC, MySQL binlog, PostgreSQL logical replication slot) – không real-time, không có SLA latency. Full load + CDC ⇒ downtime chỉ bằng thời gian cutover.</li>
+          <li><b>Heterogeneous</b> ⇒ chuyển schema/code bằng <b>DMS Schema Conversion</b> (managed) hoặc <b>AWS SCT</b> (tải về), rồi DMS chuyển dữ liệu. <b>Homogeneous</b> ⇒ chỉ cần DMS/công cụ native.</li>
+          <li>File/object ⇒ DataSync/Snow/Transfer Family (Bài 18); DR liên tục ⇒ Elastic Disaster Recovery (Bài 42) – đừng nhầm với MGN.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Migration strategy / 7 Rs</dt><dd><b>Chiến lược di chuyển</b> – bảy cách tiếp cận để đưa workload lên AWS.</dd></div>
+        <div><dt>Retire</dt><dd><b>Ngừng sử dụng</b> – tắt hoặc lưu trữ ứng dụng không còn giá trị.</dd></div>
+        <div><dt>Retain</dt><dd><b>Giữ lại</b> – để ứng dụng ở môi trường nguồn, có thể xem xét lại sau.</dd></div>
+        <div><dt>Rehost (lift and shift)</dt><dd><b>Chuyển nguyên trạng</b> – lên AWS không đổi ứng dụng.</dd></div>
+        <div><dt>Relocate</dt><dd><b>Chuyển nguyên nền tảng</b> – sang phiên bản cloud của cùng nền tảng, hoặc sang VPC/Region/account khác.</dd></div>
+        <div><dt>Repurchase (drop and shop)</dt><dd><b>Mua lại sản phẩm khác</b> – thường thay bằng SaaS.</dd></div>
+        <div><dt>Replatform (lift, tinker, and shift)</dt><dd><b>Đổi nền tảng, tối ưu một phần</b> – vd chuyển DB tự quản sang RDS.</dd></div>
+        <div><dt>Refactor / Re-architect</dt><dd><b>Tái cấu trúc</b> – thiết kế lại theo cloud-native.</dd></div>
+        <div><dt>Zombie / Idle application</dt><dd><b>Ứng dụng xác sống / nhàn rỗi</b> – CPU &amp; RAM &lt; 5% / 5–20% trong 90 ngày.</dd></div>
+        <div><dt>Wave</dt><dd><b>Đợt di chuyển</b> – nhóm ứng dụng được di chuyển cùng nhau.</dd></div>
+        <div><dt>Cutover</dt><dd><b>Chuyển giao sang hệ thống mới</b> – thời điểm chuyển production sang AWS.</dd></div>
+        <div><dt>AWS Application Discovery Service</dt><dd><b>Dịch vụ khám phá ứng dụng</b> – thu thập cấu hình, mức sử dụng, phụ thuộc của server on-prem.</dd></div>
+        <div><dt>Agentless Collector / Discovery Agent</dt><dd><b>Bộ thu thập không cần agent</b> (OVA trên vCenter) / <b>agent khám phá</b> cài trên từng server.</dd></div>
+        <div><dt>AWS Migration Hub / Home Region</dt><dd><b>Trung tâm di chuyển</b> / <b>Vùng gốc</b> lưu dữ liệu discovery và theo dõi migration.</dd></div>
+        <div><dt>DMS Fleet Advisor</dt><dd><b>Bộ tư vấn đội database</b> – kiểm kê database on-prem để lập kế hoạch.</dd></div>
+        <div><dt>AWS Application Migration Service (MGN)</dt><dd><b>Dịch vụ di chuyển ứng dụng</b> – rehost máy chủ bằng sao chép block-level liên tục.</dd></div>
+        <div><dt>Replication / Launch / Post-launch template</dt><dd><b>Mẫu cấu hình sao chép / khởi chạy / sau khởi chạy</b> trong MGN.</dd></div>
+        <div><dt>Test instance / Cutover instance</dt><dd><b>Instance kiểm thử / instance chuyển giao</b> launch từ dữ liệu sao chép.</dd></div>
+        <div><dt>Conversion server</dt><dd><b>Máy chủ chuyển đổi</b> – chỉnh disk để boot native trên EC2.</dd></div>
+        <div><dt>Finalize cutover</dt><dd><b>Hoàn tất chuyển giao</b> – dừng sao chép, xóa tài nguyên staging.</dd></div>
+        <div><dt>AWS Database Migration Service (DMS)</dt><dd><b>Dịch vụ di chuyển cơ sở dữ liệu</b>.</dd></div>
+        <div><dt>Replication instance</dt><dd><b>Instance sao chép</b> – EC2 được quản lý chạy các task DMS.</dd></div>
+        <div><dt>Source / Target endpoint</dt><dd><b>Điểm kết nối nguồn / đích</b> của DMS.</dd></div>
+        <div><dt>Replication task</dt><dd><b>Tác vụ sao chép</b> – di chuyển một tập dữ liệu từ nguồn sang đích.</dd></div>
+        <div><dt>Full load</dt><dd><b>Nạp toàn bộ</b> – copy dữ liệu hiện có.</dd></div>
+        <div><dt>Change data capture (CDC) / Ongoing replication</dt><dd><b>Thu thập dữ liệu thay đổi / sao chép liên tục</b> – đọc transaction log để áp dụng thay đổi.</dd></div>
+        <div><dt>Transaction log (redo log, binlog, WAL)</dt><dd><b>Nhật ký giao dịch</b> – nguồn dữ liệu cho CDC.</dd></div>
+        <div><dt>LOB mode (Full / Limited)</dt><dd><b>Chế độ xử lý đối tượng lớn</b> – đầy đủ (chậm) / cắt theo kích thước tối đa (nhanh).</dd></div>
+        <div><dt>DMS Serverless / DCU</dt><dd><b>DMS không máy chủ</b> / <b>đơn vị năng lực DMS</b> (1 DCU = 2 GB RAM).</dd></div>
+        <div><dt>Homogeneous / Heterogeneous migration</dt><dd><b>Di chuyển cùng loại / khác loại engine</b>.</dd></div>
+        <div><dt>DMS Schema Conversion / AWS SCT</dt><dd><b>Chuyển đổi lược đồ</b> managed trong DMS / <b>công cụ chuyển đổi lược đồ</b> cài trên máy.</dd></div>
+        <div><dt>Extension pack</dt><dd><b>Gói mở rộng</b> – giả lập tính năng nguồn mà đích không có.</dd></div>
+        <div><dt>Bidirectional replication / Loopback prevention</dt><dd><b>Sao chép hai chiều</b> / <b>chống vòng lặp</b> thay đổi bị dội ngược.</dd></div>
+        <div><dt>VM Import/Export</dt><dd><b>Nhập/xuất máy ảo</b> – đổi image VM thành AMI và ngược lại.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="cau-hoi">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company plans to migrate 400 Windows and Linux servers from its on-premises VMware environment and from several physical hosts to AWS. The applications must not be modified, and the cutover window for each application must be measured in minutes. The company wants the solution with the LEAST operational overhead. Which solution should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Export each VM as an OVA image and use VM Import/Export to create AMIs, then launch EC2 instances from the AMIs.</li>
+            <li data-k="B">Install the AWS Replication Agent on the source servers and use AWS Application Migration Service to replicate them continuously, launch test instances, and then perform cutover.</li>
+            <li data-k="C">Use AWS DataSync to copy the server disks to Amazon S3 and create EC2 instances from the copied data.</li>
+            <li data-k="D">Use AWS Database Migration Service to replicate the servers to Amazon EC2.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Rehost số lượng lớn server vật lý và ảo, không sửa ứng dụng, cutover vài phút ⇒ <b>AWS MGN</b>: sao chép block-level liên tục, test trước, cutover với trạng thái mới nhất. <b>A sai</b>: VM Import/Export dựa trên image, không sao chép liên tục ⇒ downtime dài, làm thủ công cho 400 server, và không áp dụng cho physical host. <b>C sai</b>: DataSync chuyển file/object, không chuyển máy chủ boot được. <b>D sai</b>: DMS chỉ di chuyển database, không di chuyển server.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dự định di chuyển 400 server Windows và Linux từ môi trường VMware on-premises và từ một số máy chủ vật lý lên AWS. Các ứng dụng không được phép sửa đổi, và khung thời gian cutover của mỗi ứng dụng phải tính bằng phút. Công ty muốn giải pháp có LEAST operational overhead (ít gánh nặng vận hành nhất). Solutions architect nên đề xuất giải pháp nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Export từng VM thành OVA image và dùng VM Import/Export để tạo AMI, sau đó khởi chạy EC2 instance từ các AMI đó.</span><span class="why">Sai: VM Import/Export dựa trên image, không sao chép liên tục nên downtime dài, phải làm thủ công cho 400 server và không áp dụng cho máy chủ vật lý.</span></li>
+              <li data-k="B"><span class="tv">Cài AWS Replication Agent lên các source server và dùng AWS Application Migration Service để sao chép chúng liên tục, khởi chạy test instance, rồi thực hiện cutover.</span><span class="why">Đúng: AWS MGN rehost cả server ảo lẫn vật lý không cần sửa ứng dụng, sao chép block-level liên tục nên cutover chỉ mất vài phút, với gánh vận hành thấp.</span></li>
+              <li data-k="C"><span class="tv">Dùng AWS DataSync để copy ổ đĩa server lên Amazon S3 và tạo EC2 instance từ dữ liệu đã copy.</span><span class="why">Sai: DataSync chuyển file/object, không chuyển được máy chủ có thể boot; không tạo ra EC2 instance chạy được.</span></li>
+              <li data-k="D"><span class="tv">Dùng AWS Database Migration Service để sao chép các server lên Amazon EC2.</span><span class="why">Sai: DMS chỉ di chuyển dữ liệu database, không di chuyển toàn bộ server.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company is migrating an on-premises Oracle database to Amazon Aurora PostgreSQL. The database is 5 TB and is used 24/7 by an order-processing application. The company must minimize downtime during the migration. Which combination of actions meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Use AWS DMS with a full load task during a maintenance window, then point the application to Aurora.</li>
+            <li data-k="B">Use AWS Application Migration Service to rehost the Oracle server to Amazon EC2, then rename it to Aurora.</li>
+            <li data-k="C">Take an Oracle Data Pump export, copy it to Amazon S3 with AWS DataSync, and import it into Aurora PostgreSQL.</li>
+            <li data-k="D">Use DMS Schema Conversion (or AWS SCT) to convert the schema and code objects, then use an AWS DMS task with full load and change data capture (CDC) until cutover.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Oracle → PostgreSQL là <b>heterogeneous</b> ⇒ cần chuyển schema/code bằng <b>DMS Schema Conversion hoặc SCT</b>; <b>full load + CDC</b> giữ nguồn chạy tiếp và đồng bộ thay đổi tới lúc cutover ⇒ downtime tối thiểu. <b>A sai</b>: full load only cần outage đủ dài để copy 5 TB, lại thiếu bước chuyển schema. <b>B sai</b>: MGN chỉ rehost lên EC2, không chuyển engine sang Aurora. <b>C sai</b>: Data Pump của Oracle không import trực tiếp vào PostgreSQL và vẫn cần downtime dài.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang di chuyển cơ sở dữ liệu Oracle on-premises sang Amazon Aurora PostgreSQL. Cơ sở dữ liệu có dung lượng 5 TB và được một ứng dụng xử lý đơn hàng sử dụng 24/7. Công ty phải giảm thiểu downtime trong quá trình di chuyển. Tổ hợp hành động nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng AWS DMS với task full load trong một maintenance window, rồi trỏ ứng dụng sang Aurora.</span><span class="why">Sai: Full load only cần dừng ghi đủ lâu để copy 5 TB (downtime lớn), lại thiếu bước chuyển schema Oracle sang PostgreSQL.</span></li>
+              <li data-k="B"><span class="tv">Dùng AWS Application Migration Service để rehost server Oracle lên Amazon EC2, rồi đổi tên thành Aurora.</span><span class="why">Sai: MGN chỉ rehost server nguyên trạng lên EC2, không chuyển engine Oracle sang Aurora PostgreSQL.</span></li>
+              <li data-k="C"><span class="tv">Tạo bản export bằng Oracle Data Pump, copy lên Amazon S3 bằng AWS DataSync, và import vào Aurora PostgreSQL.</span><span class="why">Sai: File Data Pump là định dạng riêng của Oracle, không import trực tiếp vào PostgreSQL được, và cách này vẫn cần downtime dài.</span></li>
+              <li data-k="D"><span class="tv">Dùng DMS Schema Conversion (hoặc AWS SCT) để chuyển đổi schema và các code object, sau đó dùng AWS DMS task với full load và change data capture (CDC) cho đến lúc cutover.</span><span class="why">Đúng: Oracle → PostgreSQL là heterogeneous nên cần chuyển schema/code; full load + CDC giữ nguồn chạy tiếp và đồng bộ thay đổi tới lúc cutover, nên downtime tối thiểu.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company's application uses a self-managed Microsoft SQL Server database on premises. As part of its migration to AWS, the company wants to reduce the operational effort of patching, backups, and high availability for the database, while making only minimal changes to the application. Which migration strategy does this describe?</div>
+          <ol class="opts">
+            <li data-k="A">Replatform – migrate the database to Amazon RDS for SQL Server.</li>
+            <li data-k="B">Rehost – install SQL Server on an Amazon EC2 instance with the same configuration.</li>
+            <li data-k="C">Refactor – rewrite the application to use Amazon DynamoDB.</li>
+            <li data-k="D">Repurchase – replace the application with a SaaS product.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Tài liệu AWS lấy đúng ví dụ này cho <b>replatform</b> (lift, tinker, and shift): chuyển SQL Server sang <b>Amazon RDS for SQL Server</b> để AWS lo patch, backup, Multi-AZ, ứng dụng gần như không đổi. <b>B sai</b>: rehost lên EC2 vẫn phải tự quản lý patch/backup/HA. <b>C sai</b>: viết lại ứng dụng sang DynamoDB là refactor, không phải “thay đổi tối thiểu”. <b>D sai</b>: repurchase thay cả ứng dụng.</div>
+          <div class="trans">
+            <div class="tq">Ứng dụng của một công ty dùng cơ sở dữ liệu Microsoft SQL Server tự quản lý ở on-premises. Trong quá trình di chuyển lên AWS, công ty muốn giảm công sức vận hành cho việc vá lỗi (patching), sao lưu và high availability của cơ sở dữ liệu, trong khi chỉ thay đổi tối thiểu đối với ứng dụng. Đây là chiến lược di chuyển nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Replatform – di chuyển cơ sở dữ liệu sang Amazon RDS for SQL Server.</span><span class="why">Đúng: Replatform (lift, tinker, and shift) sang RDS for SQL Server để AWS lo patch, backup, Multi-AZ, trong khi ứng dụng gần như không đổi.</span></li>
+              <li data-k="B"><span class="tv">Rehost – cài SQL Server lên một Amazon EC2 instance với cùng cấu hình.</span><span class="why">Sai: Rehost lên EC2 thì công ty vẫn phải tự quản lý patch, backup và HA – không giảm công sức vận hành.</span></li>
+              <li data-k="C"><span class="tv">Refactor – viết lại ứng dụng để dùng Amazon DynamoDB.</span><span class="why">Sai: Viết lại ứng dụng sang DynamoDB là thay đổi lớn, trái yêu cầu "thay đổi tối thiểu".</span></li>
+              <li data-k="D"><span class="tv">Repurchase – thay thế ứng dụng bằng một sản phẩm SaaS.</span><span class="why">Sai: Repurchase thay thế toàn bộ ứng dụng, không phải giữ ứng dụng và chỉ chuyển database.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company is preparing a large-scale migration of its on-premises data center, which runs on VMware vCenter. Company policy prohibits installing additional software on the virtual machines. The migration team needs to collect server configuration and CPU, memory, and disk utilization data to right-size Amazon EC2 instances and estimate costs. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Install the AWS Application Discovery Agent on each virtual machine.</li>
+            <li data-k="B">Install the AWS Replication Agent on each virtual machine and review the metrics in the AWS Application Migration Service console.</li>
+            <li data-k="C">Deploy the AWS Application Discovery Service Agentless Collector as an OVA in vCenter.</li>
+            <li data-k="D">Use AWS Config to record the configuration of the on-premises virtual machines.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Agentless Collector</b> triển khai một lần qua vCenter (OVA), <b>không cài gì lên VM</b>, thu thập cấu hình tĩnh và mức dùng trung bình/đỉnh CPU, RAM, Disk I/O ⇒ đủ để tạo khuyến nghị EC2. <b>A sai</b>: Discovery Agent phải cài trên từng VM – vi phạm chính sách. <b>B sai</b>: cũng phải cài agent, và MGN dùng để di chuyển chứ không phải khám phá/lập kế hoạch. <b>D sai</b>: AWS Config ghi cấu hình tài nguyên AWS (hoặc qua SSM), không phải công cụ discovery cho vCenter.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang chuẩn bị di chuyển quy mô lớn data center on-premises chạy trên VMware vCenter. Chính sách công ty cấm cài thêm phần mềm lên các máy ảo. Đội migration cần thu thập cấu hình server cùng dữ liệu mức sử dụng CPU, bộ nhớ và ổ đĩa để chọn kích thước (right-size) Amazon EC2 instance và ước tính chi phí. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cài AWS Application Discovery Agent lên từng máy ảo.</span><span class="why">Sai: Discovery Agent phải cài trên từng VM – vi phạm chính sách cấm cài thêm phần mềm.</span></li>
+              <li data-k="B"><span class="tv">Cài AWS Replication Agent lên từng máy ảo và xem các metric trong console của AWS Application Migration Service.</span><span class="why">Sai: Vẫn phải cài agent lên VM, và MGN dùng để di chuyển server chứ không phải khám phá/lập kế hoạch right-size.</span></li>
+              <li data-k="C"><span class="tv">Triển khai AWS Application Discovery Service Agentless Collector dưới dạng OVA trong vCenter.</span><span class="why">Đúng: Agentless Collector triển khai một lần qua vCenter, không cài gì lên VM, vẫn thu thập cấu hình và mức dùng CPU, RAM, Disk I/O để đưa ra khuyến nghị EC2.</span></li>
+              <li data-k="D"><span class="tv">Dùng AWS Config để ghi lại cấu hình của các máy ảo on-premises.</span><span class="why">Sai: AWS Config ghi cấu hình tài nguyên AWS, không phải công cụ discovery cho môi trường vCenter và không cho dữ liệu right-size.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company is assessing its application portfolio before migrating to AWS. Which TWO applications are the BEST candidates for the retire or retain strategies? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">A customer-facing web application that needs to scale for seasonal traffic.</li>
+            <li data-k="B">An internal reporting tool whose servers have averaged less than 5% CPU and memory utilization and have had no inbound connections for the last 90 days.</li>
+            <li data-k="C">A Java application running on Linux virtual machines that the company wants to run in containers without code changes.</li>
+            <li data-k="D">A Microsoft SQL Server database that the company wants to move to a managed service.</li>
+            <li data-k="E">An IBM AS/400 application that controls specialized manufacturing hardware with no cloud equivalent.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Theo tài liệu: ứng dụng CPU/RAM <b>&lt; 5%</b> (zombie) và <b>không có kết nối inbound trong 90 ngày</b> ⇒ ứng viên <b>Retire</b> (B). Ứng dụng <b>mid-range (AS/400)</b> và <b>phụ thuộc phần cứng vật lý</b> không có tương đương trên cloud ⇒ <b>Retain</b> (E). <b>A sai</b>: cần scale ⇒ nên di chuyển (rehost/refactor). <b>C sai</b>: đưa VM vào container không sửa code ⇒ <b>replatform</b> (App2Container). <b>D sai</b>: chuyển sang managed DB ⇒ <b>replatform</b>.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang đánh giá danh mục ứng dụng trước khi di chuyển lên AWS. HAI ứng dụng nào là ứng viên BEST (phù hợp nhất) cho chiến lược retire (loại bỏ) hoặc retain (giữ lại)? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một ứng dụng web phục vụ khách hàng cần scale theo lưu lượng theo mùa.</span><span class="why">Sai: Ứng dụng cần scale linh hoạt là ứng viên tốt để di chuyển lên cloud (rehost/refactor), không phải retire/retain.</span></li>
+              <li data-k="B"><span class="tv">Một công cụ báo cáo nội bộ có server dùng trung bình dưới 5% CPU và bộ nhớ, và không có kết nối inbound nào trong 90 ngày qua.</span><span class="why">Đúng: Mức dùng &lt; 5% và không có kết nối inbound trong 90 ngày là dấu hiệu ứng dụng "zombie" – ứng viên Retire.</span></li>
+              <li data-k="C"><span class="tv">Một ứng dụng Java chạy trên máy ảo Linux mà công ty muốn chạy trong container mà không sửa code.</span><span class="why">Sai: Đưa ứng dụng vào container không sửa code là replatform (vd App2Container), không phải retire/retain.</span></li>
+              <li data-k="D"><span class="tv">Một cơ sở dữ liệu Microsoft SQL Server mà công ty muốn chuyển sang dịch vụ được quản lý.</span><span class="why">Sai: Chuyển sang managed database (vd Amazon RDS) là replatform.</span></li>
+              <li data-k="E"><span class="tv">Một ứng dụng IBM AS/400 điều khiển phần cứng sản xuất chuyên dụng không có tương đương trên cloud.</span><span class="why">Đúng: Ứng dụng mid-range phụ thuộc phần cứng vật lý không có tương đương trên cloud là ứng viên Retain.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A solutions architect is using AWS Application Migration Service to migrate a fleet of servers. The source servers show that they are connected to the service, but data replication is stalled and never reaches the initial sync. The staging area subnet has a route to a NAT gateway. What is the MOST likely cause?</div>
+          <ol class="opts">
+            <li data-k="A">The on-premises firewall blocks outbound TCP port 1500 from the source servers to the replication servers in the staging area subnet.</li>
+            <li data-k="B">The on-premises firewall blocks inbound TCP port 22 to the source servers.</li>
+            <li data-k="C">The EC2 launch template for the source servers specifies an instance type that is not available.</li>
+            <li data-k="D">The Migration Hub home Region has not been set.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Source server đã kết nối được với MGN ⇒ <b>TCP 443</b> tới API đang thông. Dữ liệu sao chép đi qua <b>TCP 1500</b> từ source tới replication server trong staging subnet – bị chặn thì replication đứng. <b>B sai</b>: MGN không cần SSH inbound vào source. <b>C sai</b>: launch template chỉ ảnh hưởng lúc launch test/cutover, không ảnh hưởng sao chép. <b>D sai</b>: home Region liên quan tới dữ liệu theo dõi/discovery, không chặn luồng dữ liệu MGN.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect đang dùng AWS Application Migration Service để di chuyển một nhóm server. Các source server hiển thị là đã kết nối với dịch vụ, nhưng việc sao chép dữ liệu bị đứng và không bao giờ đạt tới initial sync. Subnet staging area có route tới một NAT gateway. Nguyên nhân MOST likely (khả năng cao nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Firewall on-premises chặn chiều outbound TCP port 1500 từ các source server tới replication server trong subnet staging area.</span><span class="why">Đúng: Source đã kết nối được MGN nghĩa là TCP 443 tới API thông; dữ liệu sao chép đi qua TCP 1500 tới replication server, bị chặn thì replication đứng.</span></li>
+              <li data-k="B"><span class="tv">Firewall on-premises chặn chiều inbound TCP port 22 tới các source server.</span><span class="why">Sai: MGN không cần SSH inbound vào source server; agent chủ động kết nối ra ngoài.</span></li>
+              <li data-k="C"><span class="tv">EC2 launch template của các source server chỉ định một instance type không khả dụng.</span><span class="why">Sai: Launch template chỉ ảnh hưởng khi launch test/cutover instance, không ảnh hưởng việc sao chép dữ liệu.</span></li>
+              <li data-k="D"><span class="tv">Migration Hub home Region chưa được thiết lập.</span><span class="why">Sai: Home Region liên quan tới dữ liệu theo dõi/discovery, không chặn luồng sao chép dữ liệu của MGN.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company is migrating a 2 TB MySQL database from an on-premises server to Amazon RDS for MySQL. The team plans to load the initial data by using native MySQL dump tools because this is faster for the homogeneous migration. The database must remain available for writes during the migration, and the switch to Amazon RDS must cause minimal downtime. How should the team use AWS DMS?</div>
+          <ol class="opts">
+            <li data-k="A">Create a full load task after the native load is complete.</li>
+            <li data-k="B">Use DMS Schema Conversion to convert the MySQL schema before the native load.</li>
+            <li data-k="C">Record the binary log position when the dump starts, and then create a CDC-only task that starts from that native start point to replicate ongoing changes until cutover.</li>
+            <li data-k="D">Configure bidirectional replication between the source and Amazon RDS so that both databases accept writes permanently.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Tài liệu DMS mô tả đúng kịch bản này: bulk load bằng <b>công cụ native</b> (hiệu quả hơn khi homogeneous) rồi dùng <b>CDC only</b> bắt đầu từ thời điểm bulk load (với MySQL native start point là <b>binlog file:position</b>) để đồng bộ tới khi cutover. <b>A sai</b>: full load lại sẽ copy trùng 2 TB và không bắt thay đổi. <b>B sai</b>: MySQL → MySQL là homogeneous, không cần chuyển schema. <b>D sai</b>: bidirectional của DMS không phải multi-master, không giải quyết xung đột, và không cần thiết cho migration.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang di chuyển cơ sở dữ liệu MySQL 2 TB từ server on-premises sang Amazon RDS for MySQL. Đội dự định nạp dữ liệu ban đầu bằng các công cụ dump native của MySQL vì cách này nhanh hơn với migration đồng nhất (homogeneous). Cơ sở dữ liệu phải tiếp tục nhận ghi trong suốt quá trình di chuyển, và việc chuyển sang Amazon RDS phải gây downtime tối thiểu. Đội nên dùng AWS DMS như thế nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một task full load sau khi việc nạp native hoàn tất.</span><span class="why">Sai: Full load sẽ copy trùng lại 2 TB và không bắt được các thay đổi đang diễn ra.</span></li>
+              <li data-k="B"><span class="tv">Dùng DMS Schema Conversion để chuyển đổi schema MySQL trước khi nạp native.</span><span class="why">Sai: MySQL → MySQL là homogeneous, không cần chuyển đổi schema, và bước này không đồng bộ thay đổi.</span></li>
+              <li data-k="C"><span class="tv">Ghi lại vị trí binary log khi bắt đầu dump, rồi tạo task CDC-only bắt đầu từ native start point đó để sao chép các thay đổi liên tục cho đến lúc cutover.</span><span class="why">Đúng: Bulk load bằng công cụ native rồi dùng CDC only từ binlog file:position lúc dump bắt đầu sẽ đồng bộ mọi thay đổi tới cutover, giữ downtime tối thiểu.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình sao chép hai chiều giữa nguồn và Amazon RDS để cả hai cơ sở dữ liệu nhận ghi vĩnh viễn.</span><span class="why">Sai: Sao chép hai chiều của DMS không phải multi-master, không giải quyết xung đột và không cần cho migration.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,D">
+          <div class="qh">A company is migrating a three-tier application to AWS. The application consists of 20 Linux application servers, an on-premises Microsoft SQL Server database that the company wants to move to Amazon Aurora PostgreSQL, and a 60 TB NFS file share. The company has a 10 Gbps AWS Direct Connect connection. Which TWO services should be part of the migration solution for the database and the file share? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">AWS Application Migration Service for the SQL Server database to Aurora PostgreSQL</li>
+            <li data-k="B">AWS DMS together with DMS Schema Conversion for the SQL Server database</li>
+            <li data-k="C">AWS Transfer Family for the NFS file share</li>
+            <li data-k="D">AWS DataSync for the NFS file share</li>
+            <li data-k="E">VM Import/Export for the NFS file share</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, D.</b> SQL Server → Aurora PostgreSQL là heterogeneous ⇒ <b>DMS Schema Conversion</b> (cặp SQL Server → Aurora PostgreSQL được hỗ trợ) + <b>DMS</b> cho dữ liệu (B). File share NFS 60 TB qua Direct Connect 10 Gbps ⇒ <b>DataSync</b> (D, Bài 18). <b>A sai</b>: MGN rehost server nguyên trạng, không đổi engine. <b>C sai</b>: Transfer Family là endpoint SFTP/FTPS/FTP cho đối tác, không phải công cụ migrate NFS. <b>E sai</b>: VM Import/Export cho image VM. (20 server ứng dụng sẽ dùng MGN – không thuộc phạm vi câu hỏi.)</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang di chuyển một ứng dụng ba tầng lên AWS. Ứng dụng gồm 20 server ứng dụng Linux, một cơ sở dữ liệu Microsoft SQL Server on-premises mà công ty muốn chuyển sang Amazon Aurora PostgreSQL, và một file share NFS 60 TB. Công ty có kết nối AWS Direct Connect 10 Gbps. HAI dịch vụ nào nên là một phần của giải pháp di chuyển cho cơ sở dữ liệu và file share? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">AWS Application Migration Service cho việc chuyển cơ sở dữ liệu SQL Server sang Aurora PostgreSQL</span><span class="why">Sai: MGN rehost server nguyên trạng, không đổi engine từ SQL Server sang Aurora PostgreSQL.</span></li>
+              <li data-k="B"><span class="tv">AWS DMS kết hợp DMS Schema Conversion cho cơ sở dữ liệu SQL Server</span><span class="why">Đúng: SQL Server → Aurora PostgreSQL là heterogeneous; DMS Schema Conversion chuyển schema/code và DMS chuyển dữ liệu.</span></li>
+              <li data-k="C"><span class="tv">AWS Transfer Family cho file share NFS</span><span class="why">Sai: Transfer Family cung cấp endpoint SFTP/FTPS/FTP cho đối tác trao đổi file, không phải công cụ migrate NFS.</span></li>
+              <li data-k="D"><span class="tv">AWS DataSync cho file share NFS</span><span class="why">Đúng: DataSync được thiết kế để chuyển nhanh dữ liệu NFS khối lượng lớn (60 TB) qua Direct Connect lên các dịch vụ lưu trữ AWS.</span></li>
+              <li data-k="E"><span class="tv">VM Import/Export cho file share NFS</span><span class="why">Sai: VM Import/Export dùng để nhập image máy ảo, không dùng để chuyển dữ liệu file share.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company uses AWS DMS to migrate an on-premises PostgreSQL database to Amazon Aurora PostgreSQL with ongoing replication. The migration will run for several weeks. The company wants to avoid sizing and managing replication instances and wants capacity to adjust automatically to workload changes, with high availability. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create the largest available DMS replication instance class to handle peak load.</li>
+            <li data-k="B">Run the DMS replication software on an EC2 Auto Scaling group.</li>
+            <li data-k="C">Use AWS Application Migration Service to replicate the database server continuously.</li>
+            <li data-k="D">Use AWS DMS Serverless with minimum and maximum DMS capacity units (DCUs) and enable the Multi-AZ option.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>DMS Serverless</b> tự tính toán và provision capacity, <b>autoscale giữa min và max DCU</b>, không phải quản lý replication instance; tài liệu khuyến nghị bật <b>MultiAZ</b> khi dùng CDC. <b>A sai</b>: vẫn phải quản lý instance và trả tiền cho capacity đỉnh suốt thời gian. <b>B sai</b>: không phải cách DMS hoạt động, tăng gánh vận hành. <b>C sai</b>: MGN rehost server, không chuyển sang Aurora.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng AWS DMS để di chuyển cơ sở dữ liệu PostgreSQL on-premises sang Amazon Aurora PostgreSQL với ongoing replication (sao chép liên tục). Quá trình di chuyển sẽ kéo dài vài tuần. Công ty muốn tránh việc chọn kích thước và quản lý replication instance, đồng thời muốn capacity tự động điều chỉnh theo thay đổi của workload, kèm high availability. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo DMS replication instance thuộc instance class lớn nhất hiện có để xử lý tải đỉnh.</span><span class="why">Sai: Vẫn phải quản lý replication instance và trả tiền cho capacity đỉnh suốt nhiều tuần, không tự điều chỉnh.</span></li>
+              <li data-k="B"><span class="tv">Chạy phần mềm sao chép DMS trên một EC2 Auto Scaling group.</span><span class="why">Sai: DMS không hoạt động theo cách này; tự vận hành trên EC2 còn tăng gánh nặng quản lý.</span></li>
+              <li data-k="C"><span class="tv">Dùng AWS Application Migration Service để sao chép liên tục server cơ sở dữ liệu.</span><span class="why">Sai: MGN rehost server lên EC2, không chuyển dữ liệu sang Aurora PostgreSQL.</span></li>
+              <li data-k="D"><span class="tv">Dùng AWS DMS Serverless với số DMS capacity unit (DCU) tối thiểu và tối đa, và bật tùy chọn Multi-AZ.</span><span class="why">Đúng: DMS Serverless tự provision và autoscale giữa min/max DCU, không cần quản lý replication instance; bật Multi-AZ cho high availability khi chạy CDC.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company has used AWS Application Migration Service to launch cutover instances for an application. The application has been validated in production on AWS, and the on-premises servers are being decommissioned. The company wants to stop paying for the replication resources that are still running in the staging area subnet. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Terminate the test instances and keep data replication running in case of rollback.</li>
+            <li data-k="B">Finalize the cutover for the source servers in Application Migration Service, and then mark them as archived.</li>
+            <li data-k="C">Delete the EC2 launch templates associated with the source servers.</li>
+            <li data-k="D">Change the Migration Hub home Region to a lower-cost Region.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Finalize cutover</b> đổi trạng thái thành <b>Cutover complete</b>, <b>dừng sao chép</b>, bỏ dữ liệu sao chép và <b>terminate mọi tài nguyên AWS dùng cho replication</b>; sau đó <b>Mark as archived</b> để gọn danh sách. <b>A sai</b>: để replication chạy tiếp thì vẫn tốn tiền staging. <b>C sai</b>: xóa launch template không dừng replication server. <b>D sai</b>: home Region chỉ chứa dữ liệu theo dõi, không ảnh hưởng chi phí replication.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đã dùng AWS Application Migration Service để khởi chạy cutover instance cho một ứng dụng. Ứng dụng đã được xác nhận hoạt động ở production trên AWS, và các server on-premises đang được ngừng sử dụng. Công ty muốn ngừng trả tiền cho các tài nguyên sao chép vẫn đang chạy trong subnet staging area. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Terminate các test instance và giữ việc sao chép dữ liệu tiếp tục chạy phòng khi cần rollback.</span><span class="why">Sai: Giữ replication chạy thì replication server và ổ đĩa ở staging area vẫn tiếp tục tính tiền.</span></li>
+              <li data-k="B"><span class="tv">Finalize cutover cho các source server trong Application Migration Service, rồi đánh dấu chúng là archived.</span><span class="why">Đúng: Finalize cutover dừng sao chép và terminate mọi tài nguyên AWS dùng cho replication ở staging area; Mark as archived giúp gọn danh sách.</span></li>
+              <li data-k="C"><span class="tv">Xóa các EC2 launch template gắn với các source server.</span><span class="why">Sai: Xóa launch template không dừng replication server, chi phí staging vẫn còn.</span></li>
+              <li data-k="D"><span class="tv">Đổi Migration Hub home Region sang một Region có chi phí thấp hơn.</span><span class="why">Sai: Home Region chỉ lưu dữ liệu theo dõi migration, không ảnh hưởng chi phí replication.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Introduction.Components.html" target="_blank" rel="noopener">AWS DMS – Components (replication instance, endpoints, tasks, CDC)</a></li>
+        <li><a href="https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Task.CDC.html" target="_blank" rel="noopener">AWS DMS – Creating tasks for ongoing replication (CDC)</a></li>
+        <li><a href="https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Serverless.html" target="_blank" rel="noopener">AWS DMS Serverless</a></li>
+        <li><a href="https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Serverless.Components.html" target="_blank" rel="noopener">AWS DMS Serverless components (DCU, autoscaling, storage)</a></li>
+        <li><a href="https://docs.aws.amazon.com/dms/latest/userguide/CHAP_SchemaConversion.html" target="_blank" rel="noopener">Converting database schemas using DMS Schema Conversion</a></li>
+        <li><a href="https://docs.aws.amazon.com/mgn/latest/ug/Network-Requirements.html" target="_blank" rel="noopener">Application Migration Service – Network requirements</a></li>
+        <li><a href="https://docs.aws.amazon.com/mgn/latest/ug/launching-test-servers.html" target="_blank" rel="noopener">Application Migration Service – Launching test instances</a></li>
+        <li><a href="https://docs.aws.amazon.com/mgn/latest/ug/launch-cutover.html" target="_blank" rel="noopener">Application Migration Service – Launching cutover instances</a></li>
+        <li><a href="https://docs.aws.amazon.com/mgn/latest/ug/finalizing-cutover-2.html" target="_blank" rel="noopener">Application Migration Service – Finalizing a cutover</a></li>
+        <li><a href="https://docs.aws.amazon.com/mgn/latest/ug/agentless-mgn.html" target="_blank" rel="noopener">Application Migration Service – Agentless replication (vCenter)</a></li>
+        <li><a href="https://docs.aws.amazon.com/application-discovery/latest/userguide/what-is-appdiscovery.html" target="_blank" rel="noopener">What is AWS Application Discovery Service?</a></li>
+        <li><a href="https://docs.aws.amazon.com/migrationhub/latest/ug/whatishub.html" target="_blank" rel="noopener">What is AWS Migration Hub?</a></li>
+        <li><a href="https://aws.amazon.com/application-migration-service/pricing/" target="_blank" rel="noopener">AWS Application Migration Service pricing</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

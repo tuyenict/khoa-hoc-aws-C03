@@ -1,0 +1,975 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 12 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Elastic-Load-Balancing.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="12" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <span class="t" data-vi="Cân bằng tải co giãn">Elastic Load Balancing (ELB)</span> hoạt động thế nào: <b>load balancer node</b> trong từng AZ, DNS name (TTL 60 giây), <b>internet-facing</b> và <b>internal</b>, cách ELB tăng <i>availability</i> và <i>fault tolerance</i>.</li>
+          <li>Nắm bộ ba thành phần <span class="t" data-vi="Bộ lắng nghe">listener</span> – <span class="t" data-vi="Quy tắc định tuyến">rule</span> – <span class="t" data-vi="Nhóm đích">target group</span> và các <b>target type</b> (instance, ip, lambda, alb).</li>
+          <li>Phân biệt và chọn đúng <b>Application Load Balancer</b> (Layer 7, path/host-based routing), <b>Network Load Balancer</b> (Layer 4, IP tĩnh, hàng triệu request/giây) và <b>Gateway Load Balancer</b> (Layer 3, GENEVE 6081, virtual appliance).</li>
+          <li>Cấu hình <span class="t" data-vi="Kiểm tra sức khỏe">health checks</span>, hiểu <b>fail open</b>, <b>DNS failover</b> và cơ chế <span class="t" data-vi="Cân bằng tải liên vùng">cross-zone load balancing</span> (mặc định khác nhau theo từng loại LB).</li>
+          <li>Áp dụng <span class="t" data-vi="Phiên dính">sticky sessions</span>, <span class="t" data-vi="Độ trễ hủy đăng ký / xả kết nối">deregistration delay (connection draining)</span>, <b>slow start</b> và <b>SSL/TLS termination</b> với <b>SNI</b>, ACM.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 2 – Compute</span>
+        <p>Bài 8–11 đã xây dựng <b>một</b> EC2 instance hoàn chỉnh (AMI, purchasing, mạng, lưu trữ). Bài 10 đã dạy <b>Security Group</b>, ENI, Elastic IP – bài này chỉ nhắc lại cách SG phối hợp với load balancer. Bài 7 đã dạy action <code>authenticate-cognito</code>/<code>authenticate-oidc</code> của ALB – ở đây chỉ điểm danh. Từ bài này ta chuyển sang <b>nhiều</b> instance chạy song song: ELB phân phối traffic, còn <b>Amazon EC2 Auto Scaling</b> (Bài 13) tự tăng/giảm số instance. <b>Route 53</b>, <b>CloudFront</b>, <b>Global Accelerator</b> và <b>PrivateLink</b> học chi tiết ở Module Networking.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Elastic-Load-Balancing.svg" alt="">Elastic Load Balancing là gì?</h2>
+      <p class="lead"><span class="t" data-vi="Cân bằng tải co giãn">Elastic Load Balancing</span> tự động <b>phân phối traffic đến</b> trên nhiều <span class="t" data-vi="Đích">target</span> – EC2 instance, container, địa chỉ IP, Lambda function – ở <b>một hoặc nhiều Availability Zone</b>. ELB <b>theo dõi sức khỏe</b> các target đã đăng ký và <b>chỉ gửi traffic tới target khỏe</b>; đồng thời <b>tự co giãn năng lực</b> của chính load balancer theo lưu lượng. Bạn chỉ trả tiền cho phần đã dùng.</p>
+
+      <p>Theo tài liệu, dùng load balancer mang lại các lợi ích:</p>
+      <ul>
+        <li><b>Tăng availability và fault tolerance</b>: phân tải lên nhiều compute resource; một target (hoặc cả một AZ) hỏng thì traffic chuyển sang target khỏe.</li>
+        <li><b>Thêm/bớt target</b> mà không làm gián đoạn luồng request tổng thể – nền tảng cho <i>scale out/in</i> cùng Auto Scaling.</li>
+        <li><b>Health checks</b>: chỉ gửi request tới target khỏe, tự đưa target trở lại khi nó khỏe lại.</li>
+        <li><b>Offload mã hóa/giải mã</b> (SSL/TLS termination) về load balancer để instance tập trung vào business logic.</li>
+        <li>Một <b>điểm truy cập duy nhất</b> (single point of contact) cho client – client không cần biết có bao nhiêu server phía sau.</li>
+      </ul>
+
+      <h3>Bốn loại load balancer</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">
+          <div><h4>Application Load Balancer (ALB)</h4><span class="vi">Cân bằng tải tầng ứng dụng – Layer 7</span><p>HTTP/HTTPS, gRPC, WebSockets. Routing theo <b>nội dung request</b>: path, host, header, method, query string, source IP. Target: instance, IP, <b>Lambda</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Elastic-Load-Balancing_Network-Load-Balancer.svg" alt="">
+          <div><h4>Network Load Balancer (NLB)</h4><span class="vi">Cân bằng tải tầng mạng – Layer 4</span><p>TCP, UDP, TLS, TCP_UDP, QUIC. <b>Hàng triệu request/giây</b>, <b>IP tĩnh mỗi AZ</b> (gắn được Elastic IP). Target: instance, IP, <b>ALB</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Elastic-Load-Balancing_Gateway-Load-Balancer.svg" alt="">
+          <div><h4>Gateway Load Balancer (GWLB)</h4><span class="vi">Cân bằng tải cho thiết bị ảo – Layer 3</span><p>Triển khai, scale <b>virtual appliance</b> (firewall, IDS/IPS, deep packet inspection). Giao thức <b>GENEVE port 6081</b>, dùng kèm <b>GWLB endpoint</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Elastic-Load-Balancing_Classic-Load-Balancer.svg" alt="">
+          <div><h4>Classic Load Balancer (CLB)</h4><span class="vi">Thế hệ trước</span><p>AWS <b>khuyến nghị migrate</b> sang loại hiện tại. Trong đề, CLB hầu như chỉ xuất hiện như phương án sai hoặc hệ thống “legacy” cần nâng cấp.</p></div></div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><b>60 giây</b><span>TTL của bản ghi DNS load balancer – IP node có thể đổi nhanh khi scale</span></div>
+        <div class="stat"><b>≥ 2 AZ</b><span>ALB bắt buộc bật ít nhất hai Availability Zone</span></div>
+        <div class="stat"><b>/27 + 8 IP</b><span>mỗi subnet của ALB cần CIDR tối thiểu /27 và ≥ 8 IP trống để scale</span></div>
+        <div class="stat"><b>300 giây</b><span>deregistration delay mặc định (0–3.600 giây)</span></div>
+        <div class="stat"><b>6081</b><span>port GENEVE giữa GWLB và appliance</span></div>
+        <div class="stat"><b>0–999</b><span>trọng số mỗi target group trong weighted forward</span></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Networking-Content-Delivery.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Users<small>Internet</small></div>
+              <span class="arrow">DNS name<br>(TTL 60 s)</span>
+              <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Internet-facing ALB<small>node ở mỗi AZ · IP public</small></div>
+            </div>
+            <div class="grp vpc"><span class="lbl">VPC 10.0.0.0/16</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">Availability Zone a</span>
+                  <div class="grp pub"><span class="lbl">Public subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB node<small>AZ a</small></div></div>
+                  </div>
+                  <div class="grp priv"><span class="lbl">Private subnet – web tier</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Web servers<small>chỉ IP private</small></div></div>
+                  </div>
+                  <div class="grp priv"><span class="lbl">Private subnet – app tier</span>
+                    <div class="row center">
+                      <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Internal LB node<small>IP private</small></div>
+                      <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">App servers<small>target</small></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone b</span>
+                  <div class="grp pub"><span class="lbl">Public subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB node<small>AZ b</small></div></div>
+                  </div>
+                  <div class="grp priv"><span class="lbl">Private subnet – web tier</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Web servers<small>chỉ IP private</small></div></div>
+                  </div>
+                  <div class="grp priv"><span class="lbl">Private subnet – app tier</span>
+                    <div class="row center">
+                      <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Internal LB node<small>IP private</small></div>
+                      <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">App servers<small>target</small></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Kiến trúc nhiều tầng mà tài liệu “How Elastic Load Balancing works” mô tả: <b>internet-facing load balancer</b> (node có IP public) nhận request từ Internet và phân phối tới web server; web server gọi <b>internal load balancer</b> (node chỉ có IP private) để tới app server. Cả hai loại đều gửi tới target bằng <b>IP private</b> ⇒ target <b>không cần IP public</b> và nên nằm trong private subnet.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – quầy lễ tân bệnh viện</span>
+        <p>Load balancer giống <b>quầy lễ tân</b> của một bệnh viện lớn. Bệnh nhân (client) chỉ cần nhớ một địa chỉ (DNS name). <b>ALB</b> là lễ tân đọc kỹ phiếu khám (nội dung HTTP): “khám mắt” ⇒ khoa Mắt (path <code>/eye/*</code>), “khám tim” ⇒ khoa Tim mạch. <b>NLB</b> là nhân viên điều phối ở cổng xe cứu thương: không đọc phiếu, chỉ chia xe thật nhanh vào các làn, và cổng có <b>địa chỉ cố định</b>. <b>GWLB</b> là <b>trạm kiểm tra an ninh</b>: mọi người ra vào đều phải đi qua máy soi (firewall appliance) rồi mới tới nơi cần đến. <b>Health check</b> là y tá đi kiểm tra định kỳ xem phòng khám nào còn bác sĩ làm việc.</p></div>
+
+      <!-- ===================== PHẦN 2: THÀNH PHẦN ===================== -->
+      <h2 id="thanh-phan"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Thành phần chung: node, listener, rule, target group</h2>
+      <p class="lead">Mọi load balancer thế hệ hiện tại (ALB, NLB, GWLB) được ghép từ cùng một bộ “khối Lego”. Hiểu được bộ khối này thì đọc đề nào cũng xác định được cần chỉnh ở đâu.</p>
+
+      <h3>Load balancer node &amp; Availability Zones</h3>
+      <ul>
+        <li>Khi bạn <b>bật một AZ</b> (bằng cách chọn một subnet trong AZ đó), ELB tạo một <span class="t" data-vi="Nút cân bằng tải">load balancer node</span> trong AZ. Mỗi node có ENI riêng trong subnet (mô tả “ENI reserved by ELB for subnet”).</li>
+        <li>Target đăng ký trong một AZ <b>chưa được bật</b> sẽ <b>không nhận traffic</b> (trạng thái <code>unused</code>). Tắt một AZ thì target ở đó vẫn còn đăng ký nhưng không nhận traffic.</li>
+        <li>AWS khuyến nghị bật <b>nhiều AZ</b> cho mọi load balancer; riêng <b>ALB bắt buộc ≥ 2 AZ</b>. Mỗi subnet của ALB nên có CIDR ít nhất <b>/27</b> và <b>≥ 8 IP trống</b> để LB scale out; thiếu IP thì LB chạy thiếu năng lực (có thể trả 5xx/timeout).</li>
+        <li>Load balancer hiệu quả nhất khi <b>mỗi AZ đã bật có ít nhất một target</b>.</li>
+      </ul>
+
+      <h3>DNS name &amp; request routing</h3>
+      <ul>
+        <li>Mỗi load balancer có DNS name dạng <code>name-id.elb.region.amazonaws.com</code>. Amazon DNS trả về <b>IP của các node</b>; <b>client chọn IP</b> để gửi request. Bản ghi có <b>TTL 60 giây</b> để IP có thể đổi nhanh khi ELB scale.</li>
+        <li>Muốn dùng tên miền riêng (<code>www.example.com</code>) ⇒ tạo <b>Route 53 alias record</b> trỏ tới load balancer (học kỹ ở Module Networking).</li>
+        <li><b>ALB</b>: IP các node <b>có thể thay đổi</b> – <b>không</b> nên hard-code IP của ALB. <b>NLB</b>: ELB tạo một ENI mỗi AZ với <b>IP tĩnh</b>, và có thể gắn <b>một Elastic IP mỗi subnet</b> cho NLB internet-facing.</li>
+      </ul>
+
+      <h3>Load balancer scheme</h3>
+      <div class="compare">
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/res/Internet.svg" alt="">Internet-facing</h4>
+          <ul>
+            <li>Node có <b>IP public</b>; DNS name resolve ra IP public.</li>
+            <li>Nhận request từ client trên Internet.</li>
+            <li>Đặt ở <b>public subnet</b> (có route tới internet gateway).</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-VPC_Router.svg" alt="">Internal</h4>
+          <ul>
+            <li>Node chỉ có <b>IP private</b>; DNS name vẫn resolve công khai nhưng ra IP private.</li>
+            <li>Chỉ client <b>có đường vào VPC</b> (cùng VPC, peering, VPN, Direct Connect) mới gửi được request.</li>
+            <li>Dùng cho tầng app/backend giữa các tier.</li>
+          </ul></div>
+      </div>
+      <p>Scheme phải chọn <b>lúc tạo</b>. Về <span class="t" data-vi="Loại địa chỉ IP">IP address type</span>: ALB hỗ trợ <code>ipv4</code>, <code>dualstack</code> và <code>dualstack-without-public-ipv4</code>; NLB và GWLB hỗ trợ <code>ipv4</code> và <code>dualstack</code>; CLB chỉ IPv4.</p>
+
+      <h3>Listener, rule, target group</h3>
+      <ul>
+        <li><b>Listener</b>: tiến trình kiểm tra kết nối từ client theo <b>protocol + port</b> bạn cấu hình (port 1–65535). Load balancer <b>không có listener thì không nhận traffic</b>.</li>
+        <li><b>Rule</b> (ALB; NLB dual-stack có rule đơn giản): gồm <b>priority</b>, một hoặc nhiều <b>condition</b>, một hoặc nhiều <b>action</b>. Mỗi listener luôn có <b>default rule</b> – không xóa được, luôn được xét <b>cuối cùng</b>. Rule được xét theo priority <b>từ số nhỏ tới số lớn</b>.</li>
+        <li><b>Target group</b>: định tuyến request tới các <b>registered target</b> bằng protocol + port chỉ định. Một target có thể đăng ký vào <b>nhiều</b> target group; <b>health check cấu hình theo từng target group</b>. Một target group chỉ dùng với <b>một</b> load balancer.</li>
+        <li><b>Target type</b> chọn lúc tạo target group và <b>không đổi được</b> sau đó.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 330" width="780" role="img" aria-label="Listener, rule và target group của một ALB">
+          <defs><marker id="ah12a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Users.svg" x="14" y="130" width="46" height="46"/>
+          <text x="37" y="194" font-size="12" text-anchor="middle">Clients</text>
+          <path class="line-o" d="M64 153 L118 153" marker-end="url(#ah12a)"/>
+          <rect x="120" y="20" width="250" height="290" rx="10" fill="none" stroke="#8C4FFF" stroke-width="2"/>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" x="130" y="28" width="32" height="32"/>
+          <text x="170" y="50" font-size="13" font-weight="700">Application Load Balancer</text>
+          <rect x="136" y="72" width="218" height="126" rx="8" fill="none" stroke="#147EBA" stroke-width="1.6"/>
+          <text x="146" y="92" font-size="12.5" font-weight="700" style="fill:#147EBA">Listener HTTPS :443</text>
+          <text x="146" y="114" font-size="11.5">Rule 10: path /api/*</text>
+          <text x="146" y="134" font-size="11.5">Rule 20: host img.example.com</text>
+          <text x="146" y="154" font-size="11.5">Rule 30: header X-Beta = true</text>
+          <text x="146" y="178" font-size="11.5" class="muted">Default rule (xét cuối, không xóa)</text>
+          <rect x="136" y="210" width="218" height="86" rx="8" fill="none" stroke="#147EBA" stroke-width="1.6"/>
+          <text x="146" y="230" font-size="12.5" font-weight="700" style="fill:#147EBA">Listener HTTP :80</text>
+          <text x="146" y="252" font-size="11.5">Default rule: redirect</text>
+          <text x="146" y="272" font-size="11.5">⇒ HTTPS :443 (HTTP 301)</text>
+          <path class="line-o" d="M354 112 L470 60" marker-end="url(#ah12a)"/>
+          <path class="line-o" d="M354 132 L470 140" marker-end="url(#ah12a)"/>
+          <path class="line-o" d="M354 152 L470 218" marker-end="url(#ah12a)"/>
+          <path class="line-o" d="M354 176 L470 290" marker-end="url(#ah12a)"/>
+          <rect x="472" y="30" width="290" height="56" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instances.svg" x="482" y="38" width="38" height="38"/>
+          <text x="530" y="55" font-size="12.5" font-weight="700">TG-api (type: instance)</text>
+          <text x="530" y="74" font-size="11.5" class="muted">health check /health · round robin</text>
+          <rect x="472" y="112" width="290" height="56" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" x="482" y="120" width="38" height="38"/>
+          <text x="530" y="137" font-size="12.5" font-weight="700">TG-img (type: lambda)</text>
+          <text x="530" y="156" font-size="11.5" class="muted">1 Lambda function / target group</text>
+          <rect x="472" y="190" width="290" height="56" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="482" y="198" width="38" height="38"/>
+          <text x="530" y="215" font-size="12.5" font-weight="700">TG-beta (type: ip)</text>
+          <text x="530" y="234" font-size="11.5" class="muted">IP private, kể cả on-premises</text>
+          <rect x="472" y="262" width="290" height="56" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instances.svg" x="482" y="270" width="38" height="38"/>
+          <text x="530" y="287" font-size="12.5" font-weight="700">TG-web (type: instance)</text>
+          <text x="530" y="306" font-size="11.5" class="muted">đích của default rule</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Bộ ba thành phần của ALB theo tài liệu “Application Load Balancer components”: request đến listener HTTPS:443 được so khớp lần lượt với các rule theo <b>priority</b>; rule khớp đầu tiên quyết định target group; không rule nào khớp thì chạy <b>default rule</b>. Listener HTTP:80 chỉ có một default rule <b>redirect</b> sang HTTPS – mẫu cấu hình rất hay gặp.</figcaption>
+      </figure>
+
+      <h3>Target types</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Target type</th><th>ALB</th><th>NLB</th><th>GWLB</th><th>Ghi chú theo tài liệu</th></tr></thead>
+        <tbody>
+          <tr><td><code>instance</code></td><td class="yes">Có</td><td class="yes">Có</td><td class="yes">Có</td><td>Đăng ký bằng instance ID; traffic đi tới <b>primary private IP</b> của primary ENI. Instance phải cùng VPC (instance ở VPC peer phải đăng ký bằng IP). Dùng được với Auto Scaling group.</td></tr>
+          <tr><td><code>ip</code></td><td class="yes">Có</td><td class="yes">Có</td><td class="yes">Có</td><td>IP thuộc subnet của VPC hoặc dải private RFC 1918 (10/8, 172.16/12, 192.168/16) và 100.64.0.0/10 – <b>không dùng IP public</b>. Cho phép target ở <b>VPC peer</b>, <b>on-premises qua Direct Connect/Site-to-Site VPN</b>, container (mỗi task một IP), nhiều ứng dụng cùng port trên các ENI khác nhau.</td></tr>
+          <tr><td><code>lambda</code></td><td class="yes">Có</td><td class="no">Không</td><td class="no">Không</td><td>Chỉ <b>ALB</b> hỗ trợ; mỗi target group đăng ký <b>một</b> Lambda function.</td></tr>
+          <tr><td><code>alb</code></td><td class="no">–</td><td class="yes">Có</td><td class="no">Không</td><td>NLB chuyển tiếp TCP tới một ALB ⇒ kết hợp <b>IP tĩnh của NLB</b> với <b>routing Layer 7 của ALB</b>.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – Security Group với load balancer</span>
+        <ul>
+          <li>SG của <b>ALB</b> phải cho phép traffic <b>hai chiều</b> trên <b>listener port</b> và <b>health check port</b>. Thêm listener mới mà quên mở SG ⇒ client không vào được; đổi health check port mà quên ⇒ mọi target <code>unhealthy</code>.</li>
+          <li>Mẫu chuẩn (Bài 10 – SG referencing): SG của instance chỉ cho phép inbound <b>từ SG của load balancer</b>, không mở 0.0.0.0/0 ⇒ client không đi tắt thẳng vào instance.</li>
+          <li><b>NLB</b>: chỉ gắn Security Group được <b>lúc tạo</b>; tạo NLB không có SG thì <b>không thêm SG về sau được</b> (phải tạo NLB mới). Health check chịu <b>outbound rule</b> của SG NLB, không chịu inbound rule.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: ALB ===================== -->
+      <h2 id="alb"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Application Load Balancer (Layer 7)</h2>
+      <p class="lead"><span class="t" data-vi="Cân bằng tải tầng ứng dụng">Application Load Balancer</span> hoạt động ở <b>tầng 7 (application layer)</b> của mô hình OSI. Khi nhận request, ALB <b>đánh giá listener rule theo thứ tự priority</b>, chọn rule khớp, rồi chọn một target trong target group của action bằng <b>routing algorithm</b> cấu hình ở cấp target group. Vì “hiểu” HTTP, ALB định tuyến được theo <b>nội dung</b> của request – điều NLB không làm được.</p>
+
+      <h3>Listener của ALB</h3>
+      <ul>
+        <li>Protocol: <b>HTTP</b> và <b>HTTPS</b> (port 1–65535). HTTPS listener cần ít nhất <b>một SSL server certificate</b> (xem phần SSL/TLS).</li>
+        <li><b>HTTP/2</b>: hỗ trợ native với HTTPS listener, tới <b>128 request song song</b> trên một kết nối HTTP/2. Mặc định ALB gửi tới target bằng HTTP/1.1; có thể chọn <b>protocol version</b> HTTP/2 hoặc <b>gRPC</b> (chỉ với HTTPS listener, chỉ action <code>forward</code>, target <code>instance</code>/<code>ip</code>).</li>
+        <li><b>WebSockets</b>: hỗ trợ native trên cả HTTP và HTTPS listener (nâng cấp kết nối HTTP/1.1). Sau khi upgrade, listener rule và AWS WAF <b>không còn áp dụng</b> cho kết nối đó; WebSocket vốn đã “sticky”.</li>
+        <li>ALB tự thêm header <b><code>X-Forwarded-For</code></b> (IP client), <b><code>X-Forwarded-Proto</code></b> (HTTP/HTTPS mà client dùng) và <b><code>X-Forwarded-Port</code></b>. Target thấy <b>IP nguồn là IP của ALB</b> – muốn biết IP thật của client thì đọc <code>X-Forwarded-For</code>.</li>
+        <li>ALB dùng <b>connection multiplexing</b>: request từ nhiều client trên nhiều kết nối front-end có thể đi chung một kết nối back-end tới target ⇒ giảm độ trễ và tải cho ứng dụng.</li>
+        <li>Thuộc tính mặc định đáng nhớ: <b>idle timeout 60 giây</b>, client keepalive 3.600 giây, <b>deletion protection</b> mặc định tắt, <b>access logs</b> (lưu vào S3) mặc định tắt, <b>desync mitigation mode</b> mặc định <code>defensive</code>.</li>
+      </ul>
+
+      <h3>Condition types – định tuyến theo nội dung</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Condition</th><th>Định tuyến theo</th><th>Chi tiết theo tài liệu</th><th>Ví dụ</th></tr></thead>
+        <tbody>
+          <tr><td><code>path-pattern</code></td><td>Đường dẫn URL (<b>path-based routing</b>)</td><td>Phân biệt hoa/thường, ≤ 128 ký tự, wildcard <code>*</code> và <code>?</code>; chỉ áp dụng cho path, <b>không</b> cho query. Path pattern không sửa request.</td><td><code>/img/*</code> ⇒ TG ảnh; <code>/api/*</code> ⇒ TG API</td></tr>
+          <tr><td><code>host-header</code></td><td>Tên host (<b>host-based routing</b>)</td><td>Không phân biệt hoa/thường, ≤ 128 ký tự, phải có ít nhất một dấu “.”. <code>*.example.com</code> khớp <code>test.example.com</code> nhưng <b>không</b> khớp <code>example.com</code>.</td><td>Nhiều domain/subdomain trên <b>một</b> ALB</td></tr>
+          <tr><td><code>http-header</code></td><td>Header bất kỳ</td><td>Tên header và giá trị không phân biệt hoa/thường; hỗ trợ wildcard trong giá trị.</td><td><code>User-Agent: *Mobile*</code> ⇒ TG mobile</td></tr>
+          <tr><td><code>http-request-method</code></td><td>GET, POST, PUT…</td><td>Phân biệt hoa/thường, khớp chính xác, không wildcard.</td><td>POST ⇒ TG ghi, GET ⇒ TG đọc</td></tr>
+          <tr><td><code>query-string</code></td><td>Cặp key/value trong query</td><td>Không phân biệt hoa/thường, có wildcard.</td><td><code>?version=v2</code> ⇒ TG phiên bản mới</td></tr>
+          <tr><td><code>source-ip</code></td><td>IP nguồn (CIDR, IPv4/IPv6)</td><td>Là IP kết nối tới ALB (nếu client sau proxy thì là IP proxy); <b>không</b> đọc <code>X-Forwarded-For</code>.</td><td>Dải IP văn phòng ⇒ TG admin</td></tr>
+        </tbody>
+      </table></div>
+      <p>Giới hạn: mỗi rule có tối đa <b>một</b> condition mỗi loại <code>host-header</code>, <code>http-request-method</code>, <code>path-pattern</code>, <code>source-ip</code> (còn <code>http-header</code>, <code>query-string</code> thì nhiều); tối đa <b>3 match evaluation mỗi condition</b>, <b>5 mỗi rule</b>, <b>5 wildcard mỗi rule</b>. <code>host-header</code>, <code>http-header</code>, <code>path-pattern</code> hỗ trợ cả <b>regex</b>.</p>
+
+      <h3>Action types</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Action</th><th>Tác dụng</th><th>Use case trong đề</th></tr></thead>
+        <tbody>
+          <tr><td><code>forward</code></td><td>Chuyển tới một hoặc nhiều target group. Nhiều TG thì gán <b>weight 0–999</b> (weight 0 = không nhận traffic).</td><td><b>Blue/green, canary</b>: 90% TG cũ – 10% TG mới. Lưu ý: TG rỗng/unhealthy thì <b>không tự failover</b> sang TG khác.</td></tr>
+          <tr><td><code>redirect</code></td><td>Chuyển hướng URL, <b>HTTP 301</b> (vĩnh viễn) hoặc <b>302</b> (tạm thời). Được đổi protocol/host/port/path; giữ phần còn lại bằng <code>#{host}</code>, <code>#{path}</code>, <code>#{query}</code>…</td><td>“<i>Redirect all HTTP requests to HTTPS</i>” ⇒ default rule của listener :80 redirect sang HTTPS:443. Không redirect được HTTPS ⇒ HTTP.</td></tr>
+          <tr><td><code>fixed-response</code></td><td>Trả về mã 2XX/4XX/5XX và nội dung tùy chọn, <b>không</b> tới target.</td><td>Trang bảo trì, chặn path không hợp lệ (404) ngay tại ALB.</td></tr>
+          <tr><td><code>authenticate-cognito</code> / <code>authenticate-oidc</code></td><td>Xác thực user trước khi routing (chỉ HTTPS listener) – đã học ở Bài 7.</td><td>“<i>Offload user authentication</i>” cho ứng dụng web phía sau ALB.</td></tr>
+          <tr><td><code>jwt-validation</code></td><td>Kiểm tra JWT access token trong request.</td><td>Bảo vệ API machine-to-machine.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Mỗi rule phải có <b>đúng một</b> routing action (<code>forward</code>, <code>redirect</code> hoặc <code>fixed-response</code>) và nó phải là action <b>cuối cùng</b>; HTTPS listener có thể đặt action xác thực trước routing action.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 300" width="780" role="img" aria-label="Path-based và host-based routing trên một ALB">
+          <defs><marker id="ah12b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Client.svg" x="20" y="30" width="40" height="40"/>
+          <text x="70" y="46" font-size="11.5">example.com/orders/123</text>
+          <image href="../assets/icons/res/Client.svg" x="20" y="125" width="40" height="40"/>
+          <text x="70" y="141" font-size="11.5">example.com/img/logo.png</text>
+          <image href="../assets/icons/res/Mobile-client.svg" x="20" y="220" width="40" height="40"/>
+          <text x="70" y="236" font-size="11.5">api.example.com/v1/users</text>
+          <path class="line-o" d="M200 52 L318 132" marker-end="url(#ah12b)"/>
+          <path class="line-o" d="M220 146 L318 146" marker-end="url(#ah12b)"/>
+          <path class="line-o" d="M220 240 L318 160" marker-end="url(#ah12b)"/>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" x="322" y="118" width="56" height="56"/>
+          <text x="350" y="192" font-size="12.5" font-weight="700" text-anchor="middle">1 ALB</text>
+          <text x="350" y="208" font-size="11" text-anchor="middle" class="muted">HTTPS :443</text>
+          <path class="line-o" d="M384 132 L520 56" marker-end="url(#ah12b)"/>
+          <path class="line-o" d="M384 146 L520 146" marker-end="url(#ah12b)"/>
+          <path class="line-o" d="M384 160 L520 236" marker-end="url(#ah12b)"/>
+          <text x="440" y="82" font-size="11" text-anchor="middle" class="muted">path /orders/*</text>
+          <text x="452" y="138" font-size="11" text-anchor="middle" class="muted">path /img/*</text>
+          <text x="440" y="216" font-size="11" text-anchor="middle" class="muted">host api.*</text>
+          <rect x="524" y="28" width="240" height="58" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instances.svg" x="534" y="37" width="38" height="38"/>
+          <text x="582" y="54" font-size="12.5" font-weight="700">Order service</text>
+          <text x="582" y="72" font-size="11" class="muted">TG-orders (EC2 ASG)</text>
+          <rect x="524" y="118" width="240" height="58" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/svc/Amazon-Elastic-Container-Service.svg" x="534" y="127" width="38" height="38"/>
+          <text x="582" y="144" font-size="12.5" font-weight="700">Image service</text>
+          <text x="582" y="162" font-size="11" class="muted">TG-img (ECS task, type ip)</text>
+          <rect x="524" y="208" width="240" height="58" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" x="534" y="217" width="38" height="38"/>
+          <text x="582" y="234" font-size="12.5" font-weight="700">Public API</text>
+          <text x="582" y="252" font-size="11" class="muted">TG-api (type lambda)</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Một ALB phục vụ <b>nhiều microservice</b> và <b>nhiều domain</b> nhờ <b>path conditions</b> và <b>host conditions</b> – đúng hai lợi ích đầu tiên mà tài liệu liệt kê khi so ALB với Classic Load Balancer. Mỗi service có target group và health check riêng, gắn được với Auto Scaling group riêng để scale độc lập.</figcaption>
+      </figure>
+
+      <h3>Routing algorithms (cấp target group)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thuật toán</th><th>Cách chọn target</th><th>Khi nào dùng</th><th>Ràng buộc</th></tr></thead>
+        <tbody>
+          <tr><td><b>Round robin</b> (mặc định)</td><td>Lần lượt, đều nhau giữa các target khỏe</td><td>Request tương đồng về độ phức tạp, target cùng năng lực</td><td>Dùng được với slow start, sticky sessions</td></tr>
+          <tr><td><b>Least outstanding requests</b></td><td>Target có <b>ít request đang xử lý</b> nhất</td><td>Request <b>khác nhau về độ phức tạp</b> hoặc target <b>khác nhau về năng lực</b></td><td>Không dùng với slow start</td></tr>
+          <tr><td><b>Weighted random</b></td><td>Ngẫu nhiên đều; hỗ trợ <b>Automatic Target Weights (ATW)</b> anomaly mitigation</td><td>Tự giảm traffic tới target có tỉ lệ lỗi 5xx/kết nối bất thường (cần ≥ 3 target khỏe)</td><td>Không dùng với slow start, sticky sessions</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – khi nào chọn ALB</span>
+        <ul>
+          <li>“<i>Route requests based on URL path / hostname / HTTP header / query string</i>”, “<i>microservices behind a single load balancer</i>” ⇒ <b>ALB</b> với path/host-based routing.</li>
+          <li>“<i>Invoke Lambda functions over HTTP(S) behind a load balancer</i>” ⇒ <b>ALB</b> (target type <code>lambda</code>) – NLB không hỗ trợ.</li>
+          <li>“<i>Redirect HTTP to HTTPS</i>”, “<i>return a custom maintenance page without hitting servers</i>” ⇒ ALB <code>redirect</code> / <code>fixed-response</code>.</li>
+          <li>“<i>Gradually shift 10% of traffic to the new version</i>” ⇒ <b>weighted target groups</b> trong action <code>forward</code>.</li>
+          <li>“<i>Protect the web application from SQL injection / XSS</i>” ⇒ gắn <b>AWS WAF</b> web ACL vào <b>ALB</b> (học kỹ ở Module Security).</li>
+          <li>“<i>Application needs the client's IP address behind ALB</i>” ⇒ đọc header <b>X-Forwarded-For</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: NLB ===================== -->
+      <h2 id="nlb"><img src="../assets/icons/res/Elastic-Load-Balancing_Network-Load-Balancer.svg" alt="">Network Load Balancer (Layer 4)</h2>
+      <p class="lead"><span class="t" data-vi="Cân bằng tải tầng mạng">Network Load Balancer</span> hoạt động ở <b>tầng 4 (transport)</b> của mô hình OSI và xử lý được <b>hàng triệu request mỗi giây</b>, chịu được workload biến động đột ngột. NLB không đọc nội dung HTTP; nó chọn target bằng <span class="t" data-vi="Thuật toán băm luồng">flow hash algorithm</span> rồi chuyển tiếp kết nối với protocol/port đã cấu hình.</p>
+
+      <h3>Protocol &amp; cách chọn target</h3>
+      <ul>
+        <li>Listener và target group hỗ trợ <b>TCP, UDP, TLS, TCP_UDP</b> (cùng port cho cả TCP và UDP, ví dụ DNS), <b>QUIC, TCP_QUIC</b>; port 1–65535.</li>
+        <li><b>TCP</b>: flow hash dựa trên protocol, IP/port nguồn, IP/port đích và <b>TCP sequence number</b>. Mỗi kết nối TCP đi tới <b>một target</b> suốt vòng đời kết nối; các kết nối khác nhau từ cùng client có thể tới target khác nhau.</li>
+        <li><b>UDP</b>: flow hash 5 thành phần (không có sequence number) ⇒ một UDP flow luôn tới cùng target.</li>
+        <li><b>TLS listener</b>: NLB <b>terminate TLS</b> (offload giải mã) bằng certificate trên listener. Muốn <b>target tự giải mã</b> (end-to-end, ví dụ compliance) ⇒ dùng <b>TCP listener port 443</b> – NLB chuyển nguyên gói đã mã hóa (<span class="t" data-vi="Chuyển tiếp nguyên trạng">TLS passthrough</span>).</li>
+        <li>NLB <b>không hỗ trợ mutual TLS (mTLS)</b> trên TLS listener – muốn mTLS thì dùng TCP listener và xử lý mTLS trên target (hoặc dùng ALB, vốn có mTLS).</li>
+        <li><b>TCP idle timeout</b> mặc định <b>350 giây</b> (chỉnh 60–6.000 giây).</li>
+      </ul>
+
+      <h3>IP tĩnh &amp; Elastic IP</h3>
+      <p>Khác ALB, NLB có <b>một ENI với IP tĩnh mỗi AZ đã bật</b>. Với NLB internet-facing, bạn có thể gắn <b>một Elastic IP cho mỗi subnet</b> lúc tạo. Đây là lý do NLB là đáp án khi đề yêu cầu <b>whitelist IP cố định</b> trên firewall của đối tác/khách hàng. Kết hợp target type <code>alb</code> ⇒ vừa có IP tĩnh, vừa giữ routing Layer 7.</p>
+
+      <h3>Client IP preservation &amp; Proxy protocol v2</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Target group</th><th>Client IP preservation mặc định</th><th>Target thấy IP nguồn là…</th></tr></thead>
+        <tbody>
+          <tr><td>Target type <code>instance</code> (mọi protocol)</td><td class="yes">Bật</td><td>IP thật của client</td></tr>
+          <tr><td>Target type <code>ip</code>, protocol UDP / TCP_UDP / QUIC</td><td class="yes">Bật (không tắt được)</td><td>IP thật của client</td></tr>
+          <tr><td>Target type <code>ip</code>, protocol TCP / TLS</td><td class="no">Tắt</td><td>IP private của node NLB</td></tr>
+          <tr><td>Traffic qua AWS PrivateLink (endpoint service)</td><td class="no">Không áp dụng</td><td>Luôn là IP private của NLB</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Khi không giữ được IP client (target qua Transit Gateway, qua PrivateLink, IP target ngoài VPC…) mà ứng dụng vẫn cần IP gốc ⇒ bật <span class="t" data-vi="Giao thức proxy phiên bản 2">Proxy protocol v2</span>: NLB chèn header nhị phân chứa IP/port nguồn và đích (và VPC endpoint ID nếu đi qua PrivateLink). Ứng dụng phải <b>đọc được</b> header này, nếu không sẽ lỗi (kể cả health check có thể trả HTTP 400).</li>
+        <li>Bật client IP preservation thì <b>SG của target phải cho phép IP của client</b> – hoặc tham chiếu SG của NLB (tài liệu khuyến nghị) để target chỉ nhận traffic qua NLB.</li>
+        <li>Không hỗ trợ <b>NAT loopback (hairpinning)</b> khi bật client IP preservation: target sau NLB internal gọi lại chính NLB đó có thể bị route về chính nó ⇒ lỗi kết nối.</li>
+      </ul>
+
+      <h3>Các điểm khác cần nhớ</h3>
+      <ul>
+        <li>NLB là load balancer đứng sau <b>VPC endpoint service (AWS PrivateLink)</b> để chia sẻ dịch vụ cho VPC/account khác một cách private.</li>
+        <li>Sticky sessions của NLB dựa trên <b>source IP</b> (<code>stickiness.type = source_ip</code>), <b>không hỗ trợ</b> với TLS hoặc QUIC listener; mọi client sau cùng một NAT sẽ dồn vào một target.</li>
+        <li>Target <b>unhealthy</b>: mặc định NLB <b>terminate</b> các kết nối đang có tới target đó (connection termination); có thể tắt và đặt <b>unhealthy draining interval</b> để kết nối đóng êm.</li>
+        <li>Weighted target groups (0–999) cũng có trong default action của NLB – dùng cho migration/canary ở Layer 4.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – khi nào chọn NLB</span>
+        <ul>
+          <li>“<i>Static IP address / Elastic IP per AZ / partners must allowlist IPs</i>” ⇒ <b>NLB</b> (cần cả routing HTTP ⇒ NLB với target type <b>alb</b>; cần IP anycast toàn cầu ⇒ <b>Global Accelerator</b>).</li>
+          <li>“<i>Millions of requests per second, ultra-low latency, TCP/UDP</i>”, “<i>gaming / IoT / VoIP using UDP</i>” ⇒ <b>NLB</b>. ALB không nhận UDP.</li>
+          <li>“<i>Traffic must remain encrypted all the way to the instances; the load balancer must not decrypt</i>” ⇒ <b>NLB TCP listener 443</b> (passthrough).</li>
+          <li>“<i>Expose a service privately to other VPCs/accounts with AWS PrivateLink</i>” ⇒ <b>NLB</b> phía sau endpoint service.</li>
+          <li>“<i>Targets need the original client IP over TCP with IP targets</i>” ⇒ bật <b>client IP preservation</b> hoặc <b>Proxy protocol v2</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: GWLB ===================== -->
+      <h2 id="gwlb"><img src="../assets/icons/res/Elastic-Load-Balancing_Gateway-Load-Balancer.svg" alt="">Gateway Load Balancer (Layer 3)</h2>
+      <p class="lead"><span class="t" data-vi="Cân bằng tải cổng">Gateway Load Balancer</span> giúp <b>triển khai, scale và quản lý virtual appliance</b> của bên thứ ba – <b>firewall</b>, <b>intrusion detection and prevention (IDS/IPS)</b>, <b>deep packet inspection</b>. GWLB kết hợp một <b>transparent network gateway</b> (một điểm vào/ra duy nhất cho mọi traffic) với chức năng phân phối tải, đồng thời scale fleet appliance theo nhu cầu.</p>
+
+      <ul>
+        <li>Hoạt động ở <b>tầng 3 (network layer)</b>: lắng nghe <b>mọi gói IP trên mọi port</b> và chuyển tới target group của listener rule.</li>
+        <li>GWLB và appliance trao đổi traffic bằng giao thức <span class="t" data-vi="Đóng gói mạng ảo">GENEVE</span> trên <b>UDP port 6081</b> ⇒ SG của appliance phải cho phép UDP 6081. Gói tin được đóng gói nguyên vẹn nên appliance thấy được IP nguồn/đích gốc.</li>
+        <li>Duy trì <span class="t" data-vi="Dính luồng">flow stickiness</span> tới cùng một appliance bằng <b>5-tuple</b> (mặc định), <b>3-tuple</b> hoặc <b>2-tuple</b> – cần thiết vì firewall stateful phải thấy cả hai chiều của một luồng.</li>
+        <li>Dùng <span class="t" data-vi="Điểm cuối GWLB">Gateway Load Balancer endpoint (GWLBE)</span> – một loại VPC endpoint (AWS PrivateLink) – để đưa traffic <b>qua ranh giới VPC</b> một cách private: appliance + GWLB nằm ở <b>service provider VPC</b>, ứng dụng nằm ở <b>service consumer VPC</b>. GWLBE là tài nguyên <b>zonal</b>; nên tạo một GWLBE mỗi AZ.</li>
+        <li>Traffic được “bẻ lái” bằng <b>route table</b>: GWLBE là <b>next hop</b>. GWLBE và application server phải ở <b>subnet khác nhau</b>.</li>
+        <li>Thông số: interface MTU <b>8.500 byte</b> (GENEVE thêm 68 byte ⇒ appliance cần MTU ≥ 8.568), không hỗ trợ IP fragmentation; idle timeout TCP mặc định <b>350 giây</b> (60–6.000), UDP cố định <b>120 giây</b>; cross-zone mặc định <b>tắt</b>; mỗi subnet cần ≥ 8 IP trống.</li>
+        <li>Bạn chịu trách nhiệm chọn và tin tưởng phần mềm appliance; vendor trong danh sách <b>Elastic Load Balancing Partners</b> đã được tích hợp sẵn (AWS không bảo đảm an ninh của phần mềm đó).</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 360" width="780" role="img" aria-label="Luồng traffic qua Gateway Load Balancer endpoint và appliance">
+          <defs><marker id="ah12c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="10" y="20" width="400" height="320" rx="10" fill="none" stroke="#8C4FFF" stroke-width="2"/>
+          <text x="22" y="42" font-size="13" font-weight="700" style="fill:#8C4FFF">Service consumer VPC (ứng dụng)</text>
+          <image href="../assets/icons/res/Internet.svg" x="30" y="60" width="40" height="40"/>
+          <text x="50" y="114" font-size="11" text-anchor="middle">Internet</text>
+          <image href="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" x="150" y="60" width="40" height="40"/>
+          <text x="170" y="114" font-size="11" text-anchor="middle">Internet gateway</text>
+          <text x="170" y="128" font-size="10.5" text-anchor="middle" class="muted">ingress route ⇒ GWLBE</text>
+          <path class="line-o" d="M72 80 L146 80" marker-end="url(#ah12c)"/>
+          <text x="108" y="72" font-size="11" text-anchor="middle">①</text>
+          <rect x="250" y="150" width="140" height="80" rx="8" fill="none" stroke="#147EBA" stroke-width="1.6" stroke-dasharray="5 4"/>
+          <text x="320" y="166" font-size="11" text-anchor="middle" class="muted">Subnet GWLBE</text>
+          <image href="../assets/icons/res/Amazon-VPC_Endpoints.svg" x="300" y="172" width="40" height="40"/>
+          <text x="320" y="224" font-size="11" text-anchor="middle">GWLB endpoint</text>
+          <path class="line-o" d="M190 96 L292 168" marker-end="url(#ah12c)"/>
+          <text x="236" y="122" font-size="11">②</text>
+          <rect x="30" y="250" width="200" height="76" rx="8" fill="none" stroke="#7AA116" stroke-width="1.6" stroke-dasharray="5 4"/>
+          <text x="130" y="266" font-size="11" text-anchor="middle" class="muted">Subnet ứng dụng (0.0.0.0/0 ⇒ GWLBE)</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instances.svg" x="110" y="272" width="40" height="40"/>
+          <text x="130" y="322" font-size="11" text-anchor="middle">Application servers</text>
+          <path class="line-o" d="M298 214 L176 286" marker-end="url(#ah12c)"/>
+          <text x="232" y="262" font-size="11">⑤</text>
+          <rect x="440" y="20" width="330" height="320" rx="10" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <text x="452" y="42" font-size="13" font-weight="700" style="fill:#DD344C">Service provider VPC (bảo mật)</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Gateway-Load-Balancer.svg" x="470" y="160" width="48" height="48"/>
+          <text x="494" y="224" font-size="12" font-weight="700" text-anchor="middle">GWLB</text>
+          <text x="494" y="240" font-size="10.5" text-anchor="middle" class="muted">5-tuple stickiness</text>
+          <path class="line-o" d="M344 184 L466 184" marker-end="url(#ah12c)"/>
+          <text x="404" y="176" font-size="11" text-anchor="middle">③</text>
+          <image href="../assets/icons/res/Firewall.svg" x="660" y="70" width="40" height="40"/>
+          <text x="680" y="124" font-size="11" text-anchor="middle">Appliance 1</text>
+          <image href="../assets/icons/res/Firewall.svg" x="660" y="160" width="40" height="40"/>
+          <text x="680" y="214" font-size="11" text-anchor="middle">Appliance 2</text>
+          <image href="../assets/icons/res/Firewall.svg" x="660" y="250" width="40" height="40"/>
+          <text x="680" y="304" font-size="11" text-anchor="middle">Appliance 3</text>
+          <path class="line-o" d="M522 176 L654 96" marker-end="url(#ah12c)"/>
+          <path class="line-o" d="M522 184 L654 184" marker-end="url(#ah12c)"/>
+          <path class="line-o" d="M522 192 L654 266" marker-end="url(#ah12c)"/>
+          <text x="590" y="150" font-size="11" text-anchor="middle" class="muted">GENEVE</text>
+          <text x="590" y="164" font-size="11" text-anchor="middle" class="muted">UDP 6081</text>
+          <path d="M466 198 L346 198" fill="none" stroke="#8C4FFF" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah12c)"/>
+          <text x="404" y="214" font-size="11" text-anchor="middle">④ đã kiểm tra</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> Mô hình trong “Getting started with Gateway Load Balancers”: ① traffic từ Internet vào internet gateway; ② <b>ingress routing</b> (route table gắn với IGW) gửi traffic tới GWLB endpoint; ③ GWLBE chuyển qua PrivateLink tới GWLB, GWLB chọn appliance và đóng gói GENEVE; ④ appliance kiểm tra xong trả về GWLB ⇒ GWLBE; ⑤ GWLBE chuyển tới application server. Chiều ra Internet đi ngược lại nhờ route <code>0.0.0.0/0 ⇒ GWLBE</code> trên subnet ứng dụng và <code>0.0.0.0/0 ⇒ IGW</code> trên subnet GWLBE.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – khi nào chọn GWLB</span>
+        <ul>
+          <li>“<i>Inspect all inbound/outbound traffic with third-party virtual firewall appliances, scale them automatically, keep high availability</i>” ⇒ <b>Gateway Load Balancer</b> + <b>GWLB endpoints</b>.</li>
+          <li>Thấy từ khóa <b>GENEVE</b>, <b>port 6081</b>, “<i>bump-in-the-wire</i>”, “<i>transparent</i>” ⇒ GWLB.</li>
+          <li>Đề muốn firewall <b>managed của AWS</b> (không phải appliance bên thứ ba) ⇒ <b>AWS Network Firewall</b> – học ở Module Security; đừng nhầm với GWLB.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: HEALTH CHECKS ===================== -->
+      <h2 id="health-checks"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">Health checks &amp; target group health</h2>
+      <p class="lead">Load balancer định kỳ gửi request kiểm tra tới từng target đã đăng ký – gọi là <span class="t" data-vi="Kiểm tra sức khỏe">health checks</span>. Mỗi load balancer node chỉ gửi request tới target <b>healthy</b> trong các AZ đã bật. Health check cấu hình <b>theo từng target group</b>; target mới đăng ký phải qua <b>một</b> lần health check đầu tiên mới bắt đầu nhận traffic.</p>
+
+      <h3>Thông số health check (theo tài liệu)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Setting</th><th>ALB</th><th>NLB</th></tr></thead>
+        <tbody>
+          <tr><td><code>HealthCheckProtocol</code></td><td>HTTP (mặc định) hoặc HTTPS – dùng method GET</td><td><b>TCP</b> (mặc định), HTTP, HTTPS (target type <code>alb</code>: chỉ HTTP/HTTPS)</td></tr>
+          <tr><td><code>HealthCheckPort</code></td><td colspan="2">Mặc định = port target nhận traffic; có thể đặt port riêng</td></tr>
+          <tr><td><code>HealthCheckPath</code></td><td><code>/</code> (gRPC: <code>/AWS.ALB/healthcheck</code>)</td><td><code>/</code> (chỉ với HTTP/HTTPS)</td></tr>
+          <tr><td><code>HealthCheckIntervalSeconds</code></td><td>5–300; mặc định <b>30</b> (Lambda: 35)</td><td>5–300; mặc định <b>30</b></td></tr>
+          <tr><td><code>HealthCheckTimeoutSeconds</code></td><td>2–120; mặc định <b>5</b> (Lambda: 30)</td><td>2–120; mặc định 6 (HTTP), 10 (TCP/HTTPS)</td></tr>
+          <tr><td><code>HealthyThresholdCount</code></td><td colspan="2">2–10; mặc định <b>5</b> lần thành công liên tiếp ⇒ healthy</td></tr>
+          <tr><td><code>UnhealthyThresholdCount</code></td><td colspan="2">2–10; mặc định <b>2</b> lần thất bại liên tiếp ⇒ unhealthy</td></tr>
+          <tr><td><code>Matcher</code> (success codes)</td><td>200–499; mặc định <b>200</b> (gRPC: 0–99, mặc định 12)</td><td>200–599; mặc định <b>200–399</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Trạng thái target</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>State</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><code>initial</code></td><td>Đang đăng ký hoặc đang chạy health check ban đầu.</td></tr>
+          <tr><td><code>healthy</code></td><td>Target khỏe, nhận traffic.</td></tr>
+          <tr><td><code>unhealthy</code></td><td>Không phản hồi, timeout, sai mã trả về (<code>Target.ResponseCodeMismatch</code>, <code>Target.Timeout</code>…).</td></tr>
+          <tr><td><code>unused</code></td><td>Chưa đăng ký, target group chưa nằm trong listener rule, AZ chưa bật, hoặc instance đang stopped/terminated.</td></tr>
+          <tr><td><code>draining</code></td><td>Đang hủy đăng ký – connection draining (deregistration delay).</td></tr>
+          <tr><td><code>unavailable</code></td><td>Health check bị tắt (ALB) / lỗi nội bộ (NLB).</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Fail open &amp; target group health</h3>
+      <ul>
+        <li><span class="t" data-vi="Mở khi lỗi">Fail open</span>: nếu target group <b>chỉ còn target unhealthy</b> (mọi target fail cùng lúc ở mọi AZ), load balancer <b>gửi request tới tất cả target</b> bất kể trạng thái – vì gửi “thử” còn hơn trả lỗi 100%. NLB cũng fail open khi target group rỗng.</li>
+        <li><b>NLB</b>: nếu một AZ không còn target khỏe, IP của node AZ đó bị <b>gỡ khỏi DNS</b> (client nào không tôn trọng TTL vẫn gửi tới thì request fail).</li>
+        <li><b>Target group health thresholds</b> (đếm hoặc %): <b>DNS failover</b> – số target khỏe trong một zone dưới ngưỡng ⇒ đánh dấu IP node zone đó unhealthy trong DNS; <b>routing failover</b> – dưới ngưỡng ⇒ gửi traffic tới mọi target trong zone, kể cả unhealthy. Ngưỡng DNS failover phải ≥ ngưỡng routing failover.</li>
+        <li><b>Route 53 alias + Evaluate target health = Yes</b>: Route 53 dùng chính health check của target group để quyết định load balancer còn khỏe hay không ⇒ <b>failover sang load balancer ở Region khác</b> hoặc trang tĩnh trên S3.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – health check</span>
+        <ul>
+          <li>Mọi target đều <code>unhealthy</code> ngay sau khi tạo ⇒ kiểm tra <b>Security Group</b> của target có cho phép <b>health check port</b> từ SG của LB không, path có trả <b>200</b> không (vd ứng dụng trả 302 redirect tới trang login ⇒ ALB coi là fail vì mặc định chỉ nhận 200).</li>
+          <li>Health check của ELB khác với EC2 status check. Muốn Auto Scaling <b>thay thế</b> instance mà ELB đánh giá unhealthy ⇒ bật <b>ELB health check</b> trong Auto Scaling group (Bài 13).</li>
+          <li>Health check ALB <b>không hỗ trợ WebSockets</b>; NLB với HTTPS health check: target chỉ hỗ trợ TLS 1.3 sẽ fail.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: CROSS-ZONE ===================== -->
+      <h2 id="cross-zone"><img src="../assets/icons/cat/Networking-Content-Delivery.svg" alt="">Cross-zone load balancing</h2>
+      <p class="lead">Client nhận IP của các node và (với round robin DNS) mỗi node nhận <b>phần traffic bằng nhau</b>. Câu hỏi là: node ở AZ A được gửi tới target ở AZ B không? Bật <span class="t" data-vi="Cân bằng tải liên vùng">cross-zone load balancing</span> ⇒ mỗi node phân phối tới target ở <b>mọi AZ đã bật</b>; tắt ⇒ mỗi node chỉ phân phối tới target <b>trong AZ của nó</b>.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 330" width="780" role="img" aria-label="Ví dụ cross-zone bật và tắt với 2 target ở AZ A và 8 target ở AZ B">
+          <text x="195" y="24" font-size="13.5" font-weight="700" text-anchor="middle" style="fill:#7AA116">Cross-zone BẬT</text>
+          <text x="585" y="24" font-size="13.5" font-weight="700" text-anchor="middle" style="fill:#DD344C">Cross-zone TẮT</text>
+          <line x1="390" y1="10" x2="390" y2="320" stroke="#999" stroke-dasharray="4 4"/>
+          <rect x="14" y="40" width="80" height="270" rx="8" fill="none" stroke="#147EBA" stroke-dasharray="5 4"/>
+          <text x="54" y="58" font-size="11.5" text-anchor="middle" style="fill:#147EBA">AZ A</text>
+          <rect x="104" y="40" width="276" height="270" rx="8" fill="none" stroke="#147EBA" stroke-dasharray="5 4"/>
+          <text x="242" y="58" font-size="11.5" text-anchor="middle" style="fill:#147EBA">AZ B</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" x="36" y="68" width="36" height="36"/>
+          <text x="54" y="118" font-size="11" text-anchor="middle">node 50%</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" x="224" y="68" width="36" height="36"/>
+          <text x="242" y="118" font-size="11" text-anchor="middle">node 50%</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="22" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="58" y="150" width="28" height="28"/>
+          <text x="54" y="196" font-size="12" font-weight="700" text-anchor="middle" style="fill:#7AA116">10% mỗi</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="116" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="148" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="180" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="212" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="244" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="276" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="308" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="340" y="150" width="28" height="28"/>
+          <text x="242" y="196" font-size="12" font-weight="700" text-anchor="middle" style="fill:#7AA116">10% mỗi target</text>
+          <text x="197" y="240" font-size="11.5" text-anchor="middle">Mỗi node gửi tới cả 10 target</text>
+          <text x="197" y="258" font-size="11.5" text-anchor="middle">⇒ phân bố đều dù số target lệch</text>
+          <text x="197" y="290" font-size="11" text-anchor="middle" class="muted">ALB: luôn bật ở cấp LB</text>
+          <rect x="404" y="40" width="80" height="270" rx="8" fill="none" stroke="#147EBA" stroke-dasharray="5 4"/>
+          <text x="444" y="58" font-size="11.5" text-anchor="middle" style="fill:#147EBA">AZ A</text>
+          <rect x="494" y="40" width="276" height="270" rx="8" fill="none" stroke="#147EBA" stroke-dasharray="5 4"/>
+          <text x="632" y="58" font-size="11.5" text-anchor="middle" style="fill:#147EBA">AZ B</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Network-Load-Balancer.svg" x="426" y="68" width="36" height="36"/>
+          <text x="444" y="118" font-size="11" text-anchor="middle">node 50%</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Network-Load-Balancer.svg" x="614" y="68" width="36" height="36"/>
+          <text x="632" y="118" font-size="11" text-anchor="middle">node 50%</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="412" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="448" y="150" width="28" height="28"/>
+          <text x="444" y="196" font-size="12" font-weight="700" text-anchor="middle" style="fill:#DD344C">25% mỗi</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="506" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="538" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="570" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="602" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="634" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="666" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="698" y="150" width="28" height="28"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="730" y="150" width="28" height="28"/>
+          <text x="632" y="196" font-size="12" font-weight="700" text-anchor="middle" style="fill:#DD344C">6,25% mỗi target</text>
+          <text x="587" y="240" font-size="11.5" text-anchor="middle">Mỗi node chỉ gửi trong AZ của mình</text>
+          <text x="587" y="258" font-size="11.5" text-anchor="middle">⇒ 2 target AZ A bị quá tải gấp 4 lần</text>
+          <text x="587" y="290" font-size="11" text-anchor="middle" class="muted">NLB, GWLB: mặc định tắt</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Ví dụ chính thức trong “How Elastic Load Balancing works”: 2 AZ, AZ A có 2 target, AZ B có 8 target, mỗi node nhận 50% traffic. <b>Bật cross-zone</b>: mỗi target nhận <b>10%</b>. <b>Tắt</b>: mỗi target AZ A nhận <b>25%</b>, mỗi target AZ B chỉ nhận <b>6,25%</b>.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại LB</th><th>Mặc định cấp load balancer</th><th>Cấp target group</th><th>Chi phí</th></tr></thead>
+        <tbody>
+          <tr><td>ALB</td><td class="yes"><b>Luôn bật</b>, không tắt được</td><td>Tắt được (<code>load_balancing.cross_zone.enabled=false</code>); khi tắt thì không dùng được sticky sessions, Lambda target</td><td>–</td></tr>
+          <tr><td>NLB</td><td class="no"><b>Tắt</b>; bật/tắt bất kỳ lúc nào</td><td>Override bật/tắt (trừ target type <code>alb</code>)</td><td>Bật ⇒ tính <b>EC2 data transfer</b> giữa AZ</td></tr>
+          <tr><td>GWLB</td><td class="no"><b>Tắt</b>; bật/tắt bất kỳ lúc nào</td><td>–</td><td>–</td></tr>
+          <tr><td>CLB</td><td>Tạo bằng API/CLI: tắt; bằng Console: bật</td><td>–</td><td>–</td></tr>
+        </tbody>
+      </table></div>
+      <p>Khi tắt cross-zone, tài liệu khuyên: đảm bảo <b>mỗi AZ đủ capacity</b> riêng, mọi target group cùng tham gia các AZ giống nhau, không tạo subnet rỗng (ALB có thể trả <b>503</b> cho request vào AZ không có target). Lý do tắt: muốn <b>zonal isolation</b> (lỗi ở một zone không lan sang zone khác) hoặc giảm độ trễ. <b>Zonal shift</b> (Amazon Application Recovery Controller) cho phép “rút” load balancer khỏi một AZ bị suy giảm bằng một thao tác.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – cross-zone</span>
+        <ul>
+          <li>“<i>NLB with uneven number of instances per AZ; some instances overloaded</i>” ⇒ <b>bật cross-zone load balancing</b> (NLB mặc định tắt) – hoặc cân lại số instance mỗi AZ.</li>
+          <li>Đề hỏi chi phí: bật cross-zone trên <b>NLB</b> phát sinh phí data transfer giữa AZ.</li>
+          <li>ALB không cần “bật cross-zone” – nó luôn bật ở cấp load balancer.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: STICKY / DRAINING / SLOW START ===================== -->
+      <h2 id="sticky-draining"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">Sticky sessions, deregistration delay, slow start</h2>
+      <p class="lead">Ba thuộc tính target group này điều khiển <b>một client gắn với target nào</b>, <b>target rời đi êm ái thế nào</b> và <b>target mới được “làm nóng” thế nào</b>. Đề SAA-C03 hay đặt chúng vào kịch bản Auto Scaling scale in/out.</p>
+
+      <h3>Sticky sessions (session affinity)</h3>
+      <p>Mặc định ALB định tuyến <b>mỗi request độc lập</b>. <span class="t" data-vi="Phiên dính">Sticky sessions</span> gắn phiên của user với <b>một target cụ thể</b> – hữu ích cho server lưu trạng thái phiên cục bộ. Client phải hỗ trợ cookie. Bật ở <b>cấp target group</b>.</p>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Duration-based (LB-generated cookie)</h4>
+          <ul>
+            <li>ALB tạo cookie <code>AWSALB</code> (kèm <code>AWSALBCORS</code> cho request CORS), mã hóa bằng key xoay vòng.</li>
+            <li>Thời lượng stickiness <b>1 giây – 7 ngày</b>, mặc định <b>1 ngày</b>.</li>
+            <li>Dùng khi ứng dụng <b>không có</b> session cookie riêng.</li>
+            <li>Chỉ dùng được ở <b>một</b> tầng ALB (tên <code>AWSALB</code> là duy nhất).</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Application-based (app cookie)</h4>
+          <ul>
+            <li>Target đặt <b>custom cookie</b> (tên do bạn khai báo); ALB sinh thêm cookie <code>AWSALBAPP-*</code>.</li>
+            <li>Tên không được dùng tiền tố <code>AWSALB</code>, <code>AWSALBAPP</code>, <code>AWSALBTG</code>.</li>
+            <li>Thời lượng 1 giây – 7 ngày, mặc định 1 ngày.</li>
+            <li>Dùng được qua <b>nhiều tầng</b> ALB; <b>không</b> dùng với weighted target groups.</li>
+          </ul></div>
+      </div>
+      <ul>
+        <li>Target của phiên <b>unhealthy</b> hoặc đã deregister ⇒ ALB chọn target mới và cập nhật cookie (stickiness không “cứu” được target chết).</li>
+        <li>Forward tới <b>nhiều target group</b> mà có TG bật stickiness ⇒ phải bật <b>target group stickiness</b> (cookie <code>AWSALBTG</code>).</li>
+        <li>Sticky sessions <b>không hỗ trợ</b> khi cross-zone tắt ở target group, và không dùng với routing algorithm weighted random.</li>
+        <li>Mặt trái: tải <b>phân bố không đều</b>, scale out không giúp ngay cho user đã “dính”. Kiến trúc tốt hơn: đưa session ra <b>ElastiCache / DynamoDB</b> để server <b>stateless</b>.</li>
+      </ul>
+
+      <h3>Deregistration delay (connection draining)</h3>
+      <ul>
+        <li>Khi target bị <b>deregister</b> (Auto Scaling scale in, bảo trì, deploy), LB <b>ngừng gửi request mới</b> và đưa target vào trạng thái <code>draining</code> để các <b>request đang xử lý (in-flight)</b> hoàn tất.</li>
+        <li><code>deregistration_delay.timeout_seconds</code>: <b>0–3.600 giây</b>, mặc định <b>300 giây</b>. Hết thời gian ⇒ target thành <code>unused</code>; nếu thuộc Auto Scaling group thì có thể bị terminate và thay thế.</li>
+        <li>Target không còn request/kết nối nào ⇒ ALB hoàn tất ngay, không chờ hết delay. Target tự đóng kết nối trước khi hết delay ⇒ client nhận lỗi 5xx.</li>
+        <li>NLB: khuyến nghị ≥ 120 giây; bật <code>deregistration_delay.connection_termination.enabled</code> để <b>đóng hẳn</b> kết nối khi hết timeout (mặc định bật cho UDP/TCP_UDP).</li>
+        <li>Tên gọi “<b>connection draining</b>” là thuật ngữ của Classic Load Balancer; ở ALB/NLB nó chính là deregistration delay – đề dùng cả hai cách gọi.</li>
+      </ul>
+
+      <h3>Slow start mode (ALB)</h3>
+      <ul>
+        <li>Mặc định target mới nhận <b>đủ phần</b> traffic ngay khi qua health check đầu tiên. <b>Slow start</b> tăng <b>tuyến tính</b> số request gửi tới target mới trong <b>30–900 giây</b> (mặc định 0 = tắt) – cho ứng dụng thời gian warm up cache, JIT…</li>
+        <li>Chỉ dùng với <b>round robin</b>; không dùng với least outstanding requests hay weighted random. Target chỉ vào slow start khi đã có ít nhất một target khỏe không ở slow start.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – sticky, draining, slow start</span>
+        <ul>
+          <li>“<i>Users are logged out / lose their shopping cart when requests go to different instances</i>” ⇒ nhanh nhất: bật <b>sticky sessions</b>; bền vững hơn: lưu session vào <b>ElastiCache/DynamoDB</b>.</li>
+          <li>“<i>In-flight requests fail when Auto Scaling terminates instances</i>” ⇒ tăng <b>deregistration delay</b> (connection draining).</li>
+          <li>“<i>Deployment takes too long because instances stay in draining for 5 minutes, requests are short</i>” ⇒ <b>giảm</b> deregistration delay.</li>
+          <li>“<i>Newly launched instances are overwhelmed until caches warm up</i>” ⇒ <b>slow start</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: SSL/TLS & SNI ===================== -->
+      <h2 id="ssl-tls"><img src="../assets/icons/svc/AWS-Certificate-Manager.svg" alt="">SSL/TLS termination &amp; SNI</h2>
+      <p class="lead">Với <b>HTTPS listener</b> (ALB) hoặc <b>TLS listener</b> (NLB), load balancer dùng <span class="t" data-vi="Chứng chỉ máy chủ">server certificate</span> X.509 để <b>terminate</b> kết nối front-end, giải mã request rồi mới gửi tới target – gọi là <span class="t" data-vi="Kết thúc SSL/TLS tại bộ cân bằng tải">SSL/TLS termination (offloading)</span>. Bạn cũng phải chọn một <span class="t" data-vi="Chính sách bảo mật TLS">security policy</span> – tổ hợp protocol + cipher dùng để thương lượng với client (vd <code>ELBSecurityPolicy-TLS13-1-2-2021-06</code>).</p>
+
+      <h3>Nguồn certificate</h3>
+      <ul>
+        <li>Khuyến nghị dùng <b>AWS Certificate Manager (ACM)</b>: RSA 2048/3072/4096-bit và ECDSA; certificate do ACM cấp được <b>tự động gia hạn</b> (managed renewal).</li>
+        <li>Certificate <b>import</b> vào ACM: bạn tự theo dõi và gia hạn. Certificate upload vào <b>IAM</b>: phải tạo mới, thêm vào LB, gỡ cái hết hạn.</li>
+        <li>Wildcard <code>*.example.com</code> bảo vệ <code>a.example.com</code>, <code>b.example.com</code> (một cấp subdomain) nhưng <b>không</b> bảo vệ <code>example.com</code> hay <code>x.y.example.com</code>.</li>
+      </ul>
+
+      <h3>Default certificate, certificate list &amp; SNI</h3>
+      <ul>
+        <li>Tạo HTTPS listener phải chỉ định <b>đúng một</b> <b>default certificate</b>.</li>
+        <li>Thêm nhiều certificate vào <b>certificate list</b> ⇒ <b>một listener, một port 443</b> phục vụ <b>nhiều domain</b>, mỗi domain một certificate. Đây là nhờ <span class="t" data-vi="Chỉ báo tên máy chủ">Server Name Indication (SNI)</span>: client gửi hostname trong TLS handshake, load balancer chọn certificate khớp.</li>
+        <li><b>Smart certificate selection</b>: nhiều certificate cùng khớp thì ưu tiên theo thứ tự: ECDSA hơn RSA ⇒ chưa hết hạn ⇒ hash mạnh hơn (SHA) ⇒ key dài hơn ⇒ validity period.</li>
+        <li>Default certificate được dùng khi client <b>không gửi SNI</b> hoặc không certificate nào khớp hostname.</li>
+        <li>SNI có ở <b>ALB</b> và <b>NLB</b> (TLS listener). CLB thì <b>không</b> hỗ trợ SNI (mỗi CLB một certificate) – lý do phổ biến để migrate.</li>
+      </ul>
+
+      <h3>Các mô hình mã hóa</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Mô hình</th><th>Cấu hình</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><b>Termination tại LB</b></td><td>ALB HTTPS listener / NLB TLS listener ⇒ target HTTP/TCP</td><td>Offload CPU mã hóa; target nhận plaintext trong VPC.</td></tr>
+          <tr><td><b>Re-encryption (end-to-end)</b></td><td>HTTPS listener ⇒ target group HTTPS (ALB) / TLS (NLB)</td><td>LB giải mã rồi mã hóa lại tới target; LB <b>không kiểm tra</b> certificate trên target (self-signed được) vì traffic trong VPC đã được xác thực ở mức packet.</td></tr>
+          <tr><td><b>Passthrough</b></td><td>NLB <b>TCP listener 443</b> ⇒ target TCP 443</td><td>LB <b>không giải mã</b>; certificate nằm trên target. Dùng khi compliance cấm LB thấy plaintext hoặc cần mTLS trên target.</td></tr>
+          <tr><td><b>Mutual TLS (mTLS)</b></td><td>ALB HTTPS listener: <b>passthrough</b> hoặc <b>verify with trust store</b></td><td>Xác thực certificate của client. NLB TLS listener không hỗ trợ mTLS.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – SSL/TLS</span>
+        <ul>
+          <li>“<i>Host multiple HTTPS websites with different domain names / certificates on a single load balancer</i>” ⇒ <b>ALB (hoặc NLB) + nhiều certificate + SNI</b>.</li>
+          <li>“<i>Offload SSL/TLS to reduce CPU load on web servers</i>” ⇒ HTTPS listener trên ALB với certificate từ <b>ACM</b>.</li>
+          <li>“<i>Certificates must renew automatically with least operational overhead</i>” ⇒ <b>ACM-issued certificate</b> (không phải import).</li>
+          <li>“<i>End-to-end encryption, the load balancer must not terminate TLS</i>” ⇒ <b>NLB TCP passthrough</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 10: SO SÁNH ===================== -->
+      <h2 id="so-sanh"><img src="../assets/icons/svc/Elastic-Load-Balancing.svg" alt="">So sánh tổng hợp ALB – NLB – GWLB</h2>
+      <p class="lead">Bảng dưới gom các khác biệt đã học – đây là “bảng tra” khi đề hỏi <i>which load balancer should the solutions architect use?</i></p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Application LB</th><th>Network LB</th><th>Gateway LB</th></tr></thead>
+        <tbody>
+          <tr><td>OSI layer</td><td>7 (application)</td><td>4 (transport)</td><td>3 (network)</td></tr>
+          <tr><td>Protocol listener</td><td>HTTP, HTTPS (HTTP/2, gRPC, WebSockets)</td><td>TCP, UDP, TLS, TCP_UDP, QUIC, TCP_QUIC</td><td>Mọi IP packet, mọi port; GENEVE 6081 tới appliance</td></tr>
+          <tr><td>Routing</td><td>Rule theo path, host, header, method, query, source IP</td><td>Flow hash (5-tuple + sequence với TCP)</td><td>Flow hash 5/3/2-tuple, flow stickiness</td></tr>
+          <tr><td>Target type</td><td>instance, ip, <b>lambda</b></td><td>instance, ip, <b>alb</b></td><td>instance, ip (appliance)</td></tr>
+          <tr><td>IP của LB</td><td>Thay đổi – dùng DNS name</td><td><b>IP tĩnh mỗi AZ</b>, gắn được <b>Elastic IP</b></td><td>Truy cập qua GWLB endpoint</td></tr>
+          <tr><td>Cross-zone mặc định</td><td class="yes">Luôn bật (tắt được ở TG)</td><td class="no">Tắt</td><td class="no">Tắt</td></tr>
+          <tr><td>Security group</td><td class="yes">Có</td><td>Có – chỉ gắn được <b>lúc tạo</b></td><td class="no">Không (SG đặt trên appliance)</td></tr>
+          <tr><td>IP client tới target</td><td>Qua <code>X-Forwarded-For</code></td><td>Client IP preservation / Proxy protocol v2</td><td>Gói nguyên vẹn trong GENEVE</td></tr>
+          <tr><td>TLS</td><td>Termination, SNI, mTLS, re-encryption</td><td>Termination (TLS listener), SNI, passthrough (TCP)</td><td>Không terminate</td></tr>
+          <tr><td>Sticky sessions</td><td>Cookie (duration/app-based)</td><td>Source IP</td><td>Flow stickiness</td></tr>
+          <tr><td>Tích hợp nổi bật</td><td>AWS WAF, Cognito/OIDC auth, Lambda, ECS</td><td>PrivateLink endpoint service, Global Accelerator</td><td>Firewall/IDS/IPS bên thứ ba</td></tr>
+          <tr><td>Use case điển hình</td><td>Web app, microservices, container, API HTTP</td><td>Game, IoT, VoIP, TCP/UDP hiệu năng cực cao, IP tĩnh</td><td>Kiểm tra bảo mật tập trung mọi traffic</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – chọn sai loại LB</span>
+        <ul>
+          <li>Đề cần <b>UDP</b> mà chọn ALB ⇒ sai (ALB chỉ HTTP/HTTPS).</li>
+          <li>Đề cần <b>path-based routing</b> mà chọn NLB ⇒ sai (NLB không đọc URL) – trừ khi đề cần thêm IP tĩnh ⇒ NLB ⇒ ALB.</li>
+          <li>Đề cần <b>Elastic IP cho load balancer</b> mà chọn ALB ⇒ sai.</li>
+          <li>Đề cần “<i>Lambda behind a load balancer</i>” mà chọn NLB ⇒ sai.</li>
+          <li>ELB là dịch vụ <b>regional</b>, không phân phối traffic giữa các Region. Đa Region ⇒ Route 53 (failover/latency routing) hoặc Global Accelerator.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải nhớ</span>
+        <ul>
+          <li><b>ELB</b>: phân phối traffic tới target khỏe trên nhiều AZ, tự scale, một DNS name (TTL 60 s). Node mỗi AZ; ALB cần ≥ 2 AZ, subnet /27 + 8 IP trống. Internet-facing (IP public) vs internal (IP private); target luôn nhận qua IP private.</li>
+          <li><b>Listener ⇒ rule (priority, default rule xét cuối) ⇒ target group (health check riêng)</b>. Target type: instance, ip (on-premises/peering), lambda (chỉ ALB), alb (chỉ NLB); không đổi sau khi tạo.</li>
+          <li><b>ALB</b> (L7): path/host/header/method/query/source-IP routing; action forward (weight 0–999), redirect 301/302, fixed-response, authenticate; X-Forwarded-For; HTTP/2, WebSockets, gRPC; WAF; idle timeout 60 s; round robin / least outstanding requests / weighted random.</li>
+          <li><b>NLB</b> (L4): TCP/UDP/TLS, hàng triệu req/s, <b>IP tĩnh + Elastic IP mỗi AZ</b>, client IP preservation, Proxy protocol v2, TCP passthrough, PrivateLink, SG chỉ gắn lúc tạo, cross-zone mặc định tắt (bật ⇒ phí data transfer).</li>
+          <li><b>GWLB</b> (L3): virtual appliance, <b>GENEVE UDP 6081</b>, GWLB endpoint làm next hop trong route table, flow stickiness 5-tuple, MTU 8.500.</li>
+          <li><b>Health check</b>: ALB mặc định HTTP / 30 s / timeout 5 s / healthy 5 / unhealthy 2 / code 200; NLB mặc định TCP. Mọi target unhealthy ⇒ <b>fail open</b>. Route 53 Evaluate target health ⇒ failover đa Region.</li>
+          <li><b>Cross-zone</b>: ALB luôn bật; NLB/GWLB mặc định tắt. Ví dụ 2+8 target: bật 10% mỗi target; tắt 25% / 6,25%.</li>
+          <li><b>Sticky sessions</b> (AWSALB / app cookie, 1 s – 7 ngày); <b>deregistration delay</b> 300 s (0–3.600) = connection draining; <b>slow start</b> 30–900 s, chỉ round robin.</li>
+          <li><b>TLS</b>: certificate ACM (tự gia hạn), default cert + certificate list + <b>SNI</b> cho nhiều domain; NLB TCP 443 để passthrough; mTLS chỉ trên ALB.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Elastic Load Balancing (ELB)</dt><dd><b>Cân bằng tải co giãn</b> – dịch vụ phân phối traffic tới target khỏe.</dd></div>
+        <div><dt>Load balancer node</dt><dd><b>Nút cân bằng tải</b> – thành phần của LB trong mỗi AZ đã bật.</dd></div>
+        <div><dt>Internet-facing / Internal load balancer</dt><dd><b>LB hướng Internet / LB nội bộ</b> – node có IP public / chỉ IP private.</dd></div>
+        <div><dt>Listener</dt><dd><b>Bộ lắng nghe</b> – kiểm tra kết nối theo protocol + port.</dd></div>
+        <div><dt>Listener rule / Default rule</dt><dd><b>Quy tắc định tuyến / Quy tắc mặc định</b> – priority, condition, action; default rule xét cuối.</dd></div>
+        <div><dt>Target group</dt><dd><b>Nhóm đích</b> – tập target nhận traffic, có health check riêng.</dd></div>
+        <div><dt>Target type</dt><dd><b>Loại đích</b> – instance, ip, lambda, alb.</dd></div>
+        <div><dt>Application Load Balancer (ALB)</dt><dd><b>Cân bằng tải tầng ứng dụng</b> – Layer 7.</dd></div>
+        <div><dt>Network Load Balancer (NLB)</dt><dd><b>Cân bằng tải tầng mạng</b> – Layer 4, IP tĩnh.</dd></div>
+        <div><dt>Gateway Load Balancer (GWLB)</dt><dd><b>Cân bằng tải cổng</b> – Layer 3 cho virtual appliance.</dd></div>
+        <div><dt>Gateway Load Balancer endpoint (GWLBE)</dt><dd><b>Điểm cuối GWLB</b> – VPC endpoint làm next hop tới GWLB.</dd></div>
+        <div><dt>Classic Load Balancer (CLB)</dt><dd><b>Bộ cân bằng tải thế hệ cũ</b> – nên migrate.</dd></div>
+        <div><dt>Path-based / Host-based routing</dt><dd><b>Định tuyến theo đường dẫn / theo tên miền</b> – điều kiện của ALB.</dd></div>
+        <div><dt>Weighted target groups</dt><dd><b>Nhóm đích có trọng số</b> – chia traffic theo weight 0–999.</dd></div>
+        <div><dt>Round robin / Least outstanding requests / Weighted random</dt><dd><b>Xoay vòng / Ít request tồn đọng nhất / Ngẫu nhiên có trọng số</b> – thuật toán của ALB.</dd></div>
+        <div><dt>Automatic Target Weights (ATW)</dt><dd><b>Tự động điều chỉnh trọng số target</b> – giảm traffic tới target bất thường.</dd></div>
+        <div><dt>Flow hash algorithm</dt><dd><b>Thuật toán băm luồng</b> – cách NLB/GWLB chọn target.</dd></div>
+        <div><dt>X-Forwarded-For</dt><dd><b>Header chứa IP client</b> do ALB thêm vào.</dd></div>
+        <div><dt>Client IP preservation</dt><dd><b>Giữ nguyên IP client</b> khi NLB chuyển tới target.</dd></div>
+        <div><dt>Proxy protocol v2</dt><dd><b>Giao thức proxy phiên bản 2</b> – header nhị phân mang thông tin kết nối gốc.</dd></div>
+        <div><dt>GENEVE</dt><dd><b>Giao thức đóng gói mạng ảo</b> – UDP 6081 giữa GWLB và appliance.</dd></div>
+        <div><dt>Flow stickiness</dt><dd><b>Dính luồng</b> – 5/3/2-tuple tới cùng appliance.</dd></div>
+        <div><dt>Health check</dt><dd><b>Kiểm tra sức khỏe</b> target theo target group.</dd></div>
+        <div><dt>Healthy / Unhealthy threshold</dt><dd><b>Ngưỡng khỏe / không khỏe</b> – số lần liên tiếp thành công/thất bại.</dd></div>
+        <div><dt>Fail open</dt><dd><b>Mở khi lỗi</b> – mọi target unhealthy thì gửi tới tất cả.</dd></div>
+        <div><dt>DNS failover / Routing failover</dt><dd><b>Chuyển đổi dự phòng qua DNS / qua định tuyến</b> – ngưỡng target group health.</dd></div>
+        <div><dt>Cross-zone load balancing</dt><dd><b>Cân bằng tải liên vùng</b> – node gửi tới target mọi AZ.</dd></div>
+        <div><dt>Zonal shift</dt><dd><b>Dịch chuyển khỏi vùng</b> – rút LB khỏi AZ bị suy giảm (ARC).</dd></div>
+        <div><dt>Sticky sessions (session affinity)</dt><dd><b>Phiên dính</b> – gắn user với một target bằng cookie/source IP.</dd></div>
+        <div><dt>Deregistration delay (connection draining)</dt><dd><b>Độ trễ hủy đăng ký / xả kết nối</b> – mặc định 300 giây.</dd></div>
+        <div><dt>Slow start mode</dt><dd><b>Chế độ khởi động chậm</b> – tăng dần traffic cho target mới.</dd></div>
+        <div><dt>SSL/TLS termination (offloading)</dt><dd><b>Kết thúc SSL/TLS tại bộ cân bằng tải</b>.</dd></div>
+        <div><dt>TLS passthrough</dt><dd><b>Chuyển tiếp nguyên trạng</b> – LB không giải mã (NLB TCP 443).</dd></div>
+        <div><dt>Server Name Indication (SNI)</dt><dd><b>Chỉ báo tên máy chủ</b> – nhiều certificate trên một listener.</dd></div>
+        <div><dt>Default certificate / Certificate list</dt><dd><b>Chứng chỉ mặc định / Danh sách chứng chỉ</b> của HTTPS/TLS listener.</dd></div>
+        <div><dt>Security policy (ELB)</dt><dd><b>Chính sách bảo mật TLS</b> – tổ hợp protocol và cipher.</dd></div>
+        <div><dt>Mutual TLS (mTLS)</dt><dd><b>TLS hai chiều</b> – xác thực cả certificate client; chỉ ALB.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="B">
+          <div class="qh">A company is decomposing a monolithic web application into microservices that run on Amazon ECS. Requests to /orders/* must go to the order service, requests to /catalog/* must go to the catalog service, and requests for the hostname admin.example.com must go to an admin service. The company wants to use a single load balancer and minimize operational overhead. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create a Network Load Balancer with one TCP listener per microservice on a different port.</li>
+            <li data-k="B">Create an Application Load Balancer with listener rules that use path-pattern and host-header conditions to forward to separate target groups.</li>
+            <li data-k="C">Create a Gateway Load Balancer and register each microservice as a virtual appliance.</li>
+            <li data-k="D">Create three Classic Load Balancers and use Amazon Route 53 weighted records to distribute traffic.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> ALB hoạt động ở Layer 7 và hỗ trợ <b>path conditions</b> (<code>/orders/*</code>, <code>/catalog/*</code>) và <b>host conditions</b> (<code>admin.example.com</code>) trên <b>một</b> load balancer, mỗi rule forward tới một target group riêng (ECS task đăng ký target type ip). <b>A sai</b>: NLB không đọc URL/hostname; tách port buộc client đổi cách gọi. <b>C sai</b>: GWLB dành cho virtual appliance (firewall, IDS/IPS), không định tuyến HTTP. <b>D sai</b>: nhiều load balancer, CLB là thế hệ cũ và Route 53 weighted không định tuyến theo path.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang tách một ứng dụng web nguyên khối (monolithic) thành các microservice chạy trên Amazon ECS. Request tới /orders/* phải được chuyển tới order service, request tới /catalog/* phải tới catalog service, và request cho hostname admin.example.com phải tới admin service. Công ty muốn dùng một load balancer duy nhất và giảm thiểu công sức vận hành. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Network Load Balancer với mỗi microservice một TCP listener trên một port khác nhau.</span><span class="why">Sai: NLB hoạt động ở Layer 4, không đọc được URL path hay hostname; tách theo port buộc client phải đổi cách gọi.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Application Load Balancer với các listener rule dùng điều kiện path-pattern và host-header để forward tới các target group riêng biệt.</span><span class="why">Đúng: ALB (Layer 7) hỗ trợ định tuyến theo path và host trên cùng một load balancer, mỗi rule forward tới target group của từng service.</span></li>
+              <li data-k="C"><span class="tv">Tạo một Gateway Load Balancer và đăng ký mỗi microservice như một virtual appliance.</span><span class="why">Sai: GWLB dành cho virtual appliance như firewall, IDS/IPS, không định tuyến HTTP theo path/host.</span></li>
+              <li data-k="D"><span class="tv">Tạo ba Classic Load Balancer và dùng bản ghi weighted của Amazon Route 53 để phân phối traffic.</span><span class="why">Sai: dùng nhiều load balancer trái yêu cầu "một load balancer", CLB là thế hệ cũ và Route 53 weighted chia theo tỉ lệ chứ không định tuyến theo path.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A financial company exposes a TCP-based trading API to partner firms. The partners' firewalls only allow outbound connections to a fixed set of IP addresses. The API runs on EC2 instances in two Availability Zones and must scale to millions of requests per second. Which solution should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">An Application Load Balancer with an Elastic IP address associated with each Availability Zone</li>
+            <li data-k="B">An Application Load Balancer, and provide the partners with the current IP addresses of the load balancer nodes</li>
+            <li data-k="C">A Classic Load Balancer with cross-zone load balancing enabled</li>
+            <li data-k="D">A Network Load Balancer with one Elastic IP address assigned per subnet</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> NLB tạo một ENI với <b>IP tĩnh mỗi AZ</b> và cho phép gắn <b>một Elastic IP cho mỗi subnet</b>; NLB hoạt động ở Layer 4 (TCP) và xử lý <b>hàng triệu request/giây</b>. <b>A sai</b>: ALB không hỗ trợ gắn Elastic IP. <b>B sai</b>: IP node của ALB thay đổi khi scale (DNS TTL 60 giây), không được hard-code. <b>C sai</b>: CLB là thế hệ trước, không có IP tĩnh.</div>
+          <div class="trans">
+            <div class="tq">Một công ty tài chính cung cấp một API giao dịch dựa trên TCP cho các công ty đối tác. Firewall của đối tác chỉ cho phép kết nối đi ra (outbound) tới một tập địa chỉ IP cố định. API chạy trên các EC2 instance ở hai Availability Zone và phải scale tới hàng triệu request mỗi giây. Solutions architect nên đề xuất giải pháp nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một Application Load Balancer với một Elastic IP address gắn cho mỗi Availability Zone</span><span class="why">Sai: ALB không hỗ trợ gắn Elastic IP và cũng không phù hợp cho API thuần TCP.</span></li>
+              <li data-k="B"><span class="tv">Một Application Load Balancer, và cung cấp cho đối tác các địa chỉ IP hiện tại của các node load balancer</span><span class="why">Sai: IP các node ALB thay đổi khi scale hoặc thay node, nên không thể hard-code vào firewall đối tác.</span></li>
+              <li data-k="C"><span class="tv">Một Classic Load Balancer có bật cross-zone load balancing</span><span class="why">Sai: CLB là thế hệ cũ, không cung cấp IP tĩnh nên không đáp ứng yêu cầu IP cố định.</span></li>
+              <li data-k="D"><span class="tv">Một Network Load Balancer với một Elastic IP address gán cho mỗi subnet</span><span class="why">Đúng: NLB hoạt động ở Layer 4 (TCP), xử lý hàng triệu request/giây và cho phép gắn một Elastic IP mỗi subnet/AZ – đối tác chỉ cần whitelist các IP cố định này.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A security team requires that all traffic entering and leaving a VPC be inspected by a fleet of third-party next-generation firewall appliances. The solution must scale the appliances automatically, remain highly available, and be transparent to the application servers. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Deploy the appliances behind a Gateway Load Balancer and create Gateway Load Balancer endpoints in the application VPC, then update route tables to use the endpoints as the next hop.</li>
+            <li data-k="B">Deploy the appliances behind an Application Load Balancer and point the internet gateway route table at the ALB.</li>
+            <li data-k="C">Deploy the appliances behind a Network Load Balancer with TLS listeners to decrypt and inspect the traffic.</li>
+            <li data-k="D">Install the firewall software on every application server and use security groups to block unwanted traffic.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Gateway Load Balancer được thiết kế để <b>triển khai, scale, quản lý virtual appliance</b> như firewall/IDS/IPS, đóng vai <b>transparent network gateway</b>; trao đổi với appliance bằng GENEVE (UDP 6081). <b>GWLB endpoint</b> được đặt làm <b>next hop</b> trong route table (ingress routing trên IGW và route 0.0.0.0/0 của subnet ứng dụng). <b>B sai</b>: ALB chỉ xử lý HTTP/HTTPS và không làm next hop trong route table. <b>C sai</b>: NLB không phải giải pháp chèn appliance trong suốt cho mọi gói IP. <b>D sai</b>: tốn vận hành, không tập trung, không phải appliance bên thứ ba được scale tự động.</div>
+          <div class="trans">
+            <div class="tq">Một nhóm bảo mật yêu cầu toàn bộ traffic vào và ra khỏi một VPC phải được kiểm tra bởi một nhóm thiết bị firewall thế hệ mới (next-generation firewall) của bên thứ ba. Giải pháp phải tự động scale các thiết bị này, duy trì tính sẵn sàng cao và trong suốt (transparent) đối với các application server. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Triển khai các appliance phía sau một Gateway Load Balancer, tạo các Gateway Load Balancer endpoint trong VPC ứng dụng, rồi cập nhật route table để dùng các endpoint làm next hop.</span><span class="why">Đúng: GWLB được thiết kế để triển khai, scale và đảm bảo HA cho virtual appliance như firewall một cách trong suốt; GWLB endpoint được đặt làm next hop trong route table để ép traffic đi qua appliance.</span></li>
+              <li data-k="B"><span class="tv">Triển khai các appliance phía sau một Application Load Balancer và trỏ route table của internet gateway tới ALB.</span><span class="why">Sai: ALB chỉ xử lý HTTP/HTTPS và không thể làm next hop trong route table.</span></li>
+              <li data-k="C"><span class="tv">Triển khai các appliance phía sau một Network Load Balancer với TLS listener để giải mã và kiểm tra traffic.</span><span class="why">Sai: NLB không phải giải pháp chèn appliance trong suốt cho mọi gói IP; TLS listener chỉ terminate TLS chứ không đưa toàn bộ traffic VPC qua firewall.</span></li>
+              <li data-k="D"><span class="tv">Cài phần mềm firewall trên từng application server và dùng security group để chặn traffic không mong muốn.</span><span class="why">Sai: không tập trung, tốn công vận hành, không trong suốt với server và không dùng nhóm appliance bên thứ ba được scale tự động.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a web application on EC2 instances in an Auto Scaling group behind a Network Load Balancer. The Auto Scaling group has 2 instances in us-east-1a and 6 instances in us-east-1b. Monitoring shows that the instances in us-east-1a are heavily overloaded while the instances in us-east-1b are underutilized. What should a solutions architect do to distribute traffic evenly across all instances?</div>
+          <ol class="opts">
+            <li data-k="A">Enable sticky sessions on the target group.</li>
+            <li data-k="B">Change the routing algorithm of the target group to least outstanding requests.</li>
+            <li data-k="C">Enable cross-zone load balancing on the Network Load Balancer.</li>
+            <li data-k="D">Increase the deregistration delay of the target group.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Với NLB, cross-zone load balancing <b>mặc định tắt</b>: mỗi node (nhận ~50% traffic) chỉ gửi tới target trong AZ của nó ⇒ 2 instance ở 1a chịu 25% mỗi cái, 6 instance ở 1b chỉ ~8,3%. Bật cross-zone ⇒ mỗi node phân phối tới cả 8 instance (12,5% mỗi instance). Lưu ý có phí data transfer giữa AZ. <b>A sai</b>: sticky sessions còn làm lệch tải hơn. <b>B sai</b>: least outstanding requests là thuật toán của <b>ALB</b>, không có ở NLB. <b>D sai</b>: deregistration delay chỉ ảnh hưởng target đang hủy đăng ký.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng web trên các EC2 instance trong một Auto Scaling group phía sau một Network Load Balancer. Auto Scaling group có 2 instance ở us-east-1a và 6 instance ở us-east-1b. Giám sát cho thấy các instance ở us-east-1a bị quá tải nặng trong khi các instance ở us-east-1b lại dùng rất ít tài nguyên. Solutions architect nên làm gì để phân phối traffic đều cho tất cả các instance?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật sticky sessions trên target group.</span><span class="why">Sai: sticky sessions gắn client vào một target cố định, càng làm lệch tải hơn chứ không cân bằng giữa các AZ.</span></li>
+              <li data-k="B"><span class="tv">Đổi thuật toán định tuyến của target group sang least outstanding requests.</span><span class="why">Sai: least outstanding requests là thuật toán của ALB, không có trên NLB; vấn đề gốc là phân phối theo AZ.</span></li>
+              <li data-k="C"><span class="tv">Bật cross-zone load balancing trên Network Load Balancer.</span><span class="why">Đúng: với NLB, cross-zone mặc định tắt nên mỗi node AZ (nhận ~50% traffic) chỉ gửi tới target cùng AZ; bật cross-zone giúp mỗi node chia đều cho cả 8 instance (có thể phát sinh phí truyền dữ liệu giữa AZ).</span></li>
+              <li data-k="D"><span class="tv">Tăng deregistration delay của target group.</span><span class="why">Sai: deregistration delay chỉ ảnh hưởng tới target đang bị hủy đăng ký, không thay đổi cách phân phối traffic.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A company hosts three customer-facing websites (www.example.com, shop.example.net, and blog.example.org) on the same fleet of EC2 instances. All sites must be served over HTTPS on port 443 by a single load balancer, and certificates must be renewed automatically. Which combination of steps should the solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Create an Application Load Balancer with an HTTPS listener on port 443 and add a certificate for each domain to the listener's certificate list so the load balancer uses SNI.</li>
+            <li data-k="B">Create a Classic Load Balancer with three HTTPS listeners on port 443, one for each domain.</li>
+            <li data-k="C">Request public certificates for the three domains from AWS Certificate Manager (ACM).</li>
+            <li data-k="D">Upload self-signed certificates to IAM and attach them to the target group.</li>
+            <li data-k="E">Use a single wildcard certificate *.example.com for all three websites.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> Certificate list + <b>SNI</b> cho phép <b>một HTTPS listener</b> trên cùng port 443 phục vụ nhiều domain, mỗi domain một certificate; load balancer chọn certificate theo hostname client gửi. Certificate do <b>ACM</b> cấp được <b>tự động gia hạn</b> (managed renewal). <b>B sai</b>: không thể có nhiều listener cùng port trên một LB, và CLB không hỗ trợ SNI. <b>D sai</b>: certificate ở IAM không tự gia hạn, self-signed không được trình duyệt tin cậy, và certificate gắn vào listener chứ không phải target group. <b>E sai</b>: wildcard <code>*.example.com</code> không bảo vệ <code>example.net</code> hay <code>example.org</code>.</div>
+          <div class="trans">
+            <div class="tq">Một công ty host ba website phục vụ khách hàng (www.example.com, shop.example.net và blog.example.org) trên cùng một nhóm EC2 instance. Tất cả các site phải được phục vụ qua HTTPS trên port 443 bởi một load balancer duy nhất, và certificate phải được gia hạn tự động. Solutions architect nên thực hiện kết hợp các bước nào? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Application Load Balancer với HTTPS listener trên port 443 và thêm certificate cho từng domain vào certificate list của listener để load balancer dùng SNI.</span><span class="why">Đúng: nhờ SNI, một HTTPS listener trên port 443 có thể phục vụ nhiều domain, load balancer chọn đúng certificate theo hostname client gửi.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Classic Load Balancer với ba HTTPS listener trên port 443, mỗi domain một listener.</span><span class="why">Sai: một load balancer không thể có nhiều listener trên cùng một port, và CLB không hỗ trợ SNI.</span></li>
+              <li data-k="C"><span class="tv">Yêu cầu public certificate cho ba domain từ AWS Certificate Manager (ACM).</span><span class="why">Đúng: certificate public do ACM cấp được gia hạn tự động (managed renewal), đáp ứng yêu cầu tự động gia hạn.</span></li>
+              <li data-k="D"><span class="tv">Upload các certificate tự ký (self-signed) lên IAM và gắn chúng vào target group.</span><span class="why">Sai: certificate trong IAM không tự gia hạn, self-signed không được trình duyệt tin cậy, và certificate gắn vào listener chứ không phải target group.</span></li>
+              <li data-k="E"><span class="tv">Dùng một wildcard certificate *.example.com duy nhất cho cả ba website.</span><span class="why">Sai: wildcard *.example.com chỉ bao các subdomain của example.com, không bảo vệ shop.example.net hay blog.example.org.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An e-commerce application runs on EC2 instances in an Auto Scaling group behind an Application Load Balancer. During scale-in events, customers report that some checkout requests fail with errors. The checkout requests can take up to 2 minutes to complete. What should the solutions architect do to resolve this issue with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Enable slow start mode on the target group with a duration of 120 seconds.</li>
+            <li data-k="B">Enable sticky sessions with a duration of 2 minutes.</li>
+            <li data-k="C">Disable cross-zone load balancing on the target group.</li>
+            <li data-k="D">Make sure the deregistration delay of the target group is longer than the maximum checkout request duration.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Khi Auto Scaling scale in, target bị deregister và vào trạng thái <code>draining</code>: ALB ngừng gửi request mới nhưng chờ <b>deregistration delay</b> (connection draining, 0–3.600 giây, mặc định 300) để <b>request in-flight hoàn tất</b> trước khi target được terminate. Đặt giá trị lớn hơn thời gian checkout dài nhất đảm bảo request không bị cắt. <b>A sai</b>: slow start áp dụng cho target <b>mới</b> đăng ký. <b>B sai</b>: stickiness không ngăn instance bị terminate. <b>C sai</b>: không liên quan tới việc hủy đăng ký target.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng thương mại điện tử chạy trên các EC2 instance trong một Auto Scaling group phía sau một Application Load Balancer. Trong các lần scale-in, khách hàng báo rằng một số request thanh toán (checkout) bị lỗi. Request checkout có thể mất tới 2 phút để hoàn tất. Solutions architect nên làm gì để khắc phục vấn đề này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật chế độ slow start trên target group với thời lượng 120 giây.</span><span class="why">Sai: slow start chỉ tăng dần traffic cho target mới đăng ký, không bảo vệ request đang chạy trên instance bị scale in.</span></li>
+              <li data-k="B"><span class="tv">Bật sticky sessions với thời lượng 2 phút.</span><span class="why">Sai: stickiness chỉ gắn user với một target, không ngăn instance bị terminate giữa chừng khi scale in.</span></li>
+              <li data-k="C"><span class="tv">Tắt cross-zone load balancing trên target group.</span><span class="why">Sai: cross-zone liên quan tới phân phối traffic giữa các AZ, không ảnh hưởng tới quá trình hủy đăng ký target.</span></li>
+              <li data-k="D"><span class="tv">Đảm bảo deregistration delay của target group dài hơn thời gian tối đa của một request checkout.</span><span class="why">Đúng: khi target bị deregister, ALB ngừng gửi request mới và chờ deregistration delay (connection draining) để request in-flight hoàn tất; đặt lớn hơn 2 phút giúp checkout không bị cắt ngang.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company deploys a new version of its application to a new target group behind an existing Application Load Balancer. The company wants to send 10% of production traffic to the new version, monitor error rates, and then gradually increase the percentage without changing DNS records. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create a second Application Load Balancer and use an Amazon Route 53 weighted routing policy.</li>
+            <li data-k="B">Modify the listener rule to use a forward action with two weighted target groups, setting weights of 90 and 10.</li>
+            <li data-k="C">Enable sticky sessions on the new target group with a duration of 10% of the default.</li>
+            <li data-k="D">Use a redirect action that returns HTTP 302 for 10% of requests to the new target group.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Action <code>forward</code> của ALB hỗ trợ <b>nhiều target group có trọng số</b> (0–999); weight 90/10 chia 90% – 10% và có thể điều chỉnh dần mà <b>không đổi DNS</b>. <b>A sai</b>: thêm load balancer và phụ thuộc DNS caching – đề yêu cầu không đổi DNS. <b>C sai</b>: sticky sessions không chia tỉ lệ traffic. <b>D sai</b>: redirect action không chọn ngẫu nhiên theo phần trăm và đổi URL của client.</div>
+          <div class="trans">
+            <div class="tq">Một công ty triển khai phiên bản mới của ứng dụng vào một target group mới phía sau một Application Load Balancer hiện có. Công ty muốn gửi 10% traffic production tới phiên bản mới, theo dõi tỉ lệ lỗi, rồi tăng dần tỉ lệ phần trăm mà không thay đổi bản ghi DNS. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Application Load Balancer thứ hai và dùng routing policy weighted của Amazon Route 53.</span><span class="why">Sai: phải thêm load balancer và chia traffic qua DNS (chịu ảnh hưởng DNS caching) – trái yêu cầu không thay đổi DNS.</span></li>
+              <li data-k="B"><span class="tv">Sửa listener rule để dùng forward action với hai target group có trọng số, đặt weight là 90 và 10.</span><span class="why">Đúng: forward action của ALB hỗ trợ weighted target groups, chia 90%/10% ngay tại load balancer và có thể điều chỉnh dần mà không đụng tới DNS.</span></li>
+              <li data-k="C"><span class="tv">Bật sticky sessions trên target group mới với thời lượng bằng 10% giá trị mặc định.</span><span class="why">Sai: sticky sessions chỉ giữ user ở một target, không có tác dụng chia tỉ lệ traffic.</span></li>
+              <li data-k="D"><span class="tv">Dùng redirect action trả về HTTP 302 cho 10% request tới target group mới.</span><span class="why">Sai: redirect action không chọn request theo phần trăm, và nó đổi URL phía client thay vì forward tới target group.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A healthcare company must ensure that patient data remains encrypted from the client all the way to the EC2 instances that run the application. Compliance rules state that no intermediate component, including the load balancer, may decrypt the traffic. The instances hold the TLS certificates. Which load balancer configuration meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">An Application Load Balancer with an HTTPS listener and an HTTPS target group</li>
+            <li data-k="B">A Network Load Balancer with a TLS listener that uses an ACM certificate</li>
+            <li data-k="C">A Network Load Balancer with a TCP listener on port 443 that forwards to a TCP target group on port 443</li>
+            <li data-k="D">An Application Load Balancer with an HTTP listener and mutual TLS enabled</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Tài liệu nêu rõ: nếu cần target tự giải mã thay vì load balancer, tạo <b>NLB với TCP listener port 443</b> – load balancer chuyển nguyên traffic đã mã hóa tới target (<b>passthrough</b>). <b>A sai</b>: ALB HTTPS listener <b>terminate</b> TLS rồi mã hóa lại – LB vẫn thấy plaintext. <b>B sai</b>: TLS listener của NLB cũng terminate TLS tại load balancer. <b>D sai</b>: HTTP listener không mã hóa; mTLS chỉ cấu hình trên HTTPS listener và ALB vẫn terminate TLS.</div>
+          <div class="trans">
+            <div class="tq">Một công ty y tế phải đảm bảo dữ liệu bệnh nhân luôn được mã hóa từ client cho tới tận các EC2 instance chạy ứng dụng. Quy định tuân thủ nêu rằng không thành phần trung gian nào, kể cả load balancer, được phép giải mã traffic. Các instance giữ TLS certificate. Cấu hình load balancer nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một Application Load Balancer với HTTPS listener và HTTPS target group</span><span class="why">Sai: HTTPS listener của ALB terminate TLS rồi mã hóa lại tới target – load balancer vẫn thấy dữ liệu plaintext.</span></li>
+              <li data-k="B"><span class="tv">Một Network Load Balancer với TLS listener dùng certificate của ACM</span><span class="why">Sai: TLS listener của NLB cũng terminate TLS tại load balancer, vi phạm quy định không giải mã ở trung gian.</span></li>
+              <li data-k="C"><span class="tv">Một Network Load Balancer với TCP listener trên port 443 forward tới một TCP target group trên port 443</span><span class="why">Đúng: TCP listener chuyển nguyên traffic đã mã hóa tới target (TLS passthrough), chỉ instance giữ certificate mới giải mã – đáp ứng mã hóa end-to-end.</span></li>
+              <li data-k="D"><span class="tv">Một Application Load Balancer với HTTP listener và bật mutual TLS</span><span class="why">Sai: HTTP listener không mã hóa; mTLS chỉ cấu hình được trên HTTPS listener và ALB vẫn terminate TLS.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company runs a stateful web application on EC2 instances behind an Application Load Balancer. Users report that they are randomly logged out because session data is stored in memory on each instance. The company wants a quick fix now and a long-term design that allows instances to be added or removed freely. Which actions should the solutions architect recommend? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Switch to a Network Load Balancer with source IP stickiness.</li>
+            <li data-k="B">Enable duration-based sticky sessions (load balancer generated cookie) on the target group as a short-term fix.</li>
+            <li data-k="C">Disable cross-zone load balancing so that each user stays in one Availability Zone.</li>
+            <li data-k="D">Increase the health check interval so that instances are not removed from service.</li>
+            <li data-k="E">Store session state in a shared external store such as Amazon ElastiCache or Amazon DynamoDB so the instances become stateless.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> <b>Sticky sessions</b> (cookie <code>AWSALB</code>) gắn user với cùng một target – sửa nhanh mà không đổi code. Về lâu dài, đưa session ra <b>ElastiCache/DynamoDB</b> giúp server <b>stateless</b>, Auto Scaling thêm/bớt instance thoải mái và tải phân bố đều. <b>A sai</b>: đổi sang NLB mất routing Layer 7; source IP stickiness dồn mọi user sau NAT vào một target. <b>C sai</b>: tắt cross-zone không giữ user trên một instance, và sticky sessions còn không hoạt động khi cross-zone tắt. <b>D sai</b>: health check không liên quan tới việc mất session.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng web có trạng thái (stateful) trên các EC2 instance phía sau một Application Load Balancer. Người dùng báo rằng họ bị đăng xuất ngẫu nhiên vì dữ liệu session được lưu trong bộ nhớ của từng instance. Công ty muốn một cách sửa nhanh ngay bây giờ và một thiết kế dài hạn cho phép thêm hoặc bớt instance thoải mái. Solutions architect nên đề xuất những hành động nào? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển sang Network Load Balancer với stickiness theo source IP.</span><span class="why">Sai: chuyển sang NLB mất khả năng định tuyến Layer 7, và stickiness theo source IP dồn mọi user sau cùng NAT vào một target.</span></li>
+              <li data-k="B"><span class="tv">Bật sticky sessions theo thời lượng (cookie do load balancer tạo) trên target group như một cách sửa ngắn hạn.</span><span class="why">Đúng: sticky sessions (cookie AWSALB) gắn mỗi user với cùng một target nên session trong bộ nhớ không bị mất – sửa nhanh mà không cần đổi code.</span></li>
+              <li data-k="C"><span class="tv">Tắt cross-zone load balancing để mỗi user ở lại trong một Availability Zone.</span><span class="why">Sai: tắt cross-zone không giữ user trên cùng một instance, và sticky sessions còn không hoạt động khi cross-zone bị tắt.</span></li>
+              <li data-k="D"><span class="tv">Tăng khoảng thời gian health check để các instance không bị loại khỏi dịch vụ.</span><span class="why">Sai: health check không phải nguyên nhân mất session; session mất do request đi tới instance khác.</span></li>
+              <li data-k="E"><span class="tv">Lưu trạng thái session trong một kho dùng chung bên ngoài như Amazon ElastiCache hoặc Amazon DynamoDB để các instance trở thành stateless.</span><span class="why">Đúng: đưa session ra kho dùng chung làm server stateless, nên Auto Scaling thêm/bớt instance tự do mà user không bị đăng xuất – giải pháp dài hạn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company registers EC2 instances with a new Application Load Balancer target group. All targets show as unhealthy, but the application responds correctly when accessed directly from within the VPC. The health check uses HTTP on port 8080 with the path /health. The instances' security group allows inbound HTTP on port 80 from the load balancer's security group. What is the MOST likely cause?</div>
+          <ol class="opts">
+            <li data-k="A">The instances' security group does not allow inbound traffic on the health check port 8080 from the load balancer's security group.</li>
+            <li data-k="B">Cross-zone load balancing is disabled on the Application Load Balancer.</li>
+            <li data-k="C">The target group is using the round robin routing algorithm instead of least outstanding requests.</li>
+            <li data-k="D">The Application Load Balancer must be deployed in private subnets to perform health checks.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Health check được gửi tới <b>HealthCheckPort</b> (8080). Tài liệu yêu cầu security group phải cho phép traffic trên <b>cả listener port và health check port</b>; SG của instance chỉ mở port 80 nên health check bị chặn ⇒ <code>Target.Timeout</code> ⇒ unhealthy. <b>B sai</b>: ALB luôn bật cross-zone ở cấp load balancer, và cross-zone không ảnh hưởng health check. <b>C sai</b>: thuật toán routing không ảnh hưởng health check. <b>D sai</b>: ALB internet-facing nằm ở public subnet vẫn health check target qua IP private bình thường.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đăng ký các EC2 instance vào một target group của Application Load Balancer mới. Tất cả các target đều hiển thị unhealthy, nhưng ứng dụng phản hồi đúng khi được truy cập trực tiếp từ bên trong VPC. Health check dùng HTTP trên port 8080 với path /health. Security group của các instance cho phép HTTP inbound trên port 80 từ security group của load balancer. Nguyên nhân MOST likely (có khả năng nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Security group của các instance không cho phép traffic inbound trên port health check 8080 từ security group của load balancer.</span><span class="why">Đúng: health check được gửi tới port 8080 nhưng SG chỉ mở port 80, nên health check bị chặn và timeout – mọi target bị đánh dấu unhealthy.</span></li>
+              <li data-k="B"><span class="tv">Cross-zone load balancing bị tắt trên Application Load Balancer.</span><span class="why">Sai: ALB luôn bật cross-zone ở cấp load balancer, và cross-zone không ảnh hưởng tới health check.</span></li>
+              <li data-k="C"><span class="tv">Target group đang dùng thuật toán định tuyến round robin thay vì least outstanding requests.</span><span class="why">Sai: thuật toán định tuyến chỉ quyết định cách chia request, không ảnh hưởng tới kết quả health check.</span></li>
+              <li data-k="D"><span class="tv">Application Load Balancer phải được triển khai trong private subnet thì mới thực hiện được health check.</span><span class="why">Sai: ALB internet-facing trong public subnet vẫn health check target qua IP private bình thường.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/userguide/how-elastic-load-balancing-works.html" target="_blank" rel="noopener">How Elastic Load Balancing works</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/application-load-balancers.html" target="_blank" rel="noopener">Application Load Balancers</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-listeners.html" target="_blank" rel="noopener">Listeners for your Application Load Balancers</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/rule-condition-types.html" target="_blank" rel="noopener">Condition types for listener rules</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/rule-action-types.html" target="_blank" rel="noopener">Action types for listener rules</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-target-groups.html" target="_blank" rel="noopener">Target groups for your Application Load Balancers</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-target-group-attributes.html" target="_blank" rel="noopener">Edit target group attributes (ALB): deregistration delay, routing algorithm, slow start, sticky sessions</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/target-group-health-checks.html" target="_blank" rel="noopener">Health checks for Application Load Balancer target groups</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html" target="_blank" rel="noopener">Create an HTTPS listener for your Application Load Balancer</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/https-listener-certificates.html" target="_blank" rel="noopener">SSL certificates for your Application Load Balancer</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-listeners.html" target="_blank" rel="noopener">Listeners for your Network Load Balancers</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-target-groups.html" target="_blank" rel="noopener">Target groups for your Network Load Balancers</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/network/edit-target-group-attributes.html" target="_blank" rel="noopener">Edit target group attributes (NLB): client IP preservation, proxy protocol, cross-zone</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/network/target-group-health-checks.html" target="_blank" rel="noopener">Health checks for Network Load Balancer target groups</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-security-groups.html" target="_blank" rel="noopener">Update the security groups for your Network Load Balancer</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/gateway/gateway-load-balancers.html" target="_blank" rel="noopener">Gateway Load Balancers</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/gateway/getting-started.html" target="_blank" rel="noopener">Getting started with Gateway Load Balancers</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

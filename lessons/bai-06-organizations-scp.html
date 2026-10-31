@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 6 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Organizations.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="6" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Giải thích vì sao AWS khuyến nghị <span class="t" data-vi="Môi trường nhiều tài khoản">multi-account environment</span> và mô tả cấu trúc của <b>AWS Organizations</b>: root, <span class="t" data-vi="Đơn vị tổ chức">organizational unit (OU)</span>, management account, member account.</li>
+          <li>Phân biệt hai <span class="t" data-vi="Bộ tính năng">feature sets</span>: <b>Consolidated billing</b> và <b>All features</b>; nắm lợi ích của consolidated billing (volume discount, chia sẻ Reserved Instances & Savings Plans).</li>
+          <li>Hiểu sâu <span class="t" data-vi="Chính sách kiểm soát dịch vụ">service control policy (SCP)</span>: ảnh hưởng tới ai, không ảnh hưởng tới ai, cách kế thừa Allow/Deny qua cây OU, chiến lược allow list vs deny list.</li>
+          <li>Biết các loại organization policy khác (RCP, tag policy, backup policy, AI services opt-out…) và các dịch vụ tích hợp (CloudTrail organization trail, AWS RAM, delegated administrator).</li>
+          <li>Mô tả <b>AWS Control Tower</b>: <span class="t" data-vi="Vùng hạ cánh">landing zone</span>, Account Factory, các loại <span class="t" data-vi="Rào chắn kiểm soát">controls (guardrails)</span> preventive / detective / proactive.</li>
+          <li>Thiết kế truy cập tập trung cho nhân sự bằng <b>AWS IAM Identity Center</b>: identity source, <span class="t" data-vi="Bộ quyền">permission set</span>, AWS access portal.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Nối tiếp Bài 3 – 5</span>
+        <p>Bài 3 đã giới thiệu management account / member account và <b>centralized root access</b>; Bài 5 đã đặt SCP và RCP vào đúng vị trí trong <b>policy evaluation logic</b> (SCP/RCP là “cổng giao”, không cấp quyền). Bài này nhìn từ <b>góc độ tổ chức</b>: dựng cây tài khoản thế nào, gắn SCP ở đâu, kế thừa ra sao, và dùng Control Tower + IAM Identity Center để vận hành hàng chục – hàng trăm tài khoản với <i>least operational overhead</i>.</p></div>
+
+      <!-- ===================== PHẦN 1: VÌ SAO MULTI-ACCOUNT ===================== -->
+      <h2 id="multi-account"><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">Vì sao cần nhiều tài khoản? Giới thiệu AWS Organizations</h2>
+      <p class="lead"><b>AWS Organizations</b> giúp bạn <b>quản lý và quản trị tập trung</b> môi trường AWS khi tài nguyên tăng trưởng: tạo tài khoản và cấp phát tài nguyên, nhóm tài khoản để tổ chức luồng công việc, áp dụng policy để <span class="t" data-vi="Quản trị, kiểm soát tuân thủ">governance</span>, và đơn giản hóa thanh toán bằng <b>một phương thức thanh toán duy nhất</b> cho mọi tài khoản.</p>
+
+      <p>Tài liệu AWS nhấn mạnh: <b>AWS account là ranh giới tự nhiên</b> cho quyền hạn, bảo mật, chi phí và workload. Dùng <span class="t no-vi">multi-account environment</span> là <b>best practice</b> khi mở rộng trên cloud, vì nó:</p>
+      <ul>
+        <li>Tạo <b>ranh giới thanh toán</b> (billing boundary) – dễ biết dự án/phòng ban nào tiêu bao nhiêu.</li>
+        <li><b>Cô lập tài nguyên</b> để bảo mật – sự cố ở account Dev không lan sang Prod (giảm <i>blast radius</i>).</li>
+        <li>Cho cá nhân và đội nhóm sự <b>linh hoạt</b>, đồng thời dễ thích nghi với quy trình mới.</li>
+      </ul>
+      <p>Lưu ý phân biệt: <b>AWS account ≠ user</b>. Account là <i>container</i> chứa tài nguyên và có năng lực quản trị truy cập + billing; còn user là định danh tạo bằng IAM (IAM user với long-term credentials hoặc IAM role với short-term credentials). Một account thường chứa nhiều user và role.</p>
+
+      <h3>Organizations làm được gì? (theo trang “Features”)</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">
+          <div><h4>Manage your AWS accounts</h4><span class="vi">Tạo tài khoản bằng lập trình</span><p>Tạo account bằng CLI/SDK/API; cấp sẵn tài nguyên và quyền khuyến nghị cho account mới bằng <b>AWS CloudFormation StackSets</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">
+          <div><h4>Define &amp; manage organization</h4><span class="vi">Nhóm tài khoản thành OU</span><p>Nhóm account phục vụ cùng ứng dụng/dịch vụ vào OU; dùng tag policy để phân loại tài nguyên; ủy quyền dịch vụ cho account khác.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-GuardDuty.svg" alt="">
+          <div><h4>Secure &amp; monitor</h4><span class="vi">Bảo mật &amp; giám sát</span><p>Cấp read-only security cho đội bảo mật trên mọi account; dùng Amazon GuardDuty, IAM Access Analyzer, Amazon Macie ở phạm vi tổ chức.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">
+          <div><h4>Control access &amp; permissions</h4><span class="vi">Kiểm soát truy cập</span><p>IAM Identity Center để đăng nhập bằng directory; SCP, RCP, chat applications policies để giới hạn quyền.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Resource-Access-Manager.svg" alt="">
+          <div><h4>Share resources</h4><span class="vi">Chia sẻ tài nguyên</span><p><b>AWS RAM</b> chia sẻ VPC subnet cho cả tổ chức; AWS License Manager; AWS Service Catalog chia sẻ danh mục sản phẩm IT.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">
+          <div><h4>Audit for compliance</h4><span class="vi">Kiểm toán tuân thủ</span><p>Bật CloudTrail trên mọi account – log <b>member account không tắt hoặc sửa được</b>; AWS Backup policy; AWS Config cho cấu hình khuyến nghị.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">
+          <div><h4>Centrally manage billing</h4><span class="vi">Quản lý chi phí tập trung</span><p><b>Một hóa đơn hợp nhất</b>; xem usage toàn tổ chức bằng AWS Cost Explorer; tối ưu compute với AWS Compute Optimizer.</p></div></div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><b>Global</b><span>Organizations là dịch vụ global, vật lý đặt tại us-east-1 (N. Virginia)</span></div>
+        <div class="stat"><b>1 root</b><span>mỗi organization có đúng một root, tạo tự động</span></div>
+        <div class="stat"><b>1 org</b><span>một member account chỉ thuộc một organization tại một thời điểm</span></div>
+        <div class="stat"><b>Miễn phí</b><span>consolidated billing không tính phí thêm</span></div>
+      </div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Hãy hình dung một <b>tập đoàn</b>. Mỗi AWS account là một <b>công ty con</b> có két sắt (tài nguyên), nhân viên (IAM user/role) và sổ sách riêng. AWS Organizations là <b>hội đồng quản trị tập đoàn</b>: chia công ty con thành các khối (OU), ban hành nội quy chung (SCP) mà giám đốc công ty con – kể cả “chủ tịch” root user của công ty con – cũng không được vượt, và gom mọi hóa đơn về <b>phòng tài chính tập đoàn</b> (management account) thanh toán một lần.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Centrally manage multiple AWS accounts</i>”, “<i>single bill</i>”, “<i>apply policies across accounts</i>” ⇒ <b>AWS Organizations</b>.</li>
+          <li>“<i>Isolate workloads / environments (dev, test, prod), limit blast radius, separate billing per department</i>” ⇒ <b>tách thành nhiều AWS account</b> trong cùng organization, không phải nhiều VPC hay nhiều IAM group trong một account.</li>
+          <li>“<i>Share a VPC subnet / Transit Gateway with other accounts in the organization</i>” ⇒ <b>AWS Resource Access Manager (RAM)</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: CẤU TRÚC ORGANIZATION ===================== -->
+      <h2 id="structure"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">Cấu trúc một organization: root, OU, management account, member account</h2>
+      <p class="lead">Một <span class="t" data-vi="Tổ chức">organization</span> là tập hợp các AWS account được quản lý tập trung theo <b>cấu trúc cây phân cấp</b>: <span class="t" data-vi="Gốc quản trị">root</span> ở trên cùng, các <span class="t" data-vi="Đơn vị tổ chức">organizational units (OUs)</span> lồng bên dưới. Mỗi account có thể nằm trực tiếp dưới root hoặc trong một OU bất kỳ.</p>
+
+      <p>Mỗi organization gồm: <b>1 management account</b>, <b>0+ member account</b>, <b>0+ OU</b> và <b>0+ policy</b>.</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">Organization (o-exampleorgid)</span>
+          <div class="grp plain"><span class="lbl">Root (r-xxxx) – FullAWSAccess + SCP “DenyLeaveOrganization”</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/AWS-Organizations_Management-Account.svg" alt="">Management account<small>payer · không bị SCP giới hạn<br>nên KHÔNG chứa workload</small></div>
+            </div>
+            <div class="row">
+              <div class="grp region"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">OU: Security</span>
+                <div class="row center">
+                  <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Log Archive<small>CloudTrail, Config logs</small></div>
+                  <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Audit / Security Tooling<small>delegated admin GuardDuty…</small></div>
+                </div>
+              </div>
+              <div class="grp region"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">OU: Workloads</span>
+                <div class="row">
+                  <div class="grp vpc"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">OU: Prod – SCP deny Region ngoài EU</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">App-A Prod</div><div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">App-B Prod</div></div>
+                  </div>
+                  <div class="grp vpc"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">OU: Non-Prod</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">App-A Dev</div><div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">App-A Test</div></div>
+                  </div>
+                </div>
+              </div>
+              <div class="grp region"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">OU: Sandbox</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Dev cá nhân<small>SCP chặn dịch vụ đắt tiền</small></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Một cây organization điển hình. Policy gắn ở <b>root</b> ảnh hưởng mọi OU và member account bên dưới; policy gắn ở <b>OU Prod</b> chỉ ảnh hưởng App-A Prod và App-B Prod. OU con kế thừa policy của OU cha <b>cộng thêm</b> policy gắn trực tiếp. Management account có thể đặt ở bất kỳ đâu trong cây, nhưng SCP không bao giờ giới hạn nó.</figcaption>
+      </figure>
+
+      <h3>Các thành phần</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Định nghĩa (theo tài liệu)</th><th>Điểm cần nhớ</th></tr></thead>
+        <tbody>
+          <tr><td><b>Root</b></td><td>Container cao nhất của cây, nằm trong management account, là điểm xuất phát để tổ chức account.</td><td>Chỉ có <b>1 root</b>. Authorization policy (SCP) gắn ở root áp dụng cho mọi OU + member account, <b>không áp dụng cho management account</b>. Declarative policy gắn ở root thì áp dụng <b>cả management account</b>.</td></tr>
+          <tr><td><b>Organizational unit (OU)</b></td><td>Nhóm các account trong organization; OU có thể chứa OU khác để tạo phân cấp.</td><td>Tối đa <b>5 cấp OU</b> dưới root; tối đa <b>2.000 OU</b>/organization. OU con kế thừa policy từ OU cha.</td></tr>
+          <tr><td><b>Management account</b></td><td>Account dùng để tạo organization; “chủ sở hữu cuối cùng” có quyền kiểm soát tối cao về security, hạ tầng, tài chính; đóng vai <b>payer account</b>.</td><td><b>Không đổi được</b> account nào là management account. Chỉ management account mới tạo account mới và mời account khác (delegated admin không làm được).</td></tr>
+          <tr><td><b>Member account</b></td><td>Mọi account khác trong organization.</td><td>Chỉ thuộc <b>một organization</b> tại một thời điểm; có thể được chỉ định làm delegated administrator.</td></tr>
+          <tr><td><b>Delegated administrator</b></td><td>Member account được management account ủy quyền quản lý Organizations policy hoặc một dịch vụ AWS tích hợp.</td><td>Hai loại: cho <b>Organizations</b> (quản lý/gắn policy) và cho <b>một AWS service</b> (vd GuardDuty, Security Hub, IAM Access Analyzer).</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp: đặt workload trong management account</span>
+        <p>AWS khuyến nghị chỉ dùng management account (cùng user/role của nó) cho <b>những tác vụ bắt buộc phải làm ở đó</b>, và để tài nguyên ở member account. Lý do: <b>SCP không giới hạn bất kỳ user hay role nào trong management account</b>. Đề hỏi “<i>how to restrict the management account with an SCP</i>” ⇒ không thể; hãy chuyển workload ra member account và dùng <b>delegated administrator</b> cho các dịch vụ bảo mật.</p></div>
+
+      <h3>Hai feature set</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">Consolidated billing</h4>
+          <ul>
+            <li>Chỉ cung cấp tính năng <b>thanh toán chung</b>.</li>
+            <li><b>Không</b> dùng được SCP/RCP và các policy khác; <b>không</b> tích hợp dịch vụ AWS ở phạm vi tổ chức.</li>
+            <li>Có thể nâng cấp lên All features: mọi <b>invited</b> member account phải chấp nhận (handshake <code>ENABLE_ALL_FEATURES</code>, hết hạn sau <b>90 ngày</b>).</li>
+          </ul></div>
+        <div style="--accent:#E7157B"><h4><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">All features (khuyến nghị, mặc định)</h4>
+          <ul>
+            <li>Gồm <b>toàn bộ</b> consolidated billing + năng lực quản trị.</li>
+            <li>Đặt policy tập trung (SCP, RCP, tag, backup…), ủy quyền delegated administrator.</li>
+            <li>Tích hợp dịch vụ AWS (CloudTrail, Config, GuardDuty, IAM Identity Center, Control Tower…) trên mọi member account.</li>
+          </ul></div>
+      </div>
+
+      <h3>Thêm account vào organization: tạo mới hoặc mời (invitation)</h3>
+      <ol class="steps">
+        <li><b>Tạo account mới</b> từ management account (console/CLI/API <code>CreateAccount</code>) – tối đa <b>5</b> account được tạo đồng thời. Account tạo bằng Organizations có sẵn một IAM role quản trị (mặc định tên <code>OrganizationAccountAccessRole</code>) tin cậy management account, để admin truy cập bằng <code>AssumeRole</code>.</li>
+        <li><b>Mời account có sẵn</b> (standalone) – thực hiện bằng <span class="t" data-vi="Bắt tay (trao đổi thông tin an toàn)">handshake</span> loại <code>INVITE</code>. Lời mời hết hạn sau <b>15 ngày</b>. Account được mời không tự có role quản trị – phải tự tạo role cho management account nếu cần.</li>
+        <li><b>Gỡ account</b>: account được tạo trong organization phải tồn tại tối thiểu <b>4 ngày</b> mới gỡ ra được. Member account rời organization thì không còn xem dữ liệu Cost Explorer của thời gian ở trong tổ chức (dữ liệu không bị xóa, management account vẫn xem được).</li>
+      </ol>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Quota (mặc định)</th><th>Giá trị</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td>Số account trong organization</td><td><b>10</b></td><td>Adjustable qua Service Quotas (chỉ management account yêu cầu); có thể lên tới 50.000 tùy điều kiện. Lời mời đang chờ cũng tính vào quota.</td></tr>
+          <tr><td>Số root</td><td>1</td><td></td></tr>
+          <tr><td>Số OU</td><td>2.000</td><td></td></tr>
+          <tr><td>Độ sâu OU</td><td>5 cấp dưới root</td><td></td></tr>
+          <tr><td>Số SCP trong organization</td><td>10.000</td><td>RCP: 2.000</td></tr>
+          <tr><td>Kích thước tối đa một SCP</td><td><b>10.240 ký tự</b></td><td>RCP: 5.120 ký tự. Console tự xóa khoảng trắng thừa; CLI/SDK lưu nguyên văn.</td></tr>
+          <tr><td>SCP gắn trực tiếp vào root / mỗi OU / mỗi account</td><td><b>Tối thiểu 1, tối đa 10</b></td><td>Không gỡ được SCP cuối cùng. Policy kế thừa không tính vào giới hạn. RCP: tối đa 5 (gồm cả RCPFullAWSAccess).</td></tr>
+          <tr><td>Số lần mời trong 24 giờ</td><td>20 (hoặc bằng max account nếu lớn hơn)</td><td>Lời mời được chấp nhận không tính.</td></tr>
+          <tr><td>Hết hạn handshake</td><td>Mời: 15 ngày · Enable all features: 90 ngày</td><td></td></tr>
+          <tr><td>Tag trên root/OU/account</td><td>50</td><td></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – thiết kế OU</span>
+        <ul>
+          <li>Thiết kế OU theo <b>chức năng / mức kiểm soát cần áp dụng</b> (Security, Infrastructure, Workloads-Prod, Workloads-NonProd, Sandbox, Suspended…), <b>không</b> theo sơ đồ tổ chức nhân sự. Lý do: policy gắn theo OU, nên account cần cùng một bộ control thì để cùng OU.</li>
+          <li>“<i>Apply the same restrictions to a subset of accounts</i>” ⇒ gom các account đó vào <b>một OU</b> rồi gắn SCP vào OU (thay vì gắn lẻ từng account).</li>
+          <li>“<i>Administrator needs access to a newly created member account</i>” ⇒ assume <code>OrganizationAccountAccessRole</code> từ management account.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: CONSOLIDATED BILLING ===================== -->
+      <h2 id="billing"><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">Consolidated billing – một hóa đơn, gộp usage, chia sẻ giảm giá</h2>
+      <p class="lead">Với <span class="t" data-vi="Thanh toán hợp nhất">consolidated billing</span>, mọi organization có một <b>management account trả tiền cho tất cả member account</b>. Tính năng này <b>không tốn thêm phí</b>.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Lợi ích (theo AWS Billing User Guide)</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><b>One bill</b></td><td>Một hóa đơn cho nhiều account (trong cùng một seller of record – SOR; nếu có account thuộc nhiều SOR thì mỗi SOR một hóa đơn).</td></tr>
+          <tr><td><b>Easy tracking</b></td><td>Theo dõi phí trên nhiều account và tải về dữ liệu cost &amp; usage tổng hợp; management account xem được bức tranh gộp và báo cáo chi phí từng member account.</td></tr>
+          <tr><td><b>Combined usage</b></td><td>Gộp usage của mọi account ⇒ <b>chia sẻ volume pricing discounts, Reserved Instance discounts và Savings Plans</b> ⇒ tổng chi phí thấp hơn so với các account đứng riêng.</td></tr>
+          <tr><td><b>No extra fee</b></td><td>Không phát sinh chi phí thêm.</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account Dev<small>S3: 30 TB</small></div>
+          <span class="arrow">usage</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account Prod<small>S3: 50 TB · có RI EC2 chưa dùng hết</small></div>
+          <span class="arrow">usage</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Organizations_Management-Account.svg" alt="">Management (payer) account<small>gộp 80 TB ⇒ bậc giá S3 rẻ hơn<br>RI/Savings Plans áp cho account khác</small></div>
+          <span class="arrow">1 invoice</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">AWS Cost Explorer<small>phân tích chi phí theo account</small></div>
+        </div>
+        <figcaption><b>Hình 2.</b> Consolidated billing coi cả organization như một account khi tính <b>bậc giá theo khối lượng</b> (volume tier) – ví dụ minh họa: hai account cùng dùng S3, tổng usage đạt bậc giá thấp hơn. Discount từ Reserved Instances / Savings Plans của account này có thể áp cho usage phù hợp ở account khác. Hóa đơn của member account chỉ mang tính tham khảo – management account có thể phân bổ lại phần giảm giá.</figcaption>
+      </figure>
+
+      <div class="callout note"><span class="ttl">Tắt chia sẻ discount</span>
+        <p>Theo kiến thức thi phổ biến: management account có thể <b>tắt RI/Savings Plans discount sharing</b> cho từng account trong Billing preferences. Khi tắt, RI/SP của account đó chỉ áp cho chính nó và account đó không hưởng RI/SP của account khác. Đề hay hỏi: “<i>A business unit must not share Reserved Instance discounts with other units</i>” ⇒ tắt discount sharing cho account đó.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – billing</span>
+        <ul>
+          <li>“<i>Company acquired another company and wants one bill / volume discounts across all accounts</i>” ⇒ mời account vào <b>AWS Organizations</b> (consolidated billing).</li>
+          <li>“<i>Track cost per department/project across accounts</i>” ⇒ mỗi department một account (hoặc OU) + Cost Explorer; dùng <b>cost allocation tags</b> và <b>tag policies</b> để chuẩn hóa tag.</li>
+          <li>Chỉ cần gộp hóa đơn, không cần policy ⇒ feature set <b>Consolidated billing</b> đủ; nhưng muốn dùng SCP ⇒ phải <b>All features</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: SCP ===================== -->
+      <h2 id="scp"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Service control policies (SCPs) – rào chắn quyền cho cả tài khoản</h2>
+      <p class="lead"><span class="t" data-vi="Chính sách kiểm soát dịch vụ">Service control policy (SCP)</span> là một loại organization policy cho phép <b>kiểm soát tập trung quyền tối đa</b> của các IAM user và IAM role trong organization. SCP chỉ có khi organization bật <b>All features</b> (không có ở chế độ chỉ consolidated billing), và phải <b>enable policy type SCP</b> trước khi dùng.</p>
+
+      <p><b>SCP không cấp quyền.</b> SCP định nghĩa một <span class="t" data-vi="Rào chắn quyền">permission guardrail</span> – đặt giới hạn lên những action mà user/role có thể làm. Để cấp quyền, admin vẫn phải gắn identity-based policy cho user/role hoặc resource-based policy cho tài nguyên. <span class="t" data-vi="Quyền hiệu lực">Effective permissions</span> là <b>giao logic</b> giữa những gì SCP + RCP cho phép và những gì identity-based/resource-based policy cho phép.</p>
+
+      <div class="stats">
+        <div class="stat"><b>0 quyền</b><span>SCP tự nó không cấp quyền nào</span></div>
+        <div class="stat"><b>Member only</b><span>SCP không ảnh hưởng user/role trong management account</span></div>
+        <div class="stat"><b>Kể cả root</b><span>SCP giới hạn cả root user của member account</span></div>
+        <div class="stat"><b>10.240</b><span>ký tự tối đa mỗi SCP; tối đa 10 SCP gắn trực tiếp mỗi root/OU/account</span></div>
+      </div>
+
+      <h3>SCP ảnh hưởng tới ai – và không ảnh hưởng tới ai</h3>
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Bị SCP giới hạn</h4>
+          <ul>
+            <li>Mọi <b>IAM user và IAM role</b> do <b>member account</b> quản lý.</li>
+            <li><b>Root user của member account</b>.</li>
+            <li>Member account được chỉ định làm <b>delegated administrator</b> (vẫn là member).</li>
+            <li>Kể cả user được gắn <code>AdministratorAccess</code> (<code>*/*</code>): nếu SCP chặn ở bất kỳ cấp nào phía trên thì vẫn không làm được.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Organizations_Management-Account.svg" alt="">KHÔNG bị SCP giới hạn</h4>
+          <ul>
+            <li><b>Mọi action do management account thực hiện</b> (user, role, root của nó).</li>
+            <li>Action dùng quyền của <b>service-linked role</b>.</li>
+            <li>User/role thuộc <b>account bên ngoài organization</b> – kể cả khi họ truy cập tài nguyên trong org qua resource-based policy (SCP không tác động trực tiếp lên resource-based policy; muốn chặn phía tài nguyên ⇒ dùng <b>RCP</b>).</li>
+            <li>Một số tác vụ đặc biệt: đăng ký Enterprise Support bằng root; trusted signer cho CloudFront private content; cấu hình reverse DNS cho email server Lightsail/EC2 bằng root; vài dịch vụ như Amazon Mechanical Turk, Alexa Web Information Service.</li>
+          </ul></div>
+      </div>
+
+      <h3>Kế thừa qua cây: Allow phải có ở MỌI cấp, Deny chỉ cần ở MỘT cấp</h3>
+      <p>Vì có thể gắn nhiều SCP ở nhiều cấp, cần hiểu cách đánh giá theo đường đi từ root xuống account:</p>
+      <ul>
+        <li><b>Allow</b>: để một quyền được phép ở một account, phải có <b>statement Allow tường minh ở mọi cấp</b> từ root, qua từng OU trên đường đi trực tiếp, tới chính account đích. Đây là mô hình <b>deny-by-default</b>. Vì vậy khi bật SCP, AWS tự gắn SCP AWS managed tên <code>FullAWSAccess</code> (Allow mọi dịch vụ, mọi action) vào <b>mọi root, OU và account</b>.</li>
+        <li><b>Deny</b>: để một quyền bị từ chối, chỉ cần <b>bất kỳ SCP nào</b> trên đường đi (root → OU → account) Deny quyền đó. Deny ở cấp trên áp dụng cho mọi OU/account bên dưới, bất kể cấp dưới Allow gì.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 400" width="760" role="img" aria-label="Kế thừa SCP: Allow phải có ở mọi cấp, Deny ở một cấp là đủ">
+          <defs><marker id="ah6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="250" y="14" width="260" height="70" rx="8" fill="none" stroke="#E7157B" stroke-width="2.5"/>
+          <image href="../assets/icons/svc/AWS-Organizations.svg" x="262" y="26" width="40" height="40"/>
+          <text x="400" y="40" font-size="14" font-weight="800" text-anchor="middle">Root</text>
+          <text x="400" y="58" font-size="11.5" text-anchor="middle">FullAWSAccess</text>
+          <text x="400" y="74" font-size="11.5" text-anchor="middle" style="fill:#DD344C">+ Deny s3:* (Scenario 6)</text>
+          <path class="line-o" d="M330 84 L170 130" marker-end="url(#ah6)"/>
+          <path class="line-o" d="M470 84 L590 130" marker-end="url(#ah6)"/>
+          <rect x="40" y="132" width="260" height="66" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <image href="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" x="52" y="144" width="36" height="36"/>
+          <text x="180" y="158" font-size="13.5" font-weight="700" text-anchor="middle">OU Test</text>
+          <text x="180" y="178" font-size="11.5" text-anchor="middle">CHỈ có “Allow s3:*”</text>
+          <text x="180" y="192" font-size="10.5" text-anchor="middle" class="muted">(đã gỡ FullAWSAccess)</text>
+          <rect x="460" y="132" width="260" height="66" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <image href="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" x="472" y="144" width="36" height="36"/>
+          <text x="600" y="162" font-size="13.5" font-weight="700" text-anchor="middle">OU Production</text>
+          <text x="600" y="182" font-size="11.5" text-anchor="middle">FullAWSAccess</text>
+          <path class="line-o" d="M170 198 V238" marker-end="url(#ah6)"/>
+          <path class="line-o" d="M600 198 V238" marker-end="url(#ah6)"/>
+          <rect x="40" y="240" width="260" height="70" rx="8" fill="none" stroke="#DD344C" stroke-width="2.5"/>
+          <image href="../assets/icons/res/AWS-Organizations_Account.svg" x="52" y="254" width="36" height="36"/>
+          <text x="185" y="264" font-size="13" font-weight="700" text-anchor="middle">Account D</text>
+          <text x="185" y="282" font-size="11.5" text-anchor="middle" style="fill:#DD344C">KHÔNG có quyền nào</text>
+          <text x="185" y="298" font-size="10.5" text-anchor="middle" class="muted">OU chỉ Allow S3, nhưng root Deny S3</text>
+          <rect x="460" y="240" width="260" height="70" rx="8" fill="none" stroke="#7AA116" stroke-width="2.5"/>
+          <image href="../assets/icons/res/AWS-Organizations_Account.svg" x="472" y="254" width="36" height="36"/>
+          <text x="605" y="264" font-size="13" font-weight="700" text-anchor="middle">Account E, F</text>
+          <text x="605" y="282" font-size="11.5" text-anchor="middle" style="fill:#7AA116">Mọi dịch vụ TRỪ S3</text>
+          <text x="605" y="298" font-size="10.5" text-anchor="middle" class="muted">Allow ở mọi cấp; Deny S3 từ root</text>
+          <text x="380" y="345" font-size="12.5" font-weight="700" text-anchor="middle">Quyền tối đa của account = GIAO các Allow trên đường đi root → OU → account</text>
+          <text x="380" y="365" font-size="12" text-anchor="middle" class="muted">rồi TRỪ mọi Deny ở bất kỳ cấp nào; sau đó còn phải giao với identity-based policy</text>
+          <text x="380" y="385" font-size="11" text-anchor="middle" class="muted">(và boundary / session policy nếu có – xem Bài 5)</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Minh họa theo <b>Scenario 6</b> trong tài liệu “SCP evaluation”: root có FullAWSAccess + Deny S3. OU Test chỉ có “Allow S3” ⇒ Account D <b>không có quyền gì</b> (S3 bị root Deny, các dịch vụ khác không được OU Test Allow). OU Production giữ FullAWSAccess ⇒ Account E, F dùng được mọi dịch vụ <b>trừ S3</b>.</figcaption>
+      </figure>
+
+      <h3>Các kịch bản trong tài liệu “SCP evaluation”</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>#</th><th>Cấu hình</th><th>Kết quả</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Sandbox OU: FullAWSAccess + Deny S3; Account B: thêm Deny EC2</td><td>Account A mất S3; Account B mất cả S3 và EC2.</td></tr>
+          <tr><td>2</td><td>Sandbox OU chỉ có “Allow EC2”</td><td>Account A và B chỉ dùng được EC2 (Allow phải có ở mọi cấp).</td></tr>
+          <tr><td>3</td><td>Root chỉ có SCP Deny, <b>không có</b> FullAWSAccess</td><td>Mọi member account <b>không truy cập được dịch vụ nào</b>.</td></tr>
+          <tr><td>4</td><td>Test OU: FullAWSAccess + Deny EC2</td><td>Account D dùng mọi thứ trừ EC2; E, F (OU Production) dùng tất cả.</td></tr>
+          <tr><td>5</td><td>Test OU thay FullAWSAccess bằng “Allow EC2”</td><td>Account D chỉ EC2; Production vẫn full.</td></tr>
+          <tr><td>6</td><td>Root: FullAWSAccess + Deny S3; Test OU: chỉ Allow S3</td><td>D không có gì; E, F mọi thứ trừ S3 (Hình 3).</td></tr>
+          <tr><td>7</td><td>Root: 2 SCP allow list (IAM+EC2, S3+CloudWatch); OU giữ FullAWSAccess</td><td>Mọi account chỉ dùng IAM, EC2, S3, CloudWatch – policy hẹp ở root thắng do tính giao.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Chiến lược: deny list vs allow list</h3>
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Deny list (phổ biến)</h4>
+          <ul>
+            <li><b>Giữ</b> <code>FullAWSAccess</code> ở mọi cấp, thêm SCP có <code>"Effect": "Deny"</code> cho những gì muốn cấm.</li>
+            <li>Dịch vụ mới AWS ra mắt <b>tự động được phép</b>.</li>
+            <li>Ít bảo trì; Deny gắn ở root/OU tác động lên mọi account bên dưới – mạnh cho các quy tắc chung (cấm rời org, cấm tắt CloudTrail, cấm Region…).</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Allow list</h4>
+          <ul>
+            <li><b>Gỡ/thay</b> <code>FullAWSAccess</code> bằng SCP chỉ Allow tập dịch vụ được duyệt (vd <code>ec2:*</code>, <code>cloudwatch:*</code>).</li>
+            <li>Dịch vụ mới <b>bị chặn</b> cho tới khi cập nhật SCP – kiểm soát chặt hơn.</li>
+            <li>Đặt ở root ⇒ một allow list cho cả org; hoặc thay ở từng OU/account để có allow list khác nhau. Tài liệu lưu ý: chỉ dựa vào Allow có thể gây truy cập ngoài ý muốn khi các Allow rộng chồng lấn.</li>
+          </ul></div>
+      </div>
+
+      <pre><span class="c">// Ví dụ trong tài liệu: thay FullAWSAccess – chỉ cho EC2, CloudWatch, Organizations; cấm rời tổ chức</span>
+{
+  <span class="k">"Version"</span>: <span class="s">"2012-10-17"</span>,
+  <span class="k">"Statement"</span>: [
+    { <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+      <span class="k">"Action"</span>: [<span class="s">"ec2:*"</span>, <span class="s">"cloudwatch:*"</span>, <span class="s">"organizations:*"</span>],
+      <span class="k">"Resource"</span>: <span class="s">"*"</span> },
+    { <span class="k">"Effect"</span>: <span class="s">"Deny"</span>,
+      <span class="k">"Action"</span>: <span class="s">"organizations:LeaveOrganization"</span>,
+      <span class="k">"Resource"</span>: <span class="s">"*"</span> }
+  ]
+}</pre>
+
+      <h3>Các mẫu SCP hay gặp trong đề</h3>
+      <pre><span class="c">// Mẫu 1 – Chặn mọi Region ngoài danh sách được duyệt (trừ các dịch vụ global)</span>
+{
+  <span class="k">"Sid"</span>: <span class="s">"DenyOutsideApprovedRegions"</span>,
+  <span class="k">"Effect"</span>: <span class="s">"Deny"</span>,
+  <span class="k">"NotAction"</span>: [<span class="s">"iam:*"</span>, <span class="s">"organizations:*"</span>, <span class="s">"route53:*"</span>, <span class="s">"cloudfront:*"</span>,
+                <span class="s">"sts:*"</span>, <span class="s">"support:*"</span>, <span class="s">"budgets:*"</span>, <span class="s">"waf:*"</span>, <span class="c">/* … */</span>],
+  <span class="k">"Resource"</span>: <span class="s">"*"</span>,
+  <span class="k">"Condition"</span>: { <span class="k">"StringNotEquals"</span>: { <span class="k">"aws:RequestedRegion"</span>: [<span class="s">"eu-central-1"</span>, <span class="s">"eu-west-1"</span>] } }
+}
+
+<span class="c">// Mẫu 2 – Không cho tắt/xóa CloudTrail, trừ role bảo mật được chỉ định</span>
+{
+  <span class="k">"Effect"</span>: <span class="s">"Deny"</span>,
+  <span class="k">"Action"</span>: [<span class="s">"cloudtrail:StopLogging"</span>, <span class="s">"cloudtrail:DeleteTrail"</span>],
+  <span class="k">"Resource"</span>: <span class="s">"*"</span>,
+  <span class="k">"Condition"</span>: { <span class="k">"ArnNotLike"</span>: { <span class="k">"aws:PrincipalArn"</span>: <span class="s">"arn:aws:iam::*:role/SecurityAdminRole"</span> } }
+}
+
+<span class="c">// Mẫu 3 – Chỉ cho chạy một số instance type</span>
+{
+  <span class="k">"Effect"</span>: <span class="s">"Deny"</span>,
+  <span class="k">"Action"</span>: <span class="s">"ec2:RunInstances"</span>,
+  <span class="k">"Resource"</span>: <span class="s">"arn:aws:ec2:*:*:instance/*"</span>,
+  <span class="k">"Condition"</span>: { <span class="k">"StringNotEquals"</span>: { <span class="k">"ec2:InstanceType"</span>: [<span class="s">"t3.micro"</span>, <span class="s">"t3.small"</span>] } }
+}</pre>
+      <p class="muted">Mẫu 1–3 là các mẫu phổ biến (tham khảo trang “SCP examples”); danh sách dịch vụ global trong <code>NotAction</code> thay đổi theo thời gian – luôn đối chiếu tài liệu mới nhất trước khi áp dụng.</p>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp với SCP</span>
+        <ul>
+          <li><b>Gỡ FullAWSAccess</b> mà không thay bằng policy có Allow ⇒ mọi action từ member account bên dưới đều thất bại.</li>
+          <li><b>Gắn SCP vào root khi chưa test</b>: AWS khuyến nghị tạo một OU thử nghiệm, chuyển dần từng account vào để tránh khóa nhầm người dùng khỏi dịch vụ quan trọng. Dùng <b>service last accessed data</b> trong IAM (xem được cho cả entity của Organizations khi đăng nhập management account) hoặc CloudTrail để biết account đang dùng dịch vụ nào.</li>
+          <li><b>SCP không gắn được vào IAM user/group/role</b> – chỉ gắn vào root, OU, account.</li>
+          <li><b>Tắt policy type SCP</b> ở root ⇒ mọi SCP tự động detach; bật lại ⇒ chỉ còn <code>FullAWSAccess</code>, các attachment cũ <b>mất, không tự khôi phục</b>.</li>
+          <li>Có cả permissions boundary và SCP ⇒ boundary, SCP và identity-based policy <b>đều phải</b> Allow.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – SCP</span>
+        <ul>
+          <li>“<i>Prevent ANY user, including the root user, in member accounts from doing X</i>” ⇒ <b>SCP với Deny</b> gắn ở OU/root.</li>
+          <li>“<i>Restrict all accounts to specific AWS Regions</i>” ⇒ SCP Deny + <code>aws:RequestedRegion</code> (nhớ <code>NotAction</code> các dịch vụ global).</li>
+          <li>“<i>Ensure member accounts cannot leave the organization / disable CloudTrail, GuardDuty, Config</i>” ⇒ SCP Deny <code>organizations:LeaveOrganization</code>, <code>cloudtrail:StopLogging</code>…</li>
+          <li>“<i>Developers have AdministratorAccess but cannot do X in production accounts</i>” ⇒ SCP Deny ở OU Production – vì SCP đè lên cả AdministratorAccess.</li>
+          <li>Đề nói “<i>attach an SCP to grant S3 access</i>” ⇒ <b>sai</b>, SCP không bao giờ cấp quyền.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: ORG POLICIES KHÁC & TÍCH HỢP DỊCH VỤ ===================== -->
+      <h2 id="other-policies"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">Các organization policy khác và dịch vụ tích hợp</h2>
+      <p class="lead">AWS Organizations hỗ trợ hai nhóm policy: <span class="t" data-vi="Chính sách phân quyền">authorization policies</span> (SCP, RCP – quản lý bảo mật tập trung) và <span class="t" data-vi="Chính sách khai báo">declarative policies</span> (cấu hình và quản lý dịch vụ AWS tập trung).</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Policy</th><th>Nhóm</th><th>Dùng để</th></tr></thead>
+        <tbody>
+          <tr><td><b>Service control policy (SCP)</b></td><td>Authorization</td><td>Trần quyền <b>principal-centric</b>: dịch vụ, tài nguyên, điều kiện (Region, mạng) mà IAM user/role trong member account được dùng.</td></tr>
+          <tr><td><b>Resource control policy (RCP)</b></td><td>Authorization</td><td>Trần quyền <b>resource-centric</b>: vd chỉ cho identity trong tổ chức truy cập tài nguyên, hoặc quy định điều kiện cho identity bên ngoài. Bật RCP ⇒ <code>RCPFullAWSAccess</code> tự gắn, không gỡ được.</td></tr>
+          <tr><td><b>Tag policies</b></td><td>Declarative</td><td>Chuẩn hóa tag gắn vào tài nguyên trong các account.</td></tr>
+          <tr><td><b>Backup policies</b></td><td>Declarative</td><td>Quản lý và áp dụng <b>backup plan</b> (AWS Backup) tập trung cho tài nguyên trên các account.</td></tr>
+          <tr><td><b>AI services opt-out policies</b></td><td>Declarative</td><td>Kiểm soát việc AWS AI services thu thập dữ liệu cho mọi account.</td></tr>
+          <tr><td><b>Amazon EC2 declarative policies</b></td><td>Declarative</td><td>Khai báo và cưỡng chế cấu hình EC2 mong muốn trên toàn org; cấu hình được giữ kể cả khi dịch vụ thêm tính năng/API mới.</td></tr>
+          <tr><td><b>Chat applications policies</b></td><td>Declarative</td><td>Kiểm soát truy cập account từ Slack, Microsoft Teams.</td></tr>
+          <tr><td>Security Hub, Inspector, GuardDuty, S3, Bedrock… policies</td><td>Declarative</td><td>Bật/quản lý tập trung các dịch vụ này trên toàn tổ chức.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout note"><span class="ttl">Kế thừa của declarative policy khác SCP</span>
+        <p>Logic “Allow phải có ở mọi cấp / Deny ở một cấp là đủ” <b>không áp dụng</b> cho backup, tag, chat, AI opt-out… – các loại này có cơ chế kế thừa riêng để tạo <b>effective policy</b>. Ngoài ra, declarative policy gắn ở root <b>áp dụng cả management account</b>, khác với SCP.</p></div>
+
+      <h3>Dịch vụ tích hợp với Organizations (trusted access)</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">
+          <div><h4>AWS CloudTrail</h4><span class="vi">Organization trail</span><p>Ghi log hoạt động của mọi account; log này <b>member account không tắt hay sửa được</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Config.svg" alt="">
+          <div><h4>AWS Config</h4><span class="vi">Cấu hình chuẩn đa account</span><p>Xem và cưỡng chế cấu hình tài nguyên chuẩn trên nhiều account và Region.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Backup.svg" alt="">
+          <div><h4>AWS Backup</h4><span class="vi">Sao lưu theo chu kỳ</span><p>Backup policy cưỡng chế lịch sao lưu cho tài nguyên trên mọi account.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Resource-Access-Manager.svg" alt="">
+          <div><h4>AWS RAM</h4><span class="vi">Chia sẻ tài nguyên</span><p>Tạo VPC subnet một lần rồi chia sẻ cho cả tổ chức.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Service-Catalog.svg" alt="">
+          <div><h4>AWS Service Catalog</h4><span class="vi">Danh mục dịch vụ IT được duyệt</span><p>Chia sẻ dịch vụ IT ở account được chỉ định để người dùng tìm và triển khai nhanh dịch vụ đã duyệt.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Security-Hub.svg" alt="">
+          <div><h4>GuardDuty / Security Hub / Access Analyzer</h4><span class="vi">Bảo mật tập trung</span><p>Đăng ký một member account (vd Audit) làm <b>delegated administrator</b> để quản lý cho cả tổ chức.</p></div></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – chọn công cụ đúng</span>
+        <ul>
+          <li>“<i>Centralize CloudTrail logs from all accounts, member accounts must not be able to disable</i>” ⇒ <b>organization trail</b> ghi về S3 ở account Log Archive.</li>
+          <li>“<i>Enforce consistent tags across accounts</i>” ⇒ <b>tag policies</b>. “<i>Enforce backup plans</i>” ⇒ <b>backup policies</b>.</li>
+          <li>“<i>Only identities in our organization can access our S3 buckets, across all accounts</i>” ⇒ <b>RCP</b> (hoặc bucket policy với <code>aws:PrincipalOrgID</code> cho từng bucket).</li>
+          <li>“<i>Security team manages GuardDuty for all accounts without using the management account</i>” ⇒ <b>delegated administrator</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: CONTROL TOWER ===================== -->
+      <h2 id="control-tower"><img src="../assets/icons/svc/AWS-Control-Tower.svg" alt="">AWS Control Tower – dựng và quản trị landing zone theo best practice</h2>
+      <p class="lead"><b>AWS Control Tower</b> là cách đơn giản để <b>thiết lập và quản trị một môi trường AWS nhiều tài khoản</b> theo các best practice có tính chỉ dẫn (prescriptive). Control Tower <b>điều phối (orchestrate)</b> nhiều dịch vụ khác – AWS Organizations, AWS Service Catalog, AWS IAM Identity Center – để dựng một <span class="t" data-vi="Vùng hạ cánh">landing zone</span> trong <b>chưa tới một giờ</b>; tài nguyên được thiết lập và quản lý thay bạn.</p>
+
+      <p>Control Tower <b>mở rộng</b> năng lực của Organizations. Để giữ cho organization và account không bị <span class="t" data-vi="Trôi lệch cấu hình">drift</span> (lệch khỏi best practice), Control Tower áp dụng các <span class="t" data-vi="Rào chắn kiểm soát">controls</span> (đôi khi gọi là <i>guardrails</i>) – ví dụ đảm bảo log bảo mật và quyền cross-account cần thiết được tạo ra và <b>không bị thay đổi</b>. Nếu bạn có nhiều hơn “một nắm” account, một lớp điều phối như vậy giúp triển khai và quản trị account dễ hơn.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Control-Tower.svg" alt="">
+          <div><h4>Landing zone</h4><span class="vi">Vùng hạ cánh</span><p>Môi trường multi-account <b>well-architected</b> dựa trên best practice bảo mật & tuân thủ; là “container” toàn doanh nghiệp chứa mọi OU, account, user và tài nguyên cần tuân thủ.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">
+          <div><h4>Controls (guardrails)</h4><span class="vi">Rào chắn kiểm soát</span><p>Quy tắc cấp cao, viết bằng ngôn ngữ dễ hiểu, quản trị liên tục môi trường. Mỗi control cưỡng chế <b>một</b> quy tắc.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Service-Catalog.svg" alt="">
+          <div><h4>Account Factory</h4><span class="vi">Nhà máy tạo tài khoản</span><p>Mẫu account có thể cấu hình (“<b>vending machine</b>”), xây trên provisioned products của AWS Service Catalog; tạo &amp; enroll account mới với cấu hình đã duyệt, tự áp control và policy.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Config.svg" alt="">
+          <div><h4>Dashboard</h4><span class="vi">Bảng điều khiển</span><p>Giám sát liên tục landing zone: account đã cấp, control đang bật, tài nguyên <b>noncompliant</b> theo account và OU.</p></div></div>
+      </div>
+
+      <h3>Cấu trúc landing zone và điều xảy ra khi thiết lập</h3>
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Control-Tower.svg" alt="">Landing zone (home Region)</span>
+          <div class="row">
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Management-Account.svg" alt="">Management account</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/svc/AWS-Control-Tower.svg" alt="">Control Tower<small>dashboard</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Single-Sign-On.svg" alt="">IAM Identity Center<small>directory + nhóm dựng sẵn</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Service-Catalog.svg" alt="">Account Factory<small>Service Catalog</small></div>
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="grp region"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">Security OU (service integration OU)</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Log Archive account<small>log CloudTrail &amp; Config tập trung</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Security-Hub.svg" alt="">Audit account<small>đội bảo mật/kiểm toán</small></div>
+              </div>
+            </div>
+            <div class="grp region"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">Sandbox OU (tùy chọn) &amp; OU đăng ký khác</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Enrolled account<small>workload của người dùng</small></div>
+                <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account mới<small>từ Account Factory</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> Cấu trúc landing zone của Control Tower. Khi thiết lập (qua console), Control Tower tạo <b>Security OU</b> và <b>Sandbox OU</b> (tùy chọn), tạo/enroll các account cho dịch vụ tích hợp (AWS Config, CloudTrail, AWS Backup…) trong service integration OU – ở landing zone v3.3 trở về trước là hai <b>shared accounts</b> Log Archive và Audit; tạo directory trong IAM Identity Center; áp <b>mọi mandatory preventive và detective controls</b>. Từ landing zone v4.0, Security OU không còn bắt buộc.</figcaption>
+      </figure>
+
+      <ul>
+        <li><b>Preventive controls không áp dụng cho management account</b>; ngoài management account, control áp cho toàn tổ chức.</li>
+        <li><b>Không sửa/xóa</b> các tài nguyên do Control Tower quản lý bằng cách ngoài phương thức được hỗ trợ – landing zone sẽ rơi vào trạng thái không xác định.</li>
+        <li>Control Tower dùng <b>CloudFormation StackSets</b> để triển khai tài nguyên vào các account: một stack instance cho mỗi account và Region.</li>
+        <li>Có thể đăng ký organization có sẵn và enroll account có sẵn vào Control Tower (mở rộng – <i>extensibility</i>).</li>
+      </ul>
+
+      <h3>Ba loại control và ba mức hướng dẫn</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại (behavior)</th><th>Làm gì</th><th>Cơ chế bên dưới</th><th>Ví dụ trong tài liệu</th></tr></thead>
+        <tbody>
+          <tr><td><b>Preventive</b><br><small>phòng ngừa</small></td><td><b>Ngăn</b> action xảy ra; mọi lần thử bị Deny và được log trong CloudTrail.</td><td><b>SCP</b> và <b>RCP</b></td><td>“Disallow Changes to Bucket Policy for Amazon S3 Buckets” (bảo vệ Log Archive).</td></tr>
+          <tr><td><b>Detective</b><br><small>phát hiện</small></td><td><b>Phát hiện</b> tài nguyên/sự kiện không tuân thủ sau khi xảy ra, báo trên dashboard.</td><td><b>AWS Config rules</b></td><td>“Detect Whether Encryption is Enabled for Amazon EBS Volumes Attached to Amazon EC2 Instances”.</td></tr>
+          <tr><td><b>Proactive</b><br><small>chủ động</small></td><td><b>Kiểm tra trước khi cấp phát</b>: tài nguyên không tuân thủ thì không được tạo.</td><td><b>CloudFormation hooks</b></td><td>Kiểm tra tài nguyên sẽ được deploy bằng CloudFormation template.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4>Mandatory</h4><ul><li>Luôn được áp dụng, <b>không thể tắt/đổi</b>.</li><li>Bật tự động khi dựng landing zone.</li></ul></div>
+        <div style="--accent:#ED7100"><h4>Strongly recommended</h4><ul><li>Best practice cho môi trường nhiều account.</li><li>Tùy chọn, bật/tắt được bất kỳ lúc nào.</li></ul></div>
+        <div style="--accent:#7AA116"><h4>Elective</h4><ul><li>Cho các hành động doanh nghiệp thường muốn hạn chế.</li><li>Tùy chọn, bật/tắt được.</li></ul></div>
+      </div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Organizations giống <b>bộ gạch và xi măng</b>; Control Tower là <b>nhà thầu xây theo bản vẽ mẫu</b>. Preventive control là <b>hàng rào</b> (không cho vào), detective control là <b>camera</b> (vào rồi thì báo động), proactive control là <b>kiểm định bản vẽ trước khi cấp phép xây</b>.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Control Tower</span>
+        <ul>
+          <li>“<i>Set up a new multi-account environment following best practices QUICKLY, with LEAST operational overhead</i>” ⇒ <b>AWS Control Tower</b> (landing zone).</li>
+          <li>“<i>Standardize provisioning of new accounts with pre-approved configurations / self-service account vending</i>” ⇒ <b>Account Factory</b>.</li>
+          <li>“<i>Detect noncompliant resources across accounts</i>” ⇒ <b>detective control</b> (AWS Config). “<i>Prevent</i>” ⇒ preventive control (SCP). “<i>Block non-compliant resources before CloudFormation creates them</i>” ⇒ proactive control (CloudFormation hooks).</li>
+          <li>Đã có Organizations sẵn và chỉ cần một quy tắc chặn đơn giản ⇒ SCP trực tiếp cũng được; cần <b>khung governance trọn gói</b> (log tập trung, account audit, dashboard tuân thủ) ⇒ Control Tower.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: IAM IDENTITY CENTER ===================== -->
+      <h2 id="identity-center"><img src="../assets/icons/svc/AWS-Single-Sign-On.svg" alt="">AWS IAM Identity Center – một lần đăng nhập cho mọi tài khoản</h2>
+      <p class="lead"><b>AWS IAM Identity Center</b> (tên cũ <b>AWS Single Sign-On</b>, đổi tên ngày 26/7/2022) là giải pháp của AWS để kết nối <span class="t" data-vi="Người dùng thuộc lực lượng lao động (nhân viên)">workforce users</span> với các AWS managed application và tài nguyên AWS. Bạn có thể kết nối IdP sẵn có và đồng bộ user/group, hoặc tạo user trực tiếp trong Identity Center; sau đó dùng cho <b>truy cập ứng dụng</b>, <b>truy cập AWS account</b>, hoặc cả hai.</p>
+
+      <h3>Vì sao dùng IAM Identity Center?</h3>
+      <ul>
+        <li><b>Một điểm federation</b>: chỉ federate một lần, chỉ một certificate phải quản lý khi dùng SAML 2.0 IdP – thay vì cấu hình SAML provider ở từng account.</li>
+        <li><b>Quản lý tập trung truy cập vào nhiều account</b>: dùng <span class="t" data-vi="Bộ quyền">permission sets</span> cho các chức năng công việc phổ biến (vd admin), cấp phát trên nhiều account và gán cho user/group (chỉ có ở <b>organization instance</b>).</li>
+        <li><b>AWS access portal</b>: cổng web thân thiện, hiển thị mọi ứng dụng và account được gán cho người dùng.</li>
+        <li><b>Tích hợp AWS managed applications</b> (vd Amazon Redshift, Amazon Quick…) với cái nhìn chung về user/group; <span class="t" data-vi="Truyền định danh tin cậy">trusted identity propagation</span> giúp CloudTrail ghi theo đúng người dùng.</li>
+        <li><b>Multi-Region</b>: có thể replicate instance sang Region khác để workforce truy cập qua mọi Region được bật.</li>
+      </ul>
+
+      <h3>Organization instance vs account instance</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Organizations_Management-Account.svg" alt="">Organization instance (best practice)</h4>
+          <ul>
+            <li>Triển khai trong <b>management account</b> của AWS Organizations.</li>
+            <li><b>Duy nhất</b> loại instance quản lý được truy cập vào <b>AWS accounts</b>.</li>
+            <li>Khuyến nghị cho mọi production use của ứng dụng.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account instance</h4>
+          <ul>
+            <li>Gắn với account nơi nó được bật.</li>
+            <li>Chỉ để hỗ trợ triển khai <b>tách biệt</b> một số AWS managed application.</li>
+            <li>Không dùng để quản lý truy cập multi-account.</li>
+          </ul></div>
+      </div>
+
+      <h3>Identity source – nơi quản lý user và group</h3>
+      <p>Mỗi organization chỉ có <b>một identity source</b> tại một thời điểm, chọn một trong:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Identity source</th><th>Khi nào chọn</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><b>Identity Center directory</b></td><td>Chưa có IdP; muốn tạo user/group ngay trong AWS.</td><td>Mặc định khi bật lần đầu.</td></tr>
+          <tr><td><b>Active Directory</b></td><td>Đã có Microsoft AD on-premises hoặc AWS Managed Microsoft AD.</td><td>Kết nối qua AWS Directory Service (AWS Managed Microsoft AD hoặc AD Connector). <b>Không hỗ trợ Simple AD</b> (SAMBA4).</td></tr>
+          <tr><td><b>External identity provider</b></td><td>User đang ở Okta, Microsoft Entra ID…</td><td>Federation SAML 2.0; đồng bộ user/group thường qua SCIM (automatic provisioning).</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Permission set – “khuôn” tạo IAM role trong từng account</h3>
+      <p><span class="t no-vi">Permission set</span> là một <b>template</b> định nghĩa tập hợp một hoặc nhiều IAM policy. Khi bạn gán permission set cho user/group trên một hoặc nhiều account, IAM Identity Center <b>tạo IAM role tương ứng</b> (do Identity Center kiểm soát) trong <b>mỗi account</b> và gắn các policy của permission set vào role đó; user assume role qua access portal hoặc AWS CLI. Sửa permission set ⇒ Identity Center tự cập nhật role/policy tương ứng.</p>
+      <ul>
+        <li>Thêm được: <b>AWS managed policies</b>, <b>customer managed policies</b>, <b>inline policy</b>, <b>AWS managed policies for job functions</b>; và một AWS managed / customer managed policy làm <b>permissions boundary</b>.</li>
+        <li><b>Predefined permission set</b>: chọn một AWS managed policy có sẵn (vd <code>AdministratorAccess</code>, <code>PowerUserAccess</code>, <code>ViewOnlyAccess</code>) – nhanh. <b>Custom</b>: tự kết hợp policy.</li>
+        <li>Có thể gán <b>nhiều permission set cho cùng một user</b>; mỗi permission set hiện như một “role” trong access portal – hãy chọn cái <b>ít quyền nhất</b> đủ dùng.</li>
+        <li>Cần trust policy tùy chỉnh, role tag, role path ⇒ dùng <b>account access manager</b> trong IAM để gán IAM role có sẵn cho user/group Identity Center.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>1 giờ</b><span>session duration mặc định của permission set (vào AWS account)</span></div>
+        <div class="stat"><b>12 giờ</b><span>session duration tối đa của permission set</span></div>
+        <div class="stat"><b>8 giờ</b><span>thời gian đăng nhập access portal mặc định (tối đa 90 ngày)</span></div>
+        <div class="stat"><b>1</b><span>identity source mỗi organization</span></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Nhân viên<small>nhóm “DBA”</small></div>
+          <span class="arrow">① đăng nhập</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Directory-Service.svg" alt="">Identity source<small>AD / Okta / Entra ID<br>/ Identity Center directory</small></div>
+          <span class="arrow">② access portal</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Single-Sign-On.svg" alt="">IAM Identity Center<small>assignment: DBA →<br>“DatabaseAdmin” @ Prod, Dev</small></div>
+          <span class="arrow">③ assume role</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_Role.svg" alt="">IAM role do Identity Center tạo<small>trong account Prod &amp; Dev<br>(temporary credentials)</small></div>
+          <span class="arrow dashed">④ console / CLI</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS, DynamoDB, Aurora<small>trong từng account</small></div>
+        </div>
+        <figcaption><b>Hình 5.</b> Luồng truy cập multi-account bằng IAM Identity Center (ví dụ permission set <i>Database Admin</i> trong tài liệu). Một <b>account assignment</b> = (user hoặc group) + (permission set) + (AWS account). Người dùng không có IAM user trong bất kỳ account nào; mọi truy cập đều bằng <b>short-term credentials</b>. Quyền thực tế vẫn bị SCP của account đó giới hạn.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>Simple AD không làm identity source</b> cho IAM Identity Center được.</li>
+          <li>Muốn quản lý truy cập vào <b>AWS accounts</b> ⇒ phải là <b>organization instance</b>; account instance không làm được.</li>
+          <li>Permission set không “miễn” SCP: role mà Identity Center tạo trong member account vẫn bị SCP giới hạn như mọi role khác.</li>
+          <li>Đổi tên dịch vụ: đề và CLI vẫn có thể ghi “AWS SSO” – namespace <code>sso</code>, <code>identitystore</code>, <code>aws configure sso</code> được giữ nguyên.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Identity Center</span>
+        <ul>
+          <li>“<i>Employees sign in once with corporate credentials and access multiple AWS accounts</i>” ⇒ <b>IAM Identity Center</b> + identity source AD/IdP + permission sets.</li>
+          <li>“<i>Grant the same set of permissions to a group across many accounts, centrally</i>” ⇒ <b>permission set</b> gán cho group trên các account.</li>
+          <li>“<i>Users of a mobile/web application (customers) sign in</i>” ⇒ <b>Amazon Cognito</b> (Bài 7), không phải Identity Center (dành cho workforce).</li>
+          <li>Chỉ <b>một account</b> độc lập, đã có SAML IdP ⇒ IAM SAML federation (Bài 5) vẫn hợp lệ; <b>nhiều account trong Organizations</b> ⇒ Identity Center là đáp án least overhead.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: CHỌN CÔNG CỤ ===================== -->
+      <h2 id="chon-cong-cu"><img src="../assets/icons/cat/Management-Governance.svg" alt="">Tổng hợp: chọn đúng cơ chế giới hạn &amp; quản trị</h2>
+      <p class="lead">Đề SAA-C03 rất hay đặt các cơ chế cạnh nhau làm <span class="t" data-vi="Phương án gây nhiễu">distractor</span>. Bảng dưới gom lại phạm vi tác động của từng cơ chế đã học ở Bài 4–6.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cơ chế</th><th>Gắn vào</th><th>Phạm vi</th><th>Cấp quyền?</th><th>Dùng khi đề nói…</th></tr></thead>
+        <tbody>
+          <tr><td><b>Identity-based policy</b></td><td>User, group, role</td><td>Một identity</td><td class="yes">Có</td><td>“grant permissions to a user/role”</td></tr>
+          <tr><td><b>Permissions boundary</b></td><td>User, role</td><td>Một entity, trong một account</td><td class="no">Không</td><td>“delegate IAM administration, cannot exceed”</td></tr>
+          <tr><td><b>SCP</b></td><td>Root, OU, account</td><td>Mọi principal của member account (cả root user)</td><td class="no">Không</td><td>“all accounts / OU”, “including root user”, “restrict Regions/services”</td></tr>
+          <tr><td><b>RCP</b></td><td>Root, OU, account</td><td>Mọi resource của member account (hỗ trợ một số dịch vụ)</td><td class="no">Không</td><td>“prevent external access to resources org-wide”</td></tr>
+          <tr><td><b>Control Tower control</b></td><td>OU (qua Control Tower)</td><td>Account được enroll</td><td class="no">Không</td><td>“prescriptive guardrails, detect drift, compliance dashboard”</td></tr>
+          <tr><td><b>Permission set</b></td><td>User/group × account (Identity Center)</td><td>Tạo IAM role trong từng account</td><td class="yes">Có</td><td>“workforce SSO across accounts”</td></tr>
+          <tr><td><b>Tag / Backup policy</b></td><td>Root, OU, account</td><td>Cấu hình dịch vụ (cả management account nếu gắn ở root)</td><td>—</td><td>“standardize tags”, “enforce backups”</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – cụm từ khóa ⇒ dịch vụ</span>
+        <ul>
+          <li><i>Multi-account, single bill, volume discount</i> ⇒ Organizations (consolidated billing).</li>
+          <li><i>Guardrail across accounts, even root user</i> ⇒ SCP.</li>
+          <li><i>Landing zone, Account Factory, best-practice multi-account setup fast</i> ⇒ Control Tower.</li>
+          <li><i>Workforce single sign-on, permission sets, AWS access portal</i> ⇒ IAM Identity Center.</li>
+          <li><i>Share VPC subnets / resources across accounts</i> ⇒ AWS RAM.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li>Account là ranh giới tự nhiên về quyền, bảo mật, chi phí ⇒ <b>multi-account</b> là best practice; Organizations quản lý tập trung theo cây <b>root → OU (≤ 5 cấp) → account</b>.</li>
+          <li><b>Management account</b>: tạo org, tạo/mời account, gắn policy, là payer; <b>không đổi được</b>, <b>không bị SCP giới hạn</b> ⇒ không đặt workload ở đó; dùng <b>delegated administrator</b>.</li>
+          <li>Feature set: <b>Consolidated billing</b> (chỉ billing) vs <b>All features</b> (mặc định, cần cho SCP/RCP/tích hợp dịch vụ). Nâng cấp cần mọi invited account chấp nhận.</li>
+          <li>Consolidated billing: <b>một hóa đơn, gộp usage</b> ⇒ chia sẻ volume discount, RI, Savings Plans; <b>miễn phí</b>.</li>
+          <li><b>SCP không cấp quyền</b>, chỉ đặt trần cho user/role (kể cả root) của <b>member account</b>; không ảnh hưởng management account, service-linked role, principal ngoài org.</li>
+          <li>Kế thừa SCP: <b>Allow phải có ở mọi cấp</b> (vì thế có <code>FullAWSAccess</code> mặc định); <b>Deny ở một cấp</b> là đủ chặn mọi thứ bên dưới. Max 10 SCP gắn trực tiếp mỗi entity, 10.240 ký tự/SCP.</li>
+          <li>Deny list (giữ FullAWSAccess + Deny) ít bảo trì; allow list (thay FullAWSAccess) chặt hơn, chặn cả dịch vụ mới.</li>
+          <li><b>Control Tower</b> = landing zone + controls + Account Factory + dashboard, dựng trên Organizations, Service Catalog, IAM Identity Center. Control: <b>preventive (SCP/RCP)</b>, <b>detective (Config rules)</b>, <b>proactive (CloudFormation hooks)</b>; mức <b>mandatory / strongly recommended / elective</b>.</li>
+          <li><b>IAM Identity Center</b> (ex-AWS SSO): organization instance ở management account; 1 identity source (Identity Center directory / AD / external IdP); <b>permission set</b> ⇒ IAM role trong từng account; session 1 giờ mặc định, tối đa 12 giờ.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>AWS Organizations</dt><dd><b>Dịch vụ quản lý nhiều tài khoản</b> – quản lý tập trung account, policy, billing.</dd></div>
+        <div><dt>Organization</dt><dd><b>Tổ chức</b> – tập hợp AWS account quản lý tập trung theo cấu trúc cây.</dd></div>
+        <div><dt>Root (Organizations)</dt><dd><b>Gốc quản trị</b> – container cao nhất của cây; mỗi organization có đúng một root. Không nhầm với root user.</dd></div>
+        <div><dt>Organizational unit (OU)</dt><dd><b>Đơn vị tổ chức</b> – nhóm account (và OU con), tối đa 5 cấp dưới root.</dd></div>
+        <div><dt>Management account / Member account</dt><dd><b>Tài khoản quản lý (payer) / tài khoản thành viên</b>.</dd></div>
+        <div><dt>Delegated administrator</dt><dd><b>Quản trị viên được ủy quyền</b> – member account được giao quản lý policy hoặc một dịch vụ tích hợp.</dd></div>
+        <div><dt>Feature set (All features / Consolidated billing)</dt><dd><b>Bộ tính năng</b> – đầy đủ quản trị hoặc chỉ thanh toán chung.</dd></div>
+        <div><dt>Consolidated billing</dt><dd><b>Thanh toán hợp nhất</b> – một hóa đơn, gộp usage, chia sẻ volume discount/RI/Savings Plans.</dd></div>
+        <div><dt>Payer account</dt><dd><b>Tài khoản thanh toán</b> – vai trò của management account trả tiền cho mọi member.</dd></div>
+        <div><dt>Volume pricing discount</dt><dd><b>Giảm giá theo khối lượng</b> – bậc giá thấp hơn khi gộp usage.</dd></div>
+        <div><dt>Invitation / Handshake</dt><dd><b>Lời mời / Bắt tay</b> – cơ chế trao đổi an toàn giữa hai account (INVITE, ENABLE_ALL_FEATURES, APPROVE_ALL_FEATURES).</dd></div>
+        <div><dt>OrganizationAccountAccessRole</dt><dd><b>Role truy cập do Organizations tạo</b> – role quản trị trong account tạo mới, cho management account assume.</dd></div>
+        <div><dt>Service control policy (SCP)</dt><dd><b>Chính sách kiểm soát dịch vụ</b> – trần quyền cho principal của member account.</dd></div>
+        <div><dt>FullAWSAccess</dt><dd><b>SCP AWS managed cho phép tất cả</b> – tự gắn vào mọi root/OU/account khi bật SCP.</dd></div>
+        <div><dt>Permission guardrail</dt><dd><b>Rào chắn quyền</b> – giới hạn quyền tối đa, không cấp quyền.</dd></div>
+        <div><dt>Deny list / Allow list strategy</dt><dd><b>Chiến lược danh sách cấm / danh sách cho phép</b> cho SCP.</dd></div>
+        <div><dt>Service last accessed data</dt><dd><b>Dữ liệu dịch vụ truy cập gần nhất</b> – dùng để tinh chỉnh SCP theo least privilege.</dd></div>
+        <div><dt>Authorization policy / Declarative policy</dt><dd><b>Chính sách phân quyền / chính sách khai báo</b> – SCP, RCP / tag, backup, AI opt-out, EC2…</dd></div>
+        <div><dt>Tag policy</dt><dd><b>Chính sách chuẩn hóa tag</b> trên tài nguyên của các account.</dd></div>
+        <div><dt>Backup policy</dt><dd><b>Chính sách sao lưu</b> – áp backup plan của AWS Backup toàn tổ chức.</dd></div>
+        <div><dt>AI services opt-out policy</dt><dd><b>Chính sách từ chối thu thập dữ liệu AI</b>.</dd></div>
+        <div><dt>Organization trail</dt><dd><b>Trail cấp tổ chức</b> – CloudTrail ghi log mọi account, member không tắt/sửa được.</dd></div>
+        <div><dt>Trusted access</dt><dd><b>Truy cập tin cậy</b> – cho phép dịch vụ AWS làm việc trên mọi account của tổ chức.</dd></div>
+        <div><dt>AWS Control Tower</dt><dd><b>Dịch vụ dựng &amp; quản trị môi trường đa tài khoản</b> theo best practice.</dd></div>
+        <div><dt>Landing zone</dt><dd><b>Vùng hạ cánh</b> – môi trường multi-account well-architected chứa mọi OU, account, user.</dd></div>
+        <div><dt>Control (guardrail)</dt><dd><b>Rào chắn kiểm soát</b> – quy tắc quản trị cấp cao, mỗi control một quy tắc.</dd></div>
+        <div><dt>Preventive / Detective / Proactive control</dt><dd><b>Control phòng ngừa / phát hiện / chủ động</b> – SCP-RCP / Config rules / CloudFormation hooks.</dd></div>
+        <div><dt>Mandatory / Strongly recommended / Elective</dt><dd><b>Bắt buộc / Rất khuyến nghị / Tùy chọn</b> – mức hướng dẫn của control.</dd></div>
+        <div><dt>Account Factory</dt><dd><b>Nhà máy tạo tài khoản</b> – mẫu cấp account chuẩn hóa (“vending machine”) trên Service Catalog.</dd></div>
+        <div><dt>Drift</dt><dd><b>Trôi lệch cấu hình</b> – sai lệch khỏi best practice/cấu hình của landing zone.</dd></div>
+        <div><dt>Log Archive account / Audit account</dt><dd><b>Tài khoản lưu log / tài khoản kiểm toán</b> – shared accounts trong Security OU.</dd></div>
+        <div><dt>Home Region</dt><dd><b>Region chính</b> – Region nơi dựng landing zone Control Tower.</dd></div>
+        <div><dt>AWS IAM Identity Center</dt><dd><b>Đăng nhập một lần cho workforce</b> – tên cũ AWS Single Sign-On.</dd></div>
+        <div><dt>Workforce user</dt><dd><b>Người dùng là nhân sự nội bộ</b> – khác customer/end user của ứng dụng.</dd></div>
+        <div><dt>Organization instance / Account instance</dt><dd><b>Instance cấp tổ chức / cấp tài khoản</b> của Identity Center.</dd></div>
+        <div><dt>Identity source</dt><dd><b>Nguồn định danh</b> – Identity Center directory, Active Directory, hoặc external IdP.</dd></div>
+        <div><dt>Permission set</dt><dd><b>Bộ quyền</b> – template tập policy, tạo IAM role trong từng account được gán.</dd></div>
+        <div><dt>Account assignment</dt><dd><b>Gán truy cập tài khoản</b> – user/group + permission set + account.</dd></div>
+        <div><dt>AWS access portal</dt><dd><b>Cổng truy cập AWS</b> – web portal liệt kê account và ứng dụng được gán.</dd></div>
+        <div><dt>SCIM</dt><dd><b>Giao thức đồng bộ định danh tự động</b> – provisioning user/group từ IdP.</dd></div>
+        <div><dt>Trusted identity propagation</dt><dd><b>Truyền định danh tin cậy</b> – chia sẻ định danh người dùng giữa các AWS managed application.</dd></div>
+        <div><dt>AWS Resource Access Manager (AWS RAM)</dt><dd><b>Dịch vụ chia sẻ tài nguyên</b> giữa các account (vd VPC subnet).</dd></div>
+      </dl>
+
+      <!-- ===================== CÂU HỎI ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company has 40 AWS accounts in an organization in AWS Organizations with all features enabled. The security team must ensure that no IAM user or role in any member account, including the root user, can launch resources outside the eu-west-1 and eu-central-1 Regions. Which solution meets this requirement with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Create an IAM policy that denies actions outside the approved Regions and attach it to every IAM user and role in each account.</li>
+            <li data-k="B">Create an SCP that denies all actions (except global services) when aws:RequestedRegion is not one of the approved Regions, and attach it to the organization root.</li>
+            <li data-k="C">Create a permissions boundary that allows only the approved Regions and attach it to every IAM role in the member accounts.</li>
+            <li data-k="D">Use AWS Config rules in each account to detect resources created outside the approved Regions and delete them.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> SCP gắn ở root áp dụng cho <b>mọi member account</b> và giới hạn cả <b>root user</b> của member account; Deny + <code>aws:RequestedRegion</code> (NotAction các dịch vụ global) là mẫu chuẩn. <b>A sai</b>: phải gắn thủ công cho từng identity ở 40 account, không chặn được root user, ai có quyền IAM có thể gỡ. <b>C sai</b>: boundary không áp cho root user, phải gắn từng entity – overhead cao. <b>D sai</b>: Config chỉ <b>phát hiện</b> sau khi tạo, không ngăn chặn.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 40 tài khoản AWS trong một organization thuộc AWS Organizations đã bật all features. Đội bảo mật phải đảm bảo rằng không IAM user hay role nào trong bất kỳ member account nào, kể cả root user, có thể khởi tạo tài nguyên bên ngoài các Region eu-west-1 và eu-central-1. Giải pháp nào đáp ứng yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một IAM policy từ chối các action bên ngoài các Region được phê duyệt và gắn nó vào mọi IAM user và role trong từng account.</span><span class="why">Sai: phải gắn thủ công cho từng identity ở 40 account (overhead lớn), IAM policy không giới hạn được root user và người có quyền IAM có thể tự gỡ policy.</span></li>
+              <li data-k="B"><span class="tv">Tạo một SCP từ chối mọi action (trừ các dịch vụ global) khi aws:RequestedRegion không thuộc các Region được phê duyệt, và gắn nó vào root của organization.</span><span class="why">Đúng: SCP gắn một lần ở root áp dụng cho mọi member account và giới hạn cả root user của member account – đúng mẫu chặn Region chuẩn, overhead thấp nhất.</span></li>
+              <li data-k="C"><span class="tv">Tạo một permissions boundary chỉ cho phép các Region được phê duyệt và gắn nó vào mọi IAM role trong các member account.</span><span class="why">Sai: permissions boundary không áp dụng cho root user và phải gắn vào từng entity ở mọi account, overhead cao.</span></li>
+              <li data-k="D"><span class="tv">Dùng AWS Config rules trong từng account để phát hiện tài nguyên được tạo bên ngoài các Region được phê duyệt và xóa chúng.</span><span class="why">Sai: AWS Config chỉ phát hiện sau khi tài nguyên đã được tạo, không ngăn chặn việc khởi tạo như đề yêu cầu.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An administrator in the management account attaches an SCP that denies ec2:TerminateInstances to the organization root. Later, a user in the management account who has the AdministratorAccess policy successfully terminates an EC2 instance in the management account. Why did this happen?</div>
+          <ol class="opts">
+            <li data-k="A">The SCP takes up to 24 hours to propagate to all accounts.</li>
+            <li data-k="B">AdministratorAccess overrides any explicit Deny in an SCP.</li>
+            <li data-k="C">SCPs attached to the root apply only to OUs, not to accounts directly under the root.</li>
+            <li data-k="D">SCPs do not affect users or roles in the management account.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Tài liệu nêu rõ: SCP <b>chỉ ảnh hưởng member account</b>, không ảnh hưởng user/role trong management account – kể cả khi SCP gắn ở root. Vì vậy AWS khuyến nghị không đặt workload trong management account. <b>A sai</b>: không có độ trễ 24 giờ như vậy. <b>B sai</b>: ngược lại – trong member account, SCP chặn được cả AdministratorAccess. <b>C sai</b>: SCP ở root áp dụng cho mọi OU và mọi member account (kể cả account nằm trực tiếp dưới root).</div>
+          <div class="trans">
+            <div class="tq">Một quản trị viên trong management account gắn một SCP từ chối ec2:TerminateInstances vào root của organization. Sau đó, một user trong management account có policy AdministratorAccess đã terminate thành công một EC2 instance trong management account. Vì sao điều này xảy ra?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">SCP cần tới 24 giờ để lan truyền đến tất cả các account.</span><span class="why">Sai: SCP không có độ trễ lan truyền 24 giờ như vậy; nguyên nhân là SCP vốn không áp dụng cho management account.</span></li>
+              <li data-k="B"><span class="tv">AdministratorAccess ghi đè mọi Deny tường minh trong SCP.</span><span class="why">Sai: ngược lại – trong member account, Deny trong SCP chặn được cả user có AdministratorAccess.</span></li>
+              <li data-k="C"><span class="tv">SCP gắn ở root chỉ áp dụng cho các OU, không áp dụng cho các account nằm trực tiếp dưới root.</span><span class="why">Sai: SCP gắn ở root áp dụng cho mọi OU và mọi member account, kể cả account nằm trực tiếp dưới root.</span></li>
+              <li data-k="D"><span class="tv">SCP không ảnh hưởng đến user hoặc role trong management account.</span><span class="why">Đúng: SCP chỉ giới hạn member account; user/role trong management account không bị SCP ảnh hưởng, kể cả khi SCP gắn ở root.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company's organization uses the default FullAWSAccess SCP at every level. A solutions architect detaches FullAWSAccess from the "Test" OU and attaches an SCP that allows only Amazon EC2 actions. An SCP attached to the root also explicitly denies all Amazon S3 actions. A developer in an account under the Test OU has the AdministratorAccess IAM policy. What can the developer do?</div>
+          <ol class="opts">
+            <li data-k="A">Perform only Amazon EC2 actions.</li>
+            <li data-k="B">Perform all actions except Amazon S3 actions.</li>
+            <li data-k="C">Perform all actions, because AdministratorAccess is attached.</li>
+            <li data-k="D">Perform Amazon EC2 and Amazon S3 actions.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Allow phải có ở <b>mọi cấp</b> trên đường đi: root (FullAWSAccess) ∩ Test OU (chỉ EC2) ∩ account (FullAWSAccess) = chỉ EC2; Deny S3 ở root không đổi kết quả vì S3 vốn không được Test OU Allow. Quyền hiệu lực = giao với AdministratorAccess ⇒ chỉ EC2. <b>B sai</b>: bỏ qua việc Test OU đã thu hẹp còn EC2. <b>C sai</b>: SCP giới hạn cả AdministratorAccess. <b>D sai</b>: S3 bị cả thiếu Allow ở OU lẫn Deny ở root.</div>
+          <div class="trans">
+            <div class="tq">Organization của một công ty dùng SCP mặc định FullAWSAccess ở mọi cấp. Một solutions architect gỡ FullAWSAccess khỏi OU "Test" và gắn một SCP chỉ cho phép các action của Amazon EC2. Một SCP gắn ở root cũng từ chối tường minh mọi action của Amazon S3. Một developer trong một account thuộc Test OU có IAM policy AdministratorAccess. Developer đó có thể làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chỉ thực hiện được các action của Amazon EC2.</span><span class="why">Đúng: Allow phải có ở mọi cấp; giao của root (FullAWSAccess), Test OU (chỉ EC2) và account (FullAWSAccess) chỉ còn EC2; lấy giao thêm với AdministratorAccess vẫn chỉ là EC2.</span></li>
+              <li data-k="B"><span class="tv">Thực hiện mọi action trừ các action của Amazon S3.</span><span class="why">Sai: bỏ qua việc Test OU đã thay FullAWSAccess bằng SCP chỉ Allow EC2, nên các dịch vụ khác ngoài EC2 đều bị chặn.</span></li>
+              <li data-k="C"><span class="tv">Thực hiện mọi action, vì đã được gắn AdministratorAccess.</span><span class="why">Sai: SCP đặt giới hạn tối đa cho member account, kể cả với user có AdministratorAccess.</span></li>
+              <li data-k="D"><span class="tv">Thực hiện các action của Amazon EC2 và Amazon S3.</span><span class="why">Sai: S3 vừa không được Allow ở Test OU vừa bị Deny tường minh ở root.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company is starting its cloud journey and plans to create dozens of AWS accounts for different teams. The company wants a well-architected multi-account environment with centralized logging, a dedicated audit account, preconfigured guardrails, and a self-service way to provision new accounts with approved configurations. The solution must be implemented quickly with the LEAST operational overhead. Which solution should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Create an organization in AWS Organizations, write custom SCPs, and build AWS Lambda functions to create accounts and configure CloudTrail in each account.</li>
+            <li data-k="B">Use AWS CloudFormation StackSets from a single standalone account to deploy IAM users into each new account.</li>
+            <li data-k="C">Set up a landing zone with AWS Control Tower and use Account Factory to provision new accounts.</li>
+            <li data-k="D">Use AWS Service Catalog in each account to let teams launch approved EC2 instances.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Control Tower dựng <b>landing zone</b> (Security OU với Log Archive và Audit account, controls mandatory, IAM Identity Center) trong chưa tới một giờ; <b>Account Factory</b> là “vending machine” cấp account theo cấu hình đã duyệt. <b>A sai</b>: làm được nhưng tự xây toàn bộ – overhead lớn. <b>B sai</b>: StackSets là công cụ triển khai, không phải khung governance; tạo IAM user ở từng account đi ngược best practice. <b>D sai</b>: Service Catalog ở từng account chỉ chuẩn hóa sản phẩm, không tạo account, không có logging/guardrail tập trung.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang bắt đầu hành trình lên cloud và dự định tạo hàng chục tài khoản AWS cho các đội khác nhau. Công ty muốn có một môi trường multi-account được thiết kế tốt (well-architected) với logging tập trung, một audit account riêng, các guardrail được cấu hình sẵn, và một cách tự phục vụ (self-service) để cấp tài khoản mới với cấu hình đã được phê duyệt. Giải pháp phải được triển khai nhanh với LEAST operational overhead (ít công sức vận hành nhất). Solutions architect nên đề xuất giải pháp nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một organization trong AWS Organizations, viết các SCP tùy chỉnh, và xây dựng các AWS Lambda function để tạo account và cấu hình CloudTrail trong từng account.</span><span class="why">Sai: làm được nhưng phải tự xây và bảo trì toàn bộ, tốn thời gian và overhead lớn – trái yêu cầu triển khai nhanh, ít vận hành.</span></li>
+              <li data-k="B"><span class="tv">Dùng AWS CloudFormation StackSets từ một standalone account duy nhất để triển khai IAM user vào từng account mới.</span><span class="why">Sai: StackSets chỉ là công cụ triển khai, không phải khung governance (không có logging, audit account, guardrail); tạo IAM user ở từng account đi ngược best practice.</span></li>
+              <li data-k="C"><span class="tv">Thiết lập một landing zone bằng AWS Control Tower và dùng Account Factory để cấp các account mới.</span><span class="why">Đúng: Control Tower dựng sẵn landing zone (Log Archive, Audit account, controls) trong thời gian ngắn, và Account Factory cho phép tự phục vụ cấp account theo cấu hình đã duyệt.</span></li>
+              <li data-k="D"><span class="tv">Dùng AWS Service Catalog trong từng account để cho các đội khởi chạy các EC2 instance đã được phê duyệt.</span><span class="why">Sai: Service Catalog chỉ chuẩn hóa sản phẩm được phép triển khai, không tạo account và không có logging/guardrail tập trung.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">Which TWO statements about service control policies (SCPs) are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">An SCP can grant permissions to IAM users in member accounts that do not have any IAM policies.</li>
+            <li data-k="B">SCPs restrict the root user of member accounts.</li>
+            <li data-k="C">SCPs restrict actions performed by service-linked roles.</li>
+            <li data-k="D">SCPs can be attached directly to IAM user groups in a member account.</li>
+            <li data-k="E">SCPs are not available if the organization has enabled only the consolidated billing feature set.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> SCP ảnh hưởng mọi user/role của member account <b>kể cả root user</b>; SCP chỉ có khi bật <b>All features</b>. <b>A sai</b>: SCP <b>không bao giờ cấp quyền</b> – user không có IAM policy thì không có quyền dù SCP cho phép tất cả. <b>C sai</b>: tài liệu nêu SCP <b>không</b> ảnh hưởng service-linked role. <b>D sai</b>: SCP chỉ gắn vào root, OU, account.</div>
+          <div class="trans">
+            <div class="tq">HAI phát biểu nào về service control policy (SCP) là đúng? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">SCP có thể cấp quyền cho các IAM user trong member account không có bất kỳ IAM policy nào.</span><span class="why">Sai: SCP không bao giờ cấp quyền, chỉ đặt giới hạn tối đa; user không có IAM policy thì vẫn không có quyền gì.</span></li>
+              <li data-k="B"><span class="tv">SCP giới hạn root user của các member account.</span><span class="why">Đúng: SCP ảnh hưởng mọi user và role trong member account, kể cả root user.</span></li>
+              <li data-k="C"><span class="tv">SCP giới hạn các action do service-linked role thực hiện.</span><span class="why">Sai: tài liệu AWS nêu rõ SCP không ảnh hưởng đến service-linked role.</span></li>
+              <li data-k="D"><span class="tv">SCP có thể được gắn trực tiếp vào IAM user group trong một member account.</span><span class="why">Sai: SCP chỉ gắn được vào root, OU hoặc account, không gắn vào IAM user/group/role.</span></li>
+              <li data-k="E"><span class="tv">SCP không khả dụng nếu organization chỉ bật bộ tính năng consolidated billing.</span><span class="why">Đúng: SCP (và các loại policy quản trị) chỉ dùng được khi organization bật All features.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company has 60 AWS accounts in AWS Organizations. Employees are managed in Okta. The company wants employees to use their Okta credentials to access only the AWS accounts they are assigned to, with consistent permissions for each job function across all accounts. The solution must use temporary credentials and minimize administrative effort. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Enable an organization instance of AWS IAM Identity Center, configure Okta as an external identity provider, create permission sets for each job function, and assign groups to accounts.</li>
+            <li data-k="B">Enable an account instance of IAM Identity Center in each of the 60 accounts and connect each instance to Okta.</li>
+            <li data-k="C">Create IAM users in each account with the same usernames as in Okta and enforce MFA.</li>
+            <li data-k="D">Configure Amazon Cognito user pools with Okta as a SAML identity provider and give employees the Cognito tokens.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Organization instance (ở management account) là loại <b>duy nhất</b> quản lý được truy cập vào AWS accounts; Okta làm external IdP (SAML 2.0, đồng bộ qua SCIM); <b>permission set</b> tạo role thống nhất trong mọi account được gán. <b>B sai</b>: account instance không quản lý được truy cập AWS account và nhân 60 lần cấu hình. <b>C sai</b>: IAM user là long-term credentials, overhead lớn. <b>D sai</b>: Cognito dành cho người dùng <b>ứng dụng</b>, không phải workforce truy cập console/CLI của nhiều account.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 60 tài khoản AWS trong AWS Organizations. Nhân viên được quản lý trong Okta. Công ty muốn nhân viên dùng thông tin đăng nhập Okta của họ để truy cập chỉ những tài khoản AWS mà họ được gán, với quyền nhất quán cho từng chức danh công việc trên tất cả các account. Giải pháp phải dùng thông tin xác thực tạm thời (temporary credentials) và giảm thiểu công sức quản trị. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật một organization instance của AWS IAM Identity Center, cấu hình Okta làm external identity provider, tạo permission set cho từng chức danh công việc, và gán các group vào account.</span><span class="why">Đúng: organization instance quản lý tập trung truy cập vào mọi account, Okta làm IdP ngoài, permission set tạo role nhất quán với temporary credentials ở mọi account được gán.</span></li>
+              <li data-k="B"><span class="tv">Bật một account instance của IAM Identity Center trong mỗi account của 60 account và kết nối từng instance với Okta.</span><span class="why">Sai: account instance không quản lý được truy cập vào AWS account, và phải cấu hình lặp lại 60 lần – trái yêu cầu giảm công sức quản trị.</span></li>
+              <li data-k="C"><span class="tv">Tạo IAM user trong từng account với username giống trong Okta và bắt buộc MFA.</span><span class="why">Sai: IAM user dùng long-term credentials, không dùng được đăng nhập Okta và phải quản lý thủ công ở 60 account.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình Amazon Cognito user pool với Okta làm SAML identity provider và cấp Cognito token cho nhân viên.</span><span class="why">Sai: Cognito dành cho người dùng của ứng dụng, không phải để workforce truy cập console/CLI của nhiều AWS account.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company acquired another company that has 12 standalone AWS accounts. The parent company wants to receive a single bill for all accounts and benefit from volume pricing discounts and Reserved Instance sharing. The acquired company's accounts must keep their existing resources. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create 12 new member accounts in the parent organization and migrate all resources into them.</li>
+            <li data-k="B">Use AWS Resource Access Manager to share the Reserved Instances with the 12 accounts.</li>
+            <li data-k="C">Send invitations from the parent organization's management account to the 12 accounts and have each account accept the invitation.</li>
+            <li data-k="D">Make one of the acquired accounts the new management account of the parent organization.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Account có sẵn tham gia organization bằng <b>invitation</b> (handshake INVITE, hết hạn sau 15 ngày); tài nguyên giữ nguyên. Khi đã là member, consolidated billing gộp hóa đơn và chia sẻ volume discount, RI, Savings Plans. <b>A sai</b>: không cần di chuyển tài nguyên – tốn công và rủi ro. <b>B sai</b>: RAM chia sẻ tài nguyên như subnet, không phải cơ chế chia sẻ discount RI. <b>D sai</b>: <b>không thể đổi</b> management account của một organization.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đã mua lại một công ty khác có 12 tài khoản AWS độc lập (standalone). Công ty mẹ muốn nhận một hóa đơn duy nhất cho tất cả các account và hưởng lợi từ chiết khấu theo khối lượng (volume pricing) và chia sẻ Reserved Instance. Các account của công ty bị mua lại phải giữ nguyên tài nguyên hiện có. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo 12 member account mới trong organization của công ty mẹ và di chuyển toàn bộ tài nguyên sang đó.</span><span class="why">Sai: không cần di chuyển tài nguyên – vừa tốn công vừa rủi ro, trong khi account có sẵn có thể được mời vào organization.</span></li>
+              <li data-k="B"><span class="tv">Dùng AWS Resource Access Manager để chia sẻ Reserved Instance với 12 account.</span><span class="why">Sai: RAM chia sẻ tài nguyên như subnet, Transit Gateway; nó không gộp hóa đơn và không phải cơ chế chia sẻ chiết khấu RI.</span></li>
+              <li data-k="C"><span class="tv">Gửi lời mời từ management account của organization công ty mẹ tới 12 account và yêu cầu từng account chấp nhận lời mời.</span><span class="why">Đúng: account có sẵn tham gia organization qua invitation mà vẫn giữ nguyên tài nguyên; khi là member, consolidated billing gộp hóa đơn và chia sẻ volume discount, RI, Savings Plans.</span></li>
+              <li data-k="D"><span class="tv">Biến một trong các account bị mua lại thành management account mới của organization công ty mẹ.</span><span class="why">Sai: không thể đổi management account của một organization.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company uses AWS Control Tower. The compliance team wants to be notified when any Amazon EBS volume attached to an EC2 instance in an enrolled account is not encrypted. The team does not want to block existing workloads. Which type of control should be enabled?</div>
+          <ol class="opts">
+            <li data-k="A">A preventive control implemented with an SCP.</li>
+            <li data-k="B">A proactive control implemented with AWS CloudFormation hooks.</li>
+            <li data-k="C">A mandatory control that cannot be disabled.</li>
+            <li data-k="D">A detective control implemented with AWS Config rules.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Yêu cầu là <b>phát hiện</b> tài nguyên không tuân thủ mà không chặn ⇒ <b>detective control</b> (AWS Config rules); tài liệu lấy đúng ví dụ “Detect Whether Encryption is Enabled for Amazon EBS Volumes Attached to Amazon EC2 Instances” (strongly recommended). <b>A sai</b>: preventive chặn action – trái yêu cầu không block. <b>B sai</b>: proactive kiểm tra <b>trước khi</b> tạo bằng CloudFormation, không phát hiện volume đã tồn tại. <b>C sai</b>: “mandatory” là mức hướng dẫn, không phải loại control; control này không thuộc nhóm mandatory.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng AWS Control Tower. Đội tuân thủ (compliance) muốn được thông báo khi bất kỳ Amazon EBS volume nào gắn vào một EC2 instance trong một enrolled account không được mã hóa. Đội không muốn chặn các workload hiện có. Nên bật loại control nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một preventive control được triển khai bằng SCP.</span><span class="why">Sai: preventive control chặn action, trái yêu cầu không được block workload hiện có.</span></li>
+              <li data-k="B"><span class="tv">Một proactive control được triển khai bằng AWS CloudFormation hooks.</span><span class="why">Sai: proactive control kiểm tra tài nguyên trước khi tạo qua CloudFormation, không phát hiện được các volume đã tồn tại.</span></li>
+              <li data-k="C"><span class="tv">Một mandatory control không thể tắt.</span><span class="why">Sai: "mandatory" là mức hướng dẫn (guidance), không phải loại control; control kiểm tra mã hóa EBS cũng không thuộc nhóm mandatory.</span></li>
+              <li data-k="D"><span class="tv">Một detective control được triển khai bằng AWS Config rules.</span><span class="why">Đúng: detective control dùng AWS Config rules để phát hiện tài nguyên không tuân thủ (EBS chưa mã hóa) và báo cáo mà không chặn workload.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A company wants to follow AWS best practices for the management account of its organization in AWS Organizations. Which TWO actions should the company take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Keep application workloads and resources in member accounts instead of the management account.</li>
+            <li data-k="B">Attach a restrictive SCP to the management account to limit its administrators.</li>
+            <li data-k="C">Register a member account as a delegated administrator for security services such as Amazon GuardDuty.</li>
+            <li data-k="D">Change the management account to a different account every year to rotate privileges.</li>
+            <li data-k="E">Detach the FullAWSAccess SCP from the root without replacement to reduce the attack surface.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> AWS khuyến nghị chỉ dùng management account cho tác vụ bắt buộc, để tài nguyên ở member account (vì SCP không giới hạn management account) và dùng <b>delegated administrator</b> cho dịch vụ tích hợp. <b>B sai</b>: SCP không có tác dụng với management account. <b>D sai</b>: không thể đổi management account. <b>E sai</b>: gỡ FullAWSAccess không thay thế ⇒ mọi action trong member account thất bại.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn tuân theo các best practice của AWS cho management account của organization trong AWS Organizations. Công ty nên thực hiện HAI hành động nào? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt các workload ứng dụng và tài nguyên trong member account thay vì trong management account.</span><span class="why">Đúng: AWS khuyến nghị chỉ dùng management account cho các tác vụ bắt buộc, vì SCP không giới hạn được management account.</span></li>
+              <li data-k="B"><span class="tv">Gắn một SCP hạn chế vào management account để giới hạn các quản trị viên của nó.</span><span class="why">Sai: SCP không có tác dụng với user/role trong management account.</span></li>
+              <li data-k="C"><span class="tv">Đăng ký một member account làm delegated administrator cho các dịch vụ bảo mật như Amazon GuardDuty.</span><span class="why">Đúng: delegated administrator giúp quản lý dịch vụ tích hợp từ member account, giảm số người cần truy cập management account.</span></li>
+              <li data-k="D"><span class="tv">Đổi management account sang một account khác mỗi năm để luân chuyển đặc quyền.</span><span class="why">Sai: không thể đổi management account của một organization.</span></li>
+              <li data-k="E"><span class="tv">Gỡ SCP FullAWSAccess khỏi root mà không thay thế để giảm bề mặt tấn công.</span><span class="why">Sai: gỡ FullAWSAccess mà không có SCP Allow thay thế sẽ khiến mọi action trong member account thất bại.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company wants all AWS CloudTrail logs from every account in its organization to be delivered to a central Amazon S3 bucket in a dedicated logging account. Administrators of member accounts must not be able to stop or modify this logging. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Ask each account administrator to create a trail that delivers logs to the central bucket, and review the configuration monthly.</li>
+            <li data-k="B">Create an organization trail in AWS CloudTrail that delivers logs to the central bucket in the logging account, and add an SCP that denies cloudtrail:StopLogging and cloudtrail:DeleteTrail for member accounts.</li>
+            <li data-k="C">Enable consolidated billing so that CloudTrail logs are automatically aggregated in the management account.</li>
+            <li data-k="D">Use IAM Identity Center permission sets to remove CloudTrail permissions from all users.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Organization trail ghi log mọi account về một nơi và tài liệu Organizations nêu log này <b>member account không tắt hoặc sửa được</b>; SCP Deny bổ sung phòng thủ nhiều lớp cho các trail khác. <b>A sai</b>: phụ thuộc từng admin, họ vẫn tự tắt được. <b>C sai</b>: consolidated billing chỉ liên quan thanh toán. <b>D sai</b>: permission set chỉ áp cho user đăng nhập qua Identity Center, không chặn root user hay IAM role khác trong account.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn tất cả log AWS CloudTrail từ mọi account trong organization được chuyển tới một Amazon S3 bucket trung tâm trong một logging account riêng. Quản trị viên của các member account không được phép dừng hoặc sửa đổi việc ghi log này. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Yêu cầu quản trị viên của từng account tạo một trail chuyển log tới bucket trung tâm, và rà soát cấu hình hàng tháng.</span><span class="why">Sai: phụ thuộc vào từng admin và họ vẫn tự dừng hoặc sửa trail được – không đáp ứng yêu cầu ngăn chặn.</span></li>
+              <li data-k="B"><span class="tv">Tạo một organization trail trong AWS CloudTrail chuyển log tới bucket trung tâm trong logging account, và thêm một SCP từ chối cloudtrail:StopLogging và cloudtrail:DeleteTrail cho các member account.</span><span class="why">Đúng: organization trail thu log mọi account về một nơi và member account không tắt/sửa được; SCP Deny bổ sung lớp phòng thủ cho member account.</span></li>
+              <li data-k="C"><span class="tv">Bật consolidated billing để log CloudTrail được tự động tổng hợp trong management account.</span><span class="why">Sai: consolidated billing chỉ liên quan đến thanh toán, không tổng hợp log CloudTrail.</span></li>
+              <li data-k="D"><span class="tv">Dùng permission set của IAM Identity Center để gỡ quyền CloudTrail khỏi mọi user.</span><span class="why">Sai: permission set chỉ áp dụng cho user đăng nhập qua Identity Center, không chặn root user hay các IAM role khác trong account.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/organizations/latest/userguide/orgs_getting-started_concepts.html" target="_blank" rel="noopener">Terminology and concepts for AWS Organizations</a></li>
+        <li><a href="https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps_evaluation.html" target="_blank" rel="noopener">SCP evaluation</a></li>
+        <li><a href="https://docs.aws.amazon.com/organizations/latest/userguide/orgs_reference_limits.html" target="_blank" rel="noopener">Quotas and service limits for AWS Organizations</a></li>
+        <li><a href="https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/consolidated-billing.html" target="_blank" rel="noopener">Consolidating billing for AWS Organizations</a></li>
+        <li><a href="https://docs.aws.amazon.com/controltower/latest/userguide/how-control-tower-works.html" target="_blank" rel="noopener">How AWS Control Tower works</a></li>
+        <li><a href="https://docs.aws.amazon.com/controltower/latest/userguide/how-controls-work.html" target="_blank" rel="noopener">How controls work (Control Tower)</a></li>
+        <li><a href="https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetsconcept.html" target="_blank" rel="noopener">Manage AWS accounts with permission sets</a></li>
+        <li><a href="https://docs.aws.amazon.com/singlesignon/latest/userguide/manage-your-identity-source.html" target="_blank" rel="noopener">Manage your identity source (IAM Identity Center)</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

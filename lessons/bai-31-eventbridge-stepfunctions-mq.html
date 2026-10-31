@@ -1,0 +1,834 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 31 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-EventBridge.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="31" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Phân biệt hai phong cách tích hợp: <b>choreography</b> (hướng sự kiện, dùng <b>Amazon EventBridge</b>) và <b>orchestration</b> (điều phối tập trung, dùng <b>AWS Step Functions</b>), và biết khi nào chọn mỗi kiểu.</li>
+          <li>Hiểu cơ chế <b>event bus → rule (event pattern) → target</b> của EventBridge: default / custom / partner bus, tối đa <b>5 target mỗi rule</b>, retry <b>24 giờ / 185 lần</b>, DLQ, archive &amp; replay, cross-account, API destinations, Pipes.</li>
+          <li>Dùng <b>EventBridge Scheduler</b> (one-time, cron, rate, time zone, flexible time window) thay cho scheduled rule (legacy) và cron trên EC2; biết vai trò của <b>schema registry</b> (schema discovery, code bindings).</li>
+          <li>Thiết kế <b>state machine</b> bằng Amazon States Language: các loại state (Task, Choice, Parallel, Map, Wait…), <b>Retry / Catch</b>, ba integration pattern (Request Response, <code>.sync</code>, <code>.waitForTaskToken</code>).</li>
+          <li>Chọn đúng <b>Standard workflow</b> (tới 1 năm, exactly-once, lịch sử 90 ngày) hay <b>Express workflow</b> (tối đa 5 phút, at-least-once / at-most-once, 100.000 execution/giây).</li>
+          <li>Nhận diện tình huống cần <b>Amazon MQ</b> (ActiveMQ / RabbitMQ, JMS, AMQP, MQTT, STOMP, OpenWire) và kiến trúc HA của nó (active/standby + EFS, cluster 3 node + NLB).</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 6 – Application Integration &amp; Serverless</span>
+        <p>Bài 30 đã dạy <b>SQS</b> (queue, visibility timeout, DLQ) và <b>SNS</b> (topic, fan-out, filter policy) – bài này không lặp lại mà chỉ so sánh khi cần. Ở đây tập trung vào <b>EventBridge</b> (event bus, rule, Scheduler, schema registry), <b>Step Functions</b> (state machine, Standard vs Express) và <b>Amazon MQ</b>. Các nội dung liên quan học ở bài sau: <b>Lambda</b> (concurrency, destinations) – Bài 32; <b>API Gateway</b> (gọi Express workflow đồng bộ) – Bài 33; <b>ECS/Fargate</b> làm task trong workflow – Bài 34; <b>Kinesis / MSK</b> (streaming) – Bài 35.</p></div>
+
+      <!-- ===================== PHẦN 1: EVENT-DRIVEN ===================== -->
+      <h2 id="event-driven"><img src="../assets/icons/cat/Application-Integration.svg" alt="">Kiến trúc hướng sự kiện: choreography và orchestration</h2>
+      <p class="lead">Theo tài liệu EventBridge, <span class="t" data-vi="Kiến trúc hướng sự kiện">event-driven architecture</span> là cách xây dựng các hệ thống phần mềm <b>loosely coupled</b> làm việc cùng nhau bằng cách <b>phát ra</b> và <b>phản ứng với</b> các <span class="t" data-vi="Sự kiện – một thay đổi trạng thái">event</span>. Kiến trúc này giúp tăng tính linh hoạt (agility) và xây dựng ứng dụng tin cậy, dễ scale.</p>
+
+      <p>Khi một nghiệp vụ gồm nhiều bước (đặt hàng → thanh toán → kho → giao hàng), có hai cách phối hợp các microservice:</p>
+      <div class="compare">
+        <div style="--accent:#E7157B"><h4><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">Choreography (biên đạo)</h4>
+          <ul>
+            <li>Không có “nhạc trưởng”: mỗi service <b>phát event</b> khi việc của nó xong, các service khác <b>tự đăng ký</b> phản ứng.</li>
+            <li>Ghép lỏng tối đa – thêm consumer mới không cần sửa producer.</li>
+            <li>Khó nhìn toàn cảnh luồng, khó biết “đơn hàng đang ở bước nào”.</li>
+            <li>Công cụ: <b>Amazon EventBridge</b> (event bus), SNS (Bài 30).</li>
+          </ul></div>
+        <div style="--accent:#E7157B"><h4><img src="../assets/icons/svc/AWS-Step-Functions.svg" alt="">Orchestration (điều phối)</h4>
+          <ul>
+            <li>Một <b>state machine</b> trung tâm gọi từng bước theo thứ tự, quyết định nhánh, retry, bù trừ khi lỗi.</li>
+            <li>Nhìn thấy trực quan từng execution, từng bước thành công/thất bại.</li>
+            <li>Phù hợp quy trình có thứ tự, có điều kiện, chờ người duyệt, chạy lâu.</li>
+            <li>Công cụ: <b>AWS Step Functions</b>.</li>
+          </ul></div>
+      </div>
+
+      <h3>Các dịch vụ trong bài</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">
+          <div><h4>Amazon EventBridge</h4><span class="vi">Bộ định tuyến sự kiện serverless</span><p>Nhận event từ dịch vụ AWS, ứng dụng của bạn, SaaS; lọc bằng rule và giao tới target. Gồm <b>event bus</b> và <b>Pipes</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-CloudWatch_Event-Time-Based.svg" alt="">
+          <div><h4>EventBridge Scheduler</h4><span class="vi">Bộ lập lịch serverless</span><p>Hàng triệu lịch (cron, rate, một lần) gọi tới hơn <b>270</b> dịch vụ AWS, hơn <b>6.000</b> API.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EventBridge_Schema-Registry.svg" alt="">
+          <div><h4>Schema registry</h4><span class="vi">Kho lược đồ sự kiện</span><p>Lưu cấu trúc event (OpenAPI 3, JSONSchema Draft4), tự <b>discover</b> schema, sinh <b>code bindings</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Step-Functions.svg" alt="">
+          <div><h4>AWS Step Functions</h4><span class="vi">Điều phối luồng công việc</span><p>Workflow (state machine) trực quan: gọi Lambda, ECS, Glue, hơn 200 dịch vụ qua AWS SDK integration.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-MQ.svg" alt="">
+          <div><h4>Amazon MQ</h4><span class="vi">Message broker được quản lý</span><p>Apache ActiveMQ Classic và RabbitMQ – migrate broker sẵn có <b>không cần viết lại code messaging</b>.</p></div></div>
+      </div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – sàn nhảy và dàn nhạc</span>
+        <p><b>Choreography</b> giống một nhóm nhảy: không ai chỉ huy, mỗi người nghe nhạc (event) và tự biết lúc nào tới lượt mình. <b>Orchestration</b> giống dàn nhạc giao hưởng: <b>nhạc trưởng</b> (Step Functions) chỉ định từng bè vào lúc nào, dừng ở đâu, chơi lại đoạn nào khi sai. <b>Amazon MQ</b> thì như thuê nguyên “ban nhạc cũ” quen bài (ActiveMQ/RabbitMQ) để không phải tập lại từ đầu.</p></div>
+
+      <!-- ===================== PHẦN 2: EVENTBRIDGE ===================== -->
+      <h2 id="eventbridge"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">Amazon EventBridge: event bus, rule và target</h2>
+      <p class="lead"><b>Amazon EventBridge</b> là dịch vụ serverless dùng event để kết nối các thành phần ứng dụng, giúp xây dựng ứng dụng event-driven có khả năng scale. EventBridge cung cấp cách đơn giản, nhất quán để <b>ingest, filter, transform và deliver</b> event. Có hai cách xử lý event: <span class="t" data-vi="Kênh sự kiện (bộ định tuyến)">event bus</span> (nhiều nguồn → nhiều đích) và <span class="t" data-vi="Đường ống nối điểm–điểm">pipe</span> (một nguồn → một đích).</p>
+
+      <h3>Event, event bus, rule, target</h3>
+      <ul>
+        <li><b>Event</b>: bản ghi JSON mô tả một thay đổi, có các trường <code>source</code> (vd <code>aws.ec2</code>), <code>detail-type</code> (vd <code>EC2 Instance State-change Notification</code>), <code>account</code>, <code>region</code>, <code>time</code> và <code>detail</code> (nội dung riêng).</li>
+        <li><b>Event bus</b>: “router” nhận event và giao tới <b>0 hoặc nhiều</b> target. Ba loại hay gặp:
+          <ul>
+            <li><span class="t" data-vi="Bus mặc định">Default event bus</span>: có sẵn trong mỗi account, <b>tự động nhận event từ các dịch vụ AWS</b> (EC2 đổi trạng thái, S3, CodePipeline, Health…).</li>
+            <li><span class="t" data-vi="Bus tự tạo">Custom event bus</span>: bus bạn tạo cho event của ứng dụng riêng (gửi bằng <code>PutEvents</code>), thường tách theo domain/team.</li>
+            <li><span class="t" data-vi="Bus đối tác SaaS">Partner event bus</span>: nhận event từ nhà cung cấp <b>SaaS</b> đối tác (vd Zendesk, Datadog, Shopify – kiến thức phổ biến) qua <b>partner event source</b>, không cần tự viết webhook.</li>
+          </ul></li>
+        <li><span class="t" data-vi="Quy tắc">Rule</span>: gắn với <b>một</b> event bus, đánh giá event khi tới. Nếu event khớp <span class="t" data-vi="Mẫu khớp sự kiện">event pattern</span> của rule, EventBridge gửi event tới các <span class="t" data-vi="Đích nhận">target</span> của rule (có thể <b>transform</b> trước khi gửi). Một event có thể khớp <b>nhiều rule</b>; mỗi rule có tối đa <b>5 target</b>, các target chạy <b>song song</b>. Event không khớp rule nào ⇒ EventBridge bỏ qua.</li>
+        <li>Hai loại rule: rule <b>khớp event pattern</b> và rule <b>chạy theo lịch</b> (scheduled rule – nay là <b>legacy</b>, AWS khuyên dùng EventBridge Scheduler). Ngoài ra có <span class="t" data-vi="Rule do dịch vụ AWS quản lý">managed rule</span> do dịch vụ AWS tự tạo trong account (chỉ xóa bằng <b>Force delete</b>, xóa sẽ làm tính năng của dịch vụ đó ngừng chạy).</li>
+      </ul>
+
+      <h3>Ví dụ event pattern (theo tài liệu)</h3>
+      <p>Rule trên default event bus bắt sự kiện EC2 instance chuyển sang trạng thái <code>running</code> rồi gọi một Lambda function:</p>
+      <pre><code>{
+  "source": ["aws.ec2"],
+  "detail-type": ["EC2 Instance State-change Notification"],
+  "detail": {
+    "state": ["running"]
+  }
+}</code></pre>
+      <p>Mỗi khi EC2 đổi trạng thái, EC2 (event source) <b>tự gửi</b> event vào default bus; EventBridge đối chiếu với rule, khớp thì gọi Lambda. Event pattern hỗ trợ khớp prefix, số, <code>exists</code>, <code>anything-but</code>, wildcard… (tối đa <b>30 rule chứa wildcard</b> mỗi bus).</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Application-Integration.svg" alt="">AWS Cloud – một Region</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">Dịch vụ AWS<small>EC2, S3, Health…</small></div>
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Ứng dụng của bạn<small>PutEvents</small></div>
+            <div class="node"><img src="../assets/icons/res/Amazon-EventBridge_Saas-Partner-Event.svg" alt="">SaaS partner<small>partner event source</small></div>
+            <span class="arrow">event (JSON)</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-EventBridge_Default-Event-Bus.svg" alt="">Event bus<small>default / custom / partner</small></div>
+            <span class="arrow">khớp pattern?</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-EventBridge_Rule.svg" alt="">Rule<small>event pattern + input transformer</small></div>
+            <span class="arrow">≤ 5 target song song</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda</div>
+            <div class="node"><img src="../assets/icons/svc/AWS-Step-Functions.svg" alt="">Step Functions</div>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">SQS queue</div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-EventBridge_Rule.svg" alt="">Target lỗi<small>retry 24 giờ / 185 lần, backoff + jitter</small></div>
+            <span class="arrow dashed">hết lượt retry</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">DLQ (SQS)<small>giữ event để xử lý sau</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Luồng event trong EventBridge: nguồn gửi event vào bus, rule lọc theo event pattern và giao tới tối đa 5 target. Event giao lỗi được retry mặc định 24 giờ / 185 lần; nếu vẫn lỗi mà không cấu hình DLQ thì event <b>bị bỏ</b>.</figcaption>
+      </figure>
+
+      <h3>Target, retry và dead-letter queue</h3>
+      <ul>
+        <li>Target phổ biến: Lambda, Step Functions state machine, SQS, SNS, Kinesis Data Streams / Firehose, ECS task, CodePipeline, Systems Manager, một <b>event bus khác</b> (cùng/khác account hoặc Region), <b>API destination</b> (HTTPS endpoint bên ngoài).</li>
+        <li><span class="t" data-vi="Bộ biến đổi đầu vào">Input transformer</span>: đổi hình dạng event trước khi gửi tới target (chỉ lấy vài trường, ghép chuỗi…).</li>
+        <li><b>Retry policy</b>: khi giao lỗi do lỗi có thể retry (target không sẵn sàng, mạng), EventBridge mặc định retry trong <b>24 giờ</b> và tối đa <b>185 lần</b> với <b>exponential backoff + jitter</b>. Hết lượt ⇒ event <b>bị bỏ</b>.</li>
+        <li><b>DLQ</b>: gắn một <b>SQS queue</b> làm dead-letter queue cho target để không mất event giao thất bại.</li>
+        <li>Quyền gọi target: dùng <b>resource-based policy</b> của target (vd Lambda, SNS, SQS) hoặc <b>IAM role</b> mà EventBridge assume (vd Step Functions, Kinesis, ECS – kiến thức phổ biến).</li>
+      </ul>
+
+      <h3>Archive &amp; replay</h3>
+      <ul>
+        <li><span class="t" data-vi="Kho lưu sự kiện">Archive</span>: lưu event của <b>một</b> source bus (lọc được bằng event pattern), retention theo số ngày hoặc <b>vô thời hạn</b> (mặc định). Mã hóa AES-256 bằng AWS owned key. Một bus có thể có nhiều archive.</li>
+        <li><span class="t" data-vi="Phát lại sự kiện">Replay</span>: gửi lại event trong một khoảng thời gian <b>về đúng source bus</b> (có thể chỉ tới một số rule) – dùng để <b>phục hồi sau lỗi</b> hoặc <b>kiểm thử tính năng mới</b> trên dữ liệu thật. Tối đa <b>10 replay đồng thời</b> mỗi account/Region; replay không xóa event khỏi archive; event replay có thêm trường <code>replay-name</code>.</li>
+        <li>Replay <b>không bảo đảm thứ tự</b> ban đầu (xử lý theo từng khoảng 1 phút). AWS khuyên chờ khoảng <b>10 phút</b> trước khi replay để event kịp vào archive.</li>
+      </ul>
+
+      <h3>Cross-account, API destinations và Pipes</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tính năng</th><th>Làm gì</th><th>Chi tiết thi</th></tr></thead>
+        <tbody>
+          <tr><td><b>Cross-account event</b></td><td>Gửi event giữa các bus ở các account (cùng Region hoặc Region khác được hỗ trợ)</td><td>Bên <b>nhận</b>: sửa <b>resource-based policy</b> của bus cho phép account / <b>organization ID</b>. Bên <b>gửi</b>: rule có target là ARN bus bên kia + <b>IAM role</b> (bắt buộc với target bus tạo sau 02/03/2023). Phí tính cho account gửi. Nên thêm trường <code>account</code> vào event pattern để chỉ khớp account mong muốn.</td></tr>
+          <tr><td><span class="t" data-vi="Đích là API HTTPS">API destination</span></td><td>Gọi HTTPS endpoint (SaaS, ứng dụng public/private) làm target</td><td>Dùng <b>connection</b> định nghĩa phương thức xác thực (Basic, OAuth, API key – credential lưu trong <b>Secrets Manager</b>). Timeout client <b>5 giây</b>; giới hạn tốc độ gọi (mặc định <b>300 lần/giây</b> mỗi API destination). Retry mã 401, 407, 409, 429, 5xx.</td></tr>
+          <tr><td><span class="t" data-vi="Đường ống EventBridge">EventBridge Pipes</span></td><td>Nối <b>một nguồn → một đích</b>: source → filter → enrichment → target</td><td>Nguồn như SQS, DynamoDB Streams, Kinesis, Amazon MQ, MSK; chỉ trả tiền cho event <b>khớp filter</b>; enrichment bằng Lambda, Step Functions, API Gateway, API destination. Ví dụ tài liệu: SQS (đơn hàng) → API destination (lấy địa chỉ khách) → Step Functions. Có thể đặt <b>event bus làm target</b> của pipe để fan-out tiếp.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Custom Event Bus mới và Custom Event Bus - Classic</h3>
+      <p>Tài liệu hiện tại tách hai loại bus tự tạo: <b>Custom Event Bus - Classic</b> (cách định tuyến bằng rule/target ở trên – đây là mô hình đề SAA-C03 dựa vào) và <b>Custom Event Bus</b> mới, AWS khuyên dùng cho ứng dụng mới:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khả năng</th><th>Custom Event Bus (mới)</th><th>Custom Event Bus - Classic</th></tr></thead>
+        <tbody>
+          <tr><td>Định tuyến</td><td><b>Subscriber</b> do consumer tự tạo; mỗi subscriber lọc và giao tới <b>1 target</b></td><td>Rule do chủ bus viết; tối đa <b>5 target / rule</b></td></tr>
+          <tr><td>Lưu giữ event</td><td class="yes">Có sẵn trên bus, <b>1 – 365 ngày</b></td><td class="no">Không; muốn giữ phải tạo archive</td></tr>
+          <tr><td>Thứ tự</td><td class="yes">FIFO trong một <b>event group</b>, theo từng subscriber</td><td class="no">Không có</td></tr>
+          <tr><td>Replay</td><td>Subscriber chọn <b>vị trí bắt đầu</b> trong quá khứ; pause/resume không mất event</td><td>Replay từ archive</td></tr>
+          <tr><td>Khử trùng lặp</td><td class="yes">Lúc publish, theo nội dung hoặc key, cửa sổ <b>5 phút</b></td><td class="no">Không có</td></tr>
+          <tr><td>Chia sẻ cross-account</td><td>Qua <b>AWS RAM</b>; account consumer tự tạo subscriber</td><td>Resource policy của bus hoặc forward sang bus account khác</td></tr>
+          <tr><td>Định dạng</td><td><code>PutEvents</code> (JSON) và <code>PutRawEvents</code> (Avro, Protobuf, bytes)</td><td><code>PutEvents</code> (JSON)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Các quota đáng nhớ (Custom Event Bus - Classic)</h3>
+      <div class="stats">
+        <div class="stat"><b>5</b><span>target mỗi rule (không tăng được)</span></div>
+        <div class="stat"><b>300</b><span>rule mỗi event bus (mặc định, tăng được)</span></div>
+        <div class="stat"><b>100</b><span>event bus mỗi account/Region</span></div>
+        <div class="stat"><b>10.000</b><span>PutEvents TPS ở us-east-1, us-west-2, eu-west-1 (soft)</span></div>
+        <div class="stat"><b>24 giờ / 185</b><span>retry mặc định khi giao tới target</span></div>
+        <div class="stat"><b>10</b><span>replay đồng thời mỗi account/Region</span></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>React to AWS service events / API calls</i>” (EC2 state change, GuardDuty finding, S3 object created, CloudTrail API call, AWS Health) ⇒ <b>EventBridge rule</b> trên <b>default event bus</b> → Lambda / SNS / Step Functions / SSM Automation.</li>
+          <li>“<i>Receive events from a SaaS application (Zendesk, Datadog…) with least operational overhead</i>” ⇒ <b>partner event source / partner event bus</b>.</li>
+          <li>“<i>Route events from many sources to many targets with content-based filtering</i>”, “<i>decouple microservices, more than SNS filtering</i>” ⇒ <b>EventBridge</b>.</li>
+          <li>“<i>Centralize events from multiple accounts in an organization</i>” ⇒ bus trung tâm + <b>resource policy</b> cho phép <code>aws:PrincipalOrgID</code>, các account gửi qua rule có target là bus đó.</li>
+          <li>“<i>Reprocess / replay past events after fixing a bug</i>” ⇒ <b>archive &amp; replay</b>.</li>
+          <li>“<i>Point-to-point from SQS / DynamoDB Streams to a target with filtering and enrichment, no custom code</i>” ⇒ <b>EventBridge Pipes</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Rule <b>chỉ áp dụng cho event trên bus mà nó gắn vào</b>. Rule trên custom bus không thấy event của dịch vụ AWS (chúng vào default bus).</li>
+          <li>Event giao lỗi sau 24 giờ / 185 lần retry sẽ <b>mất</b> nếu không có <b>DLQ</b> – đề hỏi “ensure no events are lost” ⇒ cấu hình DLQ (SQS) cho target.</li>
+          <li>EventBridge <b>không</b> phải hàng đợi để consumer poll và không giữ event (Classic) – cần đệm, xử lý theo tốc độ riêng ⇒ đặt <b>SQS</b> làm target.</li>
+          <li>Account nhận chuyển tiếp event sang account thứ ba: tài liệu nói event <b>không</b> được gửi tiếp (không hop 2 lần) – thiết kế gửi thẳng tới bus đích.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: SCHEDULER ===================== -->
+      <h2 id="scheduler"><img src="../assets/icons/res/Amazon-CloudWatch_Event-Time-Based.svg" alt="">EventBridge Scheduler: lập lịch serverless</h2>
+      <p class="lead"><span class="t" data-vi="Bộ lập lịch EventBridge">Amazon EventBridge Scheduler</span> là bộ lập lịch serverless cho phép tạo, chạy và quản lý tác vụ từ một dịch vụ trung tâm. Scale cao: lên lịch <b>hàng triệu</b> tác vụ gọi tới hơn <b>270 dịch vụ AWS</b> và hơn <b>6.000 API</b>, không phải dựng máy chủ cron hay tự tích hợp nhiều dịch vụ.</p>
+
+      <h3>Loại lịch và tính năng</h3>
+      <ul>
+        <li><span class="t" data-vi="Lịch chạy một lần">One-time schedule</span>: gọi target <b>đúng một lần</b> vào ngày giờ chỉ định (kèm <b>time zone</b>). Nên đặt <code>ActionAfterCompletion</code> để tự xóa lịch sau khi chạy (lịch đã chạy vẫn tính vào quota).</li>
+        <li><span class="t" data-vi="Lịch lặp lại">Recurring schedule</span>: <b>cron expression</b> (vd 8:00 sáng thứ Hai) hoặc <b>rate expression</b> (vd mỗi 5 phút), có <b>time zone</b>, <b>start/end date</b>.</li>
+        <li><span class="t" data-vi="Cửa sổ thời gian linh hoạt">Flexible time window</span>: cho phép lịch chạy trong một khoảng (vd 15 phút sau mốc) để <b>dàn trải</b> tải lên target khi không cần chính xác tuyệt đối.</li>
+        <li><span class="t" data-vi="Đích mẫu">Templated targets</span>: thao tác phổ biến với SQS, SNS, Lambda, EventBridge PutEvents. <span class="t" data-vi="Đích vạn năng">Universal targets</span> (UTP): gọi gần như mọi API AWS (vd <code>ec2:StopInstances</code>, <code>ecs:RunTask</code>).</li>
+        <li><b>Retry</b>: giao <b>at-least-once</b>; cấu hình <b>maximum age of event</b> (tối đa <b>24 giờ</b>) và <b>maximum retries</b> (tối đa <b>185</b>). Event không giao được ⇒ <b>DLQ là SQS queue</b> (cùng hoặc khác account).</li>
+        <li><b>Execution role</b>: Scheduler assume một IAM role để gọi API target (console tự tạo role; CLI/SDK/CloudFormation phải tạo sẵn). Mã hóa input bằng <b>customer managed KMS key</b> nếu cần.</li>
+        <li><b>Schedule group</b>: nhóm lịch để gắn tag, quản lý (tối đa 500 group/Region).</li>
+      </ul>
+
+      <h3>Scheduler vs scheduled rule (legacy)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>EventBridge Scheduler</th><th>EventBridge scheduled rule</th></tr></thead>
+        <tbody>
+          <tr><td>Trạng thái</td><td class="yes">Được AWS <b>khuyến nghị</b></td><td class="no">Tính năng <b>legacy</b></td></tr>
+          <tr><td>Số lượng lịch</td><td><b>10.000.000</b> lịch / Region (mặc định, tăng tới hàng tỷ)</td><td>Tính vào quota rule: 300 rule / bus</td></tr>
+          <tr><td>Lịch một lần (one-time)</td><td class="yes">Có</td><td class="no">Không (chỉ cron/rate)</td></tr>
+          <tr><td>Time zone</td><td class="yes">Có, theo từng lịch</td><td class="no">UTC (kiến thức phổ biến)</td></tr>
+          <tr><td>Target</td><td>270+ dịch vụ, 6.000+ API (universal target)</td><td>Các target của rule (tối đa 5)</td></tr>
+          <tr><td>Throughput gọi target</td><td>Mặc định 1.000 TPS ở Region lớn (tăng được tới hàng chục nghìn)</td><td>Theo quota invocation của EventBridge</td></tr>
+          <tr><td>Flexible time window, retry, DLQ</td><td class="yes">Có</td><td>Retry + DLQ theo target</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>10 triệu</b><span>lịch mỗi Region (mặc định)</span></div>
+        <div class="stat"><b>270+ / 6.000+</b><span>dịch vụ / API có thể gọi</span></div>
+        <div class="stat"><b>185</b><span>số lần retry tối đa</span></div>
+        <div class="stat"><b>24 giờ</b><span>maximum age of event</span></div>
+        <div class="stat"><b>256 KB</b><span>kích thước Input payload của target</span></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Run a job every night / every hour</i>”, “<i>replace a cron job on an EC2 instance</i>”, “<i>stop dev instances at 7 PM</i>” ⇒ <b>EventBridge Scheduler</b> (hoặc scheduled rule) → Lambda / SSM / universal target – <b>serverless, least operational overhead</b>.</li>
+          <li>“<i>Send a reminder exactly 3 days after a user signs up</i>”, “<i>millions of one-time future tasks</i>” ⇒ <b>one-time schedule</b> của Scheduler (SQS delay chỉ tối đa 15 phút – Bài 30).</li>
+          <li>“<i>Schedule in local time zone, handle daylight saving</i>” ⇒ Scheduler (time zone theo lịch).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: SCHEMA REGISTRY ===================== -->
+      <h2 id="schema-registry"><img src="../assets/icons/res/Amazon-EventBridge_Schema-Registry.svg" alt="">Schema registry và schema discovery</h2>
+      <p class="lead">Một <span class="t" data-vi="Lược đồ – cấu trúc của event">schema</span> định nghĩa <b>cấu trúc</b> của event gửi vào EventBridge. EventBridge cung cấp sẵn schema cho <b>mọi event do dịch vụ AWS sinh ra</b>; bạn cũng có thể tạo/upload schema riêng hoặc <b>suy ra</b> schema trực tiếp từ event trên bus.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EventBridge_Schema-Registry.svg" alt="">
+          <div><h4>AWS event schema registry</h4><span class="vi">Registry dựng sẵn</span><p>Schema có sẵn cho event của dịch vụ AWS.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EventBridge_Schema.svg" alt="">
+          <div><h4>Discovered schema registry</h4><span class="vi">Registry khám phá tự động</span><p>Chứa schema do <b>schema discovery</b> suy ra từ event trên bus.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EventBridge_Schema.svg" alt="">
+          <div><h4>Custom registry</h4><span class="vi">Registry tự tạo</span><p>Tổ chức schema bạn tạo/upload theo nhóm logic. “All schemas” gộp tất cả.</p></div></div>
+      </div>
+
+      <ul>
+        <li><span class="t" data-vi="Khám phá lược đồ">Schema discovery</span>: bật trên một event bus để EventBridge tự suy ra schema từ event đi qua và đưa vào discovered registry (nếu dùng input transformer, schema suy ra là của event <b>gốc</b>). Giới hạn suy ra tới <b>255 cấp</b> lồng nhau.</li>
+        <li>Định dạng hỗ trợ: <b>OpenAPI 3</b> và <b>JSONSchema Draft4</b>. Schema có <b>version</b> (tối đa 100 version/schema).</li>
+        <li><span class="t" data-vi="Mã ràng buộc sinh từ schema">Code bindings</span>: tải mã cho các ngôn ngữ phổ biến (vd Java, Python, TypeScript, Go – kiến thức phổ biến) để làm việc với event như <b>object có kiểu</b>, ngay trong IDE qua AWS Toolkit (VS Code, JetBrains) – tăng tốc phát triển.</li>
+        <li>Quota: 10 registry, 100 schema/registry, 10 discoverer, 200 discovered schema mỗi Region (tăng được). Không hỗ trợ export custom schema.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>Developers need to know the structure of events and generate strongly typed code</i>”, “<i>automatically infer event formats on the bus</i>” ⇒ <b>EventBridge schema registry + schema discovery + code bindings</b>.</p></div>
+
+      <!-- ===================== PHẦN 5: STEP FUNCTIONS ===================== -->
+      <h2 id="step-functions"><img src="../assets/icons/svc/AWS-Step-Functions.svg" alt="">AWS Step Functions: state machine và các loại state</h2>
+      <p class="lead">Với <b>AWS Step Functions</b>, bạn tạo các <span class="t" data-vi="Luồng công việc">workflow</span>, còn gọi là <span class="t" data-vi="Máy trạng thái">state machine</span>, để xây dựng ứng dụng phân tán, tự động hóa quy trình, <b>điều phối microservices</b>, tạo pipeline dữ liệu và machine learning. Mỗi bước trong workflow là một <span class="t" data-vi="Trạng thái – một bước">state</span>; mỗi lần chạy workflow là một <span class="t" data-vi="Lần thực thi">execution</span>.</p>
+
+      <h3>Khái niệm cốt lõi (theo tài liệu)</h3>
+      <ul>
+        <li><span class="t" data-vi="Ngôn ngữ định nghĩa state machine">Amazon States Language (ASL)</span>: ngôn ngữ dựa trên <b>JSON</b> để định nghĩa state machine (<code>StartAt</code>, <code>States</code>, <code>TimeoutSeconds</code>…). Có thể thiết kế kéo-thả bằng <b>Workflow Studio</b>. Biến đổi dữ liệu bằng <b>JSONata</b> (khuyến nghị) hoặc JSONPath (cũ).</li>
+        <li><b>Flow states</b> điều khiển luồng; <b>Task states</b> (còn gọi <i>Actions</i>) là đơn vị công việc do dịch vụ khác thực hiện.</li>
+        <li>Dữ liệu giữa các state là <b>JSON</b>: output của state này là input của state kế tiếp; có thể lưu vào <b>variables</b>. Giới hạn input/output mỗi task/state/execution: <b>256 KiB</b> (dữ liệu lớn ⇒ lưu S3, truyền con trỏ).</li>
+        <li><span class="t" data-vi="Worker hoạt động bên ngoài">Activities</span>: worker chạy <b>ngoài</b> Step Functions (EC2, on-premises) poll lấy việc bằng <code>GetActivityTask</code> (chỉ Standard).</li>
+        <li><b>Redrive</b>: chạy tiếp một execution Standard thất bại từ bước lỗi (trong <b>14 ngày</b> sau khi kết thúc) thay vì chạy lại từ đầu.</li>
+      </ul>
+
+      <h3>Các loại state</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>State</th><th>Chức năng</th><th>Ví dụ</th></tr></thead>
+        <tbody>
+          <tr><td><b>Task</b></td><td>Thực hiện công việc: gọi Lambda, dịch vụ AWS (SDK / optimized integration), HTTP API, activity</td><td>Gọi Lambda kiểm tra tồn kho; <code>ecs:runTask.sync</code></td></tr>
+          <tr><td><b>Choice</b></td><td>Rẽ nhánh theo điều kiện trên input</td><td>Hạn mức tín dụng &gt; mức duyệt sẵn ⇒ chuyển quản lý duyệt</td></tr>
+          <tr><td><b>Parallel</b></td><td>Chạy nhiều <b>nhánh khác nhau</b> song song, chờ tất cả xong</td><td>Chuyển một video sang nhiều độ phân giải cùng lúc</td></tr>
+          <tr><td><b>Map</b></td><td>Chạy <b>cùng một chuỗi bước</b> cho từng phần tử của dataset, song song. <b>Inline</b> hoặc <b>Distributed</b> (tới <b>10.000</b> child execution song song, đọc hàng triệu object S3)</td><td>Đơn 30 sản phẩm ⇒ xử lý từng sản phẩm</td></tr>
+          <tr><td><b>Wait</b></td><td>Tạm dừng một khoảng thời gian hoặc tới thời điểm</td><td>Chờ 24 giờ rồi gửi email nhắc</td></tr>
+          <tr><td><b>Pass</b></td><td>Chuyển/biến đổi dữ liệu, không làm việc</td><td>Gắn giá trị mặc định</td></tr>
+          <tr><td><b>Succeed / Fail</b></td><td>Kết thúc execution thành công / thất bại (terminal state)</td><td>Fail với mã lỗi tùy chỉnh</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Xử lý lỗi: Retry và Catch</h3>
+      <ul>
+        <li>Mặc định, một state báo lỗi sẽ làm <b>thất bại toàn bộ execution</b>. Task, Parallel và Map có thể khai báo <code>Retry</code> và <code>Catch</code>.</li>
+        <li><b>Retry</b> (retrier): <code>ErrorEquals</code>, <code>IntervalSeconds</code> (mặc định <b>1</b>), <code>MaxAttempts</code> (mặc định <b>3</b>; 0 = không retry), <code>BackoffRate</code> (mặc định <b>2.0</b>), <code>MaxDelaySeconds</code>, <code>JitterStrategy</code> (<code>FULL</code>/<code>NONE</code>). Mỗi lần retry tính là một state transition.</li>
+        <li><b>Catch</b> (catcher): khi hết retry, chuyển sang state dự phòng (<code>Next</code>) – vd hoàn tiền, gửi thông báo, gợi ý username khác. Đây là nền tảng của mẫu <span class="t" data-vi="Giao dịch phân tán có bù trừ">saga pattern</span> (kiến thức phổ biến).</li>
+        <li>Tên lỗi có sẵn: <code>States.ALL</code> (mọi lỗi, phải đứng một mình và ở cuối), <code>States.TaskFailed</code> (mọi lỗi trừ Timeout), <code>States.Timeout</code>, <code>States.HeartbeatTimeout</code>, <code>States.Permissions</code>, <code>States.DataLimitExceeded</code>…</li>
+      </ul>
+
+      <h3>Tích hợp dịch vụ và ba integration pattern</h3>
+      <p>Hai loại tích hợp: <b>AWS SDK integrations</b> (gọi trực tiếp hơn <b>200 dịch vụ</b>, hàng nghìn API action) và <b>optimized integrations</b> (tùy biến cho Lambda, ECS/Fargate, Batch, Glue, Athena, EMR, SageMaker, SNS, SQS, DynamoDB, EventBridge, API Gateway, Bedrock…).</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Pattern</th><th>Cú pháp Resource</th><th>Hành vi</th><th>Workflow hỗ trợ</th></tr></thead>
+        <tbody>
+          <tr><td><b>Request Response</b> (mặc định)</td><td><code>arn:aws:states:::sns:publish</code></td><td>Gọi dịch vụ, nhận HTTP response là <b>đi tiếp ngay</b>, không chờ job xong</td><td>Standard &amp; Express</td></tr>
+          <tr><td><b>Run a Job</b></td><td><code>…:batch:submitJob<b>.sync</b></code></td><td>Gọi dịch vụ và <b>chờ job hoàn thành</b> (Batch, ECS, Glue, Athena, EMR, CodeBuild, Step Functions con…)</td><td class="no">Chỉ Standard</td></tr>
+          <tr><td><b>Wait for Callback</b></td><td><code>…:sqs:sendMessage<b>.waitForTaskToken</b></code></td><td>Gửi kèm <span class="t" data-vi="Mã tác vụ để gọi lại">task token</span>, <b>tạm dừng</b> tới khi bên ngoài gọi <code>SendTaskSuccess</code> / <code>SendTaskFailure</code> (có thể chờ tới <b>1 năm</b>; đặt <code>HeartbeatSeconds</code> để tránh treo)</td><td class="no">Chỉ Standard</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 330" width="760" role="img" aria-label="State machine xử lý đơn hàng">
+          <defs><marker id="ah31" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="10" y="10" width="740" height="310" rx="8" fill="none" stroke="#E7157B" stroke-width="2" stroke-dasharray="6 4"/>
+          <image href="../assets/icons/svc/AWS-Step-Functions.svg" x="20" y="18" width="26" height="26"/>
+          <text x="52" y="36" font-size="13" font-weight="700" style="fill:#E7157B">State machine: OrderWorkflow (Standard)</text>
+          <image href="../assets/icons/svc/Amazon-EventBridge.svg" x="30" y="130" width="44" height="44"/>
+          <text x="52" y="192" font-size="11" text-anchor="middle" font-weight="600">EventBridge</text>
+          <text x="52" y="206" font-size="10" text-anchor="middle" class="muted">OrderPlaced</text>
+          <path class="line-o" d="M78 152 H118" marker-end="url(#ah31)"/>
+          <image href="../assets/icons/svc/AWS-Lambda.svg" x="124" y="130" width="44" height="44"/>
+          <text x="146" y="192" font-size="11" text-anchor="middle" font-weight="600">Task: Validate</text>
+          <text x="146" y="206" font-size="10" text-anchor="middle" class="muted">Retry 3, backoff 2.0</text>
+          <path class="line-o" d="M172 152 H212" marker-end="url(#ah31)"/>
+          <rect x="216" y="130" width="70" height="44" rx="4" fill="#E7157B" fill-opacity="0.15" stroke="#E7157B"/>
+          <text x="251" y="157" font-size="12" text-anchor="middle" font-weight="700">Choice</text>
+          <text x="251" y="192" font-size="10" text-anchor="middle" class="muted">total &gt; 10.000$?</text>
+          <path class="line-o" d="M286 140 L330 80" marker-end="url(#ah31)"/>
+          <text x="300" y="98" font-size="10" class="muted">có</text>
+          <image href="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" x="334" y="52" width="40" height="40"/>
+          <text x="354" y="110" font-size="11" text-anchor="middle" font-weight="600">.waitForTaskToken</text>
+          <text x="354" y="124" font-size="10" text-anchor="middle" class="muted">quản lý duyệt (human)</text>
+          <path class="line-o" d="M286 164 L330 214" marker-end="url(#ah31)"/>
+          <text x="296" y="210" font-size="10" class="muted">không</text>
+          <rect x="334" y="200" width="200" height="90" rx="4" fill="none" stroke="#7AA116" stroke-dasharray="4 3"/>
+          <text x="434" y="216" font-size="11" text-anchor="middle" font-weight="700" style="fill:#7AA116">Parallel</text>
+          <image href="../assets/icons/svc/Amazon-DynamoDB.svg" x="350" y="226" width="36" height="36"/>
+          <text x="368" y="278" font-size="10" text-anchor="middle">Trừ kho</text>
+          <image href="../assets/icons/svc/AWS-Lambda.svg" x="416" y="226" width="36" height="36"/>
+          <text x="434" y="278" font-size="10" text-anchor="middle">Thanh toán</text>
+          <image href="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" x="482" y="226" width="36" height="36"/>
+          <text x="500" y="278" font-size="10" text-anchor="middle">Thông báo</text>
+          <path class="line-o" d="M378 88 H560 V200" marker-end="url(#ah31)"/>
+          <path class="line-o" d="M534 245 H600" marker-end="url(#ah31)"/>
+          <rect x="604" y="226" width="80" height="36" rx="18" fill="#7AA116" fill-opacity="0.2" stroke="#7AA116"/>
+          <text x="644" y="249" font-size="12" text-anchor="middle" font-weight="700">Succeed</text>
+          <path class="line-o" d="M434 200 V170 H600" marker-end="url(#ah31)"/>
+          <text x="520" y="164" font-size="10" text-anchor="middle" class="muted">Catch: States.ALL</text>
+          <rect x="604" y="150" width="120" height="36" rx="4" fill="#DD344C" fill-opacity="0.15" stroke="#DD344C"/>
+          <text x="664" y="173" font-size="11" text-anchor="middle" font-weight="700">Hoàn tiền → Fail</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Một state machine Standard xử lý đơn hàng: EventBridge khởi động execution; Task gọi Lambda có <b>Retry</b>; <b>Choice</b> rẽ nhánh đơn lớn sang bước <b>chờ người duyệt</b> (gửi task token qua SQS); <b>Parallel</b> trừ kho, thanh toán, thông báo đồng thời; lỗi được <b>Catch</b> chuyển sang bước bù trừ (hoàn tiền) rồi Fail.</figcaption>
+      </figure>
+
+      <h3>Ai khởi động state machine?</h3>
+      <ul>
+        <li><b>EventBridge</b> rule/Scheduler (target là state machine), <b>API Gateway</b> (Bài 33), <b>Lambda</b> (<code>StartExecution</code>), CodePipeline, AWS IoT Rules Engine, một state machine khác (nested workflow), EventBridge Pipes.</li>
+        <li>Theo tài liệu: cả Standard và Express đều có thể khởi động từ HTTP request qua API Gateway, IoT rule và <b>hơn 140</b> event source khác trong EventBridge.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Orchestrate multiple Lambda functions / microservices</i>”, “<i>sequence of steps with branching, retries and error handling</i>”, “<i>visual workflow</i>” ⇒ <b>Step Functions</b> (đừng để Lambda gọi Lambda nối chuỗi).</li>
+          <li>“<i>Human approval step</i>”, “<i>wait for an external system / third party to respond</i>” ⇒ <b>callback với task token</b> (<code>.waitForTaskToken</code>).</li>
+          <li>“<i>Wait until an AWS Batch / ECS / Glue job finishes before the next step</i>” ⇒ <b>Run a Job (<code>.sync</code>)</b> – không cần tự poll.</li>
+          <li>“<i>Process millions of S3 objects in parallel</i>” ⇒ <b>Distributed Map</b>.</li>
+          <li>“<i>Job takes longer than Lambda's 15-minute limit</i>” ⇒ chia nhỏ thành nhiều bước trong Step Functions, hoặc Task chạy ECS/Fargate/Batch (Bài 32, 34).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: STANDARD vs EXPRESS ===================== -->
+      <h2 id="standard-express"><img src="../assets/icons/svc/AWS-Step-Functions.svg" alt="">Standard workflow vs Express workflow</h2>
+      <p class="lead">Khi tạo state machine phải chọn <b>Type</b>: <span class="t" data-vi="Luồng chuẩn">Standard</span> (mặc định) hoặc <span class="t" data-vi="Luồng nhanh">Express</span>. Cả hai định nghĩa bằng ASL, nhưng <b>loại workflow không đổi được</b> sau khi tạo (immutable).</p>
+
+      <div class="compare">
+        <div style="--accent:#E7157B"><h4><img src="../assets/icons/svc/AWS-Step-Functions.svg" alt="">Standard workflow</h4>
+          <ul>
+            <li>Chạy <b>tối đa 1 năm</b> – workflow dài, bền vững, <b>auditable</b>.</li>
+            <li><b>Exactly-once</b>: mỗi task/state chạy đúng một lần (trừ khi khai báo Retry) ⇒ hợp với tác vụ <b>không idempotent</b> (khởi tạo EMR cluster, xử lý thanh toán).</li>
+            <li>Lịch sử execution xem qua API/console tới <b>90 ngày</b> sau khi kết thúc (giảm còn 30 ngày được); tối đa <b>25.000 event</b> lịch sử mỗi execution.</li>
+            <li>Tính tiền theo <b>số state transition</b>.</li>
+            <li>Hỗ trợ mọi pattern: <code>.sync</code>, <code>.waitForTaskToken</code>, Activities, Distributed Map, redrive.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/AWS-Step-Functions.svg" alt="">Express workflow</h4>
+          <ul>
+            <li>Chạy <b>tối đa 5 phút</b> – workload <b>khối lượng lớn, tần suất cao</b>: IoT ingestion, xử lý/biến đổi streaming data, backend mobile.</li>
+            <li><b>Asynchronous Express</b>: <b>at-least-once</b> (có thể chạy lại) ⇒ tác vụ phải <b>idempotent</b>. <b>Synchronous Express</b>: <b>at-most-once</b>, chờ xong rồi trả kết quả (gọi từ API Gateway, Lambda, <code>StartSyncExecution</code>).</li>
+            <li>Không lưu lịch sử trong Step Functions – phải bật <b>CloudWatch Logs</b>.</li>
+            <li>Tính tiền theo <b>số execution, thời lượng và bộ nhớ</b>.</li>
+            <li>Chỉ hỗ trợ <b>Request Response</b>; không có <code>.sync</code>, <code>.waitForTaskToken</code>, Activities, Distributed Map.</li>
+          </ul></div>
+      </div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Standard</th><th>Express (Async / Sync)</th></tr></thead>
+        <tbody>
+          <tr><td>Thời gian chạy tối đa</td><td><b>1 năm</b></td><td><b>5 phút</b></td></tr>
+          <tr><td>Tốc độ khởi động execution (trang tổng quan)</td><td>2.000 / giây</td><td><b>100.000 / giây</b></td></tr>
+          <tr><td>Tốc độ state transition</td><td>4.000 / giây (soft quota; 5.000 bucket ở Region lớn)</td><td><b>Gần như không giới hạn</b></td></tr>
+          <tr><td>Execution semantics</td><td class="yes">Exactly-once</td><td>Async: at-least-once · Sync: at-most-once</td></tr>
+          <tr><td>Idempotency khi start trùng tên</td><td class="yes">Tự động: không start execution mới trùng tên đang chạy</td><td class="no">Không tự quản lý – chạy song song</td></tr>
+          <tr><td>Lịch sử execution</td><td>Trong Step Functions, 90 ngày</td><td>CloudWatch Logs (phải bật logging)</td></tr>
+          <tr><td>Giá</td><td>Theo state transition</td><td>Theo số execution + thời lượng + bộ nhớ</td></tr>
+          <tr><td><code>.sync</code> / <code>.waitForTaskToken</code></td><td class="yes">Có (tùy dịch vụ)</td><td class="no">Không</td></tr>
+          <tr><td>Distributed Map, Activities, Redrive</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Open executions / account</td><td>1.000.000 / Region</td><td>Không áp dụng</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Long-running</i>”, “<i>up to several days / months</i>”, “<i>human approval</i>”, “<i>auditable execution history</i>”, “<i>payment – must not run twice</i>” ⇒ <b>Standard</b>.</li>
+          <li>“<i>High-volume, short-duration (&lt; 5 minutes)</i>”, “<i>thousands of events per second</i>”, “<i>IoT / streaming ingestion</i>”, “<i>MOST cost-effective</i> cho luồng ngắn số lượng lớn” ⇒ <b>Express</b>.</li>
+          <li>“<i>API Gateway must return the workflow result synchronously to the client</i>” ⇒ <b>Synchronous Express workflow</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Không đổi Standard ⇄ Express tại chỗ – phải tạo state machine mới.</li>
+          <li>Express <b>async</b> là at-least-once: đề có tác vụ “không được chạy hai lần” mà không idempotent ⇒ chọn <b>Standard</b>.</li>
+          <li>Express quá 5 phút sẽ fail với <code>States.Timeout</code>. Chạy đồng bộ từ <b>console</b> thì <code>StartSyncExecution</code> hết hạn sau 60 giây (dùng SDK/CLI để tới 5 phút).</li>
+          <li>Payload giữa các state tối đa <b>256 KiB</b> – dữ liệu lớn lưu S3 và truyền key.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: AMAZON MQ ===================== -->
+      <h2 id="amazon-mq"><img src="../assets/icons/svc/Amazon-MQ.svg" alt="">Amazon MQ: message broker cho ứng dụng đang dùng ActiveMQ / RabbitMQ</h2>
+      <p class="lead"><b>Amazon MQ</b> là dịch vụ <span class="t" data-vi="Bộ môi giới tin nhắn">message broker</span> được quản lý cho <b>Apache ActiveMQ Classic</b> và <b>RabbitMQ</b>; AWS lo việc setup, vận hành, bảo trì broker. Bạn có thể tạo broker mới dùng các <b>protocol chuẩn công nghiệp</b>, hoặc <b>migrate broker sẵn có</b> lên Amazon MQ <b>mà không phải viết lại code messaging</b>. <span class="t" data-vi="Môi trường broker">Broker</span> là khối xây dựng cơ bản của Amazon MQ.</p>
+
+      <h3>Hai engine và protocol hỗ trợ</h3>
+      <div class="compare">
+        <div style="--accent:#E7157B"><h4><img src="../assets/icons/res/Amazon-MQ_Broker.svg" alt="">Amazon MQ for ActiveMQ</h4>
+          <ul>
+            <li>Protocol (bật TLS): <b>OpenWire</b>, <b>AMQP</b>, <b>STOMP</b>, STOMP over WebSocket, <b>MQTT</b>, MQTT over WebSocket. Ứng dụng Java dùng <b>JMS</b> API (kiến thức phổ biến).</li>
+            <li>Data store: <b>KahaDB</b> (không hỗ trợ JDBC, LevelDB).</li>
+            <li>Triển khai: <b>single-instance</b> hoặc <b>active/standby</b>.</li>
+            <li>Storage: <b>EFS</b> (mặc định, multi-AZ) hoặc <b>EBS</b> (single-AZ, chỉ <code>mq.m5</code>).</li>
+            <li>Có <b>cross-Region data replication</b> (CRDR): replica broker ở Region khác, failover qua API.</li>
+          </ul></div>
+        <div style="--accent:#FF9900"><h4><img src="../assets/icons/res/Amazon-MQ_Broker.svg" alt="">Amazon MQ for RabbitMQ</h4>
+          <ul>
+            <li>Protocol: <b>AMQP 0-9-1</b> (bật TLS), dùng client của mọi ngôn ngữ RabbitMQ hỗ trợ.</li>
+            <li>Triển khai: <b>single-instance</b> (1 broker sau <b>NLB</b>, EBS) hoặc <b>cluster deployment</b> (<b>3 node</b> sau NLB, trải trên nhiều AZ).</li>
+            <li>Cluster: tự bật <b>classic mirroring</b> (<code>ha-mode: all</code>, <code>ha-sync-mode: automatic</code>) – dữ liệu nhân bản tới mọi node.</li>
+            <li><b>Quorum queues</b>: queue nhân bản leader/follower ở các AZ khác nhau; xử lý tốt poison message.</li>
+          </ul></div>
+      </div>
+
+      <h3>Kiến trúc high availability</h3>
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/Amazon-MQ.svg" alt="">Amazon MQ for ActiveMQ – active/standby broker</span>
+          <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+            <div class="row">
+              <div class="grp az"><span class="lbl">Availability Zone A</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-MQ_Broker.svg" alt="">Broker -1 (active)<small>nhận kết nối</small></div></div></div>
+              <div class="grp az"><span class="lbl">Availability Zone B</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-MQ_Broker.svg" alt="">Broker -2 (standby)<small>active khi -1 lỗi / bảo trì</small></div></div></div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Client.svg" alt="">Client<small>failover transport: -1, -2</small></div>
+              <span class="arrow">OpenWire / AMQP / MQTT / STOMP (TLS)</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-MQ_Broker.svg" alt="">Endpoint đang active</div>
+              <span class="arrow dashed">lưu message</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Elastic-File-System.svg" alt="">Amazon EFS<small>dùng chung, nhân bản nhiều AZ</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Active/standby broker: hai broker ở hai AZ là một <i>redundant pair</i> dùng chung storage <b>Amazon EFS</b>. Chỉ một broker active tại một thời điểm; khi lỗi hoặc bảo trì, standby lên thay (reboot chỉ mất vài giây). Client cấu hình <b>failover transport</b> với cả hai endpoint <code>-1</code>, <code>-2</code>.</figcaption>
+      </figure>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/Amazon-MQ.svg" alt="">Amazon MQ for RabbitMQ – cluster deployment</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Client.svg" alt="">Client<small>AMQP 0-9-1</small></div>
+            <span class="arrow">một endpoint cố định</span>
+            <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Network-Load-Balancer.svg" alt="">Network Load Balancer</div>
+            <span class="arrow">phân phối</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-MQ_Broker.svg" alt="">Node 1 – AZ A<small>EBS riêng</small></div>
+            <div class="node"><img src="../assets/icons/res/Amazon-MQ_Broker.svg" alt="">Node 2 – AZ B<small>EBS riêng</small></div>
+            <div class="node"><img src="../assets/icons/res/Amazon-MQ_Broker.svg" alt="">Node 3 – AZ C<small>EBS riêng</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> RabbitMQ cluster: 3 node ở 3 AZ sau một NLB, chia sẻ user, queue và trạng thái phân tán; queue được mirror tới mọi node. Khi một AZ gặp sự cố, Amazon MQ tự dời node sang AZ khác; bảo trì từng node một, luôn giữ ít nhất 2 node chạy – client phải tự reconnect.</figcaption>
+      </figure>
+
+      <h3>Storage của ActiveMQ (bảng trong tài liệu, message 1 KB)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Storage</th><th>Persistence</th><th>Use case</th><th>~Message enqueue / giây / broker</th><th>Replication</th></tr></thead>
+        <tbody>
+          <tr><td>In-memory</td><td class="no">Không bền</td><td>Giá chứng khoán, cập nhật vị trí, dữ liệu thay đổi liên tục</td><td>5.000</td><td>Không</td></tr>
+          <tr><td>Amazon EBS</td><td class="yes">Bền</td><td>Khối lượng text lớn, xử lý đơn hàng</td><td>500</td><td>Nhiều bản sao trong <b>1 AZ</b> (không hỗ trợ active/standby)</td></tr>
+          <tr><td>Amazon EFS (mặc định)</td><td class="yes">Bền</td><td>Giao dịch tài chính</td><td>80</td><td>Nhiều bản sao trên <b>nhiều AZ</b></td></tr>
+        </tbody>
+      </table></div>
+      <p>Lưu ý: đổi được <b>instance type</b> của broker nhưng <b>không đổi được storage type</b> sau khi tạo.</p>
+
+      <h3>Vận hành và bảo mật</h3>
+      <ul>
+        <li>AWS thực hiện <b>bảo trì và nâng cấp version</b> trong <span class="t" data-vi="Khung giờ bảo trì">maintenance window</span> bạn chọn (active/standby sẽ failover trong lúc bảo trì).</li>
+        <li>Metric đẩy lên <b>CloudWatch</b> mỗi phút. Mã hóa at rest và in transit (SSL); broker có thể chỉ truy cập qua <b>private endpoint trong VPC</b>; IAM kiểm soát API quản lý broker (user/password của broker để client kết nối – kiến thức phổ biến).</li>
+        <li>Amazon MQ chạy trên <b>broker instance</b> (cấp phát theo instance type) – <b>không</b> scale gần như vô hạn như SQS/SNS (kiến thức phổ biến).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Migrate an on-premises application that uses ActiveMQ / RabbitMQ / JMS / AMQP / MQTT / STOMP / OpenWire to AWS without rewriting the messaging code</i>” ⇒ <b>Amazon MQ</b> (không phải SQS/SNS – chúng dùng API riêng của AWS).</li>
+          <li>“<i>Amazon MQ highly available across AZs</i>” ⇒ ActiveMQ <b>active/standby</b> (EFS) hoặc RabbitMQ <b>cluster deployment</b> (3 node + NLB).</li>
+          <li>“<i>New cloud-native application, unlimited scale, simple API</i>” ⇒ <b>SQS/SNS/EventBridge</b>, không phải Amazon MQ.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>Single-instance broker</b> chỉ ở <b>1 AZ</b> – không highly available dù storage EFS bền multi-AZ.</li>
+          <li>Chọn EBS cho ActiveMQ ⇒ <b>không dùng được active/standby</b>. Cần HA + bền ⇒ EFS.</li>
+          <li>Đề nói “<i>least code changes</i>” mà app đang dùng JMS ⇒ đừng chọn “refactor sang SQS” dù SQS rẻ và serverless hơn.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: CHỌN DỊCH VỤ ===================== -->
+      <h2 id="chon-dich-vu"><img src="../assets/icons/cat/Serverless.svg" alt="">Chọn dịch vụ tích hợp nào?</h2>
+      <p class="lead">Đề SAA-C03 hay đưa một yêu cầu tích hợp và 4 dịch vụ “na ná” nhau. Bảng dưới gom các tiêu chí phân biệt (SQS/SNS chi tiết ở Bài 30, Kinesis ở Bài 35).</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu trong đề</th><th>Dịch vụ</th><th>Lý do</th></tr></thead>
+        <tbody>
+          <tr><td>Đệm công việc, consumer kéo theo tốc độ riêng, chống mất message</td><td><b>SQS</b></td><td>Queue, pull, retention tới 14 ngày</td></tr>
+          <tr><td>Một message ⇒ nhiều subscriber (push), email/SMS</td><td><b>SNS</b></td><td>Pub/sub, fan-out tới SQS/Lambda/HTTP</td></tr>
+          <tr><td>Phản ứng với event dịch vụ AWS / SaaS; định tuyến theo nội dung tới nhiều target; event giữa các account</td><td><b>EventBridge</b></td><td>Event bus + rule + event pattern, partner bus, archive &amp; replay</td></tr>
+          <tr><td>Chạy tác vụ theo lịch (cron, rate, một lần, time zone)</td><td><b>EventBridge Scheduler</b></td><td>Serverless, hàng triệu lịch, 270+ dịch vụ</td></tr>
+          <tr><td>Nhiều bước có thứ tự, rẽ nhánh, retry, chờ người duyệt, chạy lâu</td><td><b>Step Functions Standard</b></td><td>Orchestration, exactly-once, tới 1 năm</td></tr>
+          <tr><td>Luồng ngắn, tần suất rất cao, cần rẻ</td><td><b>Step Functions Express</b></td><td>≤ 5 phút, 100.000 execution/giây</td></tr>
+          <tr><td>Ứng dụng có sẵn dùng JMS/AMQP/MQTT/STOMP/OpenWire</td><td><b>Amazon MQ</b></td><td>Broker được quản lý, không sửa code</td></tr>
+          <tr><td>Streaming thời gian thực, nhiều consumer đọc lại, giữ thứ tự theo shard</td><td><b>Kinesis / MSK</b></td><td>Bài 35</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – bưu điện thành phố</span>
+        <p><b>SQS</b> là hộp thư chờ người tới lấy; <b>SNS</b> là loa phát thanh; <b>EventBridge</b> là <b>tổng đài phân loại thư</b> đọc nội dung phong bì (event pattern) để chuyển đúng phòng ban, kể cả thư từ công ty đối tác (SaaS); <b>Scheduler</b> là cuốn lịch hẹn giờ gửi thư; <b>Step Functions</b> là <b>quy trình hồ sơ một cửa</b> đi qua từng bàn theo thứ tự, có bàn phải chờ lãnh đạo ký; <b>Amazon MQ</b> là thuê lại nguyên hệ thống chuyển phát cũ để khách quen không phải đổi thói quen.</p></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>Choreography</b> (EventBridge – các service tự phản ứng với event) vs <b>orchestration</b> (Step Functions – state machine trung tâm điều khiển từng bước).</li>
+          <li><b>EventBridge</b>: event bus (<b>default</b> nhận event dịch vụ AWS, <b>custom</b>, <b>partner</b> cho SaaS) → <b>rule</b> (event pattern, gắn với một bus) → tối đa <b>5 target</b> chạy song song. Retry mặc định <b>24 giờ / 185 lần</b>, hết thì bỏ ⇒ cấu hình <b>DLQ (SQS)</b>. <b>Archive &amp; replay</b> về source bus; <b>cross-account</b> bằng resource policy của bus (+ IAM role bên gửi); <b>API destinations</b> (connection, timeout 5 s); <b>Pipes</b> nối 1 nguồn → 1 đích có filter + enrichment.</li>
+          <li><b>EventBridge Scheduler</b> (khuyến nghị thay scheduled rule legacy): one-time / cron / rate, time zone, flexible time window, retry ≤ 185 lần / ≤ 24 giờ, DLQ, 10 triệu lịch/Region, 270+ dịch vụ.</li>
+          <li><b>Schema registry</b>: AWS / discovered / custom registry; <b>schema discovery</b> trên bus; OpenAPI 3 &amp; JSONSchema Draft4; <b>code bindings</b> cho IDE.</li>
+          <li><b>Step Functions</b>: state machine viết bằng <b>ASL</b> (JSON); state Task, Choice, Parallel, Map (Distributed tới 10.000 child song song), Wait, Pass, Succeed, Fail; <b>Retry</b> (1 s, 3 lần, backoff 2.0 mặc định) và <b>Catch</b>; payload ≤ <b>256 KiB</b>. Pattern: Request Response, <code>.sync</code>, <code>.waitForTaskToken</code> (human approval).</li>
+          <li><b>Standard</b>: ≤ 1 năm, exactly-once, lịch sử 90 ngày, tính theo state transition, có <code>.sync</code>/callback. <b>Express</b>: ≤ 5 phút, async at-least-once / sync at-most-once, 100.000 execution/s, log ra CloudWatch, tính theo execution + thời lượng + bộ nhớ. Loại workflow <b>không đổi được</b>.</li>
+          <li><b>Amazon MQ</b>: ActiveMQ (OpenWire, AMQP, STOMP, MQTT, WebSocket; single-instance hoặc <b>active/standby + EFS</b>) và RabbitMQ (AMQP 0-9-1; single-instance hoặc <b>cluster 3 node + NLB</b>) – dùng để <b>migrate</b> ứng dụng broker sẵn có không sửa code.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Event-driven architecture</dt><dd><b>Kiến trúc hướng sự kiện</b> – thành phần phát và phản ứng với event, ghép lỏng.</dd></div>
+        <div><dt>Choreography / Orchestration</dt><dd><b>Biên đạo (phi tập trung) / Điều phối (tập trung)</b> – EventBridge / Step Functions.</dd></div>
+        <div><dt>Event</dt><dd><b>Sự kiện</b> – bản ghi JSON về một thay đổi (source, detail-type, detail…).</dd></div>
+        <div><dt>Event bus (default / custom / partner)</dt><dd><b>Kênh sự kiện</b> – mặc định nhận event AWS / tự tạo / nhận event SaaS.</dd></div>
+        <div><dt>Rule / Event pattern</dt><dd><b>Quy tắc / Mẫu khớp sự kiện</b> – lọc event trên một bus, gửi tới ≤ 5 target.</dd></div>
+        <div><dt>Target</dt><dd><b>Đích nhận</b> – Lambda, SQS, SNS, Step Functions, bus khác, API destination…</dd></div>
+        <div><dt>Input transformer</dt><dd><b>Bộ biến đổi đầu vào</b> – đổi hình dạng event trước khi tới target.</dd></div>
+        <div><dt>Managed rule</dt><dd><b>Rule do dịch vụ AWS quản lý</b> – chỉ xóa bằng Force delete.</dd></div>
+        <div><dt>Archive / Replay</dt><dd><b>Kho lưu sự kiện / Phát lại sự kiện</b> – gửi lại event cũ về source bus.</dd></div>
+        <div><dt>API destination / Connection</dt><dd><b>Đích là API HTTPS / Kết nối xác thực</b> – Basic, OAuth, API key (Secrets Manager).</dd></div>
+        <div><dt>EventBridge Pipes</dt><dd><b>Đường ống điểm–điểm</b> – source → filter → enrichment → target.</dd></div>
+        <div><dt>Enrichment</dt><dd><b>Làm giàu dữ liệu</b> – bổ sung thông tin cho event trước khi giao.</dd></div>
+        <div><dt>Subscriber (Custom Event Bus)</dt><dd><b>Bên đăng ký trên bus mới</b> – lọc và giao tới 1 target, có starting position.</dd></div>
+        <div><dt>EventBridge Scheduler</dt><dd><b>Bộ lập lịch serverless</b> – one-time, cron, rate; 10 triệu lịch/Region.</dd></div>
+        <div><dt>One-time / Recurring schedule</dt><dd><b>Lịch chạy một lần / Lịch lặp lại</b>.</dd></div>
+        <div><dt>Cron / Rate expression</dt><dd><b>Biểu thức cron / Biểu thức tần suất</b> – định nghĩa lịch lặp.</dd></div>
+        <div><dt>Flexible time window</dt><dd><b>Cửa sổ thời gian linh hoạt</b> – dàn trải thời điểm gọi target.</dd></div>
+        <div><dt>Templated / Universal target</dt><dd><b>Đích mẫu / Đích vạn năng</b> – SQS, SNS, Lambda… / mọi API AWS.</dd></div>
+        <div><dt>Schema / Schema registry</dt><dd><b>Lược đồ event / Kho lược đồ</b> – OpenAPI 3, JSONSchema Draft4.</dd></div>
+        <div><dt>Schema discovery</dt><dd><b>Khám phá lược đồ</b> – tự suy schema từ event trên bus.</dd></div>
+        <div><dt>Code bindings</dt><dd><b>Mã ràng buộc</b> – class sinh từ schema để code có kiểu.</dd></div>
+        <div><dt>State machine / Workflow</dt><dd><b>Máy trạng thái / Luồng công việc</b> của Step Functions.</dd></div>
+        <div><dt>State / Execution</dt><dd><b>Trạng thái (một bước) / Lần thực thi</b> workflow.</dd></div>
+        <div><dt>Amazon States Language (ASL)</dt><dd><b>Ngôn ngữ định nghĩa state machine</b> dạng JSON.</dd></div>
+        <div><dt>Task / Choice / Parallel / Map / Wait state</dt><dd><b>Bước làm việc / Rẽ nhánh / Song song nhánh / Lặp song song trên dataset / Chờ</b>.</dd></div>
+        <div><dt>Distributed Map</dt><dd><b>Map phân tán</b> – tới 10.000 child execution song song.</dd></div>
+        <div><dt>Retry / Catch</dt><dd><b>Thử lại / Bắt lỗi</b> – retrier và catcher trong ASL.</dd></div>
+        <div><dt>Activity</dt><dd><b>Worker hoạt động bên ngoài</b> Step Functions, poll lấy việc.</dd></div>
+        <div><dt>Service integration pattern</dt><dd><b>Mẫu tích hợp dịch vụ</b> – Request Response, .sync, .waitForTaskToken.</dd></div>
+        <div><dt>Task token / Callback</dt><dd><b>Mã tác vụ / Gọi lại</b> – SendTaskSuccess / SendTaskFailure.</dd></div>
+        <div><dt>Standard / Express workflow</dt><dd><b>Luồng chuẩn / Luồng nhanh</b> – ≤ 1 năm exactly-once / ≤ 5 phút at-least-once.</dd></div>
+        <div><dt>At-most-once</dt><dd><b>Thực thi tối đa một lần</b> – Synchronous Express.</dd></div>
+        <div><dt>Redrive (Step Functions)</dt><dd><b>Chạy tiếp execution lỗi</b> từ bước hỏng, trong 14 ngày.</dd></div>
+        <div><dt>Message broker / Broker</dt><dd><b>Bộ môi giới tin nhắn</b> – khối cơ bản của Amazon MQ.</dd></div>
+        <div><dt>ActiveMQ / RabbitMQ</dt><dd><b>Hai engine broker mã nguồn mở</b> Amazon MQ hỗ trợ.</dd></div>
+        <div><dt>JMS / AMQP / MQTT / STOMP / OpenWire</dt><dd><b>API / protocol messaging chuẩn</b> – dấu hiệu chọn Amazon MQ.</dd></div>
+        <div><dt>Active/standby broker</dt><dd><b>Cặp broker chủ/dự phòng</b> ở 2 AZ, dùng chung EFS.</dd></div>
+        <div><dt>Cluster deployment (RabbitMQ)</dt><dd><b>Triển khai cụm</b> – 3 node, nhiều AZ, sau NLB.</dd></div>
+        <div><dt>Quorum queue</dt><dd><b>Hàng đợi nhân bản theo đa số</b> – leader/follower ở các AZ.</dd></div>
+        <div><dt>Failover transport</dt><dd><b>Cơ chế kết nối dự phòng</b> của client ActiveMQ tới endpoint -1/-2.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company wants to invoke an AWS Lambda function whenever any Amazon EC2 instance in its account is stopped, so that the function can record the event in an audit table. The solution must require the LEAST operational overhead. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Write a cron job on a separate EC2 instance that calls DescribeInstances every minute and invokes the function when an instance state changes.</li>
+            <li data-k="B">Create an Amazon EventBridge rule on the default event bus with an event pattern that matches EC2 Instance State-change Notification events with state "stopped", and set the Lambda function as the target.</li>
+            <li data-k="C">Create a custom EventBridge event bus and configure Amazon EC2 to publish its state changes to the custom bus.</li>
+            <li data-k="D">Subscribe the Lambda function to an Amazon SQS queue and configure EC2 to send state changes to the queue.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Dịch vụ AWS như EC2 <b>tự gửi</b> event vào <b>default event bus</b>; chỉ cần một rule với event pattern <code>source: aws.ec2</code>, <code>detail-type: EC2 Instance State-change Notification</code>, <code>state: stopped</code> và target là Lambda – hoàn toàn serverless. <b>A sai</b>: tự poll bằng cron trên EC2 tốn vận hành và chậm. <b>C sai</b>: event dịch vụ AWS đi vào default bus; rule trên custom bus không thấy chúng. <b>D sai</b>: EC2 không gửi state change trực tiếp vào SQS, và Lambda không “subscribe” vào queue theo kiểu này.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn gọi một AWS Lambda function mỗi khi bất kỳ Amazon EC2 instance nào trong account bị dừng (stopped), để function ghi sự kiện vào một bảng audit. Giải pháp phải có LEAST operational overhead (ít công sức vận hành nhất). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Viết một cron job trên một EC2 instance riêng, gọi DescribeInstances mỗi phút và gọi function khi trạng thái instance thay đổi.</span><span class="why">Sai: phải tự quản lý thêm một EC2 instance và code polling, tốn vận hành và có độ trễ – trái yêu cầu LEAST operational overhead.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Amazon EventBridge rule trên default event bus với event pattern khớp các sự kiện EC2 Instance State-change Notification có state "stopped", và đặt Lambda function làm target.</span><span class="why">Đúng: EC2 tự gửi event thay đổi trạng thái vào default event bus; chỉ cần một rule lọc state "stopped" trỏ tới Lambda – hoàn toàn serverless, không phải vận hành gì.</span></li>
+              <li data-k="C"><span class="tv">Tạo một custom EventBridge event bus và cấu hình Amazon EC2 publish các thay đổi trạng thái lên custom bus đó.</span><span class="why">Sai: event của dịch vụ AWS chỉ đi vào default event bus, không thể cấu hình EC2 gửi thẳng vào custom bus.</span></li>
+              <li data-k="D"><span class="tv">Subscribe Lambda function vào một Amazon SQS queue và cấu hình EC2 gửi các thay đổi trạng thái vào queue.</span><span class="why">Sai: EC2 không gửi state change trực tiếp vào SQS, và Lambda không "subscribe" vào queue theo kiểu đó.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company is building a loan-approval process. After automated checks run in AWS Lambda, loans above a threshold must wait for a manager to approve or reject them in an internal web application. Approval can take up to 5 days. The process must keep an auditable history of every step. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">An AWS Step Functions Express workflow with a Wait state of 5 days.</li>
+            <li data-k="B">A single Lambda function that polls a DynamoDB table until the manager's decision is recorded.</li>
+            <li data-k="C">An Amazon SQS delay queue with a delay of 5 days.</li>
+            <li data-k="D">An AWS Step Functions Standard workflow that uses a task with the .waitForTaskToken integration pattern; the web application calls SendTaskSuccess or SendTaskFailure with the task token when the manager decides.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Standard workflow</b> chạy tới <b>1 năm</b>, lưu lịch sử execution (audit) và hỗ trợ pattern <b>callback với task token</b>: workflow tạm dừng tới khi ứng dụng gọi <code>SendTaskSuccess</code>/<code>SendTaskFailure</code> – đúng mẫu “human in the loop”. <b>A sai</b>: Express tối đa <b>5 phút</b> và không hỗ trợ <code>.waitForTaskToken</code>. <b>B sai</b>: Lambda tối đa 15 phút, poll liên tục tốn kém. <b>C sai</b>: delay queue tối đa 15 phút và không có luồng phê duyệt.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang xây dựng quy trình phê duyệt khoản vay. Sau khi các bước kiểm tra tự động chạy trên AWS Lambda, những khoản vay vượt ngưỡng phải chờ quản lý phê duyệt hoặc từ chối trong một ứng dụng web nội bộ. Việc phê duyệt có thể mất tới 5 ngày. Quy trình phải lưu lịch sử có thể kiểm toán (auditable) của mọi bước. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một AWS Step Functions Express workflow với Wait state 5 ngày.</span><span class="why">Sai: Express workflow chạy tối đa 5 phút và không hỗ trợ pattern .waitForTaskToken, nên không thể chờ 5 ngày.</span></li>
+              <li data-k="B"><span class="tv">Một Lambda function duy nhất poll bảng DynamoDB cho tới khi quyết định của quản lý được ghi nhận.</span><span class="why">Sai: Lambda chạy tối đa 15 phút, không chờ được 5 ngày; poll liên tục tốn kém và không có lịch sử từng bước.</span></li>
+              <li data-k="C"><span class="tv">Một Amazon SQS delay queue với độ trễ 5 ngày.</span><span class="why">Sai: delay queue tối đa 15 phút và không có luồng phê duyệt hay lịch sử audit.</span></li>
+              <li data-k="D"><span class="tv">Một AWS Step Functions Standard workflow dùng task với integration pattern .waitForTaskToken; ứng dụng web gọi SendTaskSuccess hoặc SendTaskFailure kèm task token khi quản lý ra quyết định.</span><span class="why">Đúng: Standard workflow chạy tới 1 năm, lưu lịch sử execution để audit, và callback bằng task token cho phép tạm dừng chờ người phê duyệt rồi tiếp tục.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">An IoT platform receives about 40,000 sensor events per second. Each event must go through a short sequence of three transformation steps that completes in under 10 seconds, and the results are written to Amazon DynamoDB with idempotent PUT operations. The company wants to orchestrate the steps with AWS Step Functions in the MOST cost-effective way. Which workflow type should be used?</div>
+          <ol class="opts">
+            <li data-k="A">Asynchronous Express workflows.</li>
+            <li data-k="B">Standard workflows.</li>
+            <li data-k="C">Standard workflows with activities running on Amazon EC2.</li>
+            <li data-k="D">Standard workflows using the Run a Job (.sync) pattern.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Theo tài liệu, <b>Express workflow</b> dành cho workload <b>khối lượng lớn</b> như IoT ingestion, streaming; chạy ≤ 5 phút, tốc độ tới <b>100.000 execution/giây</b>, transition gần như không giới hạn, tính theo số execution + thời lượng ⇒ rẻ cho luồng ngắn. Mô hình at-least-once không sao vì thao tác ghi <b>idempotent</b>. <b>B, C, D sai</b>: Standard tính tiền theo state transition (đắt ở 40.000 event/s), tốc độ start khoảng 2.000/s; activities và <code>.sync</code> không cần thiết cho bước ngắn.</div>
+          <div class="trans">
+            <div class="tq">Một nền tảng IoT nhận khoảng 40.000 sự kiện cảm biến mỗi giây. Mỗi sự kiện phải đi qua một chuỗi ngắn gồm ba bước biến đổi, hoàn thành trong dưới 10 giây, và kết quả được ghi vào Amazon DynamoDB bằng các thao tác PUT idempotent. Công ty muốn điều phối các bước bằng AWS Step Functions theo cách MOST cost-effective (tiết kiệm chi phí nhất). Nên dùng loại workflow nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Asynchronous Express workflow.</span><span class="why">Đúng: Express dành cho workload khối lượng lớn, ngắn (≤ 5 phút), tính tiền theo số execution + thời lượng nên rẻ ở 40.000 event/s; at-least-once không sao vì ghi idempotent.</span></li>
+              <li data-k="B"><span class="tv">Standard workflow.</span><span class="why">Sai: Standard tính tiền theo từng state transition nên rất đắt ở 40.000 event/s, và tốc độ khởi động execution thấp hơn nhiều.</span></li>
+              <li data-k="C"><span class="tv">Standard workflow với activities chạy trên Amazon EC2.</span><span class="why">Sai: vẫn là Standard (đắt theo transition) và còn phải vận hành thêm EC2 cho activities – không cần cho bước ngắn.</span></li>
+              <li data-k="D"><span class="tv">Standard workflow dùng pattern Run a Job (.sync).</span><span class="why">Sai: .sync dùng để chờ job chạy lâu hoàn thành, không cần cho các bước dưới 10 giây, và Standard vẫn đắt ở khối lượng này.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs an on-premises order system that uses Apache ActiveMQ with JMS clients written in Java. The company wants to move the messaging layer to AWS with minimal code changes and must remain available if an Availability Zone fails. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Replace ActiveMQ with Amazon SQS FIFO queues and rewrite the clients to use the AWS SDK.</li>
+            <li data-k="B">Deploy an Amazon MQ for ActiveMQ single-instance broker with Amazon EBS storage.</li>
+            <li data-k="C">Deploy an Amazon MQ for ActiveMQ active/standby broker with Amazon EFS storage, and configure clients with the failover transport for both endpoints.</li>
+            <li data-k="D">Use Amazon EventBridge with an API destination that points to the JMS clients.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Amazon MQ</b> cho phép migrate broker sẵn có <b>không viết lại code messaging</b> (JMS/OpenWire giữ nguyên). <b>Active/standby</b> gồm hai broker ở <b>hai AZ</b> dùng chung <b>EFS</b> (nhân bản multi-AZ); client dùng failover transport tới endpoint -1/-2. <b>A sai</b>: phải viết lại code (không phải “minimal changes”). <b>B sai</b>: single-instance ở 1 AZ, và EBS chỉ nhân bản trong 1 AZ, không hỗ trợ active/standby. <b>D sai</b>: EventBridge không thay thế broker JMS.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy hệ thống đặt hàng on-premises dùng Apache ActiveMQ với các JMS client viết bằng Java. Công ty muốn chuyển lớp messaging lên AWS với ít thay đổi code nhất và phải tiếp tục khả dụng nếu một Availability Zone gặp sự cố. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thay ActiveMQ bằng Amazon SQS FIFO queue và viết lại client để dùng AWS SDK.</span><span class="why">Sai: phải viết lại toàn bộ code messaging sang AWS SDK, trái yêu cầu thay đổi code tối thiểu.</span></li>
+              <li data-k="B"><span class="tv">Triển khai broker Amazon MQ for ActiveMQ dạng single-instance với lưu trữ Amazon EBS.</span><span class="why">Sai: single-instance chỉ nằm ở một AZ, EBS chỉ nhân bản trong một AZ, nên không chịu được sự cố AZ.</span></li>
+              <li data-k="C"><span class="tv">Triển khai broker Amazon MQ for ActiveMQ dạng active/standby với lưu trữ Amazon EFS, và cấu hình client dùng failover transport cho cả hai endpoint.</span><span class="why">Đúng: Amazon MQ giữ nguyên JMS/OpenWire nên gần như không sửa code; active/standby đặt hai broker ở hai AZ dùng chung EFS, client failover tự chuyển khi một AZ hỏng.</span></li>
+              <li data-k="D"><span class="tv">Dùng Amazon EventBridge với một API destination trỏ tới các JMS client.</span><span class="why">Sai: EventBridge không phải message broker JMS và không thay thế được ActiveMQ cho các client hiện có.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">An Amazon EventBridge rule sends order events to a third-party HTTPS endpoint through an API destination. The endpoint was unavailable for 30 hours, and the company discovered that some events were lost. The company wants to make sure that undelivered events are kept and that it can reprocess historical events after an outage. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Configure an Amazon SQS dead-letter queue for the rule's target.</li>
+            <li data-k="B">Add four more targets to the rule that point to the same API destination.</li>
+            <li data-k="C">Increase the API destination client timeout to 60 seconds.</li>
+            <li data-k="D">Create an EventBridge archive for the event bus and replay the events after the endpoint recovers.</li>
+            <li data-k="E">Enable schema discovery on the event bus.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> Mặc định EventBridge retry <b>24 giờ / 185 lần</b>; hết lượt thì event <b>bị bỏ</b> – nên 30 giờ sự cố làm mất event. <b>DLQ (SQS)</b> giữ event giao thất bại (A). <b>Archive &amp; replay</b> lưu event và phát lại về source bus khi endpoint hồi phục (D). <b>B sai</b>: thêm target trùng chỉ gửi lặp, không giữ event. <b>C sai</b>: timeout của API destination cố định <b>5 giây</b>, và timeout không phải nguyên nhân. <b>E sai</b>: schema discovery chỉ suy ra cấu trúc event.</div>
+          <div class="trans">
+            <div class="tq">Một Amazon EventBridge rule gửi các sự kiện đơn hàng tới một HTTPS endpoint của bên thứ ba thông qua API destination. Endpoint đã không khả dụng trong 30 giờ, và công ty phát hiện một số sự kiện bị mất. Công ty muốn bảo đảm các sự kiện giao không thành công được giữ lại và có thể xử lý lại các sự kiện trong quá khứ sau sự cố. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình một Amazon SQS dead-letter queue cho target của rule.</span><span class="why">Đúng: EventBridge chỉ retry tối đa 24 giờ/185 lần rồi bỏ event; DLQ giữ lại các event giao thất bại thay vì để mất.</span></li>
+              <li data-k="B"><span class="tv">Thêm bốn target nữa vào rule, cùng trỏ tới API destination đó.</span><span class="why">Sai: các target trùng chỉ gửi lặp tới cùng endpoint đang hỏng, không giữ lại event nào.</span></li>
+              <li data-k="C"><span class="tv">Tăng client timeout của API destination lên 60 giây.</span><span class="why">Sai: timeout của API destination cố định 5 giây, và endpoint ngừng 30 giờ chứ không phải do timeout.</span></li>
+              <li data-k="D"><span class="tv">Tạo một EventBridge archive cho event bus và replay các sự kiện sau khi endpoint hồi phục.</span><span class="why">Đúng: archive lưu lại event đi qua bus, replay phát lại chúng về source bus để xử lý lại sau sự cố.</span></li>
+              <li data-k="E"><span class="tv">Bật schema discovery trên event bus.</span><span class="why">Sai: schema discovery chỉ suy ra cấu trúc event, không lưu trữ hay phát lại event.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A mobile application must send a reminder notification exactly 72 hours after each user registers. The application has millions of users, and registrations happen continuously. The company wants a serverless solution with the LEAST operational overhead. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Send a message to an Amazon SQS delay queue with a delay of 72 hours for each registration.</li>
+            <li data-k="B">Run a cron job on an Amazon EC2 instance every minute that scans a database for users registered 72 hours ago.</li>
+            <li data-k="C">For each registration, create an Amazon EventBridge Scheduler one-time schedule that invokes the notification Lambda function 72 hours later and is deleted after completion.</li>
+            <li data-k="D">Start an AWS Step Functions Express workflow with a Wait state of 72 hours for each registration.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>EventBridge Scheduler</b> hỗ trợ <b>one-time schedule</b> theo ngày giờ (kèm time zone), scale tới <b>10 triệu lịch</b>/Region (tăng được), serverless; đặt <code>ActionAfterCompletion</code> để tự xóa lịch đã chạy. <b>A sai</b>: delay của SQS tối đa <b>15 phút</b>. <b>B sai</b>: EC2 + cron tốn vận hành. <b>D sai</b>: Express workflow tối đa <b>5 phút</b>, không thể Wait 72 giờ.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng di động phải gửi thông báo nhắc nhở đúng 72 giờ sau khi mỗi người dùng đăng ký. Ứng dụng có hàng triệu người dùng và việc đăng ký diễn ra liên tục. Công ty muốn một giải pháp serverless với LEAST operational overhead (ít công sức vận hành nhất). Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gửi một message vào Amazon SQS delay queue với độ trễ 72 giờ cho mỗi lượt đăng ký.</span><span class="why">Sai: độ trễ của SQS delay queue tối đa chỉ 15 phút.</span></li>
+              <li data-k="B"><span class="tv">Chạy một cron job trên Amazon EC2 instance mỗi phút để quét cơ sở dữ liệu tìm người dùng đăng ký cách đây 72 giờ.</span><span class="why">Sai: không serverless, phải quản lý EC2 và code quét – tốn vận hành.</span></li>
+              <li data-k="C"><span class="tv">Với mỗi lượt đăng ký, tạo một one-time schedule của Amazon EventBridge Scheduler để gọi Lambda function gửi thông báo sau 72 giờ, và lịch được xóa sau khi hoàn thành.</span><span class="why">Đúng: EventBridge Scheduler hỗ trợ lịch chạy một lần theo thời điểm, scale tới hàng triệu lịch, serverless và tự xóa lịch đã chạy (ActionAfterCompletion).</span></li>
+              <li data-k="D"><span class="tv">Khởi động một AWS Step Functions Express workflow với Wait state 72 giờ cho mỗi lượt đăng ký.</span><span class="why">Sai: Express workflow chạy tối đa 5 phút, không thể Wait 72 giờ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company uses AWS Organizations with 50 member accounts. The security team wants all AWS service events of a specific type from every account to be delivered to an Amazon EventBridge event bus in a central security account for processing. New accounts are added frequently. Which solution requires the LEAST ongoing management?</div>
+          <ol class="opts">
+            <li data-k="A">Add each member account ID individually to an IAM policy attached to the security team's users.</li>
+            <li data-k="B">Attach a resource-based policy to the central event bus that allows events:PutEvents for principals in the organization (aws:PrincipalOrgID), and deploy a rule in each member account that targets the central event bus with an IAM role.</li>
+            <li data-k="C">Create an Amazon SQS queue in each member account and have the security account poll all queues.</li>
+            <li data-k="D">Configure EventBridge archives in each member account and replay them to the security account every hour.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Bên <b>nhận</b> cấp quyền qua <b>resource-based policy</b> của event bus, có thể chỉ định cả <b>organization</b> (không phải sửa khi thêm account). Bên <b>gửi</b> tạo rule có target là ARN bus trung tâm kèm IAM role (bắt buộc với target bus mới). <b>A sai</b>: IAM policy của user không cho phép account khác ghi vào bus. <b>C sai</b>: poll nhiều queue tốn vận hành. <b>D sai</b>: replay chỉ gửi về <b>source bus</b> ban đầu, không gửi sang account khác.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng AWS Organizations với 50 member account. Đội bảo mật muốn mọi sự kiện dịch vụ AWS thuộc một loại cụ thể từ mọi account được chuyển tới một Amazon EventBridge event bus trong account bảo mật trung tâm để xử lý. Account mới được thêm thường xuyên. Giải pháp nào đòi hỏi LEAST ongoing management (ít công quản lý lâu dài nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm từng member account ID vào một IAM policy gắn với các user của đội bảo mật.</span><span class="why">Sai: IAM policy của user không cấp quyền cho account khác ghi vào event bus, và phải sửa mỗi khi thêm account.</span></li>
+              <li data-k="B"><span class="tv">Gắn resource-based policy vào event bus trung tâm cho phép events:PutEvents với các principal trong organization (aws:PrincipalOrgID), và triển khai một rule trong mỗi member account có target là event bus trung tâm kèm IAM role.</span><span class="why">Đúng: resource policy theo aws:PrincipalOrgID tự áp dụng cho mọi account mới trong organization, còn rule ở account gửi chuyển event sang bus trung tâm bằng IAM role.</span></li>
+              <li data-k="C"><span class="tv">Tạo một Amazon SQS queue trong mỗi member account và cho account bảo mật poll tất cả các queue.</span><span class="why">Sai: phải quản lý và poll 50+ queue, tăng dần theo số account – tốn vận hành.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình EventBridge archive trong mỗi member account và replay sang account bảo mật mỗi giờ.</span><span class="why">Sai: replay chỉ phát lại về source bus ban đầu, không gửi sang account khác được.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A customer support team uses a SaaS ticketing application that is an Amazon EventBridge partner. The company wants to start an AWS Step Functions workflow whenever a high-priority ticket is created, without building or maintaining any webhook infrastructure. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Build an Amazon API Gateway REST API and a Lambda function to receive webhooks from the SaaS application.</li>
+            <li data-k="B">Poll the SaaS API every minute from an EventBridge Scheduler schedule.</li>
+            <li data-k="C">Use Amazon MQ to receive messages from the SaaS application over MQTT.</li>
+            <li data-k="D">Set up the SaaS partner event source, associate it with a partner event bus, and create a rule that matches high-priority ticket events with the state machine as the target.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Với SaaS là partner của EventBridge, event được đưa vào <b>partner event bus</b> qua <b>partner event source</b>; rule lọc theo <b>event pattern</b> (priority = high) và target là <b>Step Functions</b> – không phải dựng webhook. <b>A sai</b>: tự xây webhook = thêm hạ tầng phải duy trì. <b>B sai</b>: polling tốn chi phí, có độ trễ và vẫn phải viết code. <b>C sai</b>: Amazon MQ dành cho ứng dụng dùng protocol broker, không phải tích hợp SaaS.</div>
+          <div class="trans">
+            <div class="tq">Một đội hỗ trợ khách hàng dùng một ứng dụng quản lý ticket dạng SaaS là partner của Amazon EventBridge. Công ty muốn khởi động một AWS Step Functions workflow mỗi khi có ticket ưu tiên cao được tạo, mà không phải xây dựng hay duy trì bất kỳ hạ tầng webhook nào. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Xây dựng một Amazon API Gateway REST API và một Lambda function để nhận webhook từ ứng dụng SaaS.</span><span class="why">Sai: đây chính là tự dựng hạ tầng webhook phải duy trì, trái yêu cầu đề bài.</span></li>
+              <li data-k="B"><span class="tv">Poll API của SaaS mỗi phút từ một lịch EventBridge Scheduler.</span><span class="why">Sai: polling tốn chi phí, có độ trễ và vẫn phải viết code gọi API, trong khi SaaS đã là partner có thể đẩy event.</span></li>
+              <li data-k="C"><span class="tv">Dùng Amazon MQ để nhận message từ ứng dụng SaaS qua MQTT.</span><span class="why">Sai: Amazon MQ dành cho ứng dụng dùng protocol broker (JMS, AMQP, MQTT), không phải cơ chế tích hợp SaaS partner.</span></li>
+              <li data-k="D"><span class="tv">Thiết lập SaaS partner event source, liên kết nó với một partner event bus, và tạo một rule khớp các sự kiện ticket ưu tiên cao với target là state machine.</span><span class="why">Đúng: partner event source đưa event SaaS thẳng vào partner event bus; rule lọc priority cao và khởi động Step Functions – không cần webhook.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company exposes an Amazon API Gateway endpoint that must call three microservices implemented as AWS Lambda functions in sequence, with retries on transient errors, and return the combined result to the client in the same HTTP request. The whole process finishes in less than 10 seconds. Which solution meets these requirements with the LEAST custom code?</div>
+          <ol class="opts">
+            <li data-k="A">Integrate API Gateway with an AWS Step Functions Synchronous Express workflow that invokes the three functions with Retry fields.</li>
+            <li data-k="B">Integrate API Gateway with an AWS Step Functions Standard workflow and have the client poll DescribeExecution for the result.</li>
+            <li data-k="C">Have the first Lambda function invoke the second and third functions and implement retry logic in code.</li>
+            <li data-k="D">Publish the request to an Amazon SNS topic that has the three functions subscribed.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Synchronous Express workflow</b> khởi động, <b>chờ hoàn thành rồi trả kết quả</b> – tài liệu nêu dùng để điều phối microservices từ API Gateway mà không phải viết code xử lý lỗi, retry, song song. <b>B sai</b>: Standard khởi động bất đồng bộ, client phải poll – không trả kết quả trong cùng request. <b>C sai</b>: Lambda gọi Lambda và tự viết retry = nhiều code, gắn chặt. <b>D sai</b>: SNS fan-out song song, bất đồng bộ, không theo thứ tự và không trả kết quả.</div>
+          <div class="trans">
+            <div class="tq">Một công ty cung cấp một endpoint Amazon API Gateway phải gọi tuần tự ba microservice được triển khai bằng AWS Lambda function, có retry khi gặp lỗi tạm thời, và trả kết quả tổng hợp cho client trong cùng HTTP request. Toàn bộ quá trình hoàn thành trong dưới 10 giây. Giải pháp nào đáp ứng các yêu cầu này với LEAST custom code (ít code tự viết nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tích hợp API Gateway với một AWS Step Functions Synchronous Express workflow gọi ba function, có khai báo trường Retry.</span><span class="why">Đúng: Synchronous Express workflow chờ chạy xong rồi trả kết quả ngay trong request; thứ tự và retry khai báo trong state machine, không cần code xử lý lỗi.</span></li>
+              <li data-k="B"><span class="tv">Tích hợp API Gateway với một AWS Step Functions Standard workflow và cho client poll DescribeExecution để lấy kết quả.</span><span class="why">Sai: Standard workflow khởi động bất đồng bộ, client phải poll nên không nhận kết quả trong cùng HTTP request.</span></li>
+              <li data-k="C"><span class="tv">Cho Lambda function đầu tiên gọi function thứ hai và thứ ba, và tự cài logic retry trong code.</span><span class="why">Sai: Lambda gọi Lambda và tự viết retry tạo nhiều code tự viết, gắn chặt các service – trái yêu cầu LEAST custom code.</span></li>
+              <li data-k="D"><span class="tv">Publish request lên một Amazon SNS topic có ba function đã subscribe.</span><span class="why">Sai: SNS fan-out song song và bất đồng bộ, không theo thứ tự và không trả kết quả về client.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A data team runs a nightly pipeline: first an AWS Batch job generates about 2 million small files in Amazon S3 (it takes about 3 hours), then each file must be processed in parallel by a Lambda function. The team wants to orchestrate the pipeline with AWS Step Functions without writing polling code. Which TWO design choices meet these requirements? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Use an Express workflow with the batch:submitJob.sync integration.</li>
+            <li data-k="B">Use a Standard workflow with a Task state that calls batch:submitJob.sync.</li>
+            <li data-k="C">Use a Lambda function in a loop that calls DescribeJobs every minute until the job completes.</li>
+            <li data-k="D">Use a Parallel state with 2 million branches, one per file.</li>
+            <li data-k="E">Use a Map state in Distributed mode that reads the objects from Amazon S3 and runs child workflow executions in parallel.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Pattern <b>Run a Job (<code>.sync</code>)</b> cho phép Step Functions <b>tự chờ</b> Batch job hoàn thành – chỉ có ở <b>Standard</b> (chạy được 3 giờ, tới 1 năm) (B). <b>Distributed Map</b> xử lý dataset lớn trên S3 với tới <b>10.000</b> child execution song song (E). <b>A sai</b>: Express tối đa 5 phút và không hỗ trợ <code>.sync</code>. <b>C sai</b>: tự viết polling – trái yêu cầu. <b>D sai</b>: Parallel dành cho các <b>nhánh khác nhau</b> được định nghĩa cố định, không dùng để lặp trên dữ liệu.</div>
+          <div class="trans">
+            <div class="tq">Một đội dữ liệu chạy pipeline hằng đêm: đầu tiên một AWS Batch job tạo ra khoảng 2 triệu file nhỏ trong Amazon S3 (mất khoảng 3 giờ), sau đó mỗi file phải được một Lambda function xử lý song song. Đội muốn điều phối pipeline bằng AWS Step Functions mà không phải viết code polling. HAI lựa chọn thiết kế nào đáp ứng các yêu cầu này? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng Express workflow với integration batch:submitJob.sync.</span><span class="why">Sai: Express workflow chạy tối đa 5 phút (job mất 3 giờ) và không hỗ trợ pattern .sync.</span></li>
+              <li data-k="B"><span class="tv">Dùng Standard workflow với một Task state gọi batch:submitJob.sync.</span><span class="why">Đúng: pattern Run a Job (.sync) cho Step Functions tự chờ Batch job hoàn thành mà không cần code polling, và Standard chạy được nhiều giờ (tới 1 năm).</span></li>
+              <li data-k="C"><span class="tv">Dùng một Lambda function trong vòng lặp gọi DescribeJobs mỗi phút cho tới khi job hoàn thành.</span><span class="why">Sai: đây chính là tự viết code polling, trái yêu cầu.</span></li>
+              <li data-k="D"><span class="tv">Dùng một Parallel state với 2 triệu nhánh, mỗi nhánh một file.</span><span class="why">Sai: Parallel dành cho một số nhánh khác nhau được định nghĩa cố định, không dùng để lặp qua dữ liệu động khổng lồ.</span></li>
+              <li data-k="E"><span class="tv">Dùng Map state ở chế độ Distributed để đọc các object từ Amazon S3 và chạy song song các child workflow execution.</span><span class="why">Đúng: Distributed Map được thiết kế cho dataset lớn trên S3, chạy tới 10.000 child execution song song để xử lý hàng triệu file.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-bus.html" target="_blank" rel="noopener">Amazon EventBridge event bus (default and Classic)</a></li>
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-custom-bus-what-is.html" target="_blank" rel="noopener">What is the EventBridge Custom Event Bus?</a></li>
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-rules.html" target="_blank" rel="noopener">Rules in Amazon EventBridge</a></li>
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-rule-retry-policy.html" target="_blank" rel="noopener">How EventBridge retries delivering events</a></li>
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-archive.html" target="_blank" rel="noopener">Archiving and replaying events in Amazon EventBridge</a></li>
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-cross-account.html" target="_blank" rel="noopener">Sending and receiving events between AWS accounts</a></li>
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-api-destinations.html" target="_blank" rel="noopener">API destinations as targets in Amazon EventBridge</a></li>
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-pipes.html" target="_blank" rel="noopener">Amazon EventBridge Pipes</a></li>
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-quota.html" target="_blank" rel="noopener">Amazon EventBridge quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/using-eventbridge-scheduler.html" target="_blank" rel="noopener">Amazon EventBridge Scheduler (EventBridge User Guide)</a></li>
+        <li><a href="https://docs.aws.amazon.com/scheduler/latest/UserGuide/what-is-scheduler.html" target="_blank" rel="noopener">What is Amazon EventBridge Scheduler?</a></li>
+        <li><a href="https://docs.aws.amazon.com/scheduler/latest/UserGuide/scheduler-quotas.html" target="_blank" rel="noopener">Quotas for Amazon EventBridge Scheduler</a></li>
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-schema.html" target="_blank" rel="noopener">Amazon EventBridge schemas</a></li>
+        <li><a href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-schema-registry.html" target="_blank" rel="noopener">Schema registries in Amazon EventBridge</a></li>
+        <li><a href="https://docs.aws.amazon.com/step-functions/latest/dg/concepts-statemachines.html" target="_blank" rel="noopener">Learn about state machines in Step Functions</a></li>
+        <li><a href="https://docs.aws.amazon.com/step-functions/latest/dg/choosing-workflow-type.html" target="_blank" rel="noopener">Choosing workflow type in Step Functions</a></li>
+        <li><a href="https://docs.aws.amazon.com/step-functions/latest/dg/connect-to-resource.html" target="_blank" rel="noopener">Discover service integration patterns in Step Functions</a></li>
+        <li><a href="https://docs.aws.amazon.com/step-functions/latest/dg/concepts-error-handling.html" target="_blank" rel="noopener">Handling errors in Step Functions workflows</a></li>
+        <li><a href="https://docs.aws.amazon.com/step-functions/latest/dg/service-quotas.html" target="_blank" rel="noopener">Step Functions service quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/amazon-mq-broker-architecture.html" target="_blank" rel="noopener">Deployment options for Amazon MQ for ActiveMQ brokers</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/rabbitmq-broker-architecture.html" target="_blank" rel="noopener">Deployment options for Amazon MQ for RabbitMQ brokers</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/broker-storage.html" target="_blank" rel="noopener">Amazon MQ for ActiveMQ storage types</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/working-with-activemq.html" target="_blank" rel="noopener">Using Amazon MQ for ActiveMQ</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 14 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="14" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <span class="t" data-vi="Dịch vụ lưu trữ đối tượng">Amazon S3</span> là <b>object storage</b> và phân biệt với block storage (EBS) / file storage; nắm các khái niệm <span class="t" data-vi="Thùng chứa">bucket</span>, <span class="t" data-vi="Đối tượng">object</span>, <span class="t" data-vi="Khóa / tên đối tượng">key</span>, <span class="t" data-vi="Mã phiên bản">version ID</span>, metadata, prefix.</li>
+          <li>Nhớ các giới hạn hay thi: quy tắc đặt tên bucket, kích thước object, single PUT 5 GB, multipart upload, 10.000 bucket mặc định, mô hình <b>strong read-after-write consistency</b>.</li>
+          <li>Phân biệt <span class="t" data-vi="Độ bền dữ liệu">durability</span> (11 số 9) với <span class="t" data-vi="Tính sẵn sàng">availability</span>, và biết lớp nào <b>không</b> chịu được mất một AZ.</li>
+          <li>Chọn đúng <span class="t" data-vi="Lớp lưu trữ">storage class</span>: Standard, Standard-IA, One Zone-IA, Intelligent-Tiering, Express One Zone, Glacier Instant / Flexible Retrieval / Deep Archive – theo tần suất truy cập, thời gian lấy dữ liệu, minimum storage duration và minimum billable size.</li>
+          <li>Hiểu <b>S3 Versioning</b>: ba trạng thái bucket, <code>null</code> version, <span class="t" data-vi="Dấu xóa">delete marker</span>, khôi phục object bị xóa/ghi đè, chi phí và <b>MFA Delete</b>.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 3 – Storage</span>
+        <p>Bài 11 đã dạy <b>EBS và instance store</b> (block storage gắn vào một EC2). Bài này mở đầu phần S3 với các khái niệm <b>nền tảng</b>. Các chủ đề S3 khác được dành cho bài sau để tránh trùng lặp: <b>Bài 15</b> – Lifecycle rules, Replication (CRR/SRR), multipart upload chi tiết, Transfer Acceleration, hiệu năng, Event notifications; <b>Bài 16</b> – bucket policy, Block Public Access, mã hóa (SSE-S3/KMS/C), Object Lock, presigned URL, Access Points, CORS. Ở bài này các tính năng đó chỉ được nhắc tên khi cần.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Amazon S3 là gì?</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ lưu trữ đối tượng đơn giản">Amazon Simple Storage Service (Amazon S3)</span> là dịch vụ <span class="t" data-vi="Lưu trữ đối tượng">object storage</span> có khả năng mở rộng, tính sẵn sàng, bảo mật và hiệu năng hàng đầu. Khách hàng mọi quy mô dùng S3 để lưu và bảo vệ <b>bất kỳ lượng dữ liệu nào</b> cho các trường hợp như <b>data lake</b>, website, ứng dụng di động, <b>backup and restore</b>, <b>archive</b>, ứng dụng doanh nghiệp, thiết bị IoT và phân tích big data.</p>
+
+      <p>S3 lưu dữ liệu dưới dạng <b>object</b> bên trong <b>bucket</b>. Một <span class="t no-vi">object</span> là <b>một file cùng metadata mô tả file đó</b>; một <span class="t no-vi">bucket</span> là <b>vùng chứa object</b>. Để lưu dữ liệu, bạn tạo bucket (đặt tên + chọn AWS Region) rồi upload dữ liệu thành object; mỗi object có một <b>key</b> là định danh duy nhất trong bucket.</p>
+
+      <div class="stats">
+        <div class="stat"><b>99.999999999%</b><span>durability thiết kế (11 số 9) – mọi storage class trừ RRS</span></div>
+        <div class="stat"><b>≥ 3 AZ</b><span>số AZ lưu dữ liệu của Standard, Standard-IA, Intelligent-Tiering, Glacier</span></div>
+        <div class="stat"><b>50 TB</b><span>kích thước tối đa một object (tài liệu hiện tại)</span></div>
+        <div class="stat"><b>5 GB</b><span>tối đa cho một lần <code>PUT</code> đơn – lớn hơn phải dùng multipart upload</span></div>
+        <div class="stat"><b>10.000</b><span>general purpose bucket mặc định mỗi account (xin tăng được)</span></div>
+        <div class="stat"><b>Không giới hạn</b><span>số object trong một bucket, dung lượng bucket</span></div>
+      </div>
+
+      <h3>Object storage khác block storage và file storage thế nào?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Block storage (Amazon EBS – Bài 11)</th><th>File storage (Amazon EFS / FSx – bài sau)</th><th>Object storage (Amazon S3)</th></tr></thead>
+        <tbody>
+          <tr><td>Đơn vị dữ liệu</td><td>Block trên một volume, OS tự format file system</td><td>File trong cây thư mục, truy cập qua NFS/SMB</td><td><b>Object</b> = dữ liệu + metadata, đánh địa chỉ bằng <b>bucket + key</b></td></tr>
+          <tr><td>Cách truy cập</td><td>Gắn vào EC2 (thường 1 instance) trong <b>một AZ</b></td><td>Mount đồng thời từ nhiều máy</td><td><b>HTTP(S) REST API</b>, SDK, CLI, console – từ bất kỳ đâu có quyền</td></tr>
+          <tr><td>Sửa một phần dữ liệu</td><td class="yes">Có (ghi từng block)</td><td class="yes">Có</td><td class="no">Không – muốn đổi phải <b>ghi lại cả object</b> (PUT mới)</td></tr>
+          <tr><td>Phạm vi</td><td>Zonal</td><td>Regional (EFS Standard)</td><td><b>Regional</b>, tự lưu dư thừa trên nhiều AZ (trừ lớp One Zone)</td></tr>
+          <tr><td>Dung lượng</td><td>Cấp phát trước theo GB</td><td>Co giãn tự động</td><td><b>Không giới hạn</b>, trả tiền theo dung lượng thực dùng</td></tr>
+          <tr><td>Dùng khi</td><td>Ổ boot, database trên EC2</td><td>Chia sẻ file giữa nhiều server</td><td>Static content, backup, archive, data lake, log, media</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Nhóm tính năng của S3 (theo tài liệu “What is Amazon S3?”)</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Standard.svg" alt="">
+          <div><h4>Storage classes</h4><span class="vi">Lớp lưu trữ</span><p>Standard / Express One Zone cho dữ liệu nóng, Standard-IA / One Zone-IA cho dữ liệu ít truy cập, Glacier cho lưu trữ dài hạn, Intelligent-Tiering cho mẫu truy cập không rõ. <b>Bài này.</b></p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Replication.svg" alt="">
+          <div><h4>Storage management</h4><span class="vi">Quản lý lưu trữ</span><p>S3 Lifecycle, S3 Object Lock (WORM), S3 Replication, S3 Batch Operations (thao tác trên hàng tỉ object). <b>Bài 15–16.</b></p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">
+          <div><h4>Access management &amp; security</h4><span class="vi">Quản lý truy cập và bảo mật</span><p>Mặc định bucket và object <b>private</b>. Block Public Access, IAM, bucket policy, Access Points, ACL, Object Ownership, IAM Access Analyzer for S3. <b>Bài 16.</b></p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Object-Lambda.svg" alt="">
+          <div><h4>Data processing</h4><span class="vi">Xử lý dữ liệu</span><p>S3 Object Lambda (chèn code vào GET/HEAD/LIST), Event notifications tới SNS, SQS, Lambda. <b>Bài 15.</b></p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">
+          <div><h4>Logging &amp; monitoring</h4><span class="vi">Ghi log và giám sát</span><p>CloudWatch metrics, CloudTrail (API cấp bucket và object), server access logging, Trusted Advisor.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Storage-Lens.svg" alt="">
+          <div><h4>Analytics &amp; insights</h4><span class="vi">Phân tích và thống kê</span><p>S3 Storage Lens (60+ metric, dashboard toàn tổ chức), Storage Class Analysis, S3 Inventory.</p></div></div>
+      </div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – kho gửi đồ khổng lồ</span>
+        <p>S3 giống một <b>kho gửi đồ</b> không đáy. Mỗi <b>bucket</b> là một dãy tủ mang tên riêng của bạn (tên phải không trùng với ai khác). Mỗi <b>object</b> là một gói hàng kèm <b>phiếu mô tả</b> (metadata), dán <b>mã gửi</b> (key) – bạn chỉ cần đọc đúng mã là lấy được gói. Bạn không thể “sửa một trang” bên trong gói: muốn thay thì gửi gói mới cùng mã. Có ngăn <b>giao nhanh</b> (Standard), ngăn <b>rẻ nhưng tính phí mỗi lần lấy</b> (IA), và <b>kho lạnh ngoại thành</b> (Glacier) – rất rẻ nhưng phải đặt lịch lấy trước vài giờ. Bật <b>versioning</b> giống như kho giữ lại <b>mọi gói cũ</b> mỗi khi bạn gửi gói mới cùng mã.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – nhận diện S3 trong đề</span>
+        <ul>
+          <li>“<i>Store an unlimited amount of data</i>”, “<i>static content (images, videos, documents)</i>”, “<i>durable, highly available, cost-effective storage</i>”, “<i>data lake</i>” ⇒ <b>Amazon S3</b>.</li>
+          <li>“<i>Shared file system mounted by many EC2 instances</i>” ⇒ <b>không</b> phải S3 mà là EFS/FSx. “<i>Boot volume / low-latency block storage for a database on EC2</i>” ⇒ EBS.</li>
+          <li>“<i>Least operational overhead</i>” cho lưu trữ: S3 là dịch vụ <b>managed, serverless</b> – không cấp phát dung lượng, không quản lý server.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: BUCKET ===================== -->
+      <h2 id="bucket"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Bucket – vùng chứa object</h2>
+      <p class="lead"><span class="t" data-vi="Thùng chứa">Bucket</span> là vùng chứa object, tổ chức namespace của S3 ở mức cao nhất, xác định <b>account chịu phí</b> lưu trữ và truyền dữ liệu, và là <b>đơn vị tổng hợp</b> cho báo cáo sử dụng. Khi tạo bucket bạn nhập <b>tên</b> và chọn <b>AWS Region</b> – sau khi tạo <b>không đổi được tên lẫn Region</b>.</p>
+
+      <h3>Bốn loại bucket</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại bucket</th><th>Đặc điểm</th><th>Dùng khi</th></tr></thead>
+        <tbody>
+          <tr><td><b><span class="t" data-vi="Bucket đa dụng">General purpose bucket</span></b></td><td>Loại gốc, được khuyến nghị cho <b>hầu hết</b> trường hợp. Không giới hạn số object, dùng mọi storage class (trừ S3 Express One Zone), lưu dư thừa trên nhiều AZ. Cấu trúc <b>phẳng</b> (flat).</td><td>Mặc định – gần như mọi câu hỏi SAA-C03 về S3</td></tr>
+          <tr><td><b><span class="t" data-vi="Bucket thư mục">Directory bucket</span></b></td><td>Tổ chức object theo <b>thư mục phân cấp</b> thật; mặc định tối đa <b>100</b> directory bucket/account. Đặt trong <b>một AZ</b> (dùng S3 Express One Zone) hoặc một <b>Dedicated Local Zone</b> (S3 One Zone-IA, cho data residency). Public access luôn bị tắt.</td><td>Ứng dụng cần độ trễ <b>single-digit millisecond</b>, hàng trăm nghìn request/giây; yêu cầu lưu dữ liệu trong ranh giới cụ thể</td></tr>
+          <tr><td><b>Table bucket</b></td><td>Lưu dữ liệu dạng bảng theo định dạng <b>Apache Iceberg</b>, tối ưu cho analytics; query bằng Athena, Redshift, Spark. Mặc định 10 table bucket/Region, 10.000 table/bucket. Luôn private.</td><td>Giao dịch mua hàng, dữ liệu cảm biến streaming…</td></tr>
+          <tr><td><b>Vector bucket</b></td><td>Lưu và truy vấn <b>vector embedding</b> qua vector index; tích hợp Amazon Bedrock, OpenSearch.</td><td>Tìm kiếm tương đồng cho ứng dụng AI/ML</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Namespace và quy tắc đặt tên general purpose bucket</h3>
+      <p>Mặc định general purpose bucket nằm trong <span class="t" data-vi="Không gian tên toàn cục">global namespace</span>: tên bucket phải <b>duy nhất trên mọi AWS account trong mọi Region</b> của một <b>partition</b> (<code>aws</code>, <code>aws-cn</code>, <code>aws-us-gov</code>, <code>aws-eusc</code>). Tài liệu mới bổ sung tùy chọn <span class="t" data-vi="Không gian tên theo account và Region">account regional namespace</span>: tên có hậu tố <code>-&lt;account-id&gt;-&lt;region&gt;-an</code>, chỉ account của bạn tạo được và không account khác nào tạo lại được.</p>
+      <ul>
+        <li>Dài <b>3–63 ký tự</b>; chỉ gồm <b>chữ thường</b>, số, dấu chấm (<code>.</code>) và gạch nối (<code>-</code>); bắt đầu và kết thúc bằng chữ hoặc số.</li>
+        <li><b>Không</b> có hai dấu chấm liền nhau, <b>không</b> có dạng địa chỉ IP (<code>192.168.5.4</code>), không có chữ hoa hay gạch dưới.</li>
+        <li>Tiền tố cấm: <code>xn--</code>, <code>sthree-</code>, <code>amzn-s3-demo-</code>. Hậu tố dành riêng: <code>-s3alias</code> (access point alias), <code>--ol-s3</code>, <code>.mrap</code>, <code>--x-s3</code> (directory bucket), <code>--table-s3</code>.</li>
+        <li>Bucket dùng <b>Transfer Acceleration</b> không được có dấu chấm. AWS khuyên tránh dấu chấm (trừ bucket chỉ dùng static website) vì virtual-hosted-style HTTPS không khớp chứng chỉ.</li>
+        <li>Không đưa thông tin nhạy cảm vào tên bucket – tên hiện trong URL của mọi object.</li>
+      </ul>
+
+      <h3>Region, quota và quyền sở hữu</h3>
+      <ul>
+        <li>Chọn Region để <b>tối ưu độ trễ</b>, <b>giảm chi phí</b> hoặc đáp ứng <b>yêu cầu pháp lý</b>. Object trong một Region <b>không bao giờ rời Region</b> trừ khi bạn chủ động chuyển hoặc replicate (vd Europe (Ireland) ở lại Ireland). Đây là lý do S3 là dịch vụ <b>regional</b> dù tên bucket là toàn cục (Bài 1).</li>
+        <li>Mặc định <b>10.000 general purpose bucket</b>/account; xin tăng qua Service Quotas (quản lý ở US East (N. Virginia)).</li>
+        <li><b>Không có giới hạn</b> dung lượng bucket hay số object; nhưng <b>không tạo bucket lồng trong bucket</b>.</li>
+        <li>Bucket thuộc sở hữu của account tạo ra nó – <b>không chuyển quyền sở hữu</b> sang account khác được.</li>
+        <li>Xóa bucket ⇒ tên có thể được <b>account khác</b> tạo lại và nhận các request vốn gửi cho bạn. Muốn giữ tên thì <b>làm rỗng và giữ bucket</b> thay vì xóa.</li>
+      </ul>
+
+      <h3>Địa chỉ của một object</h3>
+      <p>Mọi object đánh địa chỉ được bằng <b>endpoint + bucket + key (+ version)</b>. Ví dụ object <code>photos/puppy.jpg</code> trong bucket <code>amzn-s3-demo-bucket</code> ở us-west-2:</p>
+      <p><code>https://amzn-s3-demo-bucket.s3.us-west-2.amazonaws.com/photos/puppy.jpg</code> – kiểu <b>virtual-hosted-style</b> (tên bucket nằm trong hostname). S3 là dịch vụ <b>REST</b>; SDK tự tính chữ ký (signature) cho request. Mọi tương tác với S3 hoặc là <b>authenticated</b>, hoặc là <b>anonymous</b>.</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Storage.svg" alt="">AWS Cloud</span>
+          <div class="row">
+            <div class="grp region"><span class="lbl">Region: ap-southeast-1 (Singapore)</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">General purpose bucket<small>shop-media-prod</small></div>
+                <span class="arrow dashed">dữ liệu tự lưu dư thừa</span>
+              </div>
+              <div class="row">
+                <div class="grp az"><span class="lbl">AZ a</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Object.svg" alt="">bản sao<small>Standard / IA / Glacier</small></div></div></div>
+                <div class="grp az"><span class="lbl">AZ b</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Object.svg" alt="">bản sao<small>Standard / IA / Glacier</small></div></div></div>
+                <div class="grp az"><span class="lbl">AZ c</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Object.svg" alt="">bản sao<small>Standard / IA / Glacier</small></div></div></div>
+              </div>
+              <div class="row">
+                <div class="grp az"><span class="lbl">AZ a – chỉ một AZ</span>
+                  <div class="row center">
+                    <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-One-Zone-IA.svg" alt="">S3 One Zone-IA<small>general purpose bucket</small></div>
+                    <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Directory bucket<small>S3 Express One Zone</small></div>
+                  </div></div>
+              </div>
+            </div>
+            <div class="grp region"><span class="lbl">Region: eu-west-1 (Ireland)</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Bucket khác<small>dữ liệu không rời Region</small></div>
+              </div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Ứng dụng / người dùng<small>HTTPS REST API</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Bucket được tạo trong <b>một Region</b> nhưng tên thuộc global namespace. Với các lớp như S3 Standard, Standard-IA, Intelligent-Tiering và Glacier, S3 tự lưu dữ liệu dư thừa trên <b>≥ 3 AZ</b> – bạn không phải chọn AZ. Chỉ <b>S3 One Zone-IA</b> và <b>S3 Express One Zone</b> (trong directory bucket) nằm ở <b>một AZ</b> nên không chịu được mất AZ. Dữ liệu ở Ireland không tự sang Singapore trừ khi bạn cấu hình replication (Bài 15).</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – bucket</span>
+        <ul>
+          <li>“<i>Rename the bucket</i>” / “<i>move the bucket to another Region</i>” ⇒ <b>không làm được</b>; phải tạo bucket mới và copy/replicate dữ liệu.</li>
+          <li>Tên bucket duy nhất toàn cục <b>không</b> có nghĩa S3 là dịch vụ global – dữ liệu vẫn ở Region bạn chọn.</li>
+          <li>“<i>Make the bucket public so that the website works</i>” – mặc định mọi bucket private và Block Public Access bật; cách đúng thường là CloudFront + quyền truy cập riêng (Bài 16).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: OBJECT, KEY, METADATA ===================== -->
+      <h2 id="object"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Object.svg" alt="">Object, key, metadata và tính nhất quán</h2>
+      <p class="lead">S3 là kho <b>key-value</b>: bạn có thể coi S3 như một bảng ánh xạ cơ bản giữa <b>“bucket + key + version”</b> và chính object. Một <span class="t" data-vi="Đối tượng">object</span> gồm các thành phần sau.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Ý nghĩa</th><th>Con số / ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><b><span class="t" data-vi="Khóa / tên đối tượng">Key</span></b></td><td>Tên bạn đặt cho object, định danh duy nhất trong bucket; phân biệt hoa thường.</td><td>Chuỗi Unicode UTF-8, tối đa <b>1.024 byte</b> (tính cả prefix và dấu <code>/</code>)</td></tr>
+          <tr><td><b><span class="t" data-vi="Mã phiên bản">Version ID</span></b></td><td>Chuỗi do S3 sinh ra; cùng với key xác định duy nhất một object.</td><td><code>null</code> nếu chưa bật versioning; ≤ 1.024 byte, không sửa được</td></tr>
+          <tr><td><b>Value</b></td><td>Nội dung lưu trữ – dãy byte bất kỳ.</td><td>Từ <b>0 byte tới 50 TB</b></td></tr>
+          <tr><td><b><span class="t" data-vi="Siêu dữ liệu">Metadata</span></b></td><td>Cặp name-value mô tả object: <b>system-defined</b> (do S3 quản lý) và <b>user-defined</b> (<code>x-amz-meta-*</code>).</td><td>User-defined ≤ <b>2 KB</b>; toàn bộ header PUT ≤ 8 KB</td></tr>
+          <tr><td><b>Subresources</b></td><td>Thông tin phụ gắn với object, vd <code>acl</code>.</td><td>Không tồn tại độc lập</td></tr>
+          <tr><td><b>Access control information</b></td><td>ACL, bucket policy, IAM policy… quyết định ai truy cập.</td><td>Mặc định <b>private</b> (Bài 16)</td></tr>
+          <tr><td><b><span class="t" data-vi="Thẻ đối tượng">Object tags</span></b></td><td>Cặp key-value để phân loại, kiểm soát truy cập, lifecycle rule, phân bổ chi phí.</td><td>Tối đa <b>10 tag</b>/object; key ≤ 128 ký tự, value ≤ 255 ký tự</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Prefix và “folder” – S3 không có thư mục thật</h3>
+      <ul>
+        <li>Mô hình dữ liệu của general purpose bucket là <b>phẳng (flat)</b>: không có bucket con, không có thư mục con. Console và SDK <b>suy ra</b> cấu trúc phân cấp từ <span class="t" data-vi="Tiền tố">prefix</span> và <span class="t" data-vi="Ký tự phân tách">delimiter</span> (<code>/</code>).</li>
+        <li>Ví dụ key <code>Development/Projects.xls</code>: prefix <code>Development/</code> được hiển thị như “folder”. Upload <code>sample1.jpg</code> vào folder <code>backup</code> ⇒ key thật là <code>backup/sample1.jpg</code>.</li>
+        <li>Khi bạn “Create folder” trên console, S3 tạo một <b>object 0 byte</b> có key là prefix + delimiter.</li>
+        <li>Đổi tên object hoặc đổi thuộc tính (storage class, encryption, metadata) trên console ⇒ S3 <b>tạo object mới thay thế</b> object cũ (nếu bật versioning thì sinh version mới).</li>
+        <li>Nên dùng ký tự an toàn trong key: chữ, số và <code>! - _ . * ' ( )</code>; tránh <code>\ { } ^ % ` [ ] " &lt; &gt; ~ # |</code>.</li>
+      </ul>
+
+      <h3>Metadata</h3>
+      <ul>
+        <li><b>System-defined metadata</b>: có loại chỉ S3 sửa (<code>Date</code>, <code>Content-Length</code>, <code>Last-Modified</code>, <code>ETag</code>, <code>x-amz-version-id</code>, <code>x-amz-delete-marker</code>) và loại bạn kiểm soát (<code>Content-Type</code>, <code>Cache-Control</code>, <code>x-amz-storage-class</code>, <code>x-amz-server-side-encryption</code>, <code>x-amz-website-redirect-location</code>…).</li>
+        <li><b>User-defined metadata</b>: đặt lúc upload với prefix <code>x-amz-meta-</code>, S3 lưu key ở dạng chữ thường. <b>Sau khi upload không sửa được</b> – cách duy nhất là <b>copy object</b> và đặt metadata mới.</li>
+        <li><code>HeadObject</code> lấy metadata mà không tải nội dung object (cần quyền READ).</li>
+      </ul>
+
+      <h3>Kích thước upload</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cách upload</th><th>Giới hạn</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><b>Single PUT</b> (SDK, REST API, CLI)</td><td>Tối đa <b>5 GB</b></td><td>Một request duy nhất</td></tr>
+          <tr><td><b>S3 console</b></td><td>Tối đa <b>160 GB</b> mỗi file</td><td>Lớn hơn phải dùng CLI/SDK/API</td></tr>
+          <tr><td><b><span class="t" data-vi="Tải lên nhiều phần">Multipart upload</span></b></td><td>Object từ <b>5 MB tới 50 TB</b>; tối đa <b>10.000 part</b>, mỗi part ≤ 5 GiB</td><td>Upload từng part độc lập, <b>song song</b>, theo thứ tự bất kỳ; chi tiết ở Bài 15</td></tr>
+        </tbody>
+      </table></div>
+      <p>Mặc định mọi object upload lên được <b>mã hóa SSE-S3</b> tự động (chi tiết mã hóa ở Bài 16). Có thể dùng <b>conditional write</b> trên <code>PutObject</code>/<code>CompleteMultipartUpload</code> để chặn ghi đè object đã có cùng key.</p>
+
+      <div class="callout note"><span class="ttl">5 TB hay 50 TB?</span>
+        <p>Nhiều tài liệu ôn thi và câu hỏi cũ ghi kích thước object tối đa là <b>5 TB</b>. Tài liệu AWS hiện tại đã nâng lên <b>50 TB</b> (chính xác 53,7 TB = 10.000 part × 5 GiB). Điều không đổi và hay thi: <b>single PUT tối đa 5 GB</b> ⇒ file lớn hơn bắt buộc multipart upload. Nếu gặp đáp án “5 TB” trong đề cũ, hiểu đó là giới hạn trước đây.</p></div>
+
+      <h3>Mô hình nhất quán dữ liệu (data consistency model)</h3>
+      <ul>
+        <li>S3 cung cấp <span class="t" data-vi="Nhất quán mạnh đọc-sau-ghi">strong read-after-write consistency</span> cho <code>PUT</code> và <code>DELETE</code> object ở <b>mọi Region</b> – áp dụng cho cả object mới, ghi đè object cũ và xóa. Đọc ACL, object tags, metadata (<code>HEAD</code>) cũng nhất quán mạnh.</li>
+        <li>Ví dụ trong tài liệu: ghi object mới rồi <b>LIST</b> ngay ⇒ object có trong danh sách; ghi đè rồi đọc ngay ⇒ nhận <b>dữ liệu mới</b>; xóa rồi đọc ngay ⇒ không trả dữ liệu.</li>
+        <li>Cập nhật trên <b>một key là nguyên tử (atomic)</b>: đọc đồng thời với ghi sẽ nhận dữ liệu cũ hoặc mới, <b>không bao giờ</b> dữ liệu dở dang.</li>
+        <li>S3 <b>không khóa object</b> cho nhiều người ghi đồng thời: hai PUT cùng key cùng lúc ⇒ <span class="t" data-vi="Người ghi sau cùng thắng">last-writer-wins</span> (timestamp mới nhất thắng). Cần khóa thì ứng dụng tự làm. Không có cập nhật nguyên tử <b>giữa nhiều key</b>.</li>
+        <li><b>Cấu hình bucket</b> thì <b>eventual consistency</b>: xóa bucket rồi list có thể vẫn thấy; bật versioning lần đầu nên <b>chờ 15 phút</b> trước khi PUT/DELETE.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 300" width="780" role="img" aria-label="Cấu tạo của một S3 object">
+          <defs><marker id="ah14a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" x="20" y="20" width="44" height="44"/>
+          <text x="74" y="40" font-size="13" font-weight="700">Bucket: amzn-s3-demo-bucket (us-west-2)</text>
+          <text x="74" y="58" font-size="11" class="muted">tên duy nhất trong partition · chọn Region khi tạo · không đổi tên/Region</text>
+          <rect x="20" y="80" width="740" height="200" rx="10" fill="none" stroke="#7AA116" stroke-width="2" stroke-dasharray="6 4"/>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Object.svg" x="40" y="100" width="40" height="40"/>
+          <text x="90" y="118" font-size="13" font-weight="700">Object</text>
+          <text x="90" y="134" font-size="11" class="muted">= bucket + key + version ID</text>
+          <rect x="40" y="152" width="160" height="110" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="120" y="174" font-size="12.5" font-weight="700" text-anchor="middle">Key</text>
+          <text x="120" y="196" font-size="11" text-anchor="middle">photos/2026/puppy.jpg</text>
+          <text x="120" y="216" font-size="10.5" text-anchor="middle" class="muted">prefix "photos/2026/"</text>
+          <text x="120" y="234" font-size="10.5" text-anchor="middle" class="muted">≤ 1.024 byte UTF-8</text>
+          <rect x="215" y="152" width="160" height="110" rx="8" fill="none" stroke="#8C4FFF" stroke-width="2"/>
+          <text x="295" y="174" font-size="12.5" font-weight="700" text-anchor="middle">Version ID</text>
+          <text x="295" y="196" font-size="11" text-anchor="middle">3sL4kqtJlcpX…</text>
+          <text x="295" y="216" font-size="10.5" text-anchor="middle" class="muted">null nếu chưa versioning</text>
+          <text x="295" y="234" font-size="10.5" text-anchor="middle" class="muted">S3 sinh, không sửa được</text>
+          <rect x="390" y="152" width="160" height="110" rx="8" fill="none" stroke="#D13212" stroke-width="2"/>
+          <text x="470" y="174" font-size="12.5" font-weight="700" text-anchor="middle">Value (data)</text>
+          <text x="470" y="196" font-size="11" text-anchor="middle">0 byte – 50 TB</text>
+          <text x="470" y="216" font-size="10.5" text-anchor="middle" class="muted">single PUT ≤ 5 GB</text>
+          <text x="470" y="234" font-size="10.5" text-anchor="middle" class="muted">không sửa từng phần</text>
+          <rect x="565" y="152" width="180" height="110" rx="8" fill="none" stroke="#EC7211" stroke-width="2"/>
+          <text x="655" y="174" font-size="12.5" font-weight="700" text-anchor="middle">Metadata + tags</text>
+          <text x="655" y="196" font-size="11" text-anchor="middle">Content-Type, x-amz-meta-*</text>
+          <text x="655" y="216" font-size="10.5" text-anchor="middle" class="muted">user metadata ≤ 2 KB</text>
+          <text x="655" y="234" font-size="10.5" text-anchor="middle" class="muted">≤ 10 tag; storage class</text>
+          <path class="line-o" d="M330 110 L560 110" marker-end="url(#ah14a)"/>
+          <text x="570" y="114" font-size="11" class="muted">GET / HEAD / PUT qua HTTPS</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Cấu tạo của một object theo tài liệu “Amazon S3 objects overview”: <b>key</b> (gồm cả prefix), <b>version ID</b>, <b>value</b> và <b>metadata</b> (cộng tags, subresources, thông tin phân quyền). Storage class cũng là một system metadata (<code>x-amz-storage-class</code>) gắn với <b>từng object</b> – trong cùng một bucket các object có thể ở các lớp khác nhau.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – object và consistency</span>
+        <ul>
+          <li>“<i>Upload a 20 GB / 100 GB file</i>”, “<i>upload fails / is slow for large files</i>”, “<i>resume uploads after network failure</i>” ⇒ <b>multipart upload</b> (single PUT chỉ tới 5 GB).</li>
+          <li>“<i>Application must read the object immediately after writing it</i>” ⇒ S3 đã <b>strong read-after-write consistency</b>, không cần thêm cơ chế nào (đề cũ nói “eventual consistency for overwrites” là thông tin đã lỗi thời).</li>
+          <li>“<i>Change the metadata of millions of existing objects</i>” ⇒ phải <b>copy object</b> (vd bằng S3 Batch Operations) vì metadata user-defined không sửa tại chỗ được.</li>
+          <li>“<i>Search objects by attributes</i>” ⇒ S3 không phải database; lưu index ở DynamoDB/S3 Metadata thay vì LIST toàn bucket.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: DURABILITY & AVAILABILITY ===================== -->
+      <h2 id="durability"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Standard.svg" alt="">Durability 11 số 9 và availability</h2>
+      <p class="lead">Hai chỉ số này hay bị nhầm. <span class="t" data-vi="Độ bền dữ liệu">Durability</span> trả lời câu hỏi “<b>dữ liệu có bị mất không?</b>”; <span class="t" data-vi="Tính sẵn sàng">availability</span> trả lời “<b>lúc này tôi có đọc được dữ liệu không?</b>”. Mọi storage class hiện tại của S3 đều được thiết kế cho <b>99.999999999%</b> (11 số 9) durability, nhưng availability khác nhau theo lớp.</p>
+
+      <div class="stats">
+        <div class="stat"><b>11 số 9</b><span>durability thiết kế – Standard, IA, One Zone-IA, Intelligent-Tiering, Express One Zone, Glacier</span></div>
+        <div class="stat"><b>99.99%</b><span>availability thiết kế của S3 Standard (Glacier Flexible / Deep Archive: sau khi restore)</span></div>
+        <div class="stat"><b>99.9%</b><span>Standard-IA, Intelligent-Tiering, Glacier Instant Retrieval</span></div>
+        <div class="stat"><b>99.95%</b><span>S3 Express One Zone</span></div>
+        <div class="stat"><b>99.5%</b><span>S3 One Zone-IA – thấp nhất</span></div>
+        <div class="stat"><b>99.99%</b><span>durability của Reduced Redundancy Storage – lớp cũ, không khuyến nghị</span></div>
+      </div>
+
+      <ul>
+        <li>S3 đạt độ sẵn sàng cao bằng cách <b>replicate dữ liệu trên nhiều server</b> trong data center của AWS; PUT thành công nghĩa là dữ liệu đã được lưu an toàn.</li>
+        <li>Các lớp lưu trên <b>≥ 3 AZ</b> chịu được <b>mất vật lý một AZ</b> (động đất, lũ lụt). Tài liệu nhấn mạnh: <b>mọi lớp trừ S3 One Zone-IA và S3 Express One Zone</b> đều chịu được mất AZ.</li>
+        <li><b>One Zone-IA</b> có durability “ngang Standard-IA” (11 số 9 trong phạm vi một AZ) nhưng <b>kém availability và kém resilient</b> hơn – nếu AZ bị phá hủy thì dữ liệu mất.</li>
+        <li><b>Reduced Redundancy Storage (RRS)</b>: durability chỉ 99.99% (mất trung bình 0,01% số object mỗi năm; object mất trả lỗi <b>405</b>). AWS khuyến nghị <b>không dùng</b> – S3 Standard còn rẻ hơn.</li>
+        <li>Ước lượng phổ biến (S3 FAQ): với 11 số 9, lưu <b>10 triệu object</b> thì trung bình khoảng <b>10.000 năm</b> mới mất một object.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – durability ≠ availability ≠ backup</span>
+        <ul>
+          <li>Đề nêu “<i>data must remain available if an Availability Zone fails</i>” ⇒ loại ngay <b>One Zone-IA</b> và <b>Express One Zone</b>, dù chúng cùng 11 số 9 durability.</li>
+          <li>11 số 9 bảo vệ khỏi <b>hỏng phần cứng</b>, <b>không</b> bảo vệ khỏi <b>người dùng xóa nhầm hoặc ghi đè</b> – muốn vậy cần <b>Versioning</b> (cuối bài), MFA Delete, Object Lock (Bài 16) hoặc replication sang bucket khác (Bài 15).</li>
+          <li>Cần chịu được <b>mất cả một Region</b> ⇒ S3 không tự làm; phải cấu hình <b>Cross-Region Replication</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: STORAGE CLASSES ===================== -->
+      <h2 id="storage-classes"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Standard-IA.svg" alt="">Storage classes – chọn lớp lưu trữ</h2>
+      <p class="lead">Mỗi object trong S3 gắn với một <span class="t" data-vi="Lớp lưu trữ">storage class</span>. Mặc định là <b>S3 Standard</b> nếu bạn không chỉ định. Chọn lớp phù hợp giúp tối ưu <b>chi phí</b>, <b>hiệu năng</b> và <b>availability</b>. Quy luật chung: lớp càng rẻ tiền lưu trữ thì càng đắt tiền truy xuất, có <span class="t" data-vi="Thời gian lưu tối thiểu tính phí">minimum storage duration</span> và <span class="t" data-vi="Kích thước tối thiểu tính phí">minimum billable object size</span>.</p>
+
+      <h3>Bảng so sánh đầy đủ (theo tài liệu “Comparing the Amazon S3 storage classes”)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Storage class</th><th>Thiết kế cho</th><th>Availability</th><th>AZ</th><th>Min duration</th><th>Min billable size</th><th>Lưu ý khác</th></tr></thead>
+        <tbody>
+          <tr><td><b>S3 Standard</b><br><code>STANDARD</code></td><td>Truy cập thường xuyên (hơn 1 lần/tháng), mili giây</td><td>99.99%</td><td>≥ 3</td><td class="yes">Không</td><td class="yes">Không</td><td>Lớp mặc định, không phí retrieval</td></tr>
+          <tr><td><b>S3 Intelligent-Tiering</b><br><code>INTELLIGENT_TIERING</code></td><td>Mẫu truy cập <b>không biết trước / thay đổi</b></td><td>99.9%</td><td>≥ 3</td><td class="yes">Không</td><td class="yes">Không</td><td>Phí monitoring &amp; automation theo object; <b>không phí retrieval</b>; object &lt; 128 KB không được theo dõi, luôn ở Frequent Access</td></tr>
+          <tr><td><b>S3 Standard-IA</b><br><code>STANDARD_IA</code></td><td>Dữ liệu sống lâu, truy cập ~1 lần/tháng, mili giây</td><td>99.9%</td><td>≥ 3</td><td class="no">30 ngày</td><td class="no">128 KB</td><td>Phí retrieval theo GB</td></tr>
+          <tr><td><b>S3 One Zone-IA</b><br><code>ONEZONE_IA</code></td><td>Dữ liệu <b>tạo lại được</b>, ~1 lần/tháng, mili giây</td><td>99.5%</td><td><b>1</b></td><td class="no">30 ngày</td><td class="no">128 KB</td><td>Phí retrieval; <b>không chịu được mất AZ</b></td></tr>
+          <tr><td><b>S3 Express One Zone</b><br><code>EXPRESS_ONEZONE</code></td><td>Độ trễ <b>single-digit ms</b> cho ứng dụng nhạy độ trễ</td><td>99.95%</td><td><b>1</b> (bạn chọn)</td><td class="yes">Không</td><td class="yes">Không</td><td>Chỉ trong <b>directory bucket</b>; nhanh tới 10× Standard</td></tr>
+          <tr><td><b>S3 Glacier Instant Retrieval</b><br><code>GLACIER_IR</code></td><td>Lưu trữ dài hạn, ~1 lần/quý, <b>mili giây</b></td><td>99.9%</td><td>≥ 3</td><td class="no">90 ngày</td><td class="no">128 KB</td><td>Phí retrieval theo GB</td></tr>
+          <tr><td><b>S3 Glacier Flexible Retrieval</b><br><code>GLACIER</code></td><td>Archive ~1 lần/năm, lấy trong <b>phút tới giờ</b></td><td>99.99% (sau restore)</td><td>≥ 3</td><td class="no">90 ngày</td><td>N/A (+40 KB metadata)</td><td>Phải <b>restore</b> trước khi đọc; Bulk miễn phí</td></tr>
+          <tr><td><b>S3 Glacier Deep Archive</b><br><code>DEEP_ARCHIVE</code></td><td>Archive &lt; 1 lần/năm, lấy trong <b>giờ</b></td><td>99.99% (sau restore)</td><td>≥ 3</td><td class="no">180 ngày</td><td>N/A (+40 KB metadata)</td><td>Rẻ nhất AWS; phải restore</td></tr>
+          <tr><td><b>Reduced Redundancy</b><br><code>REDUCED_REDUNDANCY</code></td><td>Dữ liệu không quan trọng, tái tạo được</td><td>99.99%</td><td>≥ 3</td><td>Không</td><td>Không</td><td><b>Không khuyến nghị</b>; durability 99.99%</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout note"><span class="ttl">Minimum storage duration và minimum billable size hoạt động thế nào?</span>
+        <ul>
+          <li>Object Standard-IA / One Zone-IA <b>nhỏ hơn 128 KB</b> vẫn bị tính như <b>128 KB</b>.</li>
+          <li>Xóa, ghi đè hoặc chuyển lớp <b>trước 30 ngày</b> (IA) / <b>90 ngày</b> (Glacier IR, Flexible) / <b>180 ngày</b> (Deep Archive) ⇒ vẫn bị tính phí cho <b>phần còn lại</b> của thời hạn tối thiểu.</li>
+          <li>Glacier Flexible Retrieval và Deep Archive cần thêm <b>40 KB metadata</b> mỗi object: 32 KB tính theo giá lớp Glacier tương ứng + 8 KB tính theo giá <b>S3 Standard</b> (giữ tên và metadata). ⇒ Lưu <b>hàng triệu file rất nhỏ</b> vào Glacier có thể không rẻ; nên gom (tar/zip) trước.</li>
+        </ul></div>
+
+      <h3>1. Dữ liệu truy cập thường xuyên: S3 Standard và S3 Express One Zone</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Standard.svg" alt="">S3 Standard</h4>
+          <ul>
+            <li>Lớp <b>mặc định</b>; dữ liệu production quan trọng, truy cập thường xuyên.</li>
+            <li>≥ 3 AZ, 99.99% availability, không phí retrieval, không thời hạn tối thiểu.</li>
+            <li>Dùng <b>Storage Class Analysis</b> để biết khi nào nên chuyển sang Standard-IA.</li>
+          </ul></div>
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 Express One Zone</h4>
+          <ul>
+            <li>Lớp <b>độ trễ thấp nhất</b>: single-digit millisecond, truy cập nhanh tới <b>10×</b> và chi phí request thấp hơn S3 Standard.</li>
+            <li>Lưu trong <b>directory bucket</b> ở <b>một AZ bạn chọn</b> – đặt cạnh compute (EC2, EKS…) để có tốc độ cao nhất; hỗ trợ hàng trăm nghìn request/giây.</li>
+            <li>Không chịu được mất AZ – dùng cho dữ liệu tạm/trung gian (ML training, analytics tương tác).</li>
+          </ul></div>
+      </div>
+
+      <h3>2. Dữ liệu ít truy cập: S3 Standard-IA và S3 One Zone-IA</h3>
+      <p>Hai lớp <b>IA (infrequent access)</b> dành cho dữ liệu <b>sống lâu, ít truy cập nhưng khi cần phải có ngay</b> (mili giây, như Standard). Đổi lại bạn trả <b>phí retrieval theo GB</b>, thời hạn tối thiểu 30 ngày, kích thước tính phí tối thiểu 128 KB. Ví dụ: <b>backup</b>, dữ liệu cũ vẫn cần truy cập nhanh – thường upload vào Standard rồi dùng lifecycle chuyển sang IA (Bài 15).</p>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Standard-IA.svg" alt="">S3 Standard-IA</h4>
+          <ul>
+            <li>Lưu trên <b>nhiều AZ</b> cách xa nhau; chịu được mất một AZ.</li>
+            <li>AWS khuyến nghị cho <b>bản chính hoặc bản duy nhất</b> của dữ liệu <b>không tạo lại được</b>.</li>
+            <li>Availability 99.9%.</li>
+          </ul></div>
+        <div style="--accent:#D13212"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-One-Zone-IA.svg" alt="">S3 One Zone-IA</h4>
+          <ul>
+            <li>Chỉ <b>một AZ</b> ⇒ <b>rẻ hơn</b> Standard-IA; availability 99.5%.</li>
+            <li>AWS khuyến nghị cho dữ liệu <b>tạo lại được</b> nếu AZ hỏng, và cho <b>bản replica</b> khi cấu hình Cross-Region Replication.</li>
+            <li>Dùng được trong directory bucket ở Dedicated Local Zone cho yêu cầu data residency.</li>
+          </ul></div>
+      </div>
+
+      <h3>3. Mẫu truy cập không biết trước: S3 Intelligent-Tiering</h3>
+      <p><span class="t" data-vi="Phân tầng thông minh">S3 Intelligent-Tiering</span> là lớp <b>duy nhất</b> tự động tiết kiệm chi phí bằng cách <b>di chuyển từng object</b> giữa các <span class="t" data-vi="Tầng truy cập">access tier</span> khi mẫu truy cập thay đổi – <b>không ảnh hưởng hiệu năng</b>, không tốn công vận hành và <b>không có phí retrieval</b>. Bạn chỉ trả thêm một khoản nhỏ <b>phí monitoring &amp; automation</b> mỗi object/tháng. Khi object di chuyển giữa các tier, storage class vẫn là Intelligent-Tiering.</p>
+      <ul>
+        <li><b>Frequent Access</b> (tự động): mọi object mới upload/chuyển vào bắt đầu ở đây.</li>
+        <li><b>Infrequent Access</b> (tự động): không được truy cập <b>30 ngày liên tiếp</b>.</li>
+        <li><b>Archive Instant Access</b> (tự động): không được truy cập <b>90 ngày liên tiếp</b> – vẫn truy cập mili giây.</li>
+        <li><b>Archive Access</b> (tùy chọn, phải kích hoạt): sau tối thiểu <b>90 ngày</b> (cấu hình tới <b>730 ngày</b>); hiệu năng như Glacier Flexible Retrieval – phải <code>RestoreObject</code>, Standard 3–5 giờ.</li>
+        <li><b>Deep Archive Access</b> (tùy chọn): sau tối thiểu <b>180 ngày</b> (tới 730 ngày); như Glacier Deep Archive – Standard trong 12 giờ.</li>
+        <li>Object ở Infrequent / Archive Instant Access được truy cập lại (GET, PUT, CopyObject, tải qua console…) ⇒ <b>tự quay về Frequent Access</b>. <code>HeadObject</code>, tagging, List <b>không</b> tính là truy cập.</li>
+        <li>Object <b>&lt; 128 KB</b> không được theo dõi và luôn ở Frequent Access. Chỉ bật Archive/Deep Archive Access khi ứng dụng chấp nhận <b>truy cập bất đồng bộ</b> (async).</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 290" width="780" role="img" aria-label="Các access tier của S3 Intelligent-Tiering">
+          <defs><marker id="ah14b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Intelligent-Tiering.svg" x="16" y="12" width="40" height="40"/>
+          <text x="66" y="32" font-size="13" font-weight="700">S3 Intelligent-Tiering – một storage class, nhiều access tier</text>
+          <text x="66" y="50" font-size="11" class="muted">phí monitoring nhỏ / object · không phí retrieval · object &lt; 128 KB luôn ở Frequent</text>
+          <rect x="16" y="76" width="460" height="150" rx="10" fill="none" stroke="#7AA116" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="28" y="96" font-size="11.5" font-weight="700" style="fill:#7AA116">Tự động – truy cập mili giây</text>
+          <rect x="30" y="112" width="130" height="60" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="95" y="138" font-size="12.5" font-weight="700" text-anchor="middle">Frequent</text>
+          <text x="95" y="156" font-size="10.5" text-anchor="middle" class="muted">điểm bắt đầu</text>
+          <path class="line-o" d="M160 142 L184 142" marker-end="url(#ah14b)"/>
+          <text x="172" y="132" font-size="10" text-anchor="middle" class="muted">30 ngày</text>
+          <rect x="186" y="112" width="130" height="60" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="251" y="138" font-size="12.5" font-weight="700" text-anchor="middle">Infrequent</text>
+          <text x="251" y="156" font-size="10.5" text-anchor="middle" class="muted">≥ 30 ngày không dùng</text>
+          <path class="line-o" d="M316 142 L330 142" marker-end="url(#ah14b)"/>
+          <rect x="332" y="112" width="134" height="60" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="399" y="134" font-size="12" font-weight="700" text-anchor="middle">Archive Instant</text>
+          <text x="399" y="152" font-size="10.5" text-anchor="middle" class="muted">≥ 90 ngày</text>
+          <text x="399" y="166" font-size="10" text-anchor="middle" class="muted">vẫn mili giây</text>
+          <path class="line-o" d="M330 196 C 220 214, 120 214, 96 176" marker-end="url(#ah14b)" stroke-dasharray="4 4"/>
+          <text x="220" y="220" font-size="10.5" text-anchor="middle" class="muted">truy cập lại (GET/PUT/Copy) ⇒ về Frequent</text>
+          <rect x="492" y="76" width="272" height="150" rx="10" fill="none" stroke="#8C4FFF" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="504" y="96" font-size="11.5" font-weight="700" style="fill:#8C4FFF">Tùy chọn kích hoạt – truy cập bất đồng bộ</text>
+          <rect x="504" y="112" width="120" height="60" rx="8" fill="none" stroke="#8C4FFF" stroke-width="2"/>
+          <text x="564" y="134" font-size="12" font-weight="700" text-anchor="middle">Archive</text>
+          <text x="564" y="152" font-size="10.5" text-anchor="middle" class="muted">≥ 90 → 730 ngày</text>
+          <text x="564" y="166" font-size="10" text-anchor="middle" class="muted">restore 3–5 giờ</text>
+          <rect x="634" y="112" width="120" height="60" rx="8" fill="none" stroke="#8C4FFF" stroke-width="2"/>
+          <text x="694" y="134" font-size="12" font-weight="700" text-anchor="middle">Deep Archive</text>
+          <text x="694" y="152" font-size="10.5" text-anchor="middle" class="muted">≥ 180 → 730 ngày</text>
+          <text x="694" y="166" font-size="10" text-anchor="middle" class="muted">restore ≤ 12 giờ</text>
+          <path class="line-o" d="M466 142 L502 142" marker-end="url(#ah14b)"/>
+          <text x="628" y="200" font-size="10.5" text-anchor="middle" class="muted">phải RestoreObject trước khi GET</text>
+          <text x="16" y="262" font-size="11.5">Dùng khi: “<tspan font-style="italic">unknown, changing or unpredictable access patterns</tspan>”, “<tspan font-style="italic">no retrieval charges</tspan>”, “<tspan font-style="italic">without operational overhead</tspan>”.</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Các access tier của S3 Intelligent-Tiering theo tài liệu “How S3 Intelligent-Tiering works”. Ba tier đầu tự động và vẫn truy cập mili giây; hai tier archive phải <b>bật thủ công</b> và phải restore trước khi đọc. Chỉ bật Archive Access ở 90 ngày nếu bạn muốn <b>bỏ qua</b> Archive Instant Access (rẻ hơn chút nhưng mất truy cập tức thì).</figcaption>
+      </figure>
+
+      <h3>4. Dữ liệu hiếm khi truy cập: ba lớp S3 Glacier</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier.svg" alt="">
+          <div><h4>S3 Glacier Instant Retrieval</h4><span class="vi">Lưu trữ lâu dài, lấy tức thì</span><p>Dữ liệu ~<b>1 lần/quý</b> cần <b>mili giây</b>: image hosting, chia sẻ file, hồ sơ y tế xem khi bệnh nhân tái khám. Hiệu năng như Standard-IA; <b>lưu rẻ hơn</b> Standard-IA nhưng <b>truy cập đắt hơn</b>. Min 90 ngày, 128 KB.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service-Glacier.svg" alt="">
+          <div><h4>S3 Glacier Flexible Retrieval</h4><span class="vi">Lưu trữ lâu dài, lấy linh hoạt</span><p>Archive ~<b>1–2 lần/năm</b>, không cần ngay: <b>backup và disaster recovery</b>. Restore từ <b>vài phút tới 12 giờ</b>; <b>Bulk retrieval miễn phí</b>. Min 90 ngày. (Tên cũ: S3 Glacier.)</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier-Deep-Archive.svg" alt="">
+          <div><h4>S3 Glacier Deep Archive</h4><span class="vi">Lưu trữ sâu</span><p><b>Rẻ nhất AWS</b>. Dữ liệu &lt; 1 lần/năm, giữ <b>nhiều năm cho compliance</b>, chấp nhận chờ tới <b>72 giờ</b>. Restore Standard trong 12 giờ, Bulk trong 48 giờ. Min <b>180 ngày</b>. Thay thế băng từ (tape).</p></div></div>
+      </div>
+
+      <h3>Cách chọn storage class nhanh trong phòng thi</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Từ khóa trong đề</th><th>Storage class</th></tr></thead>
+        <tbody>
+          <tr><td>“<i>Frequently accessed</i>”, “<i>millisecond</i>”, không nói gì thêm</td><td><b>S3 Standard</b></td></tr>
+          <tr><td>“<i>Unknown / changing / unpredictable access patterns</i>”, “<i>automatically optimize cost</i>”</td><td><b>S3 Intelligent-Tiering</b></td></tr>
+          <tr><td>“<i>Infrequently accessed but requires rapid / immediate access when needed</i>”, dữ liệu quan trọng</td><td><b>S3 Standard-IA</b></td></tr>
+          <tr><td>Như trên nhưng “<i>can be recreated</i>”, “<i>secondary backup copy</i>”, “<i>most cost-effective</i>”</td><td><b>S3 One Zone-IA</b></td></tr>
+          <tr><td>“<i>Single-digit millisecond latency</i>”, “<i>co-locate storage with compute in one AZ</i>”</td><td><b>S3 Express One Zone</b> (directory bucket)</td></tr>
+          <tr><td>“<i>Archive accessed once a quarter, must be retrieved in milliseconds</i>”</td><td><b>S3 Glacier Instant Retrieval</b></td></tr>
+          <tr><td>“<i>Archive, retrieval within minutes to hours</i>”, “<i>backup accessed 1–2 times a year</i>”</td><td><b>S3 Glacier Flexible Retrieval</b></td></tr>
+          <tr><td>“<i>Retain for 7–10 years for compliance, rarely accessed, retrieval within 12 / 48 hours</i>”, “<i>lowest cost</i>”, “<i>replace tape</i>”</td><td><b>S3 Glacier Deep Archive</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Đặt storage class cho object</h3>
+      <ul>
+        <li>Chỉ định lúc upload bằng header <code>x-amz-storage-class</code> trong <code>PutObject</code>, <code>CopyObject</code>, <code>CreateMultipartUpload</code> (vd <code>INTELLIGENT_TIERING</code>, <code>GLACIER_IR</code>); không chỉ định ⇒ <code>STANDARD</code>.</li>
+        <li>Đổi lớp của object đã có: <b>copy</b> object với lớp mới (console làm việc này khi bạn sửa Storage class) hoặc để <b>S3 Lifecycle</b> tự chuyển theo tuổi object (Bài 15).</li>
+        <li>Lớp <b>S3 Outposts</b> (<code>OUTPOSTS</code>) chỉ dùng cho bucket trên AWS Outposts (dữ liệu on-premises); luôn mã hóa SSE-S3 (hoặc SSE-C), <b>không</b> hỗ trợ SSE-KMS.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – storage class</span>
+        <ul>
+          <li>Hai lớp duy nhất <b>không</b> chịu được mất AZ: <b>One Zone-IA</b> và <b>Express One Zone</b>. Đề có “<i>resilient to the loss of an AZ</i>” ⇒ loại hai lớp này.</li>
+          <li>Glacier <b>Instant</b> Retrieval là lớp Glacier <b>duy nhất</b> đọc trực tiếp bằng GET (mili giây). Flexible và Deep Archive là <b>archival</b> – phải restore.</li>
+          <li>Dữ liệu cần lưu <b>dưới 30 ngày</b> rồi xóa ⇒ để Standard; đưa vào IA/Glacier sẽ bị tính đủ thời hạn tối thiểu. Object rất nhỏ (&lt; 128 KB) ⇒ IA/Glacier IR tính như 128 KB.</li>
+          <li>Truy cập <b>không đoán được</b> và muốn tránh phí retrieval bất ngờ ⇒ Intelligent-Tiering thay vì tự đoán Standard-IA.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: GLACIER RESTORE ===================== -->
+      <h2 id="glacier-restore"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service-Glacier.svg" alt="">Lấy dữ liệu từ archive: restore và retrieval options</h2>
+      <p class="lead">Object ở <b>S3 Glacier Flexible Retrieval</b>, <b>S3 Glacier Deep Archive</b> (và tier Archive / Deep Archive Access của Intelligent-Tiering) đã được <b>lưu trữ (archived)</b> – <b>không truy cập thời gian thực</b>. Muốn đọc, bạn gửi <span class="t" data-vi="Yêu cầu khôi phục">restore request</span> (<code>RestoreObject</code>); S3 tạo một <b>bản sao tạm thời</b> có thể đọc khi request hoàn tất, còn object gốc vẫn ở lớp archive.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Lớp / tier</th><th>Expedited</th><th>Standard</th><th>Standard (qua Batch Operations)</th><th>Bulk</th></tr></thead>
+        <tbody>
+          <tr><td><b>Glacier Flexible Retrieval</b> / IT Archive Access</td><td><b>1–5 phút</b></td><td><b>3–5 giờ</b> (mặc định)</td><td>vài phút – 5 giờ</td><td><b>5–12 giờ</b> (miễn phí)</td></tr>
+          <tr><td><b>Glacier Deep Archive</b> / IT Deep Archive Access</td><td class="no">Không có</td><td><b>Trong 12 giờ</b></td><td>9–12 giờ</td><td><b>Trong 48 giờ</b></td></tr>
+          <tr><td><b>Glacier Instant Retrieval</b></td><td colspan="4">Không cần restore – <code>GET</code> trực tiếp, mili giây</td></tr>
+        </tbody>
+      </table></div>
+
+      <ul>
+        <li><b><span class="t" data-vi="Truy xuất khẩn cấp">Expedited retrieval</span></b>: cho yêu cầu khẩn cấp thỉnh thoảng, tới vài trăm object. Object &lt; 250 MB thường sẵn sàng trong 1–5 phút; object lớn hơn lấy với thông lượng tới 300 MB/s. Là tính năng <b>premium</b> (giá cao).</li>
+        <li><b><span class="t" data-vi="Dung lượng truy xuất đặt trước">Provisioned capacity</span></b>: không có nó, Expedited có thể <b>bị từ chối</b> lúc nhu cầu cao. Mỗi đơn vị bảo đảm <b>ít nhất 3 Expedited retrieval mỗi 5 phút</b> và tới 300 MB/s. Người <b>gửi request</b> mua (không phải bucket owner).</li>
+        <li><b>Standard retrieval</b>: mặc định khi không chỉ định tier. <b>Miễn phí</b> với Intelligent-Tiering.</li>
+        <li><b>Bulk retrieval</b>: rẻ nhất, cho lượng dữ liệu lớn; <b>miễn phí</b> với Glacier Flexible Retrieval và Intelligent-Tiering.</li>
+        <li>Quota restore: <b>1.000 transaction/giây</b> mỗi account; thông lượng restore tới <b>1–2 PB/ngày</b>. Restore hàng triệu object ⇒ dùng <b>S3 Batch Operations</b>. Object &gt; 5 TB có thể mất tới 48 giờ.</li>
+        <li>Khi restore bạn chỉ định <b>số ngày</b> giữ bản sao tạm; hết hạn S3 xóa bản sao, object archive vẫn còn.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/User.svg" alt="">Kiểm toán viên<small>cần hồ sơ 2019</small></div>
+          <span class="arrow">RestoreObject (Tier=Bulk / Standard / Expedited, Days=7)</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier-Deep-Archive.svg" alt="">Object ở Deep Archive<small>vẫn giữ nguyên lớp</small></div>
+          <span class="arrow dashed">chờ ≤ 12 h / ≤ 48 h</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Object.svg" alt="">Bản sao tạm<small>đọc được bằng GET</small></div>
+          <span class="arrow">GET</span>
+          <div class="node"><img src="../assets/icons/res/Client.svg" alt="">Ứng dụng<small>tải hồ sơ</small></div>
+        </div>
+        <figcaption><b>Hình 4.</b> Luồng truy xuất dữ liệu archival: gửi <code>RestoreObject</code> chọn retrieval tier và số ngày giữ bản sao ⇒ chờ theo tier ⇒ <code>GET</code> bản sao tạm. Muốn đọc tức thì không qua restore ⇒ chọn từ đầu <b>Glacier Instant Retrieval</b>.</figcaption>
+      </figure>
+
+      <div class="callout note"><span class="ttl">S3 Glacier storage classes ≠ dịch vụ Amazon Glacier (vault)</span>
+        <p>Các lớp S3 Glacier là một phần của <b>Amazon S3</b>: dữ liệu là <b>object trong bucket</b>, dùng S3 API, console, lifecycle, tagging, mã hóa. Còn <b>Amazon Glacier</b> (dịch vụ riêng, tên cũ “S3 Glacier” vault) lưu <b>archive trong vault</b>, không hỗ trợ tính năng S3, không upload/download qua console. AWS khuyến nghị dùng <b>S3 Glacier storage classes</b> cho mọi dữ liệu dài hạn. Lưu ý: object ở lớp Glacier trong S3 <b>không</b> truy cập được qua dịch vụ Amazon Glacier và ngược lại. (Glacier Vault Lock học ở Bài 16.)</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – retrieval</span>
+        <ul>
+          <li>“<i>Occasionally need a few archived files within minutes</i>” ⇒ Glacier Flexible Retrieval + <b>Expedited</b>; thêm “<i>must be guaranteed / reliable</i>” ⇒ mua <b>provisioned capacity</b>.</li>
+          <li>“<i>Retrieve petabytes of archive at the lowest cost, no urgency</i>” ⇒ <b>Bulk</b>.</li>
+          <li>Deep Archive <b>không có Expedited</b> – đề yêu cầu “within minutes” mà dữ liệu ở Deep Archive ⇒ không đáp ứng; phải chọn lớp khác từ đầu.</li>
+          <li>“<i>Accessed a few times a year but needs immediate access</i>” ⇒ Glacier <b>Instant</b> Retrieval, không phải Flexible + Expedited.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: VERSIONING ===================== -->
+      <h2 id="versioning"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">S3 Versioning – giữ mọi phiên bản của object</h2>
+      <p class="lead"><span class="t" data-vi="Quản lý phiên bản S3">S3 Versioning</span> giữ <b>nhiều biến thể của một object trong cùng bucket</b>, cho phép bảo toàn, lấy lại và khôi phục <b>mọi version của mọi object</b> – phục hồi dễ dàng sau thao tác nhầm của người dùng hoặc lỗi ứng dụng. Versioning <b>mặc định tắt</b>; bạn phải bật rõ ràng ở cấp bucket.</p>
+
+      <h3>Ba trạng thái của bucket</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Trạng thái</th><th>PUT cùng key</th><th>DELETE (không version ID)</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><b>Unversioned</b> (mặc định)</td><td>Ghi đè – bản cũ <b>mất</b></td><td>Xóa vĩnh viễn</td><td>Mọi object có version ID <code>null</code></td></tr>
+          <tr><td><b>Versioning-enabled</b></td><td>Tạo <b>version mới</b> (ID mới), bản cũ thành <span class="t" data-vi="Phiên bản không hiện hành">noncurrent version</span></td><td>Chèn <b>delete marker</b>, không xóa dữ liệu</td><td><b>Không bao giờ</b> quay về unversioned</td></tr>
+          <tr><td><b>Versioning-suspended</b></td><td>Object mới có version ID <code>null</code>; nếu đã có <code>null</code> version thì <b>ghi đè nó</b>; các version có ID khác giữ nguyên</td><td>Chèn delete marker với ID <code>null</code></td><td>Dừng tích lũy version mới; version cũ vẫn còn và vẫn tính tiền</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Trạng thái versioning áp dụng cho <b>tất cả</b> object trong bucket (không bao giờ chỉ một phần).</li>
+        <li>Bật versioning <b>không thay đổi</b> object đã có: chúng giữ version ID <code>null</code>, nội dung và quyền như cũ; chỉ cách S3 xử lý <b>request sau đó</b> thay đổi.</li>
+        <li>Version ID do <b>chỉ S3 sinh</b>, không sửa được: chuỗi opaque UTF-8, URL-ready, ≤ 1.024 byte (vd <code>3sL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY+MTRCxf3vjVBH40Nr8X8gdRQBpUMLUo</code>).</li>
+        <li>Version mới <b>chỉ</b> được tạo khi có <b>PUT</b> object (kể cả <code>CopyObject</code> vì nó thực hiện PUT). Đổi tag object <b>không</b> tạo version mới.</li>
+        <li>Bucket owner và mọi IAM user được phép đều bật được versioning. Bật lần đầu nên <b>chờ 15 phút</b> trước khi PUT/DELETE (có thể gặp lỗi 404 <code>NoSuchKey</code> tạm thời).</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 360" width="780" role="img" aria-label="Hoạt động của PUT, DELETE, GET trong bucket bật versioning">
+          <defs><marker id="ah14c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" x="16" y="10" width="38" height="38"/>
+          <text x="62" y="32" font-size="13" font-weight="700">Key photo.gif trong bucket Versioning-enabled</text>
+          <!-- column 1 -->
+          <text x="100" y="72" font-size="12" font-weight="700" text-anchor="middle">① PUT photo.gif</text>
+          <rect x="40" y="200" width="120" height="44" rx="8" fill="none" stroke="#7AA116" stroke-width="2.5"/>
+          <text x="100" y="220" font-size="12" font-weight="700" text-anchor="middle">ID 111111</text>
+          <text x="100" y="236" font-size="10.5" text-anchor="middle" class="muted">current</text>
+          <path class="line-o" d="M175 222 L215 222" marker-end="url(#ah14c)"/>
+          <!-- column 2 -->
+          <text x="290" y="72" font-size="12" font-weight="700" text-anchor="middle">② PUT lại (ghi đè)</text>
+          <rect x="230" y="150" width="120" height="44" rx="8" fill="none" stroke="#7AA116" stroke-width="2.5"/>
+          <text x="290" y="170" font-size="12" font-weight="700" text-anchor="middle">ID 121212</text>
+          <text x="290" y="186" font-size="10.5" text-anchor="middle" class="muted">current</text>
+          <rect x="230" y="200" width="120" height="44" rx="8" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+          <text x="290" y="220" font-size="12" text-anchor="middle">ID 111111</text>
+          <text x="290" y="236" font-size="10.5" text-anchor="middle" class="muted">noncurrent</text>
+          <path class="line-o" d="M365 222 L405 222" marker-end="url(#ah14c)"/>
+          <!-- column 3 -->
+          <text x="480" y="72" font-size="12" font-weight="700" text-anchor="middle">③ DELETE (không ID)</text>
+          <rect x="420" y="100" width="120" height="44" rx="8" fill="none" stroke="#D13212" stroke-width="2.5" stroke-dasharray="5 4"/>
+          <text x="480" y="120" font-size="12" font-weight="700" text-anchor="middle">Delete marker</text>
+          <text x="480" y="136" font-size="10.5" text-anchor="middle" class="muted">current, không data</text>
+          <rect x="420" y="150" width="120" height="44" rx="8" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+          <text x="480" y="170" font-size="12" text-anchor="middle">ID 121212</text>
+          <text x="480" y="186" font-size="10.5" text-anchor="middle" class="muted">noncurrent</text>
+          <rect x="420" y="200" width="120" height="44" rx="8" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+          <text x="480" y="220" font-size="12" text-anchor="middle">ID 111111</text>
+          <text x="480" y="236" font-size="10.5" text-anchor="middle" class="muted">noncurrent</text>
+          <!-- column 4 results -->
+          <text x="560" y="98" font-size="11" font-weight="700">Kết quả request:</text>
+          <text x="560" y="122" font-size="11">GET photo.gif ⇒ <tspan font-weight="700">404 Not Found</tspan></text>
+          <text x="560" y="140" font-size="10.5" class="muted">header x-amz-delete-marker: true</text>
+          <text x="560" y="166" font-size="11">GET ?versionId=121212 ⇒ <tspan font-weight="700">trả dữ liệu</tspan></text>
+          <text x="560" y="192" font-size="11">GET ?versionId=&lt;marker&gt; ⇒ <tspan font-weight="700">405</tspan></text>
+          <text x="560" y="218" font-size="11">ListObjectsV2 ⇒ <tspan font-weight="700">không thấy</tspan> photo.gif</text>
+          <text x="560" y="244" font-size="11">ListObjectVersions ⇒ thấy cả 3</text>
+          <!-- restore -->
+          <rect x="40" y="276" width="720" height="70" rx="10" fill="none" stroke="#EC7211" stroke-width="1.5"/>
+          <text x="56" y="298" font-size="12" font-weight="700">Khôi phục:</text>
+          <text x="56" y="318" font-size="11">• DELETE ?versionId=&lt;delete marker&gt; ⇒ xóa marker ⇒ 121212 trở lại current (object “sống lại”).</text>
+          <text x="56" y="336" font-size="11">• Hoặc COPY version 111111 lên chính key đó ⇒ thành version mới current. DELETE ?versionId=111111 ⇒ xóa vĩnh viễn, không tạo marker.</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Luồng versioning theo tài liệu “How S3 Versioning works” và “Working with delete markers”. PUT không ghi đè mà thêm version; DELETE đơn giản chỉ chèn <b>delete marker</b> làm current version ⇒ GET trả 404 nhưng dữ liệu vẫn còn. Chỉ <b>DELETE kèm versionId</b> mới xóa vĩnh viễn (do bucket owner/IAM user có quyền).</figcaption>
+      </figure>
+
+      <h3>Delete marker</h3>
+      <ul>
+        <li><span class="t" data-vi="Dấu xóa">Delete marker</span> là <b>placeholder</b> cho object bị DELETE đơn giản (không version ID) trong bucket enabled hoặc suspended. Chỉ S3 tạo ra nó. Nó có key và version ID nhưng <b>không có dữ liệu</b>, không có ACL.</li>
+        <li>GET không kèm versionId khi current là delete marker ⇒ <b>404 Not Found</b> + <code>x-amz-delete-marker: true</code>. GET kèm versionId của chính marker ⇒ <b>405 Method Not Allowed</b>.</li>
+        <li>Delete marker vẫn tính phí rất nhỏ (bằng kích thước key name), lưu ở lớp Standard. Chỉ thấy qua <code>ListObjectVersions</code> (console: <b>Show versions</b>).</li>
+        <li><b>Xóa delete marker</b> (DELETE kèm versionId của marker) ⇒ version trước đó trở lại làm current – cách phổ biến nhất để “undelete”.</li>
+      </ul>
+
+      <h3>Chi phí và vận hành</h3>
+      <ul>
+        <li><b>Mỗi version là một object đầy đủ</b>, không phải phần chênh lệch (diff). Lưu 3 version ⇒ trả tiền cho 3 object. File 1 GB bị ghi đè hằng ngày trong một tháng ⇒ ~30 GB.</li>
+        <li>Kết hợp với <b>S3 Lifecycle</b> để kiểm soát chi phí: <code>NoncurrentVersionExpiration</code> xóa vĩnh viễn version cũ sau N ngày; <code>Expiration</code> trên current version trong bucket có versioning chỉ <b>chèn delete marker</b>. Nếu bucket chưa versioning đã có rule expiration, khi bật versioning phải <b>thêm noncurrent expiration</b> để giữ hành vi xóa thật (chi tiết Bài 15).</li>
+        <li>Thấy <b>HTTP 503 (Slow Down)</b> tăng mạnh cho PUT/DELETE trong bucket versioning ⇒ có thể có object với <b>hàng triệu version</b>.</li>
+        <li>Versioning là <b>điều kiện bắt buộc</b> cho S3 Replication (Bài 15) và S3 Object Lock (Bài 16). SOAP API không hỗ trợ versioning.</li>
+      </ul>
+
+      <h3>MFA Delete</h3>
+      <p><span class="t" data-vi="Xóa có MFA">MFA Delete</span> thêm một lớp bảo vệ: request phải kèm <b>hai yếu tố</b> – credential của bạn và chuỗi <b>serial number của thiết bị MFA + dấu cách + mã 6 số</b>.</p>
+      <ul>
+        <li>Yêu cầu MFA cho đúng <b>hai thao tác</b>: <b>đổi trạng thái versioning</b> của bucket và <b>xóa vĩnh viễn một object version</b>.</li>
+        <li><b>Chỉ bucket owner (root account)</b> bật được MFA Delete, dù IAM user được phép vẫn bật được versioning.</li>
+        <li><b>Không bật được qua console</b> – chỉ qua <b>AWS CLI</b> hoặc API (<code>put-bucket-versioning ... MFADelete=Enabled --mfa "SERIAL 123456"</code>). Cấu hình lưu chung trong versioning subresource.</li>
+        <li><b>Không dùng được cùng lifecycle configuration</b>.</li>
+        <li>Khác với <b>MFA-protected API access</b> (điều kiện <code>aws:MultiFactorAuthPresent</code> trong policy – Bài 4/16): MFA Delete chống <b>xóa nhầm</b> trên bucket; MFA-protected API access ép mọi thao tác nhạy cảm dùng credential tạm có MFA.</li>
+      </ul>
+
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">Versioning bảo vệ khỏi</h4>
+          <ul>
+            <li>Xóa nhầm (DELETE thường chỉ thêm delete marker).</li>
+            <li>Ghi đè nhầm, lỗi ứng dụng ghi dữ liệu hỏng.</li>
+            <li>Ransomware mã hóa rồi ghi đè object (version cũ vẫn còn).</li>
+          </ul></div>
+        <div style="--accent:#D13212"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_Encrypted-Data.svg" alt="">Versioning KHÔNG đủ khi</h4>
+          <ul>
+            <li>Người có quyền cố ý <b>DELETE kèm versionId</b> ⇒ thêm <b>MFA Delete</b> hoặc <b>Object Lock</b> (WORM, Bài 16).</li>
+            <li>Cần bản sao ở Region khác ⇒ <b>Cross-Region Replication</b> (Bài 15).</li>
+            <li>Muốn giảm chi phí version cũ ⇒ lifecycle noncurrent expiration/transition.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – versioning</span>
+        <ul>
+          <li>“<i>Protect objects from accidental deletion or overwrite</i>”, “<i>recover previous versions</i>” ⇒ <b>enable S3 Versioning</b> (thường kèm <b>MFA Delete</b>).</li>
+          <li>“<i>A user deleted an object in a versioned bucket; restore it</i>” ⇒ <b>xóa delete marker</b> (hoặc copy version trước lên làm current). Không cần backup.</li>
+          <li>“<i>Disable versioning</i>” ⇒ chỉ có <b>Suspend</b>; bucket không bao giờ quay về unversioned, version cũ vẫn tính tiền.</li>
+          <li>“<i>Require MFA to permanently delete object versions</i>” ⇒ <b>MFA Delete</b>, bật bằng <b>CLI với root account</b> – phương án bật trên console hay bằng IAM user là sai.</li>
+          <li>Chi phí bucket tăng vọt sau khi bật versioning ⇒ nhiều noncurrent version ⇒ lifecycle <b>NoncurrentVersionExpiration</b>.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải nhớ</span>
+        <ul>
+          <li><b>S3</b> = object storage regional, serverless, dung lượng không giới hạn; object = key + version ID + value + metadata; không sửa một phần object.</li>
+          <li><b>Bucket</b>: tên duy nhất trong partition (3–63 ký tự, chữ thường, số, <code>.</code>, <code>-</code>, không dạng IP); chọn Region khi tạo, không đổi tên/Region; 10.000 bucket/account mặc định; không giới hạn object; mặc định private.</li>
+          <li><b>Object</b>: 0 byte – 50 TB (tài liệu cũ: 5 TB); <b>single PUT ≤ 5 GB</b>, console ≤ 160 GB, multipart 5 MB – 50 TB (10.000 part); key ≤ 1.024 byte; user metadata ≤ 2 KB, sửa phải copy; ≤ 10 tag. Prefix/“folder” chỉ là một phần của key.</li>
+          <li><b>Consistency</b>: strong read-after-write cho PUT/DELETE/LIST ở mọi Region; last-writer-wins; cấu hình bucket là eventual.</li>
+          <li><b>Durability 11 số 9</b> cho mọi lớp (trừ RRS 99.99%); availability: Standard 99.99%, Standard-IA / IT / Glacier IR 99.9%, Express One Zone 99.95%, One Zone-IA 99.5%. Chỉ <b>One Zone-IA</b> và <b>Express One Zone</b> nằm 1 AZ.</li>
+          <li><b>Min duration / min size</b>: IA 30 ngày + 128 KB; Glacier IR 90 ngày + 128 KB; Glacier Flexible 90 ngày; Deep Archive 180 ngày (+40 KB metadata mỗi object).</li>
+          <li><b>Intelligent-Tiering</b>: Frequent ⇒ 30 ngày Infrequent ⇒ 90 ngày Archive Instant; tùy chọn Archive (≥ 90) / Deep Archive (≥ 180, tới 730); phí monitoring, không phí retrieval; &lt; 128 KB không được theo dõi.</li>
+          <li><b>Restore</b>: Flexible – Expedited 1–5 phút / Standard 3–5 giờ / Bulk 5–12 giờ (miễn phí); Deep Archive – Standard ≤ 12 giờ / Bulk ≤ 48 giờ, không Expedited. Provisioned capacity bảo đảm Expedited.</li>
+          <li><b>Versioning</b>: unversioned ⇒ enabled ⇔ suspended (không quay lại unversioned); object cũ có ID <code>null</code>; DELETE thường ⇒ delete marker (GET 404); DELETE kèm versionId ⇒ xóa vĩnh viễn; mỗi version tính tiền đầy đủ. <b>MFA Delete</b>: chỉ root, chỉ CLI/API, bảo vệ đổi trạng thái versioning và xóa version vĩnh viễn.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Amazon S3</dt><dd><b>Dịch vụ lưu trữ đối tượng</b> – regional, dung lượng không giới hạn.</dd></div>
+        <div><dt>Object storage</dt><dd><b>Lưu trữ đối tượng</b> – dữ liệu + metadata đánh địa chỉ bằng key, truy cập qua HTTP API.</dd></div>
+        <div><dt>Bucket</dt><dd><b>Thùng chứa</b> object; tên duy nhất trong partition, nằm trong một Region.</dd></div>
+        <div><dt>General purpose / Directory bucket</dt><dd><b>Bucket đa dụng / Bucket thư mục</b> – loại mặc định phẳng / loại phân cấp một AZ cho Express One Zone.</dd></div>
+        <div><dt>Table bucket / Vector bucket</dt><dd><b>Bucket dữ liệu bảng / Bucket vector</b> – Apache Iceberg / vector embedding.</dd></div>
+        <div><dt>Global namespace / Account regional namespace</dt><dd><b>Không gian tên toàn cục / theo account và Region</b> cho tên bucket.</dd></div>
+        <div><dt>Object</dt><dd><b>Đối tượng</b> – file cùng metadata mô tả nó.</dd></div>
+        <div><dt>Object key (key name)</dt><dd><b>Khóa / tên đối tượng</b> – định danh duy nhất trong bucket, ≤ 1.024 byte.</dd></div>
+        <div><dt>Prefix / Delimiter</dt><dd><b>Tiền tố / Ký tự phân tách</b> – tạo “folder” logic trong cấu trúc phẳng.</dd></div>
+        <div><dt>Version ID</dt><dd><b>Mã phiên bản</b> – do S3 sinh; <code>null</code> khi chưa versioning.</dd></div>
+        <div><dt>System-defined / User-defined metadata</dt><dd><b>Siêu dữ liệu hệ thống / do người dùng định nghĩa</b> (<code>x-amz-meta-</code>, ≤ 2 KB).</dd></div>
+        <div><dt>Object tag</dt><dd><b>Thẻ đối tượng</b> – tối đa 10/object, dùng cho policy, lifecycle, chi phí.</dd></div>
+        <div><dt>Multipart upload</dt><dd><b>Tải lên nhiều phần</b> – bắt buộc khi object &gt; 5 GB.</dd></div>
+        <div><dt>Strong read-after-write consistency</dt><dd><b>Nhất quán mạnh đọc-sau-ghi</b> – đọc ngay sau ghi luôn thấy dữ liệu mới.</dd></div>
+        <div><dt>Last-writer-wins</dt><dd><b>Người ghi sau cùng thắng</b> – hai PUT đồng thời cùng key.</dd></div>
+        <div><dt>Storage class</dt><dd><b>Lớp lưu trữ</b> – gắn với từng object, quyết định giá và hiệu năng.</dd></div>
+        <div><dt>S3 Standard-IA / One Zone-IA</dt><dd><b>Lớp truy cập không thường xuyên (nhiều AZ / một AZ)</b>.</dd></div>
+        <div><dt>S3 Express One Zone</dt><dd><b>Lớp một AZ hiệu năng cao</b> – single-digit ms, trong directory bucket.</dd></div>
+        <div><dt>S3 Intelligent-Tiering / Access tier</dt><dd><b>Phân tầng thông minh / Tầng truy cập</b> – tự chuyển object theo mẫu truy cập.</dd></div>
+        <div><dt>S3 Glacier Instant / Flexible Retrieval / Deep Archive</dt><dd><b>Lưu trữ lâu dài lấy tức thì / lấy linh hoạt / lưu trữ sâu</b>.</dd></div>
+        <div><dt>Reduced Redundancy Storage (RRS)</dt><dd><b>Lưu trữ giảm dư thừa</b> – lớp cũ, durability 99.99%, không khuyến nghị.</dd></div>
+        <div><dt>Minimum storage duration / Minimum billable object size</dt><dd><b>Thời gian lưu tối thiểu tính phí / Kích thước tối thiểu tính phí</b>.</dd></div>
+        <div><dt>Retrieval fee</dt><dd><b>Phí truy xuất</b> theo GB – IA và Glacier.</dd></div>
+        <div><dt>Restore (RestoreObject)</dt><dd><b>Khôi phục từ archive</b> – tạo bản sao tạm đọc được.</dd></div>
+        <div><dt>Expedited / Standard / Bulk retrieval</dt><dd><b>Truy xuất khẩn cấp / tiêu chuẩn / hàng loạt</b>.</dd></div>
+        <div><dt>Provisioned capacity</dt><dd><b>Dung lượng truy xuất đặt trước</b> – bảo đảm Expedited.</dd></div>
+        <div><dt>S3 Versioning</dt><dd><b>Quản lý phiên bản S3</b> – unversioned / enabled / suspended.</dd></div>
+        <div><dt>Current / Noncurrent version</dt><dd><b>Phiên bản hiện hành / không hiện hành</b>.</dd></div>
+        <div><dt>Delete marker</dt><dd><b>Dấu xóa</b> – placeholder không dữ liệu; GET trả 404.</dd></div>
+        <div><dt>MFA Delete</dt><dd><b>Xóa có MFA</b> – chỉ root, chỉ CLI/API.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="B">
+          <div class="qh">A media company stores millions of objects of various sizes (most larger than 1 MB) in Amazon S3. Some objects are accessed heavily for a few days and then rarely, while others are accessed unpredictably months later. The company wants to minimize storage costs without building any monitoring or adding retrieval fees. Which storage class should be used?</div>
+          <ol class="opts">
+            <li data-k="A">S3 Standard-IA</li>
+            <li data-k="B">S3 Intelligent-Tiering</li>
+            <li data-k="C">S3 One Zone-IA</li>
+            <li data-k="D">S3 Glacier Instant Retrieval</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Mẫu truy cập <b>không đoán được / thay đổi</b> và yêu cầu không tự xây giám sát, không phí retrieval ⇒ <b>S3 Intelligent-Tiering</b>: tự chuyển từng object giữa Frequent, Infrequent (30 ngày), Archive Instant (90 ngày), chỉ thu phí monitoring nhỏ, <b>không phí retrieval</b>. <b>A sai</b>: Standard-IA thu phí retrieval theo GB – object bị truy cập nhiều sẽ tốn hơn Standard. <b>C sai</b>: cũng có phí retrieval và chỉ một AZ. <b>D sai</b>: Glacier IR có phí truy cập cao và thời hạn tối thiểu 90 ngày, không hợp với object nóng.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền thông lưu hàng triệu object với nhiều kích thước khác nhau (phần lớn lớn hơn 1 MB) trong Amazon S3. Một số object được truy cập rất nhiều trong vài ngày rồi hiếm khi được dùng, trong khi số khác lại được truy cập bất ngờ vài tháng sau. Công ty muốn giảm thiểu chi phí lưu trữ mà không phải tự xây dựng hệ thống giám sát hay phát sinh phí truy xuất (retrieval fee). Nên dùng storage class nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">S3 Standard-IA</span><span class="why">Sai: Standard-IA tính phí retrieval theo GB, nên các object bị truy cập nhiều trong những ngày đầu sẽ tốn hơn cả S3 Standard.</span></li>
+              <li data-k="B"><span class="tv">S3 Intelligent-Tiering</span><span class="why">Đúng: Intelligent-Tiering tự động chuyển từng object giữa các tầng theo mẫu truy cập thực tế, chỉ thu phí monitoring nhỏ và không có phí retrieval – hợp với mẫu truy cập không đoán được.</span></li>
+              <li data-k="C"><span class="tv">S3 One Zone-IA</span><span class="why">Sai: cũng có phí retrieval và chỉ lưu ở một AZ, không phù hợp cho object có lúc được truy cập dày đặc.</span></li>
+              <li data-k="D"><span class="tv">S3 Glacier Instant Retrieval</span><span class="why">Sai: Glacier Instant Retrieval có phí truy cập cao và thời hạn lưu tối thiểu 90 ngày, không hợp với object "nóng".</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An application generates thumbnails from original images stored in S3 Standard. The thumbnails are accessed about once a month, must be returned in milliseconds when requested, and can be regenerated from the originals at any time. Which storage class for the thumbnails is the MOST cost-effective?</div>
+          <ol class="opts">
+            <li data-k="A">S3 Standard</li>
+            <li data-k="B">S3 Glacier Flexible Retrieval</li>
+            <li data-k="C">S3 Standard-IA</li>
+            <li data-k="D">S3 One Zone-IA</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Dữ liệu <b>tạo lại được</b>, truy cập ~1 lần/tháng, cần mili giây ⇒ <b>S3 One Zone-IA</b>, rẻ hơn Standard-IA vì chỉ lưu ở một AZ; mất AZ thì chỉ cần tạo lại thumbnail. <b>A sai</b>: Standard đắt hơn cho dữ liệu ít truy cập. <b>B sai</b>: Flexible Retrieval phải restore (phút–giờ), không đáp ứng mili giây. <b>C sai</b>: Standard-IA đắt hơn One Zone-IA; khả năng chịu mất AZ là không cần thiết với dữ liệu tái tạo được.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng tạo ảnh thumbnail từ các ảnh gốc được lưu trong S3 Standard. Các thumbnail được truy cập khoảng một lần mỗi tháng, phải được trả về trong vài mili giây khi có yêu cầu, và có thể tạo lại từ ảnh gốc bất cứ lúc nào. Storage class nào cho các thumbnail là MOST cost-effective (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">S3 Standard</span><span class="why">Sai: Standard có giá lưu trữ cao hơn các lớp IA, lãng phí cho dữ liệu chỉ truy cập một lần mỗi tháng.</span></li>
+              <li data-k="B"><span class="tv">S3 Glacier Flexible Retrieval</span><span class="why">Sai: Flexible Retrieval phải restore mất từ vài phút tới vài giờ, không đáp ứng yêu cầu trả về trong mili giây.</span></li>
+              <li data-k="C"><span class="tv">S3 Standard-IA</span><span class="why">Sai: đáp ứng được hiệu năng nhưng đắt hơn One Zone-IA; khả năng chịu mất AZ là không cần thiết vì thumbnail tạo lại được.</span></li>
+              <li data-k="D"><span class="tv">S3 One Zone-IA</span><span class="why">Đúng: dữ liệu ít truy cập, cần mili giây và tạo lại được ⇒ One Zone-IA rẻ hơn Standard-IA vì chỉ lưu một AZ; nếu mất AZ thì chỉ cần tạo lại thumbnail.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A financial institution must retain transaction records for 10 years to meet regulatory requirements. The records are almost never read, but when an auditor requests them, they must be available within 48 hours. Which solution is the MOST cost-effective?</div>
+          <ol class="opts">
+            <li data-k="A">Store the records in S3 Glacier Deep Archive and use Bulk retrieval when needed.</li>
+            <li data-k="B">Store the records in S3 Glacier Instant Retrieval.</li>
+            <li data-k="C">Store the records in S3 Standard-IA.</li>
+            <li data-k="D">Store the records in S3 Glacier Flexible Retrieval and use Expedited retrieval when needed.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>S3 Glacier Deep Archive</b> là lớp lưu trữ <b>rẻ nhất AWS</b>, dành cho dữ liệu giữ nhiều năm vì compliance, truy cập &lt; 1 lần/năm. <b>Bulk retrieval</b> hoàn tất <b>trong 48 giờ</b> với chi phí thấp nhất – vừa khớp yêu cầu. <b>B sai</b>: Glacier IR cho truy cập mili giây – trả tiền lưu cao hơn cho tốc độ không cần. <b>C sai</b>: Standard-IA đắt hơn nhiều cho dữ liệu lưu 10 năm. <b>D sai</b>: Flexible Retrieval đắt hơn Deep Archive, Expedited là tùy chọn premium không cần thiết.</div>
+          <div class="trans">
+            <div class="tq">Một tổ chức tài chính phải lưu giữ hồ sơ giao dịch trong 10 năm để đáp ứng yêu cầu pháp lý. Các hồ sơ gần như không bao giờ được đọc, nhưng khi kiểm toán viên yêu cầu thì chúng phải sẵn sàng trong vòng 48 giờ. Giải pháp nào là MOST cost-effective (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Lưu hồ sơ trong S3 Glacier Deep Archive và dùng Bulk retrieval khi cần.</span><span class="why">Đúng: Deep Archive là lớp lưu trữ rẻ nhất cho dữ liệu giữ nhiều năm, và Bulk retrieval hoàn tất trong vòng 48 giờ với chi phí thấp nhất – vừa khớp yêu cầu.</span></li>
+              <li data-k="B"><span class="tv">Lưu hồ sơ trong S3 Glacier Instant Retrieval.</span><span class="why">Sai: Glacier Instant Retrieval cho truy cập mili giây – trả giá lưu trữ cao hơn cho tốc độ không cần thiết.</span></li>
+              <li data-k="C"><span class="tv">Lưu hồ sơ trong S3 Standard-IA.</span><span class="why">Sai: Standard-IA đắt hơn nhiều so với các lớp Glacier cho dữ liệu lưu 10 năm hầu như không đọc.</span></li>
+              <li data-k="D"><span class="tv">Lưu hồ sơ trong S3 Glacier Flexible Retrieval và dùng Expedited retrieval khi cần.</span><span class="why">Sai: Flexible Retrieval đắt hơn Deep Archive, và Expedited là tùy chọn truy xuất cao cấp không cần khi được phép chờ 48 giờ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A hospital stores medical imaging files in Amazon S3. Each file is typically accessed once per quarter when a patient has a follow-up appointment, and doctors require the images to load immediately. The files must be retained for years. Which storage class meets these requirements at the LOWEST cost?</div>
+          <ol class="opts">
+            <li data-k="A">S3 Standard</li>
+            <li data-k="B">S3 Glacier Flexible Retrieval with Expedited retrieval</li>
+            <li data-k="C">S3 Glacier Instant Retrieval</li>
+            <li data-k="D">S3 Glacier Deep Archive</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Tài liệu nêu đúng ví dụ này: <b>S3 Glacier Instant Retrieval</b> cho dữ liệu dài hạn truy cập <b>~1 lần/quý</b> cần <b>mili giây</b> (image hosting, hồ sơ y tế khi tái khám); lưu rẻ hơn Standard-IA, hiệu năng như Standard-IA. <b>A sai</b>: Standard đắt hơn cho dữ liệu hiếm truy cập. <b>B sai</b>: Expedited vẫn mất 1–5 phút và có thể bị từ chối nếu không mua provisioned capacity – không phải “immediately”. <b>D sai</b>: Deep Archive cần tới 12–48 giờ restore.</div>
+          <div class="trans">
+            <div class="tq">Một bệnh viện lưu các file hình ảnh y khoa trong Amazon S3. Mỗi file thường được truy cập một lần mỗi quý khi bệnh nhân có lịch tái khám, và bác sĩ yêu cầu hình ảnh phải tải lên ngay lập tức. Các file phải được lưu giữ trong nhiều năm. Storage class nào đáp ứng các yêu cầu này với chi phí LOWEST (thấp nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">S3 Standard</span><span class="why">Sai: Standard có giá lưu trữ cao, lãng phí cho dữ liệu chỉ truy cập mỗi quý một lần.</span></li>
+              <li data-k="B"><span class="tv">S3 Glacier Flexible Retrieval với Expedited retrieval</span><span class="why">Sai: Expedited vẫn mất 1–5 phút và có thể bị từ chối khi nhu cầu cao nếu không mua provisioned capacity – không phải "ngay lập tức".</span></li>
+              <li data-k="C"><span class="tv">S3 Glacier Instant Retrieval</span><span class="why">Đúng: Glacier Instant Retrieval dành cho dữ liệu lưu lâu, truy cập khoảng một lần mỗi quý nhưng cần trả về trong mili giây, với giá lưu rẻ hơn Standard-IA.</span></li>
+              <li data-k="D"><span class="tv">S3 Glacier Deep Archive</span><span class="why">Sai: Deep Archive cần 12–48 giờ để restore, không đáp ứng yêu cầu tải ngay.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A company stores critical documents in an S3 bucket. The company must be able to recover documents that are accidentally overwritten or deleted, and must add an extra layer of protection so that permanently deleting an object version requires a second authentication factor. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Enable S3 Versioning on the bucket.</li>
+            <li data-k="B">Change the storage class of the documents to S3 Glacier Flexible Retrieval.</li>
+            <li data-k="C">Enable MFA Delete on the bucket by using the AWS CLI with the root user credentials.</li>
+            <li data-k="D">Enable MFA Delete on the bucket from the S3 console by using an IAM administrator user.</li>
+            <li data-k="E">Configure an S3 Lifecycle rule that expires current object versions after 30 days.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> <b>Versioning</b> giữ mọi version: ghi đè tạo version mới, DELETE thường chỉ chèn delete marker ⇒ khôi phục được. <b>MFA Delete</b> bắt buộc MFA khi <b>xóa vĩnh viễn một version</b> hoặc đổi trạng thái versioning; tài liệu nêu chỉ <b>bucket owner (root)</b> bật được và <b>chỉ qua CLI/API</b>. <b>B sai</b>: đổi storage class không chống xóa. <b>D sai</b>: không bật được MFA Delete trên console, và IAM user không bật được. <b>E sai</b>: expiration làm ngược mục tiêu; hơn nữa MFA Delete không dùng được cùng lifecycle configuration.</div>
+          <div class="trans">
+            <div class="tq">Một công ty lưu các tài liệu quan trọng trong một S3 bucket. Công ty phải có khả năng khôi phục các tài liệu bị ghi đè hoặc bị xóa nhầm, và phải thêm một lớp bảo vệ để việc xóa vĩnh viễn một object version đòi hỏi yếu tố xác thực thứ hai. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật S3 Versioning trên bucket.</span><span class="why">Đúng: Versioning giữ lại mọi version – ghi đè tạo version mới, xóa thường chỉ thêm delete marker – nên khôi phục được tài liệu bị ghi đè hoặc xóa nhầm.</span></li>
+              <li data-k="B"><span class="tv">Đổi storage class của các tài liệu sang S3 Glacier Flexible Retrieval.</span><span class="why">Sai: đổi storage class chỉ ảnh hưởng chi phí và thời gian truy xuất, không bảo vệ chống ghi đè hay xóa.</span></li>
+              <li data-k="C"><span class="tv">Bật MFA Delete trên bucket bằng AWS CLI với thông tin đăng nhập của root user.</span><span class="why">Đúng: MFA Delete bắt buộc MFA khi xóa vĩnh viễn một version; chỉ bucket owner (root user) mới bật được và chỉ qua CLI/API.</span></li>
+              <li data-k="D"><span class="tv">Bật MFA Delete trên bucket từ S3 console bằng một IAM user quản trị.</span><span class="why">Sai: MFA Delete không bật được trên console, và IAM user (kể cả admin) không bật được – phải là root user.</span></li>
+              <li data-k="E"><span class="tv">Cấu hình một S3 Lifecycle rule cho các current object version hết hạn sau 30 ngày.</span><span class="why">Sai: cho object hết hạn đi ngược mục tiêu bảo vệ dữ liệu; hơn nữa MFA Delete không dùng được cùng lifecycle configuration.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">An S3 bucket has versioning enabled. A developer ran a script that issued DeleteObject requests without version IDs for several important objects. Users now receive 404 Not Found errors when they request the objects. What is the FASTEST way to restore access to the latest data?</div>
+          <ol class="opts">
+            <li data-k="A">Restore the objects from an AWS Backup recovery point.</li>
+            <li data-k="B">Delete the delete markers that are the current versions of the affected objects.</li>
+            <li data-k="C">Suspend versioning on the bucket so the previous versions become current.</li>
+            <li data-k="D">Contact AWS Support to recover the deleted objects.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Trong bucket bật versioning, DELETE không kèm version ID <b>không xóa dữ liệu</b> mà chèn <b>delete marker</b> làm current version ⇒ GET trả 404. Xóa delete marker (DELETE kèm versionId của marker) ⇒ version trước đó trở lại làm current ngay. <b>A sai</b>: không cần backup, dữ liệu vẫn trong bucket; restore chậm hơn và có thể không có recovery point mới nhất. <b>C sai</b>: suspend không thay đổi object hiện có, delete marker vẫn là current. <b>D sai</b>: không cần thiết – bạn tự khôi phục được.</div>
+          <div class="trans">
+            <div class="tq">Một S3 bucket đã bật versioning. Một developer chạy một script gửi các request DeleteObject không kèm version ID cho một số object quan trọng. Giờ người dùng nhận lỗi 404 Not Found khi yêu cầu các object đó. Cách FASTEST (nhanh nhất) để khôi phục quyền truy cập tới dữ liệu mới nhất là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Khôi phục các object từ một recovery point của AWS Backup.</span><span class="why">Sai: dữ liệu vẫn còn nguyên trong bucket nên không cần backup; restore chậm hơn và recovery point có thể không chứa bản mới nhất.</span></li>
+              <li data-k="B"><span class="tv">Xóa các delete marker đang là current version của các object bị ảnh hưởng.</span><span class="why">Đúng: DELETE không kèm version ID chỉ chèn delete marker làm current version (gây 404); xóa marker thì version trước đó lập tức trở lại làm current.</span></li>
+              <li data-k="C"><span class="tv">Tạm ngưng (suspend) versioning trên bucket để các version trước trở thành current.</span><span class="why">Sai: suspend versioning không thay đổi các object hiện có, delete marker vẫn là current version.</span></li>
+              <li data-k="D"><span class="tv">Liên hệ AWS Support để khôi phục các object đã bị xóa.</span><span class="why">Sai: không cần thiết và chậm – bạn có thể tự khôi phục bằng cách xóa delete marker.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company's backup application uploads database dump files of 30–80 GB to Amazon S3 with a single PutObject call. The uploads always fail. Network interruptions also force the application to restart uploads from the beginning. What should the solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Enable S3 Versioning on the destination bucket.</li>
+            <li data-k="B">Upload the files by using the S3 console instead of the API.</li>
+            <li data-k="C">Change the destination storage class to S3 One Zone-IA.</li>
+            <li data-k="D">Use the multipart upload API (for example, through the AWS CLI or SDK transfer manager).</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Một lần <b>PUT đơn tối đa 5 GB</b>; file 30–80 GB bắt buộc dùng <b>multipart upload</b> (object 5 MB – 50 TB, tối đa 10.000 part). Các part upload <b>độc lập, song song</b>, part lỗi chỉ cần gửi lại phần đó ⇒ không phải upload lại từ đầu. <b>A sai</b>: versioning không liên quan giới hạn kích thước. <b>B sai</b>: console chỉ tới 160 GB và là thao tác thủ công – không phù hợp ứng dụng backup tự động; vẫn không giải quyết gián đoạn. <b>C sai</b>: storage class không ảnh hưởng giới hạn PUT.</div>
+          <div class="trans">
+            <div class="tq">Ứng dụng backup của một công ty tải các file dump cơ sở dữ liệu dung lượng 30–80 GB lên Amazon S3 bằng một lệnh PutObject duy nhất. Việc tải lên luôn thất bại. Các lần gián đoạn mạng cũng buộc ứng dụng phải tải lại từ đầu. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật S3 Versioning trên bucket đích.</span><span class="why">Sai: versioning chỉ giữ các version object, không liên quan tới giới hạn kích thước của một lần PUT.</span></li>
+              <li data-k="B"><span class="tv">Tải file lên bằng S3 console thay vì API.</span><span class="why">Sai: console là thao tác thủ công, không phù hợp ứng dụng backup tự động và không giải quyết việc phải tải lại từ đầu khi mất mạng.</span></li>
+              <li data-k="C"><span class="tv">Đổi storage class đích sang S3 One Zone-IA.</span><span class="why">Sai: storage class không ảnh hưởng tới giới hạn 5 GB của một lần PUT.</span></li>
+              <li data-k="D"><span class="tv">Dùng multipart upload API (ví dụ qua AWS CLI hoặc transfer manager của SDK).</span><span class="why">Đúng: một lần PUT đơn tối đa 5 GB nên file 30–80 GB bắt buộc dùng multipart upload; các part tải độc lập, song song và part lỗi chỉ cần gửi lại phần đó.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A research team stores raw data in S3 Glacier Flexible Retrieval. A few times a year, scientists urgently need two or three specific files within minutes, and the retrieval must not be rejected even during periods of high demand. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Use Bulk retrievals for the urgent requests.</li>
+            <li data-k="B">Move the data to S3 Glacier Deep Archive and use Expedited retrievals.</li>
+            <li data-k="C">Use Expedited retrievals and purchase provisioned capacity.</li>
+            <li data-k="D">Use Standard retrievals initiated through S3 Batch Operations.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Expedited retrieval</b> thường trả object (&lt; 250 MB) trong <b>1–5 phút</b>, nhưng lúc nhu cầu cao có thể không được chấp nhận. <b>Provisioned capacity</b> bảo đảm mỗi đơn vị ít nhất 3 Expedited retrieval mỗi 5 phút. <b>A sai</b>: Bulk mất 5–12 giờ. <b>B sai</b>: Deep Archive <b>không hỗ trợ Expedited</b>. <b>D sai</b>: Standard qua Batch Operations vẫn có thể mất tới 5 giờ và dành cho số lượng lớn object.</div>
+          <div class="trans">
+            <div class="tq">Một nhóm nghiên cứu lưu dữ liệu thô trong S3 Glacier Flexible Retrieval. Vài lần mỗi năm, các nhà khoa học cần gấp hai hoặc ba file cụ thể trong vòng vài phút, và yêu cầu truy xuất không được bị từ chối kể cả trong giai đoạn nhu cầu cao. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng Bulk retrieval cho các yêu cầu khẩn cấp.</span><span class="why">Sai: Bulk retrieval mất 5–12 giờ, không đáp ứng yêu cầu vài phút.</span></li>
+              <li data-k="B"><span class="tv">Chuyển dữ liệu sang S3 Glacier Deep Archive và dùng Expedited retrieval.</span><span class="why">Sai: Deep Archive không hỗ trợ Expedited retrieval (nhanh nhất là Standard trong khoảng 12 giờ).</span></li>
+              <li data-k="C"><span class="tv">Dùng Expedited retrieval và mua provisioned capacity.</span><span class="why">Đúng: Expedited trả object trong 1–5 phút, và provisioned capacity đảm bảo yêu cầu Expedited không bị từ chối khi nhu cầu cao.</span></li>
+              <li data-k="D"><span class="tv">Dùng Standard retrieval được khởi tạo qua S3 Batch Operations.</span><span class="why">Sai: Standard retrieval mất vài giờ (tới 5 giờ), và Batch Operations dành cho số lượng object lớn chứ không phải vài file gấp.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">An application writes a new version of a configuration file to the same S3 key and then immediately reads the key from another process in the same AWS Region. A developer is concerned that the reading process might receive stale data. What is the behavior of Amazon S3 in this situation?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon S3 provides strong read-after-write consistency, so the read returns the new data after the PUT is acknowledged.</li>
+            <li data-k="B">Amazon S3 provides eventual consistency for overwrite PUTs, so the application must wait several seconds before reading.</li>
+            <li data-k="C">The application must enable S3 Versioning to receive the latest data.</li>
+            <li data-k="D">The application must use a DynamoDB table to lock the object before every read.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> S3 cung cấp <b>strong read-after-write consistency</b> cho PUT và DELETE ở mọi Region, kể cả <b>PUT ghi đè</b> object có sẵn: mọi GET/LIST bắt đầu sau khi nhận phản hồi PUT thành công đều thấy dữ liệu mới; cập nhật một key là nguyên tử. <b>B sai</b>: đó là mô hình cũ trước 12/2020, không còn đúng. <b>C sai</b>: versioning không liên quan tới tính nhất quán. <b>D sai</b>: không cần khóa cho trường hợp đọc sau ghi; khóa chỉ cần khi nhiều writer đồng thời (S3 dùng last-writer-wins).</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng ghi một phiên bản mới của file cấu hình vào cùng một S3 key, rồi ngay lập tức đọc key đó từ một tiến trình khác trong cùng AWS Region. Một developer lo ngại rằng tiến trình đọc có thể nhận dữ liệu cũ (stale). Hành vi của Amazon S3 trong tình huống này là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon S3 cung cấp strong read-after-write consistency, nên lần đọc sẽ trả về dữ liệu mới sau khi PUT được xác nhận thành công.</span><span class="why">Đúng: S3 đảm bảo strong read-after-write consistency cho mọi PUT (kể cả ghi đè) và DELETE ở mọi Region – mọi GET bắt đầu sau khi PUT thành công đều thấy dữ liệu mới.</span></li>
+              <li data-k="B"><span class="tv">Amazon S3 cung cấp eventual consistency cho các PUT ghi đè, nên ứng dụng phải chờ vài giây trước khi đọc.</span><span class="why">Sai: đó là mô hình nhất quán cũ trước tháng 12/2020, hiện không còn đúng.</span></li>
+              <li data-k="C"><span class="tv">Ứng dụng phải bật S3 Versioning để nhận được dữ liệu mới nhất.</span><span class="why">Sai: versioning không liên quan tới tính nhất quán đọc sau ghi; S3 vốn đã nhất quán mạnh.</span></li>
+              <li data-k="D"><span class="tv">Ứng dụng phải dùng một bảng DynamoDB để khóa object trước mỗi lần đọc.</span><span class="why">Sai: không cần khóa cho đọc sau ghi; khóa chỉ cần khi có nhiều writer ghi đồng thời cùng một key.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A solutions architect must choose storage classes for data that has to remain available even if an entire Availability Zone is destroyed. Which TWO storage classes do NOT meet this requirement? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">S3 Standard-IA</li>
+            <li data-k="B">S3 One Zone-IA</li>
+            <li data-k="C">S3 Glacier Instant Retrieval</li>
+            <li data-k="D">S3 Intelligent-Tiering</li>
+            <li data-k="E">S3 Express One Zone</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Tài liệu nêu: mọi storage class <b>trừ S3 One Zone-IA và S3 Express One Zone</b> đều được thiết kế chịu được mất vật lý một AZ. Hai lớp này lưu dữ liệu ở <b>một AZ duy nhất</b> (dù vẫn 11 số 9 durability trong AZ đó). <b>A, C, D</b> đều lưu trên <b>≥ 3 AZ</b> nên đáp ứng yêu cầu – chọn chúng là sai vì đề hỏi lớp <b>không</b> đáp ứng.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect phải chọn storage class cho dữ liệu cần luôn sẵn sàng ngay cả khi toàn bộ một Availability Zone bị phá hủy. HAI storage class nào KHÔNG đáp ứng yêu cầu này? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">S3 Standard-IA</span><span class="why">Sai: Standard-IA lưu dữ liệu trên ít nhất 3 AZ nên chịu được mất một AZ – nó ĐÁP ỨNG yêu cầu, trong khi đề hỏi lớp không đáp ứng.</span></li>
+              <li data-k="B"><span class="tv">S3 One Zone-IA</span><span class="why">Đúng: One Zone-IA chỉ lưu dữ liệu trong một AZ duy nhất, mất AZ đó là mất dữ liệu – nên KHÔNG đáp ứng yêu cầu.</span></li>
+              <li data-k="C"><span class="tv">S3 Glacier Instant Retrieval</span><span class="why">Sai: Glacier Instant Retrieval lưu trên ít nhất 3 AZ nên đáp ứng yêu cầu – không phải đáp án cho câu hỏi "KHÔNG đáp ứng".</span></li>
+              <li data-k="D"><span class="tv">S3 Intelligent-Tiering</span><span class="why">Sai: Intelligent-Tiering lưu trên ít nhất 3 AZ nên chịu được mất một AZ – nó đáp ứng yêu cầu.</span></li>
+              <li data-k="E"><span class="tv">S3 Express One Zone</span><span class="why">Đúng: Express One Zone lưu dữ liệu trong một AZ duy nhất (directory bucket), không chịu được việc mất cả AZ – nên KHÔNG đáp ứng yêu cầu.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingObjects.html" target="_blank" rel="noopener">Amazon S3 objects overview</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html" target="_blank" rel="noopener">Naming Amazon S3 objects</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingMetadata.html" target="_blank" rel="noopener">Working with object metadata</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/upload-objects.html" target="_blank" rel="noopener">Uploading objects</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html" target="_blank" rel="noopener">General purpose bucket naming rules</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/BucketRestrictions.html" target="_blank" rel="noopener">General purpose bucket quotas, limitations, and restrictions</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/intelligent-tiering-overview.html" target="_blank" rel="noopener">How S3 Intelligent-Tiering works</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/glacier-storage-classes.html" target="_blank" rel="noopener">Understanding S3 Glacier storage classes for long-term data storage</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/restoring-objects-retrieval-options.html" target="_blank" rel="noopener">Understanding archive retrieval options</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/versioning-workflows.html" target="_blank" rel="noopener">How S3 Versioning works</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/AddingObjectstoVersionSuspendedBuckets.html" target="_blank" rel="noopener">Adding objects to versioning-suspended buckets</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html" target="_blank" rel="noopener">Deleting object versions from a versioning-enabled bucket</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeleteMarker.html" target="_blank" rel="noopener">Working with delete markers</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/MultiFactorAuthenticationDelete.html" target="_blank" rel="noopener">Configuring MFA delete</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

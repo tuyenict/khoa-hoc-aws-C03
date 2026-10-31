@@ -1,0 +1,1026 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 36 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Athena.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="36" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Phân biệt <b>data lake</b> và <b>data warehouse</b>, nắm các tầng của một pipeline phân tích trên AWS: thu nhận → lưu trữ (S3) → lập danh mục (Glue Data Catalog) → xử lý (Glue / EMR) → truy vấn (Athena / Redshift) → trực quan hóa (QuickSight).</li>
+          <li>Dùng <b>Amazon Athena</b> để chạy SQL <b>serverless trên S3</b>, và biết tối ưu chi phí bằng <b>partitioning</b>, <b>định dạng cột (Parquet / ORC)</b>, nén, <b>workgroup</b>; biết khi nào dùng <b>Federated Query</b>.</li>
+          <li>Hiểu <b>AWS Glue</b>: <b>Data Catalog</b>, <b>crawler</b>, <b>ETL job</b>, trigger, <b>job bookmark</b>, Glue Studio / DataBrew; và <b>AWS Lake Formation</b> cấp quyền chi tiết tới <b>cột, hàng, ô</b>, LF-Tags, chia sẻ cross-account.</li>
+          <li>Nắm kiến trúc <b>Amazon Redshift</b> (leader / compute node, RA3 managed storage, Serverless), <b>Redshift Spectrum</b>, concurrency scaling, snapshot.</li>
+          <li>Biết chọn <b>Amazon EMR</b> (Hadoop/Spark, primary/core/task node, Spot cho task node, EMR Serverless), <b>Amazon OpenSearch Service</b> (tìm kiếm, log analytics, UltraWarm, Serverless) và <b>Amazon QuickSight</b> (dashboard, SPICE, row-level security).</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 7 – Data &amp; Analytics</span>
+        <p>Bài 35 đã dạy tầng <b>thu nhận dữ liệu luồng</b> (Kinesis Data Streams, Data Firehose – kể cả chuyển JSON → Parquet và dynamic partitioning, MSK). Bài này đi tiếp các tầng phía sau: <b>lưu – lập danh mục – xử lý – truy vấn – trực quan hóa</b>. Kiến thức nền: <b>S3</b> storage class, lifecycle, prefix (Bài 14–16), <b>RDS / Aurora / DynamoDB</b> (Bài 26–28; Bài 29 đã nói “OLAP ⇒ Redshift, học ở Module 7”), <b>Spot Instance</b> (Bài 9), <b>RAM</b> và Organizations (Bài 6). Các dịch vụ <b>AI/ML</b> (SageMaker…) học ở <b>Bài 37</b>; <b>KMS</b> ở Bài 38; <b>CloudWatch / CloudTrail</b> ở Bài 40.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Analytics.svg" alt="">Bức tranh phân tích dữ liệu trên AWS: data lake và data warehouse</h2>
+      <p class="lead">Đề SAA-C03 hiếm khi hỏi sâu cú pháp SQL, nhưng rất hay hỏi <b>chọn đúng dịch vụ phân tích</b> cho một tình huống: “truy vấn ad-hoc log trên S3 rẻ nhất”, “BI trên petabyte dữ liệu có cấu trúc”, “chạy Spark tùy biến”, “tìm kiếm full-text”, “dashboard cho lãnh đạo”, “cấp quyền theo cột cho từng nhóm”. Bài này giúp bạn ghép đúng từ khóa với dịch vụ.</p>
+
+      <h3>Data lake và data warehouse</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Lake-Formation_Data-Lake.svg" alt=""><span class="t" data-vi="Hồ dữ liệu – kho tập trung chứa mọi loại dữ liệu ở định dạng gốc">Data lake</span></h4>
+          <ul>
+            <li>Kho <b>tập trung</b> chứa dữ liệu <b>có cấu trúc, bán cấu trúc và phi cấu trúc</b> (CSV, JSON, log, Parquet, ảnh…) ở định dạng gốc.</li>
+            <li>Trên AWS: lưu ở <b>Amazon S3</b> (rẻ, bền 11 số 9, gần như vô hạn), metadata trong <b>Glue Data Catalog</b>, quyền bằng <b>Lake Formation</b>.</li>
+            <li><b>Schema-on-read</b>: định nghĩa schema lúc đọc; nhiều engine (Athena, EMR, Redshift Spectrum, Glue) cùng đọc một bản dữ liệu.</li>
+            <li>Hợp với khám phá dữ liệu, ML, truy vấn ad-hoc, lưu trữ lâu dài giá rẻ.</li>
+          </ul></div>
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/svc/Amazon-Redshift.svg" alt=""><span class="t" data-vi="Kho dữ liệu – CSDL phân tích dữ liệu có cấu trúc đã được làm sạch">Data warehouse</span></h4>
+          <ul>
+            <li>Gom dữ liệu từ <b>nhiều hệ thống</b> (tồn kho, tài chính, bán lẻ…) về <b>một định dạng chung</b> và lưu <b>lâu dài</b> (theo tài liệu Athena).</li>
+            <li>Trên AWS: <b>Amazon Redshift</b> – dữ liệu được <b>nạp (load)</b> vào bảng có schema rõ ràng (<b>schema-on-write</b>).</li>
+            <li>Tối ưu cho truy vấn <b>phức tạp, join nhiều bảng rất lớn</b>, báo cáo BI từ dữ liệu lịch sử.</li>
+            <li>Đây là <span class="t" data-vi="Xử lý phân tích trực tuyến">OLAP</span> – khác với <b>OLTP</b> (RDS/Aurora/DynamoDB phục vụ giao dịch).</li>
+          </ul></div>
+      </div>
+
+      <h3>Dịch vụ trong bài</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">
+          <div><h4>Amazon Athena</h4><span class="vi">Truy vấn SQL tương tác trên S3</span><p><b>Serverless</b>, trỏ vào dữ liệu S3 và chạy SQL chuẩn ngay, kết quả trong vài giây; trả tiền theo truy vấn. Có cả Apache Spark trên Athena.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Glue.svg" alt="">
+          <div><h4>AWS Glue</h4><span class="vi">Tích hợp dữ liệu serverless (ETL)</span><p>Khám phá (crawler), lập danh mục (Data Catalog), làm sạch và biến đổi dữ liệu (ETL Spark), kết nối hơn <b>70</b> nguồn dữ liệu.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Lake-Formation.svg" alt="">
+          <div><h4>AWS Lake Formation</h4><span class="vi">Quản trị &amp; bảo mật data lake</span><p>Cấp quyền kiểu RDBMS (grant/revoke) tới <b>database, bảng, cột, hàng, ô</b> trên dữ liệu S3 và Data Catalog; chia sẻ cross-account.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Redshift.svg" alt="">
+          <div><h4>Amazon Redshift</h4><span class="vi">Data warehouse quy mô petabyte</span><p>Fully managed, SQL, lưu trữ dạng cột, xử lý song song (MPP); có Provisioned cluster và <b>Redshift Serverless</b>; <b>Spectrum</b> truy vấn thẳng S3.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-EMR.svg" alt="">
+          <div><h4>Amazon EMR</h4><span class="vi">Nền tảng big data (Hadoop, Spark…)</span><p>Cluster được quản lý chạy Apache Spark, Hadoop, Hive, Presto, HBase… với toàn quyền cấu hình; có EMR Serverless.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Elasticsearch-Service.svg" alt="">
+          <div><h4>Amazon OpenSearch Service</h4><span class="vi">Tìm kiếm &amp; phân tích log (tên cũ Elasticsearch Service)</span><p>Domain OpenSearch được quản lý cho <b>full-text search</b>, log analytics, giám sát ứng dụng, clickstream; có OpenSearch Dashboards và bản Serverless.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-QuickSight.svg" alt="">
+          <div><h4>Amazon QuickSight</h4><span class="vi">BI &amp; dashboard (nay là Amazon Quick Sight)</span><p>Kết nối nguồn dữ liệu, dựng dashboard tương tác, nhúng vào ứng dụng; engine in-memory <b>SPICE</b>.</p></div></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Analytics.svg" alt="">AWS Cloud – kiến trúc data lake tham chiếu</span>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">1. Thu nhận (Bài 35, 18)</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">Data Firehose<small>stream → S3 (Parquet)</small></div>
+              <div class="node"><img src="../assets/icons/svc/AWS-Database-Migration-Service.svg" alt="">AWS DMS / Glue JDBC<small>từ RDS, on-premises</small></div>
+            </div>
+            <span class="arrow">ghi</span>
+            <div class="grp region"><span class="lbl"><img src="../assets/icons/res/AWS-Lake-Formation_Data-Lake.svg" alt="">2. Lưu trữ + danh mục + quản trị</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">S3: raw → curated<small>partition year=/month=/</small></div>
+              <div class="node"><img src="../assets/icons/res/AWS-Glue_Crawler.svg" alt="">Glue crawler<small>suy ra schema</small></div>
+              <div class="node"><img src="../assets/icons/res/AWS-Glue_Data-Catalog.svg" alt="">Glue Data Catalog<small>bảng = metadata</small></div>
+              <div class="node"><img src="../assets/icons/svc/AWS-Lake-Formation.svg" alt="">Lake Formation<small>quyền cột/hàng/ô</small></div>
+            </div>
+            <span class="arrow">xử lý &amp; truy vấn</span>
+            <div class="grp plain"><span class="lbl">3. Xử lý / truy vấn</span>
+              <div class="node"><img src="../assets/icons/svc/AWS-Glue.svg" alt="">Glue ETL<small>làm sạch, CSV → Parquet</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-EMR.svg" alt="">EMR<small>Spark tùy biến</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">Athena<small>SQL ad-hoc</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Redshift.svg" alt="">Redshift + Spectrum<small>warehouse / BI</small></div>
+            </div>
+            <span class="arrow">trực quan</span>
+            <div class="grp plain"><span class="lbl">4. Tiêu thụ</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-QuickSight.svg" alt="">QuickSight<small>dashboard</small></div>
+              <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Analyst / lãnh đạo<small>đọc báo cáo</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Kiến trúc data lake điển hình: dữ liệu được đổ vào <b>S3</b> (vùng raw, sau đó ETL sang vùng curated dạng Parquet có partition); <b>Glue crawler</b> suy ra schema và ghi vào <b>Glue Data Catalog</b>; <b>Lake Formation</b> kiểm soát ai được xem cột/hàng nào; các engine <b>Athena, EMR, Redshift Spectrum, Glue</b> dùng chung catalog để đọc cùng một bản dữ liệu; <b>QuickSight</b> trực quan hóa kết quả.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – thư viện thành phố</span>
+        <p><b>S3 data lake</b> là <b>kho sách</b> khổng lồ, nhận đủ loại sách, báo, tài liệu photo. <b>Glue crawler</b> là <b>thủ thư</b> đi qua từng kệ và ghi phiếu mục lục; <b>Glue Data Catalog</b> là <b>tủ phiếu mục lục</b> (chỉ có thông tin về sách, không chứa sách). <b>Lake Formation</b> là <b>bàn kiểm soát thẻ</b>: thẻ sinh viên chỉ đọc được chương 1–3, thẻ giảng viên đọc cả sách. <b>Athena</b> là bạn đọc tự tra mục lục rồi đọc ngay tại chỗ, trả tiền theo số trang đã lật. <b>Redshift</b> là <b>phòng nghiên cứu chuyên đề</b>: sách đã được chọn lọc, sắp xếp sẵn để tra cứu phức tạp nhanh nhất. <b>EMR</b> là <b>xưởng in</b> bạn thuê nguyên dây chuyền để làm gì tùy ý. <b>QuickSight</b> là <b>bảng tin</b> tóm tắt cho lãnh đạo.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Ad-hoc SQL queries on data in S3</i>”, “<i>serverless</i>”, “<i>no infrastructure</i>”, “<i>pay per query</i>” ⇒ <b>Amazon Athena</b>.</li>
+          <li>“<i>Data warehouse</i>”, “<i>complex queries joining large tables</i>”, “<i>BI on petabytes of structured data</i>”, “<i>OLAP</i>” ⇒ <b>Amazon Redshift</b>.</li>
+          <li>“<i>Hadoop / Spark / Hive / HBase / Presto</i>”, “<i>custom big data processing with full control</i>” ⇒ <b>Amazon EMR</b>.</li>
+          <li>“<i>Discover schema</i>”, “<i>central metadata catalog</i>”, “<i>serverless ETL</i>” ⇒ <b>AWS Glue</b> (crawler + Data Catalog + ETL job).</li>
+          <li>“<i>Fine-grained (column/row-level) access control on data lake</i>”, “<i>share data lake across accounts</i>” ⇒ <b>AWS Lake Formation</b>.</li>
+          <li>“<i>Full-text search</i>”, “<i>log analytics with near real-time dashboards</i>” ⇒ <b>OpenSearch Service</b>. “<i>Business dashboards</i>” ⇒ <b>QuickSight</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: ATHENA ===================== -->
+      <h2 id="athena"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">Amazon Athena: SQL serverless trên S3</h2>
+      <p class="lead"><b>Amazon Athena</b> là dịch vụ <span class="t" data-vi="Truy vấn tương tác – chạy câu lệnh và nhận kết quả ngay">interactive query</span> giúp phân tích dữ liệu <b>trực tiếp trong Amazon S3</b> bằng <b>SQL chuẩn</b> (ANSI SQL). Chỉ vài thao tác trên console: trỏ Athena vào dữ liệu S3, định nghĩa bảng và chạy truy vấn ad-hoc, có kết quả trong vài giây. Athena SQL và <b>Apache Spark trên Athena</b> đều <b>serverless</b> – không có hạ tầng để dựng hay quản lý, bạn <b>chỉ trả tiền cho truy vấn đã chạy</b>; Athena <b>tự scale</b>, chạy song song nên nhanh cả với dữ liệu lớn.</p>
+
+      <h3>Đặc điểm chính (theo tài liệu)</h3>
+      <ul>
+        <li>Phân tích dữ liệu <b>có cấu trúc, bán cấu trúc và phi cấu trúc</b> trên S3: CSV, JSON, hoặc định dạng cột <b>Apache Parquet / Apache ORC</b> (cùng Avro, log text… qua <span class="t" data-vi="Bộ tuần tự hóa / giải tuần tự hóa – cách đọc/ghi một định dạng">SerDe</span>). <b>Không cần nạp (load)</b> hay gom dữ liệu vào Athena.</li>
+        <li>Tích hợp <b>AWS Glue Data Catalog</b> làm kho metadata bền vững cho dữ liệu S3 – tạo bảng một lần, dùng chung cho cả account và với các tính năng ETL/khám phá dữ liệu của Glue. Catalog của Athena <b>tương thích Hive metastore</b>: nếu đã có Hive metastore trên EMR, có thể chạy DDL trên Athena và truy vấn ngay mà không ảnh hưởng job EMR.</li>
+        <li>Tích hợp <b>Amazon QuickSight</b> để trực quan hóa; kết nối công cụ BI / SQL client qua <b>JDBC / ODBC</b>.</li>
+        <li>Ví dụ tài liệu nêu: chạy <b>truy vấn nhanh trên web log</b> để điều tra vấn đề hiệu năng của website.</li>
+        <li>Kết quả truy vấn được ghi vào một <b>S3 query result location</b> (cấu hình theo workgroup).</li>
+        <li><b>Giá</b>: tính theo <b>lượng dữ liệu quét</b> mỗi truy vấn – khoảng <b>5 USD/TB</b> ở nhiều Region, làm tròn lên tối thiểu 10 MB mỗi truy vấn. <i>(con số giá: kiến thức phổ biến, xem trang Athena pricing)</i>. Vì vậy mọi kỹ thuật <b>giảm dữ liệu quét</b> = <b>giảm tiền</b> và <b>tăng tốc</b>.</li>
+      </ul>
+
+      <h3>Tối ưu chi phí &amp; hiệu năng: partition + định dạng cột</h3>
+      <p><b>1. <span class="t" data-vi="Phân vùng dữ liệu theo khóa (thường là thời gian)">Partitioning</span></b> – chia dữ liệu theo khóa bất kỳ, phổ biến nhất là <b>thời gian</b> (year/month/day/hour) hoặc nguồn dữ liệu + ngày. Khi truy vấn có điều kiện partition trong <code>WHERE</code>, Athena <b>chỉ quét dữ liệu của partition đó</b>.</p>
+      <ul>
+        <li><b>Hive-style partition</b>: đường dẫn chứa cặp <code>key=value</code>, ví dụ <code>s3://bucket/logs/year=2026/month=10/day=31/</code>. Nạp partition mới vào bảng bằng <code>MSCK REPAIR TABLE</code> (chỉ chạy được với Hive-style; đường dẫn S3 nên viết <b>chữ thường</b>).</li>
+        <li><b>Non-Hive style</b> (vd log CloudTrail, Firehose: <code>data/2026/10/31/…</code>) ⇒ thêm thủ công bằng <code>ALTER TABLE ADD PARTITION</code>.</li>
+        <li><span class="t" data-vi="Dự đoán partition – tính partition từ cấu hình bảng thay vì tra metastore">Partition projection</span>: với bảng có rất nhiều partition mà cấu trúc biết trước, Athena <b>tính</b> giá trị và vị trí partition từ thuộc tính bảng (trong bộ nhớ) thay vì tra metastore ⇒ giảm đáng kể thời gian truy vấn, <b>khỏi phải quản lý partition</b>.</li>
+        <li>Dữ liệu không partition + bucket rất nhiều object có thể chạm giới hạn <b>GET request rate</b> của S3 ⇒ lỗi S3 – partition dữ liệu để tránh. Athena hỗ trợ bảng Glue tới 10 triệu partition nhưng một lần quét đọc tối đa 1 triệu partition (dùng <b>partition index</b>).</li>
+      </ul>
+
+      <p><b>2. <span class="t" data-vi="Định dạng lưu trữ theo cột">Columnar storage format</span></b> – <b>Apache Parquet</b> và <b>ORC</b> được tối ưu để truy xuất nhanh, có ba đặc tính khiến chúng hợp với Athena:</p>
+      <ol class="steps">
+        <li><b>Nén theo từng cột</b>, thuật toán nén chọn theo kiểu dữ liệu của cột ⇒ tiết kiệm dung lượng S3, giảm I/O khi truy vấn.</li>
+        <li><span class="t" data-vi="Đẩy điều kiện lọc xuống tầng lưu trữ">Predicate pushdown</span>: Athena dùng thống kê của từng block (giá trị min/max) để quyết định <b>đọc hay bỏ qua</b> block ⇒ chỉ lấy block cần thiết.</li>
+        <li><b>Splitting</b>: chia việc đọc file cho nhiều reader ⇒ tăng song song.</li>
+      </ol>
+      <p>Thêm vào đó, truy vấn chỉ chọn vài cột (<code>SELECT col1, col2</code>) thì Athena chỉ đọc các cột đó, không phải cả dòng như CSV/JSON.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí (theo tài liệu Athena)</th><th>Apache Parquet</th><th>Apache ORC</th></tr></thead>
+        <tbody>
+          <tr><td>Thế mạnh</td><td>Nén &amp; mã hóa (encoding) hiệu quả, lý tưởng cho <b>truy vấn phức tạp</b>, xử lý khối lượng lớn; tối ưu với Apache Arrow</td><td>Lưu dữ liệu <b>Hive</b> hiệu quả; file thường <b>nhỏ hơn</b>; có index giúp truy vấn nhanh</td></tr>
+          <tr><td>Kiểu dữ liệu phức tạp</td><td>Hỗ trợ</td><td>Hỗ trợ rộng hơn (struct, map, list)</td></tr>
+          <tr><td>Schema evolution</td><td colspan="2">Cả hai đều hỗ trợ thêm/bớt/sửa cột theo thời gian</td></tr>
+          <tr><td>Cách chuyển đổi</td><td colspan="2">Athena <b>CTAS</b> (<code>CREATE TABLE AS SELECT … WITH (format='PARQUET')</code>), <b>Glue ETL job</b>, hoặc <b>Firehose record format conversion</b> (Bài 35)</td></tr>
+        </tbody>
+      </table></div>
+
+      <p><b>3. Các mẹo khác</b>: <b>nén</b> file (GZIP, Snappy…); tránh <b>quá nhiều file nhỏ</b> – gộp thành file lớn (cỡ vài chục tới vài trăm MB) để giảm overhead mở file <i>(kích thước gợi ý: kiến thức phổ biến)</i>; chỉ <code>SELECT</code> cột cần thiết; dùng <code>LIMIT</code> khi khám phá dữ liệu.</p>
+
+      <div class="stats">
+        <div class="stat"><b>~5 USD / TB</b><span>giá theo dữ liệu quét (tham khảo, kiến thức phổ biến)</span></div>
+        <div class="stat"><b>Parquet / ORC</b><span>nén theo cột + predicate pushdown ⇒ quét ít dữ liệu</span></div>
+        <div class="stat"><b>1.000</b><span>workgroup tối đa mỗi Region / account</span></div>
+        <div class="stat"><b>10 triệu</b><span>partition bảng Glue Athena hỗ trợ (đọc ≤ 1 triệu/lần quét)</span></div>
+      </div>
+
+      <h3>Workgroup – tách tải, phân quyền, kiểm soát chi phí</h3>
+      <ul>
+        <li><span class="t" data-vi="Nhóm làm việc Athena">Workgroup</span> là <b>tài nguyên IAM</b>: dùng policy để quy định ai được chạy truy vấn trong workgroup nào; mỗi workgroup có lịch sử truy vấn và saved query riêng ⇒ tách <b>team A / team B</b>, hay <b>báo cáo tự động / ad-hoc</b>.</li>
+        <li><b>Enforce cấu hình</b> cho mọi truy vấn: vị trí kết quả trên S3, expected bucket owner, <b>mã hóa kết quả</b>.</li>
+        <li><span class="t" data-vi="Giới hạn sử dụng dữ liệu">Data usage controls</span>: <b>per-query</b> (truy vấn quét quá ngưỡng sẽ bị <b>hủy</b>) và <b>per-workgroup</b> (vượt ngưỡng theo giờ/ngày… ⇒ bắn <b>SNS alarm</b>).</li>
+        <li>Đẩy metric truy vấn lên <b>CloudWatch</b>, sự kiện trạng thái truy vấn lên <b>EventBridge</b>, gắn <b>cost allocation tag</b>; dùng <b>capacity reservation</b> (số DPU cố định) khi cần năng lực ổn định.</li>
+        <li>Mỗi account có workgroup <b>primary</b> (không xóa được); tối đa <b>1.000</b> workgroup/Region.</li>
+      </ul>
+
+      <h3>Athena Federated Query – SQL trên dữ liệu ngoài S3</h3>
+      <ul>
+        <li>Dùng <span class="t" data-vi="Bộ kết nối nguồn dữ liệu">data source connector</span> để chạy SQL <b>tại chỗ (query in place)</b> trên nguồn quan hệ, NoSQL, object, tùy biến – ví dụ <b>DynamoDB, Redshift, RDS MySQL/PostgreSQL, SQL Server, Oracle, DocumentDB, OpenSearch, CloudWatch Logs/Metrics, Timestream, MSK/Kafka, Redis</b>, Google BigQuery, Snowflake, Teradata…</li>
+        <li>Athena gọi connector để xác định dữ liệu cần đọc, quản lý song song và <b>đẩy điều kiện lọc xuống nguồn</b>. Connector kiểu Athena data catalog chạy dưới dạng <b>AWS Lambda function</b> trong account của bạn (connector tùy biến viết bằng <b>Athena Query Federation SDK</b>); loại Glue Data Catalog federated connector dùng Glue connection và hỗ trợ quyền chi tiết qua Lake Formation.</li>
+        <li>Có thể dùng để <b>join</b> dữ liệu nhiều nguồn trong một câu SQL, hoặc dựng pipeline trích xuất dữ liệu nhiều nguồn và lưu vào S3. Không hỗ trợ ghi (<code>INSERT INTO</code>) vào nguồn federated.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Reduce Athena query cost / improve performance</i>” ⇒ <b>chuyển sang Parquet/ORC</b> + <b>nén</b> + <b>partition</b> theo cột hay lọc (thường là ngày) + gộp file nhỏ. Tăng “instance size” không phải là đáp án – Athena serverless.</li>
+          <li>“<i>Analyze VPC Flow Logs / CloudTrail / ALB access logs stored in S3 with SQL, occasionally</i>” ⇒ <b>Athena</b> (rẻ nhất, không cần cluster).</li>
+          <li>“<i>Run SQL across S3 and DynamoDB / RDS without moving data</i>” ⇒ <b>Athena Federated Query</b>.</li>
+          <li>“<i>Limit how much data each team can scan</i>”, “<i>separate query history per team</i>” ⇒ <b>Athena workgroups</b> với data usage controls.</li>
+          <li>“<i>New partitions not showing in query results</i>” ⇒ chạy <code>MSCK REPAIR TABLE</code> / <code>ALTER TABLE ADD PARTITION</code>, chạy lại crawler, hoặc dùng <b>partition projection</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Athena <b>không phải</b> database lưu dữ liệu – dữ liệu vẫn nằm trong S3; bảng Athena chỉ là <b>metadata</b>. Xóa bảng không xóa dữ liệu S3 (external table).</li>
+          <li>Athena hợp với truy vấn <b>ad-hoc / tương tác</b>; còn báo cáo BI phức tạp chạy liên tục, nhiều người dùng đồng thời, join rất nhiều bảng lớn ⇒ <b>Redshift</b> thường là lựa chọn tốt hơn.</li>
+          <li>Mỗi bảng Athena tương ứng <b>một S3 prefix</b>; để nhiều schema khác nhau dưới cùng prefix ⇒ truy vấn trả 0 kết quả hoặc lỗi. Mỗi bảng một prefix riêng.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: GLUE ===================== -->
+      <h2 id="glue"><img src="../assets/icons/svc/AWS-Glue.svg" alt="">AWS Glue: Data Catalog, crawler, ETL job</h2>
+      <p class="lead"><b>AWS Glue</b> là dịch vụ <span class="t" data-vi="Tích hợp dữ liệu – khám phá, chuẩn bị, di chuyển, kết hợp dữ liệu">data integration</span> <b>serverless</b> giúp khám phá, chuẩn bị, di chuyển và tích hợp dữ liệu từ nhiều nguồn cho analytics, ML và phát triển ứng dụng. Glue kết nối hơn <b>70</b> nguồn dữ liệu, quản lý dữ liệu trong một <b>data catalog tập trung</b>, cho phép dựng – chạy – giám sát pipeline <span class="t" data-vi="Trích xuất – Biến đổi – Nạp">ETL</span> trực quan để nạp vào data lake; dữ liệu đã lập danh mục có thể truy vấn ngay bằng <b>Athena, EMR, Redshift Spectrum</b>. Glue hỗ trợ ETL, ELT và streaming, <b>có sẵn high availability</b>, tính tiền <b>pay-as-you-go</b>.</p>
+
+      <h3>Các thành phần (theo “AWS Glue concepts”)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Định nghĩa</th><th>Ghi nhớ cho kỳ thi</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Danh mục dữ liệu Glue – kho metadata bền vững">AWS Glue Data Catalog</span></td><td>Kho metadata bền vững: định nghĩa bảng, định nghĩa job, thông tin điều khiển.</td><td><b>Mỗi account có một Data Catalog mỗi Region</b>. Dùng chung cho Athena, EMR, Redshift Spectrum, Lake Formation; thay thế Hive metastore.</td></tr>
+          <tr><td>Database / Table</td><td>Database là nhóm logic các bảng. Table = định nghĩa metadata: tên cột, kiểu dữ liệu, <b>partition</b>, vị trí dữ liệu.</td><td><b>Bảng chỉ chứa metadata, không chứa dữ liệu</b> – dữ liệu vẫn ở S3/RDS gốc.</td></tr>
+          <tr><td><span class="t" data-vi="Trình thu thập – tự suy ra schema và tạo bảng">Crawler</span></td><td>Chương trình kết nối data store, chạy lần lượt các <b>classifier</b> để xác định schema, rồi tạo/cập nhật bảng trong Data Catalog.</td><td>Một lần chạy crawl được nhiều data store; chạy theo lịch thì phát hiện file/bảng/partition <b>mới hoặc thay đổi</b>.</td></tr>
+          <tr><td><span class="t" data-vi="Bộ phân loại – nhận diện định dạng và schema">Classifier</span></td><td>Xác định schema dữ liệu. Có sẵn cho CSV, JSON, Avro, XML… và RDBMS qua JDBC; tự viết bằng <b>grok pattern</b> hoặc row tag XML.</td><td>Classifier tùy biến chạy trước; classifier đầu tiên nhận diện được sẽ được dùng.</td></tr>
+          <tr><td>Connection</td><td>Đối tượng trong Data Catalog chứa thông tin kết nối tới một data store (JDBC, VPC…).</td><td>Crawler/job truy cập RDS trong VPC cần connection.</td></tr>
+          <tr><td><span class="t" data-vi="Tác vụ ETL">Job</span> / Script / Transform</td><td>Logic nghiệp vụ ETL: script (PySpark hoặc Scala do Glue sinh ra hoặc bạn viết) + nguồn + đích; chạy trong môi trường <b>Apache Spark</b> serverless.</td><td>Ví dụ kinh điển: <b>CSV/JSON → Parquet</b>, làm sạch, join, ghi vào S3/Redshift.</td></tr>
+          <tr><td><span class="t" data-vi="Khung dữ liệu động – hỗ trợ dữ liệu lồng nhau, tự mô tả schema">DynamicFrame</span></td><td>Bảng phân tán hỗ trợ dữ liệu lồng (struct, array); mỗi record tự mô tả schema – linh hoạt với dữ liệu bán cấu trúc.</td><td>Chuyển qua lại được với Spark DataFrame.</td></tr>
+          <tr><td>Trigger</td><td>Khởi chạy job theo <b>lịch</b>, <b>theo yêu cầu</b> hoặc <b>theo sự kiện</b>.</td><td>Chuỗi job + crawler phụ thuộc nhau ⇒ <b>Glue workflow</b>.</td></tr>
+          <tr><td>Worker / <span class="t" data-vi="Đơn vị xử lý dữ liệu – đơn vị tính phí Glue">DPU</span></td><td>Tính phí theo giờ dựa trên số <b>Data Processing Unit</b> dùng để chạy job (1 DPU = 1 worker); <b>không tính thời gian khởi động/tắt</b>.</td><td>Worker type: Standard, G.1X, G.2X … G.16X, G.025X, R.1X–R.8X (memory-optimized); Glue có <b>auto scaling</b> worker theo tải.</td></tr>
+          <tr><td>Notebook / Interactive sessions</td><td>Notebook Jupyter serverless và phiên tương tác để khám phá, debug script.</td><td>(Development endpoint là cách cũ.)</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 330" width="760" role="img" aria-label="Glue crawler, Data Catalog và các engine truy vấn">
+          <defs><marker id="a36" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#8C4FFF"/></marker>
+          <marker id="b36" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#7AA116"/></marker></defs>
+          <rect x="15" y="20" width="190" height="200" rx="8" fill="#7AA116" fill-opacity="0.08" stroke="#7AA116"/>
+          <text x="28" y="40" font-size="12" font-weight="700">Data stores</text>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" x="28" y="52" width="34" height="34"/>
+          <text x="68" y="66" font-size="11">S3 (CSV, JSON,</text>
+          <text x="68" y="80" font-size="11">Parquet, log…)</text>
+          <image href="../assets/icons/svc/Amazon-RDS.svg" x="28" y="100" width="34" height="34"/>
+          <text x="68" y="121" font-size="11">RDS / JDBC</text>
+          <image href="../assets/icons/svc/Amazon-DynamoDB.svg" x="28" y="148" width="34" height="34"/>
+          <text x="68" y="169" font-size="11">DynamoDB…</text>
+          <text x="28" y="208" font-size="10" class="muted">dữ liệu nằm nguyên tại chỗ</text>
+
+          <path d="M205 110 H265" stroke="#8C4FFF" stroke-width="2" marker-end="url(#a36)"/>
+          <image href="../assets/icons/res/AWS-Glue_Crawler.svg" x="270" y="78" width="54" height="54"/>
+          <text x="262" y="148" font-size="12" font-weight="700">Crawler</text>
+          <text x="245" y="164" font-size="10" class="muted">① classifier → schema</text>
+          <text x="245" y="178" font-size="10" class="muted">② nhóm thành bảng/partition</text>
+          <path d="M330 105 H395" stroke="#8C4FFF" stroke-width="2" marker-end="url(#a36)"/>
+          <text x="334" y="96" font-size="10" class="muted">③ ghi metadata</text>
+
+          <rect x="400" y="40" width="160" height="150" rx="8" fill="#8C4FFF" fill-opacity="0.10" stroke="#8C4FFF"/>
+          <image href="../assets/icons/res/AWS-Glue_Data-Catalog.svg" x="455" y="52" width="48" height="48"/>
+          <text x="420" y="118" font-size="12" font-weight="700">Glue Data Catalog</text>
+          <text x="415" y="136" font-size="10">database → table</text>
+          <text x="415" y="151" font-size="10">cột, kiểu, partition,</text>
+          <text x="415" y="166" font-size="10">vị trí S3 (chỉ metadata)</text>
+          <text x="415" y="181" font-size="10" class="muted">1 catalog / account / Region</text>
+
+          <path d="M560 75 H630" stroke="#7AA116" stroke-width="2" marker-end="url(#b36)"/>
+          <path d="M560 110 H630" stroke="#7AA116" stroke-width="2" marker-end="url(#b36)"/>
+          <path d="M560 145 H630" stroke="#7AA116" stroke-width="2" marker-end="url(#b36)"/>
+          <path d="M560 180 H630" stroke="#7AA116" stroke-width="2" marker-end="url(#b36)"/>
+          <image href="../assets/icons/svc/Amazon-Athena.svg" x="635" y="60" width="28" height="28"/><text x="668" y="79" font-size="11">Athena</text>
+          <image href="../assets/icons/svc/Amazon-EMR.svg" x="635" y="95" width="28" height="28"/><text x="668" y="114" font-size="11">EMR</text>
+          <image href="../assets/icons/svc/Amazon-Redshift.svg" x="635" y="130" width="28" height="28"/><text x="668" y="149" font-size="11">Spectrum</text>
+          <image href="../assets/icons/svc/AWS-Glue.svg" x="635" y="165" width="28" height="28"/><text x="668" y="184" font-size="11">Glue ETL</text>
+
+          <rect x="15" y="240" width="730" height="78" rx="8" fill="#ED7100" fill-opacity="0.08" stroke="#ED7100"/>
+          <image href="../assets/icons/svc/AWS-Glue.svg" x="30" y="258" width="38" height="38"/>
+          <text x="80" y="265" font-size="12" font-weight="700">Glue ETL job (Spark serverless): đọc bảng nguồn từ catalog → transform → ghi bảng đích</text>
+          <text x="80" y="284" font-size="11">Trigger: lịch / sự kiện / on-demand · Job bookmark: chỉ xử lý dữ liệu mới từ lần chạy trước</text>
+          <text x="80" y="302" font-size="11">Ví dụ: s3://raw/*.csv ⇒ làm sạch, bỏ trùng (FindMatches) ⇒ s3://curated/ dạng Parquet, partition theo ngày</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Quy trình Glue: crawler chạy <b>classifier</b> để suy ra schema, nhóm file thành <b>bảng và partition</b>, rồi ghi <b>metadata</b> vào Data Catalog (dữ liệu vẫn ở nguyên data store). Athena, EMR, Redshift Spectrum và chính Glue ETL đều dùng chung catalog này. Glue ETL job chạy Spark serverless để biến đổi dữ liệu, dùng <b>job bookmark</b> để chỉ xử lý dữ liệu mới.</figcaption>
+      </figure>
+
+      <h3>Crawler xác định bảng và partition thế nào?</h3>
+      <ul>
+        <li>Bạn chỉ định <b>Include path</b>. Nếu phần lớn schema ở một cấp thư mục <b>giống nhau</b>, crawler tạo <b>một bảng với nhiều partition</b> thay vì nhiều bảng. Ví dụ <code>s3://sales/year=2019/month=Jan/day=1</code>… ⇒ 1 bảng <code>sales</code> với partition key <code>year, month, day</code>.</li>
+        <li>Muốn tách thành bảng riêng ⇒ khai báo <b>mỗi thư mục gốc của bảng là một data store riêng</b> trong crawler.</li>
+        <li>Crawler có thể chạy <b>theo lịch</b>; lần chạy sau chỉ bổ sung bảng/partition mới hoặc đã thay đổi. File nén nguyên khối (gzip) phải được tải về để đọc.</li>
+        <li>Với nguồn <b>streaming</b> (Kinesis, Kafka) thì <b>định nghĩa bảng thủ công</b>, không dùng crawler.</li>
+      </ul>
+
+      <h3>Job bookmark – xử lý tăng dần (incremental)</h3>
+      <p><span class="t" data-vi="Dấu trang tác vụ – lưu trạng thái dữ liệu đã xử lý">Job bookmark</span> lưu trạng thái của lần chạy trước để <b>không xử lý lại dữ liệu cũ</b> – chạy job theo lịch thì chỉ xử lý dữ liệu mới, tránh trùng lặp ở đích. Áp dụng cho nguồn <b>JDBC</b>, transform Relationalize và một số nguồn <b>S3</b> (JSON, CSV, Avro, XML, và Parquet/ORC từ Glue 1.0).</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tùy chọn</th><th>Hành vi</th></tr></thead>
+        <tbody>
+          <tr><td><b>Enable</b></td><td>Cập nhật trạng thái sau mỗi lần chạy; lần sau chỉ xử lý dữ liệu mới kể từ checkpoint.</td></tr>
+          <tr><td><b>Disable</b> (mặc định)</td><td>Không dùng bookmark, job luôn xử lý <b>toàn bộ</b> dataset.</td></tr>
+          <tr><td><b>Pause</b></td><td>Xử lý dữ liệu tăng dần kể từ lần chạy thành công gần nhất (hoặc khoảng <code>from/to</code>) nhưng <b>không cập nhật</b> trạng thái bookmark.</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Với S3, bookmark dựa trên <b>last modified time</b> của object; với JDBC, dựa trên <b>bookmark key</b> (mặc định primary key tăng/giảm tuần tự).</li>
+        <li>Có thể <b>rewind</b> về lần chạy trước hoặc <b>reset</b> (<code>aws glue reset-job-bookmark</code>) để xử lý lại toàn bộ; Glue <b>không xóa</b> file đích khi rewind/reset.</li>
+      </ul>
+
+      <h3>Các tính năng khác hay xuất hiện</h3>
+      <ul>
+        <li><b>AWS Glue Studio</b> – giao diện đồ họa (visual job editor) để kéo-thả luồng biến đổi, Glue tự sinh code và chạy trên engine Spark serverless.</li>
+        <li><b>AWS Glue DataBrew</b> – công cụ <b>chuẩn bị dữ liệu trực quan, không cần viết code</b> để làm sạch và chuẩn hóa dữ liệu (dành cho analyst/data scientist).</li>
+        <li><b>FindMatches</b> – ML có sẵn để <b>khử trùng lặp</b> và tìm bản ghi “gần giống nhau” mà không cần là chuyên gia ML.</li>
+        <li><b>Sensitive data detection</b> – định nghĩa, phát hiện và xử lý dữ liệu nhạy cảm (PII) trong pipeline và data lake.</li>
+        <li><b>Streaming ETL</b> – làm sạch/biến đổi dữ liệu streaming “in transit”, sẵn sàng phân tích trong vài giây.</li>
+        <li><b>AWS Glue Data Quality</b> – kiểm tra chất lượng dữ liệu bằng rule <i>(kiến thức phổ biến)</i>.</li>
+        <li>Engine chạy job: <b>Spark</b> (chính) và Python shell; Glue for Ray đã kết thúc hỗ trợ. Giám sát bằng job run insights, CloudTrail, Spark UI.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Automatically discover the schema of data in S3 and make it queryable by Athena</i>” ⇒ <b>Glue crawler</b> → <b>Glue Data Catalog</b> → Athena.</li>
+          <li>“<i>Convert CSV/JSON in S3 to Parquet on a schedule, serverless</i>” ⇒ <b>Glue ETL job</b> (hoặc Athena CTAS cho việc một lần; Firehose nếu dữ liệu đang streaming).</li>
+          <li>“<i>ETL job reprocesses old files on every run</i>” ⇒ bật <b>job bookmark</b>.</li>
+          <li>“<i>Business analysts need to clean and normalize data without writing code</i>” ⇒ <b>Glue DataBrew</b>.</li>
+          <li>“<i>Replace self-managed Hive metastore</i>” / “<i>shared metadata for Athena, EMR and Redshift Spectrum</i>” ⇒ <b>Glue Data Catalog</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Glue Data Catalog <b>không lưu dữ liệu</b> và không phải nơi chạy truy vấn – cần engine (Athena/EMR/Redshift Spectrum) để truy vấn.</li>
+          <li>Glue ETL là <b>batch/micro-batch Spark</b>: khởi động mất thời gian, không thay thế được Lambda cho xử lý từng sự kiện mili-giây; cũng không phải dịch vụ “real-time stream analytics” như Managed Service for Apache Flink.</li>
+          <li>Glue (serverless, tính theo DPU-giờ) và EMR (cluster, toàn quyền cấu hình) đều chạy Spark: đề nhấn “<i>least operational overhead / serverless ETL</i>” ⇒ Glue; nhấn “<i>full control, custom frameworks, HBase, Presto…</i>” ⇒ EMR.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: LAKE FORMATION ===================== -->
+      <h2 id="lake-formation"><img src="../assets/icons/svc/AWS-Lake-Formation.svg" alt="">AWS Lake Formation: quản trị và phân quyền data lake</h2>
+      <p class="lead"><b>AWS Lake Formation</b> giúp <b>quản trị tập trung, bảo mật và chia sẻ</b> dữ liệu cho analytics và ML. Lake Formation quản lý <span class="t" data-vi="Kiểm soát truy cập chi tiết">fine-grained access control</span> cho dữ liệu data lake trên S3 và metadata của nó trong <b>Glue Data Catalog</b>. Nó có <b>mô hình quyền riêng bổ sung cho IAM</b>: cơ chế <b>grant / revoke</b> đơn giản giống RDBMS, thực thi ở mức <b>cột, hàng và ô</b> trên các dịch vụ Athena, QuickSight, Redshift Spectrum, EMR, Glue. Theo tài liệu, quyền Lake Formation dễ quản lý <b>thay cho</b> tổ hợp S3 bucket policy + IAM policy phức tạp.</p>
+
+      <h3>Tính năng chính</h3>
+      <ul>
+        <li><b>Nhập dữ liệu</b>: đọc dữ liệu và schema từ MySQL, PostgreSQL, SQL Server, MariaDB, Oracle chạy trên <b>RDS</b> hoặc <b>EC2</b>, cũng như on-premises qua <b>JDBC</b>; hỗ trợ nạp <b>bulk và incremental</b> vào data lake (dùng các mẫu <span class="t" data-vi="Bản thiết kế dựng sẵn để nạp dữ liệu">blueprint</span> / workflow dựng trên Glue – <i>tên “blueprint”: kiến thức phổ biến</i>). Nguồn khác ⇒ viết Glue ETL job.</li>
+        <li><b>Lập danh mục</b>: dùng Glue crawler; quản lý quyền theo tag (<b>LF-TBAC</b>).</li>
+        <li><b>Quyền ở mức database, bảng, cột, hàng, ô</b> – áp dụng cho IAM user/role và user/group federated từ IdP ngoài (SAML).</li>
+        <li><span class="t" data-vi="Bộ lọc dữ liệu – giới hạn tổ hợp cột và hàng">Data filters</span>: giới hạn truy cập theo tổ hợp cột + hàng ⇒ <b>row-level và cell-level security</b> để bảo vệ PII.</li>
+        <li><span class="t" data-vi="Kiểm soát truy cập dựa trên thẻ Lake Formation">LF-Tags (LF-TBAC)</span>: gắn nhãn tùy biến lên database/bảng/cột (vd <code>classification=confidential</code>, <code>domain=sales</code>) rồi cấp quyền theo tag ⇒ thay hàng nghìn policy trên từng tài nguyên bằng vài tag logic; cách <b>được khuyến nghị</b> để scale quản trị.</li>
+        <li><b>Hybrid access mode</b>: bật quyền Lake Formation <b>dần dần</b> cho một số database/bảng/người dùng mà không phá vỡ IAM/S3 policy hiện có của workload khác.</li>
+        <li><b>Audit</b>: log truy cập dữ liệu đầy đủ qua <b>CloudTrail</b> – ai, truy cập dữ liệu nào, bằng dịch vụ nào, khi nào.</li>
+        <li><b>Federated catalog</b>: đưa dữ liệu Redshift, DynamoDB, nguồn ngoài (BigQuery, MySQL…), S3 Tables vào Data Catalog để quản lý quyền tập trung mà <b>không cần di chuyển dữ liệu</b>.</li>
+      </ul>
+
+      <h3>Luồng kiểm tra quyền – <span class="t" data-vi="Cấp phát thông tin xác thực tạm thời">credential vending</span></h3>
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Lake-Formation.svg" alt="">Truy vấn bảng do Lake Formation quản lý</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/User.svg" alt="">Analyst (IAM role)<small>SELECT … FROM sales</small></div>
+            <span class="arrow">gửi truy vấn</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">Engine tích hợp<small>Athena / EMR / Glue / Spectrum</small></div>
+            <span class="arrow">① get metadata</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Glue_Data-Catalog.svg" alt="">Glue Data Catalog<small>② hỏi Lake Formation: được xem cột nào?</small></div>
+            <span class="arrow">③ get credentials</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Lake-Formation.svg" alt="">Lake Formation<small>cấp quyền truy cập tạm thời</small></div>
+            <span class="arrow">④ get data + lọc cột/hàng/ô</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 location đã đăng ký<small>trả kết quả đã lọc</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Theo tài liệu “How it works”: (1) engine xin metadata bảng từ Data Catalog; (2) Catalog kiểm tra quyền với Lake Formation và chỉ trả metadata user được phép thấy; (3) nếu vị trí S3 đã <b>đăng ký</b> với Lake Formation, engine xin <b>quyền truy cập tạm thời</b>; (4) engine đọc S3, áp dụng lọc cột/hàng/ô rồi trả kết quả. Nếu bảng không do Lake Formation quản lý, engine gọi thẳng S3 và <b>bucket policy + IAM policy</b> được đánh giá như thường.</figcaption>
+      </figure>
+
+      <h3>Chia sẻ cross-account</h3>
+      <ul>
+        <li>Chia sẻ database, bảng (có lọc cột), nhiều bảng hoặc “All Tables” cho <b>account khác, Organization/OU, hoặc IAM principal ở account khác</b> – vẫn giữ bảo vệ mức bảng/cột.</li>
+        <li>Lake Formation dùng <b>AWS Resource Access Manager (RAM)</b> để share. Cùng Organization ⇒ có hiệu lực ngay; khác Organization ⇒ RAM gửi <b>lời mời</b>, data lake admin bên nhận phải chấp nhận.</li>
+        <li>Hai phương pháp: <b>LF-TBAC</b> (khuyến nghị) và <b>named resource</b>. Athena và Redshift Spectrum bên nhận cần tạo <span class="t" data-vi="Liên kết tài nguyên – trỏ tới database/bảng được chia sẻ">resource link</span> để đưa tài nguyên được chia sẻ vào truy vấn.</li>
+        <li>Mô hình phổ biến: <b>một account “data lake” trung tâm</b>, nhiều account “consumer” (phòng ban) truy vấn qua Lake Formation – không sao chép dữ liệu.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Analysts may only see certain columns (e.g., hide PII) / rows (e.g., only their region) of tables in the S3 data lake, queried by Athena</i>” ⇒ <b>Lake Formation</b> (column-level / data filters cho row &amp; cell-level).</li>
+          <li>“<i>Centrally manage permissions for thousands of tables</i>” ⇒ <b>LF-Tags</b> (tag-based access control).</li>
+          <li>“<i>Share Data Catalog tables with other accounts without copying data</i>” ⇒ Lake Formation cross-account (dùng <b>RAM</b>), bên nhận tạo <b>resource link</b>.</li>
+          <li>“<i>Build a secure data lake quickly, ingest from RDS</i>” ⇒ <b>Lake Formation</b> (dựng trên Glue + S3).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Lake Formation <b>không phải</b> nơi lưu dữ liệu riêng: dữ liệu vẫn ở S3, metadata vẫn ở Glue Data Catalog – Lake Formation là <b>lớp phân quyền (authorization layer)</b> phía trên.</li>
+          <li>IAM / S3 bucket policy chỉ kiểm soát được tới mức <b>object/prefix</b>; không thể ẩn một <b>cột</b> trong file Parquet – yêu cầu “column-level” trên data lake ⇒ Lake Formation (hoặc tách dữ liệu ra nhiều bảng, tốn công hơn).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: REDSHIFT ===================== -->
+      <h2 id="redshift"><img src="../assets/icons/svc/Amazon-Redshift.svg" alt="">Amazon Redshift: data warehouse, Serverless và Redshift Spectrum</h2>
+      <p class="lead"><b>Amazon Redshift</b> là dịch vụ <span class="t" data-vi="Kho dữ liệu">data warehouse</span> <b>fully managed, quy mô petabyte</b> trên cloud. Bất kể kích thước dataset, Redshift cho hiệu năng truy vấn nhanh bằng chính các công cụ SQL và ứng dụng BI bạn đang dùng (JDBC/ODBC, query editor v2, Data API). Theo tài liệu Athena: chọn Redshift khi cần <b>gom dữ liệu từ nhiều nguồn</b> về định dạng chung, <b>lưu lâu dài</b>, dựng <b>báo cáo nghiệp vụ phức tạp</b> từ dữ liệu lịch sử, và chạy truy vấn có <b>rất nhiều join giữa các bảng rất lớn</b> trên dữ liệu có cấu trúc cao.</p>
+
+      <h3>Kiến trúc provisioned cluster</h3>
+      <ul>
+        <li><span class="t" data-vi="Cụm – tập hợp các node chạy engine Redshift">Cluster</span> gồm các <b>node</b>; mỗi cluster có <b>một leader node</b> và <b>một hoặc nhiều compute node</b>, chạy một Redshift engine và chứa một hoặc nhiều database.</li>
+        <li><span class="t" data-vi="Node điều phối">Leader node</span>: nhận truy vấn từ client, <b>parse</b>, lập <b>kế hoạch thực thi</b>, điều phối chạy song song trên compute node, <b>tổng hợp kết quả trung gian</b> rồi trả cho client. Bạn <b>chỉ trả tiền compute node</b>.</li>
+        <li><span class="t" data-vi="Node tính toán">Compute node</span>: chạy kế hoạch thực thi, trao đổi dữ liệu với nhau; mỗi compute node được chia thành nhiều <b>slice</b> (vd ra3.4xlarge: 4 slice/node). Đây là kiến trúc <span class="t" data-vi="Xử lý song song quy mô lớn">MPP</span> + <b>lưu trữ dạng cột</b> <i>(thuật ngữ MPP/columnar: kiến thức phổ biến)</i>.</li>
+        <li>Cluster <b>single-node</b>: leader và compute dùng chung một node – <b>không khuyến nghị cho production</b>. Cluster có ≥ 2 compute node thì dữ liệu mỗi node được <b>mirror</b> lên đĩa node khác để giảm rủi ro mất dữ liệu.</li>
+        <li>Cluster chạy trong <b>VPC</b> (cần <b>cluster subnet group</b>), kiểm soát truy cập bằng <b>security group</b>; có thể <b>pause</b> cluster (chỉ trả tiền backup storage), mua <b>reserved node</b> cho tải ổn định.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Node type</th><th>Lưu trữ</th><th>Khi nào chọn (theo tài liệu)</th></tr></thead>
+        <tbody>
+          <tr><td><b>RA3</b> (ra3.large, ra3.xlplus, ra3.4xlarge, ra3.16xlarge)</td><td><span class="t" data-vi="Lưu trữ được quản lý – SSD cục bộ + S3">Redshift managed storage</span>: SSD lớn trên node làm cache nhanh + <b>S3</b> lưu bền lâu dài; dữ liệu vượt SSD tự đẩy xuống S3, giá như nhau.</td><td><b>Scale và trả tiền compute và storage độc lập</b>; dữ liệu tăng trưởng. Tối đa 128 TB managed storage/node (ra3.4xlarge, ra3.16xlarge), tới 16.384 TB/cluster.</td></tr>
+          <tr><td><b>RG</b> (rg.large … rg.12xlarge)</td><td>Managed storage như RA3, dùng <b>Graviton</b>.</td><td>Giá/hiệu năng tốt hơn; có engine truy vấn data lake <b>tích hợp</b> chạy trên compute của cluster (RA3 dùng Spectrum).</td></tr>
+          <tr><td><b>DC2</b> (dc2.large, dc2.8xlarge)</td><td>SSD NVMe <b>cục bộ</b> (160 GB hoặc 2,56 TB/node).</td><td>Compute-intensive, dataset <b>&lt; 1 TB (nén)</b>; muốn thêm dung lượng phải thêm node.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Amazon Redshift Serverless</h3>
+      <ul>
+        <li>Truy cập và phân tích dữ liệu <b>không cần dựng, tinh chỉnh, quản lý cluster</b>; tài nguyên được tự provision và capacity <b>tự scale trong vài giây</b> cho tải biến động/khó đoán.</li>
+        <li><b>Không tính phí khi data warehouse rảnh (idle)</b> – chỉ trả khi đang dùng. Capacity đo bằng <span class="t" data-vi="Đơn vị xử lý Redshift">RPU</span> (Redshift Processing Unit), tính theo giây <i>(RPU: kiến thức phổ biến)</i>.</li>
+        <li>Tổ chức bằng <b>namespace</b> (database, user, dữ liệu) và <b>workgroup</b> (tài nguyên compute) ⇒ kiểm soát chi phí chi tiết. Backup: snapshot thủ công + <b>recovery point</b> tự động; có thể restore snapshot của provisioned cluster vào namespace serverless.</li>
+      </ul>
+
+      <h3>Nạp dữ liệu vào Redshift</h3>
+      <ul>
+        <li>Lệnh <code>COPY</code> từ S3 (song song, nhanh nhất cho batch), DynamoDB, EMR… – cũng là cách <b>Amazon Data Firehose</b> giao dữ liệu vào Redshift (ghi S3 rồi COPY – Bài 35). Ngược lại <code>UNLOAD</code> xuất kết quả ra S3 <i>(UNLOAD: kiến thức phổ biến)</i>.</li>
+        <li><b>Streaming ingestion</b> trực tiếp từ Kinesis Data Streams / MSK; <b>zero-ETL integration</b> từ Aurora/RDS/DynamoDB sang Redshift gần thời gian thực mà không cần tự dựng pipeline <i>(zero-ETL: kiến thức phổ biến)</i>.</li>
+        <li>Glue ETL job ghi trực tiếp vào bảng Redshift; QuickSight và công cụ BI đọc từ Redshift.</li>
+      </ul>
+
+      <h3><span class="t" data-vi="Truy vấn dữ liệu S3 từ Redshift mà không cần nạp">Redshift Spectrum</span></h3>
+      <ul>
+        <li>Truy vấn hiệu quả dữ liệu có cấu trúc và bán cấu trúc trong <b>file S3</b> <b>mà không cần nạp vào bảng Redshift</b>. Phần lớn xử lý diễn ra ở <b>tầng Spectrum</b> – các server Redshift <b>chuyên dụng, độc lập với cluster</b>; Redshift đẩy xuống các tác vụ nặng như <b>lọc điều kiện và aggregation</b> ⇒ ít tốn năng lực cluster; Spectrum có thể dùng <b>hàng nghìn instance</b> chạy song song.</li>
+        <li>Định nghĩa <b>external schema / external table</b> trong <b>external data catalog</b>: <b>AWS Glue Data Catalog</b>, catalog của Athena, hoặc Apache Hive metastore của bạn. Thay đổi catalog có hiệu lực ngay với mọi cluster.</li>
+        <li><b>Join</b> bảng Spectrum với bảng Redshift cục bộ như bảng thường ⇒ mô hình “<b>dữ liệu nóng</b> trong Redshift, <b>dữ liệu lịch sử lạnh</b> trong S3”.</li>
+        <li>Nhiều cluster cùng truy vấn <b>một dataset S3</b> mà không phải sao chép cho từng cluster – nhưng cluster và bucket S3 phải ở <b>cùng Region</b>.</li>
+        <li><b>Không hỗ trợ UPDATE</b> trên external table; partition external table để tối ưu (optimizer bỏ qua partition không liên quan); có thể tạo <b>materialized view</b> trên bảng Spectrum. Tính phí theo dữ liệu quét <i>(giống Athena – kiến thức phổ biến)</i>.</li>
+        <li>Lưu ý cập nhật: RA3/DC2 dùng Spectrum (fleet ngoài cluster); <b>RG và Redshift Serverless</b> có engine truy vấn data lake tích hợp chạy trên compute của chính chúng.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 340" width="760" role="img" aria-label="Kiến trúc Redshift cluster và Redshift Spectrum">
+          <defs><marker id="c36" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#8C4FFF"/></marker></defs>
+          <image href="../assets/icons/svc/Amazon-QuickSight.svg" x="20" y="40" width="36" height="36"/>
+          <text x="12" y="92" font-size="11">QuickSight / BI</text>
+          <text x="12" y="106" font-size="10" class="muted">JDBC / ODBC</text>
+          <path d="M100 60 H170" stroke="#8C4FFF" stroke-width="2" marker-end="url(#c36)"/>
+          <text x="104" y="52" font-size="10" class="muted">SQL</text>
+
+          <rect x="175" y="20" width="370" height="200" rx="8" fill="#8C4FFF" fill-opacity="0.08" stroke="#8C4FFF"/>
+          <text x="188" y="38" font-size="12" font-weight="700">Redshift cluster (RA3) – trong VPC</text>
+          <rect x="290" y="48" width="140" height="48" rx="6" fill="#8C4FFF" fill-opacity="0.15" stroke="#8C4FFF"/>
+          <image href="../assets/icons/svc/Amazon-Redshift.svg" x="298" y="55" width="32" height="32"/>
+          <text x="336" y="68" font-size="11" font-weight="700">Leader node</text>
+          <text x="336" y="84" font-size="10">parse · plan · gộp</text>
+          <path d="M320 96 L235 130" stroke="#8C4FFF" stroke-width="1.5"/>
+          <path d="M360 96 L360 130" stroke="#8C4FFF" stroke-width="1.5"/>
+          <path d="M400 96 L485 130" stroke="#8C4FFF" stroke-width="1.5"/>
+          <image href="../assets/icons/res/Amazon-Redshift_RA3.svg" x="200" y="132" width="40" height="40"/>
+          <text x="190" y="186" font-size="10">Compute 1 (slices)</text>
+          <image href="../assets/icons/res/Amazon-Redshift_RA3.svg" x="340" y="132" width="40" height="40"/>
+          <text x="330" y="186" font-size="10">Compute 2 (slices)</text>
+          <image href="../assets/icons/res/Amazon-Redshift_RA3.svg" x="470" y="132" width="40" height="40"/>
+          <text x="455" y="186" font-size="10">Compute N</text>
+          <text x="188" y="208" font-size="10" class="muted">Managed storage: SSD cache + S3 · lưu dạng cột · MPP</text>
+
+          <path d="M360 220 L360 255" stroke="#8C4FFF" stroke-width="2" marker-end="url(#c36)"/>
+          <text x="368" y="243" font-size="10" class="muted">đẩy xuống lọc + aggregation</text>
+          <rect x="175" y="258" width="370" height="66" rx="8" fill="#ED7100" fill-opacity="0.08" stroke="#ED7100"/>
+          <text x="188" y="278" font-size="12" font-weight="700">Redshift Spectrum layer</text>
+          <text x="188" y="296" font-size="10">hàng nghìn node chuyên dụng, độc lập với cluster</text>
+          <text x="188" y="312" font-size="10">external table (đọc-only) · cùng Region với bucket</text>
+
+          <path d="M545 290 H600" stroke="#ED7100" stroke-width="2" marker-end="url(#c36)"/>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" x="608" y="262" width="44" height="44"/>
+          <text x="600" y="322" font-size="11">S3 data lake (Parquet)</text>
+          <image href="../assets/icons/res/AWS-Glue_Data-Catalog.svg" x="608" y="150" width="40" height="40"/>
+          <text x="590" y="204" font-size="11">Glue Data Catalog</text>
+          <text x="590" y="218" font-size="10" class="muted">external schema</text>
+          <path d="M628 196 L628 258" stroke="#7AA116" stroke-width="1.5" stroke-dasharray="4 3"/>
+          <path d="M545 170 H600" stroke="#7AA116" stroke-width="1.5" stroke-dasharray="4 3"/>
+        </svg>
+        <figcaption><b>Hình 4.</b> Leader node nhận SQL, lập kế hoạch và phân phối cho các compute node (chia thành slice) chạy song song; RA3 lưu dữ liệu trên managed storage (SSD + S3). Khi truy vấn chạm <b>external table</b>, Redshift đẩy phần lọc/aggregation xuống <b>tầng Spectrum</b> đọc thẳng file S3 – định nghĩa bảng nằm trong <b>Glue Data Catalog</b>, nên Athena và EMR cũng đọc được cùng dữ liệu.</figcaption>
+      </figure>
+
+      <h3>Scale, hiệu năng và khả năng phục hồi</h3>
+      <ul>
+        <li><span class="t" data-vi="Mở rộng đồng thời – thêm cluster tạm để xử lý truy vấn chờ">Concurrency scaling</span>: khi bật trên một <b>WLM queue</b>, Redshift <b>tự thêm capacity cluster tạm</b> để xử lý cả truy vấn <b>đọc</b> (dashboard) lẫn nhiều truy vấn <b>ghi</b> phổ biến (COPY, INSERT, DELETE, UPDATE, CTAS…) ⇒ hỗ trợ <b>hàng nghìn user/truy vấn đồng thời</b>, người dùng vẫn thấy dữ liệu mới nhất. Chỉ tính phí khi cluster concurrency-scaling <b>đang chạy truy vấn</b> (mỗi cluster tích lũy ~1 giờ credit miễn phí mỗi ngày – <i>kiến thức phổ biến</i>).</li>
+        <li><b>Elastic resize / classic resize</b> để thêm bớt node hoặc đổi node type.</li>
+        <li><span class="t" data-vi="Bản chụp – bản sao lưu tại một thời điểm">Snapshot</span>: lưu trong S3 do Redshift quản lý, <b>incremental</b>. <b>Automated</b>: mặc định khoảng <b>8 giờ một lần hoặc mỗi 5 GB/node dữ liệu thay đổi</b> (cái nào trước), retention mặc định <b>1 ngày</b>, RA3/RG đặt <b>1–35 ngày</b> (không tắt được). <b>Manual</b>: giữ <b>vô thời hạn</b> (kể cả khi xóa cluster) trừ khi đặt retention. Restore luôn tạo <b>cluster mới</b>, truy vấn được ngay trong khi dữ liệu tải nền. Tích hợp <b>AWS Backup</b>.</li>
+        <li><b>Cross-Region snapshot copy</b> (tự sao snapshot sang Region khác cho DR; cluster mã hóa KMS cần <b>snapshot copy grant</b>) và tùy chọn <b>Multi-AZ</b> cho RA3 <i>(kiến thức phổ biến)</i>.</li>
+        <li>Single-node gặp <b>hardware failure</b> thì không thay được node – phải restore snapshot.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>Petabyte</b><span>quy mô data warehouse fully managed</span></div>
+        <div class="stat"><b>1 leader + N compute</b><span>chỉ trả tiền compute node</span></div>
+        <div class="stat"><b>~8 giờ / 5 GB mỗi node</b><span>chu kỳ automated snapshot mặc định</span></div>
+        <div class="stat"><b>1 → 35 ngày</b><span>retention automated snapshot (mặc định 1 ngày)</span></div>
+        <div class="stat"><b>&lt; 1 TB</b><span>dữ liệu nén ⇒ DC2; lớn/tăng trưởng ⇒ RA3/RG</span></div>
+        <div class="stat"><b>0 USD khi idle</b><span>Redshift Serverless</span></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Query historical data in S3 and join it with current data in Redshift without loading it</i>” ⇒ <b>Redshift Spectrum</b>.</li>
+          <li>“<i>Many concurrent BI users, queries queue up during peak</i>” ⇒ <b>concurrency scaling</b>.</li>
+          <li>“<i>Data warehouse with unpredictable, intermittent usage; no cluster management</i>” ⇒ <b>Redshift Serverless</b>.</li>
+          <li>“<i>Scale storage independently of compute</i>” ⇒ <b>RA3</b> (managed storage).</li>
+          <li>“<i>Disaster recovery for Redshift in another Region</i>” ⇒ bật <b>cross-Region snapshot copy</b>.</li>
+          <li>“<i>Load large volumes of data from S3 into Redshift efficiently</i>” ⇒ <code>COPY</code> (song song), không phải nhiều lệnh INSERT từng dòng.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Redshift là <b>OLAP</b>, không dành cho ứng dụng giao dịch nhiều ghi nhỏ, độ trễ mili-giây (OLTP ⇒ RDS/Aurora/DynamoDB).</li>
+          <li>Redshift Spectrum <b>cần một Redshift cluster</b> (hoặc Serverless) – nếu đề không có Redshift và chỉ cần truy vấn ad-hoc S3 thì <b>Athena</b> rẻ và ít vận hành hơn.</li>
+          <li>Redshift provisioned mặc định nằm trong <b>một AZ</b>; đừng nghĩ nó tự Multi-AZ như Aurora – cần snapshot/cross-Region copy hoặc bật Multi-AZ (RA3).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: EMR ===================== -->
+      <h2 id="emr"><img src="../assets/icons/svc/Amazon-EMR.svg" alt="">Amazon EMR: Hadoop, Spark và big data có toàn quyền kiểm soát</h2>
+      <p class="lead"><b>Amazon EMR</b> (tên cũ <i>Elastic MapReduce</i>) là nền tảng <b>managed cluster</b> giúp chạy các framework big data như <b>Apache Hadoop</b> và <b>Apache Spark</b> trên AWS để xử lý và phân tích lượng dữ liệu khổng lồ, đồng thời biến đổi và di chuyển dữ liệu lớn vào/ra S3, DynamoDB… Theo tài liệu Athena: dùng EMR khi chạy <b>code tùy biến</b> trên dataset cực lớn với Spark, Hadoop, Presto, HBase – ML, graph analytics, biến đổi dữ liệu, streaming… và cần <b>toàn quyền cấu hình cluster</b> và phần mềm cài trên đó.</p>
+
+      <h3>Cluster và loại node</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Node type</th><th>Vai trò (theo tài liệu)</th><th>Gợi ý mua instance</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Node chính – điều phối cluster (tên cũ master node)">Primary node</span></td><td>Quản lý cluster: điều phối phân bổ dữ liệu và task cho node khác, theo dõi trạng thái task và sức khỏe cluster. Mọi cluster đều có; có thể tạo cluster <b>một node</b> chỉ có primary.</td><td>On-Demand / Reserved – mất primary là mất cluster.</td></tr>
+          <tr><td><span class="t" data-vi="Node lõi – chạy task và lưu dữ liệu HDFS">Core node</span></td><td>Chạy task <b>và lưu dữ liệu trong HDFS</b>. Cluster nhiều node có ít nhất một core node. <b>Application master</b> của YARN chỉ chạy trên core node.</td><td>On-Demand / Reserved (mất node = mất dữ liệu HDFS).</td></tr>
+          <tr><td><span class="t" data-vi="Node tác vụ – chỉ chạy task, không lưu HDFS">Task node</span></td><td><b>Chỉ chạy task, không lưu HDFS</b>; tùy chọn.</td><td><b>Spot Instance</b> – tài liệu: “Spot Instances are often used to run task nodes”; job không fail khi task node Spot bị thu hồi.</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Cấu hình node: <b>instance groups</b> (mỗi nhóm một instance type) hoặc <b>instance fleets</b> (mỗi node type một fleet trộn nhiều instance type, có target capacity cho On-Demand và Spot). Lựa chọn này <b>không đổi được</b> sau khi tạo cluster.</li>
+        <li>Bootstrap action cài phần mềm tùy biến; có thể dùng custom AMI Amazon Linux.</li>
+      </ul>
+
+      <h3>Tầng lưu trữ</h3>
+      <ul>
+        <li><b>HDFS</b>: hệ thống tệp phân tán, nhân bản dữ liệu trên nhiều instance – nhưng là <b>ephemeral</b>, <b>bị thu hồi khi terminate cluster</b>. Hợp cho cache kết quả trung gian, workload random I/O.</li>
+        <li><span class="t" data-vi="Hệ thống tệp EMR – truy cập S3 như một file system">EMRFS</span> / S3A (mặc định từ EMR 7.10): truy cập <b>S3 như file system</b>. Thực hành phổ biến: <b>input/output ở S3</b>, kết quả trung gian ở HDFS ⇒ dữ liệu bền vững độc lập với vòng đời cluster.</li>
+        <li><b>Local file system</b>: instance store – chỉ tồn tại theo vòng đời EC2 instance.</li>
+        <li>Quản lý tài nguyên: <b>YARN</b>; framework xử lý: <b>Hadoop MapReduce</b>, <b>Spark</b> (in-memory, DAG); ứng dụng: Hive, Pig, Spark SQL/Streaming, MLlib, HBase, Presto/Trino, Flink…</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/Amazon-EMR.svg" alt="">EMR cluster transient xử lý log hằng đêm</span>
+          <div class="row">
+            <div class="grp region"><span class="lbl"><img src="../assets/icons/res/Amazon-EMR_Cluster.svg" alt="">Cluster (VPC, private subnet)</span>
+              <div class="grp plain"><span class="lbl">Primary – On-Demand</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-EMR_EMR-Engine.svg" alt="">Primary node<small>YARN ResourceManager</small></div>
+              </div>
+              <div class="grp plain"><span class="lbl">Core – On-Demand</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-EMR_HDFS-Cluster.svg" alt="">Core nodes ×3<small>task + HDFS</small></div>
+              </div>
+              <div class="grp plain"><span class="lbl">Task – Spot</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" alt="">Task nodes ×10<small>chỉ tính toán</small></div>
+              </div>
+            </div>
+            <span class="arrow">EMRFS đọc / ghi</span>
+            <div class="grp plain"><span class="lbl">Dữ liệu bền vững</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">S3 input / output<small>Parquet, partition</small></div>
+              <div class="node"><img src="../assets/icons/res/AWS-Glue_Data-Catalog.svg" alt="">Glue Data Catalog<small>làm Hive metastore</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> Cluster EMR chi phí tối ưu: primary và core node dùng On-Demand (core giữ HDFS và application master), <b>task node dùng Spot</b> để tăng sức tính toán giá rẻ. Dữ liệu vào/ra nằm ở <b>S3</b> qua EMRFS nên cluster có thể là <b>transient</b> – chạy các step rồi tự terminate, không mất dữ liệu.</figcaption>
+      </figure>
+
+      <h3>Gửi việc và vòng đời cluster</h3>
+      <ul>
+        <li>Gửi việc bằng <b>step</b> (đơn vị công việc theo thứ tự: PENDING → RUNNING → COMPLETED; step lỗi ⇒ mặc định các step sau CANCELLED), hoặc SSH vào primary node dùng trực tiếp Spark/Hive…</li>
+        <li>Vòng đời: <code>STARTING</code> → <code>BOOTSTRAPPING</code> → <code>RUNNING</code> → <code>WAITING</code> → <code>TERMINATING</code> → <code>TERMINATED</code> (lỗi ⇒ <code>TERMINATED_WITH_ERRORS</code>, dữ liệu trên cluster bị xóa trừ khi bật <b>termination protection</b>).</li>
+        <li><span class="t" data-vi="Cluster tạm thời – tự tắt sau khi chạy xong step">Transient cluster</span>: định nghĩa sẵn step, <b>auto-terminate</b> khi xong ⇒ tiết kiệm. <b>Long-running cluster</b>: chờ (WAITING) nhận thêm step / truy vấn tương tác, phải tự tắt.</li>
+      </ul>
+
+      <h3>Các tùy chọn triển khai</h3>
+      <div class="compare">
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/res/Amazon-EMR_Cluster.svg" alt="">EMR on EC2</h4>
+          <ul>
+            <li>Toàn quyền: instance type, Spot, bootstrap action, SSH.</li>
+            <li>Tự chọn sizing, managed scaling.</li>
+            <li>Hợp với cluster lớn, ứng dụng đa dạng (HBase, Presto…).</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/svc/Amazon-EMR.svg" alt="">EMR Serverless</h4>
+          <ul>
+            <li><b>Không cấu hình, tối ưu, bảo mật hay vận hành cluster</b>; chạy Spark / Hive.</li>
+            <li>Tự xác định tài nguyên cho job, cấp phát rồi <b>giải phóng khi job xong</b> – tránh over/under-provision.</li>
+            <li><b>Pre-initialized capacity</b>: “warm pool” worker để job khởi động trong vài giây.</li>
+            <li>Application → job run (mỗi job một <b>runtime role</b> IAM); nhiều AZ trong Region.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-Elastic-Kubernetes-Service.svg" alt="">EMR on EKS</h4>
+          <ul>
+            <li>Chạy Spark job trên cluster <b>EKS</b> sẵn có, dùng chung hạ tầng Kubernetes với ứng dụng khác <i>(kiến thức phổ biến)</i>.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Migrate on-premises Hadoop / Spark / Hive jobs to AWS with minimal changes</i>” ⇒ <b>Amazon EMR</b>.</li>
+          <li>“<i>Reduce EMR cost for batch jobs</i>” ⇒ <b>Spot cho task node</b>, On-Demand/Reserved cho primary &amp; core; dữ liệu trên <b>S3 (EMRFS)</b>; <b>transient cluster</b> tự terminate.</li>
+          <li>“<i>Run Spark without managing clusters</i>” ⇒ <b>EMR Serverless</b> (hoặc Glue nếu là ETL đơn giản).</li>
+          <li>“<i>Data must persist after the cluster terminates</i>” ⇒ lưu ở <b>S3</b>, không phải HDFS.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Đặt <b>core node</b> trên Spot là rủi ro: Spot bị thu hồi ⇒ mất block HDFS và có thể làm job lỗi. Đáp án tối ưu chi phí an toàn là <b>Spot cho task node</b>.</li>
+          <li>EMR là cluster bạn phải chọn cấu hình – đề hỏi “<i>least operational overhead</i>” cho SQL đơn giản trên S3 thì Athena thắng EMR.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: OPENSEARCH ===================== -->
+      <h2 id="opensearch"><img src="../assets/icons/svc/Amazon-Elasticsearch-Service.svg" alt="">Amazon OpenSearch Service: tìm kiếm và log analytics</h2>
+      <p class="lead"><b>Amazon OpenSearch Service</b> là dịch vụ managed giúp triển khai, vận hành và scale cluster <b>OpenSearch</b> – engine <b>tìm kiếm và phân tích mã nguồn mở</b> dùng cho <b>log analytics</b>, <b>giám sát ứng dụng thời gian thực</b>, <b>clickstream</b> và <b>full-text search</b>. Dịch vụ hỗ trợ OpenSearch và Elasticsearch OSS cũ (tới <b>7.10</b>, bản mã nguồn mở cuối cùng) – vì thế tên cũ là <i>Amazon Elasticsearch Service</i>. AWS provision mọi tài nguyên, <b>tự phát hiện và thay node hỏng</b>, scale bằng một lệnh API.</p>
+
+      <h3>Khái niệm và tính năng (theo tài liệu)</h3>
+      <ul>
+        <li><span class="t" data-vi="Miền – tương đương một cluster OpenSearch">Domain</span> = một cluster OpenSearch với instance type, số instance, storage do bạn chỉ định; mỗi EC2 instance là một node.</li>
+        <li><b>Scale</b>: nhiều instance type (có Graviton), tới <b>1.002 data node</b>, tới <b>25 PB</b> storage gắn kèm.</li>
+        <li><b>Stability</b>: phân bổ node trên <b>2 hoặc 3 AZ</b> (Multi-AZ, có biến thể Multi-AZ with Standby); <span class="t" data-vi="Node quản lý cluster chuyên dụng">dedicated master node</span> gánh việc quản lý cluster; <b>automated snapshot</b> để backup/restore.</li>
+        <li><b>Security</b>: IAM access control, đặt domain trong <b>VPC</b> với security group, <b>mã hóa at rest</b> và <b>node-to-node</b>, xác thực OpenSearch Dashboards bằng <b>Amazon Cognito</b>, HTTP basic hoặc <b>SAML</b>; bảo mật mức <b>index, document, field</b> (fine-grained access control); audit log.</li>
+        <li><b>Tích hợp</b>: OpenSearch Dashboards để trực quan; CloudWatch metric/alarm; CloudTrail; nạp dữ liệu streaming từ <b>S3, Kinesis Data Streams, Data Firehose, DynamoDB</b> (thường qua Lambda), <b>CloudWatch Logs</b> subscription; cảnh báo qua <b>SNS</b>; SQL cho công cụ BI.</li>
+        <li><b>Giá</b>: theo giờ instance + dung lượng EBS; không tính phí truyền dữ liệu giữa các AZ trong domain Multi-AZ và giữa UltraWarm/cold với S3.</li>
+      </ul>
+
+      <h3>Các tầng lưu trữ</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tầng</th><th>Lưu ở đâu</th><th>Đặc điểm</th></tr></thead>
+        <tbody>
+          <tr><td><b>Hot</b></td><td>Instance store / EBS gắn với data node</td><td>Nhanh nhất cho <b>index và search</b> dữ liệu mới; trả tiền theo dung lượng đã provision; có overhead replica (vd shard 20 GiB + 1 replica cần ~58 GiB).</td></tr>
+          <tr><td><span class="t" data-vi="Tầng ấm – lưu trên S3 kèm cache">UltraWarm</span></td><td><b>Amazon S3</b> + cache thông minh trên node UltraWarm</td><td>Chi phí/GiB <b>thấp hơn đáng kể</b>; index <b>read-only</b> (hợp dữ liệu bất biến như log); không cần replica (S3 bền); trả theo dung lượng <b>đã dùng</b> (ultrawarm1.large tới 20 TiB). Yêu cầu <b>dedicated master node</b>, OpenSearch/ES ≥ 6.8, không dùng với T2/T3.</td></tr>
+          <tr><td><b>Cold</b></td><td>S3</td><td>Dữ liệu rất ít truy cập; <b>không đọc/ghi trực tiếp</b>, chuyển lại warm (miễn phí) khi cần truy vấn.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Tự động chuyển index hot → warm → cold theo tuổi bằng <b>Index State Management (ISM)</b>.</p>
+
+      <h3>Amazon OpenSearch Serverless</h3>
+      <ul>
+        <li>Tùy chọn <b>on-demand, serverless</b>: không provision/cấu hình/tinh chỉnh cluster. Đơn vị là <span class="t" data-vi="Bộ sưu tập – nhóm index phục vụ một workload">collection</span>, chọn loại khi tạo (không đổi được): <b>Time series</b> (log analytics), <b>Search</b> (full-text), <b>Vector search</b> (semantic search, generative AI/RAG).</li>
+        <li>Kiến trúc <b>tách indexing và search</b>, lưu index trên <b>S3</b> ⇒ scale ingest và query độc lập. Capacity đo bằng <span class="t" data-vi="Đơn vị tính toán OpenSearch">OCU</span> – mỗi OCU = <b>6 GiB RAM</b> + vCPU tương ứng; tự tăng/giảm trong giới hạn bạn đặt.</li>
+        <li>Giới hạn: không hỗ trợ cross-account access cho collection, không cross-Region search/replication, không plugin tùy biến; refresh interval ~10 giây; TLS 1.2 bắt buộc.</li>
+      </ul>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – mục lục cuối sách</span>
+        <p>CSDL như DynamoDB giống <b>tra theo số trang</b> (biết key là lấy ngay). OpenSearch giống <b>mục lục chỉ mục từ khóa ở cuối sách</b> (inverted index): gõ “áo khoác len đỏ” là ra mọi trang có các từ đó, xếp theo mức liên quan. Vì vậy mẫu kiến trúc phổ biến là <b>DynamoDB lưu dữ liệu chính</b> + <b>DynamoDB Streams → Lambda → OpenSearch</b> để có ô tìm kiếm full-text.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Full-text search / fuzzy search / search box for product catalog</i>” ⇒ <b>OpenSearch Service</b> (thường kèm DynamoDB/RDS là nguồn dữ liệu chính).</li>
+          <li>“<i>Centralize logs (CloudWatch Logs, VPC Flow Logs, application logs) and visualize them in near real time</i>” ⇒ <b>Firehose / CloudWatch Logs subscription → OpenSearch + OpenSearch Dashboards</b>.</li>
+          <li>“<i>Retain months of logs in OpenSearch cost-effectively, still searchable</i>” ⇒ <b>UltraWarm</b> (+ cold storage cho dữ liệu cũ hơn).</li>
+          <li>“<i>Secure OpenSearch Dashboards login</i>” ⇒ <b>Amazon Cognito</b> / SAML; “<i>private access</i>” ⇒ domain trong <b>VPC</b>.</li>
+          <li>“<i>Avoid managing OpenSearch clusters</i>”, “<i>vector search for generative AI</i>” ⇒ <b>OpenSearch Serverless</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>OpenSearch không phải CSDL giao dịch chính (không ACID, không thay RDS/DynamoDB) – nó là <b>index để tìm kiếm/phân tích</b>.</li>
+          <li>Đề nhắc “<i>Elasticsearch</i>” hay “<i>ELK stack</i>” ⇒ chính là <b>OpenSearch Service</b>; “Kibana” ⇒ <b>OpenSearch Dashboards</b>.</li>
+          <li>Truy vấn SQL ad-hoc trên log lưu ở S3, không cần tìm kiếm full-text, không cần dashboard thời gian thực ⇒ <b>Athena</b> rẻ hơn duy trì domain OpenSearch.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: QUICKSIGHT ===================== -->
+      <h2 id="quicksight"><img src="../assets/icons/svc/Amazon-QuickSight.svg" alt="">Amazon QuickSight: BI, dashboard và SPICE</h2>
+      <p class="lead"><b>Amazon QuickSight</b> là dịch vụ <span class="t" data-vi="Trí tuệ kinh doanh – phân tích và trực quan hóa dữ liệu cho ra quyết định">business intelligence (BI)</span> serverless: kết nối nguồn dữ liệu, dựng <b>dashboard tương tác</b>, và <b>nhúng analytics</b> vào ứng dụng. Cập nhật: AWS đã phát triển QuickSight thành <b>Amazon Quick</b> (bộ dịch vụ AI gồm agent, research, automation…); phần BI nay mang tên <b>Amazon Quick Sight</b>, mọi API/SDK QuickSight cũ vẫn hoạt động. Đề SAA-C03 vẫn dùng tên <b>QuickSight</b>.</p>
+
+      <h3>Khái niệm cần biết</h3>
+      <ul>
+        <li><b>Data source → dataset → analysis → dashboard</b>: nguồn có thể là <b>Athena, Redshift, RDS/Aurora, S3, OpenSearch</b>, file upload, SaaS, database on-premises… <i>(danh sách nguồn và chuỗi analysis → dashboard: kiến thức phổ biến)</i>. Dashboard là bản <b>chỉ đọc</b> của analysis, chia sẻ cho reader.</li>
+        <li><span class="t" data-vi="Engine tính toán song song trong bộ nhớ của QuickSight">SPICE</span> (<i>Super-fast, Parallel, In-memory Calculation Engine</i>): <b>import</b> dữ liệu vào bộ nhớ của QuickSight ⇒ truy vấn phân tích <b>nhanh hơn</b>, không phải chờ direct query, và <b>dùng lại nhiều lần không tốn thêm</b> – nguồn tính phí theo truy vấn (như Athena) chỉ bị tính khi tạo và khi <b>refresh</b> dataset. Ngược lại là <b>direct query</b> (truy vấn thẳng nguồn mỗi lần).</li>
+        <li>SPICE capacity cấp <b>theo Region</b>, dùng chung cho mọi người trong account tại Region đó; admin mua thêm hoặc trả bớt. Enterprise edition mã hóa SPICE at rest.</li>
+        <li><span class="t" data-vi="Bảo mật mức hàng">Row-level security (RLS)</span> – <b>Enterprise edition</b>: gắn một <b>permissions dataset</b> (cột UserName/GroupName + giá trị được xem) để mỗi reader chỉ thấy các hàng khớp quy tắc (vd sales EMEA chỉ thấy EMEA). User/group không có rule ⇒ <b>không thấy dữ liệu</b>. Tối đa 999 rule/user. Có thêm column-level security <i>(CLS: kiến thức phổ biến)</i>.</li>
+        <li>Người dùng/nhóm quản lý qua IAM Identity Center hoặc IAM federation; tính năng ML insights (anomaly detection, forecast) và hỏi đáp ngôn ngữ tự nhiên (Q / Quick) <i>(kiến thức phổ biến)</i>.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Interactive dashboards / BI visualizations for business users</i>”, “<i>embed dashboards in a web app</i>” ⇒ <b>QuickSight</b>.</li>
+          <li>“<i>Dashboard queries against Athena are slow and costly</i>” ⇒ import vào <b>SPICE</b> và refresh theo lịch.</li>
+          <li>“<i>Each regional manager sees only their region’s data in the same dashboard</i>” ⇒ QuickSight <b>row-level security</b> (Enterprise). Nếu yêu cầu áp dụng cho mọi engine truy vấn data lake ⇒ <b>Lake Formation</b> data filter.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: CHỌN DỊCH VỤ ===================== -->
+      <h2 id="chon-dich-vu"><img src="../assets/icons/cat/Analytics.svg" alt="">Chọn dịch vụ phân tích nào? Bảng quyết định</h2>
+      <p class="lead">Đây là phần “ăn điểm” nhất của bài: đề thường đưa 4 dịch vụ phân tích đều làm được việc, nhưng chỉ một phương án thỏa thêm ràng buộc <b>cost-effective</b>, <b>least operational overhead</b>, <b>serverless</b>, hay <b>full control</b>.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Dịch vụ</th><th>Mô hình</th><th>Dữ liệu ở đâu</th><th>Hợp nhất cho</th><th>Không hợp cho</th></tr></thead>
+        <tbody>
+          <tr><td><b>Athena</b></td><td>Serverless, trả theo dữ liệu quét</td><td>S3 (và nguồn federated)</td><td>SQL <b>ad-hoc</b>, phân tích log trên S3, khám phá data lake</td><td>BI phức tạp nhiều người dùng liên tục; OLTP</td></tr>
+          <tr><td><b>Redshift</b></td><td>Cluster provisioned / Serverless</td><td>Nạp vào Redshift (+ S3 qua Spectrum)</td><td><b>Data warehouse</b>, join nhiều bảng lớn, báo cáo BI lặp lại, hàng nghìn user</td><td>Truy vấn thỉnh thoảng trên S3 (đắt hơn Athena)</td></tr>
+          <tr><td><b>EMR</b></td><td>Cluster (EC2/EKS) hoặc Serverless</td><td>S3 (EMRFS) / HDFS</td><td>Spark/Hadoop/Hive/HBase/Presto <b>tùy biến</b>, ML, xử lý cực lớn, di chuyển Hadoop on-prem</td><td>Yêu cầu ít vận hành nhất cho SQL đơn giản</td></tr>
+          <tr><td><b>Glue</b></td><td>Serverless (DPU)</td><td>Đọc/ghi S3, JDBC, Redshift…</td><td><b>ETL</b>, crawler, Data Catalog, chuẩn bị dữ liệu</td><td>Truy vấn tương tác; xử lý sự kiện mili-giây</td></tr>
+          <tr><td><b>Lake Formation</b></td><td>Lớp quản trị</td><td>S3 + Glue Data Catalog</td><td>Quyền <b>cột/hàng/ô</b>, LF-Tags, chia sẻ cross-account</td><td>Tự nó không chạy truy vấn hay ETL</td></tr>
+          <tr><td><b>OpenSearch</b></td><td>Domain managed / Serverless</td><td>Index trong domain (hot) / S3 (UltraWarm)</td><td><b>Full-text search</b>, log analytics gần thời gian thực, dashboard vận hành</td><td>Báo cáo SQL join phức tạp; CSDL chính</td></tr>
+          <tr><td><b>QuickSight</b></td><td>Serverless BI, trả theo user</td><td>Nguồn bên ngoài hoặc SPICE</td><td><b>Dashboard</b>, nhúng analytics, RLS</td><td>Xử lý/biến đổi dữ liệu lớn</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Analytics.svg" alt="">Ví dụ đề thi: phân tích clickstream &amp; đơn hàng của sàn thương mại điện tử</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">Data Firehose<small>clickstream → Parquet, dynamic partition</small></div>
+            <span class="arrow">S3</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">S3 data lake<small>dt=2026-10-31/</small></div>
+            <span class="arrow">crawler</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Glue_Data-Catalog.svg" alt="">Glue Data Catalog<small>+ Lake Formation ẩn cột PII</small></div>
+            <span class="arrow">SQL</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">Athena (ad-hoc)<small>workgroup giới hạn quét</small></div>
+            <span class="arrow">SPICE</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-QuickSight.svg" alt="">QuickSight<small>dashboard + RLS</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-Aurora.svg" alt="">Aurora (OLTP đơn hàng)<small>nguồn giao dịch</small></div>
+            <span class="arrow">zero-ETL / Glue</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Redshift.svg" alt="">Redshift<small>báo cáo tài chính, join lớn</small></div>
+            <span class="arrow">Spectrum</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 lịch sử 5 năm<small>không nạp vào cluster</small></div>
+            <span class="arrow">tìm kiếm</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Elasticsearch-Service.svg" alt="">OpenSearch<small>ô tìm sản phẩm full-text</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 6.</b> Một hệ thống thực tế thường dùng <b>nhiều</b> dịch vụ: clickstream qua Firehose vào S3 (Parquet, partition theo ngày) → Glue Data Catalog + Lake Formation → Athena cho truy vấn ad-hoc và QuickSight (SPICE, RLS) cho dashboard; dữ liệu đơn hàng từ Aurora vào Redshift cho báo cáo phức tạp, Redshift Spectrum đọc dữ liệu lịch sử trên S3; OpenSearch phục vụ ô tìm kiếm sản phẩm.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – cặp hay bị nhầm</span>
+        <ul>
+          <li><b>Athena vs Redshift Spectrum</b>: cả hai đọc S3 bằng SQL qua Glue Data Catalog. Không có Redshift ⇒ <b>Athena</b>; đã có Redshift và cần <b>join với bảng trong warehouse</b> ⇒ <b>Spectrum</b>.</li>
+          <li><b>Glue vs EMR</b>: ETL serverless, ít vận hành ⇒ <b>Glue</b>; framework tùy biến, toàn quyền cấu hình, tận dụng Spot ⇒ <b>EMR</b>.</li>
+          <li><b>Athena vs OpenSearch</b> cho log: SQL ad-hoc, rẻ, lưu S3 ⇒ <b>Athena</b>; tìm kiếm full-text, dashboard gần real-time, cảnh báo ⇒ <b>OpenSearch</b>.</li>
+          <li><b>Lake Formation vs IAM/S3 policy</b>: cần mức <b>cột/hàng/ô</b> hay quản trị tập trung nhiều account ⇒ <b>Lake Formation</b>.</li>
+          <li><b>QuickSight RLS vs Lake Formation</b>: hạn chế trong <b>dashboard</b> ⇒ QuickSight RLS; hạn chế ở <b>tầng data lake</b> cho mọi engine ⇒ Lake Formation.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải thuộc</span>
+        <ul>
+          <li><b>Data lake</b> = S3 + Glue Data Catalog + Lake Formation (schema-on-read, mọi loại dữ liệu). <b>Data warehouse</b> = Redshift (OLAP, schema-on-write, join lớn, BI).</li>
+          <li><b>Athena</b>: SQL serverless trên S3, trả theo <b>dữ liệu quét</b> ⇒ giảm chi phí bằng <b>Parquet/ORC + nén + partition</b> (Hive-style + <code>MSCK REPAIR TABLE</code>, hoặc partition projection); <b>workgroup</b> giới hạn dữ liệu quét/tách team; <b>Federated Query</b> qua connector (Lambda) cho DynamoDB, RDS, Redshift…; CTAS để đổi định dạng.</li>
+          <li><b>Glue</b>: Data Catalog (1/account/Region, chỉ metadata), <b>crawler</b> (classifier → bảng/partition), <b>ETL job</b> Spark serverless (DPU), trigger/workflow, <b>job bookmark</b> (mặc định Disable) để xử lý tăng dần, Studio (visual), <b>DataBrew</b> (no-code), FindMatches.</li>
+          <li><b>Lake Formation</b>: lớp quyền trên Data Catalog + S3; grant/revoke kiểu RDBMS mức <b>database/bảng/cột/hàng/ô</b> (data filters); <b>LF-Tags</b>; credential vending; cross-account qua <b>RAM</b> + resource link; audit CloudTrail.</li>
+          <li><b>Redshift</b>: leader + compute node (slice), MPP, columnar; <b>RA3/RG</b> managed storage (scale compute/storage độc lập), DC2 &lt; 1 TB; <b>Serverless</b> (không phí khi idle); <b>Spectrum</b> truy vấn S3 không cần nạp (cùng Region, chỉ đọc); <b>concurrency scaling</b>; snapshot tự động ~8 giờ/5 GB-node, retention 1–35 ngày, manual giữ vô hạn, cross-Region copy cho DR; nạp bằng <code>COPY</code>.</li>
+          <li><b>EMR</b>: Hadoop/Spark/Hive/HBase/Presto; <b>primary</b> (điều phối), <b>core</b> (task + HDFS), <b>task</b> (chỉ tính toán ⇒ <b>Spot</b>); HDFS ephemeral, dữ liệu bền ở <b>S3 (EMRFS)</b>; transient cluster auto-terminate; EMR Serverless (pre-initialized capacity), EMR on EKS.</li>
+          <li><b>OpenSearch</b>: full-text search + log analytics + Dashboards; domain Multi-AZ, dedicated master; <b>UltraWarm</b> (S3, read-only, rẻ) &amp; cold; bảo mật VPC/IAM/Cognito/FGAC; <b>Serverless</b> (collection time series/search/vector, OCU).</li>
+          <li><b>QuickSight</b> (nay Amazon Quick Sight): BI dashboard, nhúng; <b>SPICE</b> in-memory (nhanh, giảm chi phí truy vấn nguồn); <b>RLS</b> (Enterprise).</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="glossary">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Data lake / Data warehouse</dt><dd><b>Hồ dữ liệu / Kho dữ liệu</b> – S3 chứa mọi định dạng (schema-on-read) / Redshift chứa dữ liệu có cấu trúc đã nạp (schema-on-write).</dd></div>
+        <div><dt>OLAP / OLTP</dt><dd><b>Xử lý phân tích / Xử lý giao dịch trực tuyến</b>.</dd></div>
+        <div><dt>ETL / ELT</dt><dd><b>Trích xuất – Biến đổi – Nạp</b> / nạp trước rồi biến đổi trong đích.</dd></div>
+        <div><dt>Amazon Athena</dt><dd><b>Truy vấn SQL tương tác serverless trên S3</b> – trả theo dữ liệu quét.</dd></div>
+        <div><dt>Columnar format (Parquet, ORC)</dt><dd><b>Định dạng lưu theo cột</b> – nén theo cột, predicate pushdown, splitting.</dd></div>
+        <div><dt>Predicate pushdown</dt><dd><b>Đẩy điều kiện lọc xuống tầng lưu trữ</b> – bỏ qua block không cần đọc.</dd></div>
+        <div><dt>Hive-style partition / MSCK REPAIR TABLE</dt><dd><b>Phân vùng dạng key=value / lệnh nạp partition mới</b>.</dd></div>
+        <div><dt>Partition projection</dt><dd><b>Dự đoán partition</b> – Athena tính partition từ cấu hình bảng.</dd></div>
+        <div><dt>CTAS</dt><dd><b>CREATE TABLE AS SELECT</b> – tạo bảng mới từ kết quả truy vấn (đổi sang Parquet).</dd></div>
+        <div><dt>Workgroup (Athena)</dt><dd><b>Nhóm làm việc</b> – tách tải, IAM, giới hạn dữ liệu quét.</dd></div>
+        <div><dt>Athena Federated Query / Data source connector</dt><dd><b>Truy vấn liên kết / Bộ kết nối nguồn</b> – SQL trên nguồn ngoài S3 (Lambda).</dd></div>
+        <div><dt>SerDe</dt><dd><b>Bộ tuần tự hóa / giải tuần tự hóa</b> – cách đọc/ghi một định dạng.</dd></div>
+        <div><dt>AWS Glue Data Catalog</dt><dd><b>Danh mục dữ liệu Glue</b> – metadata, 1/account/Region.</dd></div>
+        <div><dt>Crawler / Classifier</dt><dd><b>Trình thu thập / Bộ phân loại</b> – suy ra schema, tạo bảng &amp; partition.</dd></div>
+        <div><dt>Glue job / DPU</dt><dd><b>Tác vụ ETL / Đơn vị xử lý dữ liệu</b> – Spark serverless, tính phí theo DPU-giờ.</dd></div>
+        <div><dt>DynamicFrame</dt><dd><b>Khung dữ liệu động</b> – record tự mô tả schema.</dd></div>
+        <div><dt>Job bookmark</dt><dd><b>Dấu trang tác vụ</b> – chỉ xử lý dữ liệu mới (Enable/Disable/Pause).</dd></div>
+        <div><dt>Glue Studio / Glue DataBrew</dt><dd><b>Trình dựng ETL trực quan / Công cụ chuẩn bị dữ liệu không cần code</b>.</dd></div>
+        <div><dt>FindMatches</dt><dd><b>Khử trùng lặp bằng ML</b> trong Glue.</dd></div>
+        <div><dt>AWS Lake Formation</dt><dd><b>Quản trị &amp; phân quyền data lake</b> – grant/revoke mức cột/hàng/ô.</dd></div>
+        <div><dt>Data filter / Cell-level security</dt><dd><b>Bộ lọc dữ liệu / Bảo mật mức ô</b> – tổ hợp cột + hàng.</dd></div>
+        <div><dt>LF-Tags (LF-TBAC)</dt><dd><b>Kiểm soát truy cập dựa trên thẻ Lake Formation</b>.</dd></div>
+        <div><dt>Credential vending</dt><dd><b>Cấp phát thông tin xác thực tạm thời</b> cho engine đọc S3.</dd></div>
+        <div><dt>Resource link</dt><dd><b>Liên kết tài nguyên</b> – trỏ tới database/bảng được chia sẻ cross-account.</dd></div>
+        <div><dt>Hybrid access mode</dt><dd><b>Chế độ truy cập lai</b> – bật quyền Lake Formation dần dần cùng IAM.</dd></div>
+        <div><dt>Leader node / Compute node / Slice</dt><dd><b>Node điều phối / Node tính toán / Lát xử lý</b> trong Redshift.</dd></div>
+        <div><dt>MPP</dt><dd><b>Xử lý song song quy mô lớn</b>.</dd></div>
+        <div><dt>RA3 / Redshift managed storage</dt><dd><b>Node RA3 / Lưu trữ được quản lý</b> – SSD + S3, scale storage độc lập.</dd></div>
+        <div><dt>Redshift Serverless / RPU</dt><dd><b>Redshift không máy chủ / Đơn vị xử lý Redshift</b>.</dd></div>
+        <div><dt>Redshift Spectrum / External table</dt><dd><b>Truy vấn S3 từ Redshift / Bảng ngoài</b> – không nạp dữ liệu.</dd></div>
+        <div><dt>Concurrency scaling</dt><dd><b>Mở rộng đồng thời</b> – thêm cluster tạm khi truy vấn xếp hàng.</dd></div>
+        <div><dt>Cross-Region snapshot copy</dt><dd><b>Sao chép snapshot sang Region khác</b> – DR cho Redshift.</dd></div>
+        <div><dt>COPY / UNLOAD</dt><dd><b>Nạp song song từ S3 / Xuất kết quả ra S3</b>.</dd></div>
+        <div><dt>Primary / Core / Task node</dt><dd><b>Node chính / lõi (HDFS) / tác vụ (Spot)</b> trong EMR.</dd></div>
+        <div><dt>EMRFS</dt><dd><b>Hệ thống tệp EMR</b> – truy cập S3 như file system.</dd></div>
+        <div><dt>Transient cluster / Step</dt><dd><b>Cluster tạm thời / Bước công việc</b> – chạy xong tự terminate.</dd></div>
+        <div><dt>EMR Serverless / Pre-initialized capacity</dt><dd><b>EMR không máy chủ / Năng lực khởi tạo sẵn</b> (warm pool).</dd></div>
+        <div><dt>Domain (OpenSearch)</dt><dd><b>Miền</b> – tương đương một cluster OpenSearch.</dd></div>
+        <div><dt>Dedicated master node</dt><dd><b>Node quản lý cluster chuyên dụng</b>.</dd></div>
+        <div><dt>UltraWarm / Cold storage</dt><dd><b>Tầng ấm (S3, read-only) / Tầng lạnh</b>.</dd></div>
+        <div><dt>OpenSearch Serverless / Collection / OCU</dt><dd><b>OpenSearch không máy chủ / Bộ sưu tập index / Đơn vị tính toán</b> (6 GiB RAM).</dd></div>
+        <div><dt>OpenSearch Dashboards</dt><dd><b>Giao diện trực quan hóa</b> (tương đương Kibana).</dd></div>
+        <div><dt>Business intelligence (BI)</dt><dd><b>Trí tuệ kinh doanh</b> – dashboard, báo cáo.</dd></div>
+        <div><dt>SPICE</dt><dd><b>Engine tính toán in-memory của QuickSight</b>.</dd></div>
+        <div><dt>Row-level security (RLS)</dt><dd><b>Bảo mật mức hàng</b> – QuickSight Enterprise.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company stores Application Load Balancer access logs in an Amazon S3 bucket. The security team occasionally needs to run SQL queries against the logs to investigate incidents. The solution must be cost-effective and require the LEAST operational overhead. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Launch an Amazon EMR cluster with Apache Hive and keep it running to query the logs.</li>
+            <li data-k="B">Load the logs into an Amazon Redshift provisioned cluster every hour by using the COPY command.</li>
+            <li data-k="C">Create a table for the logs in the AWS Glue Data Catalog and query the data in place with Amazon Athena.</li>
+            <li data-k="D">Stream the logs into an Amazon OpenSearch Service domain and query them with OpenSearch Dashboards.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Athena</b> là SQL <b>serverless</b> chạy trực tiếp trên dữ liệu S3, không nạp dữ liệu, chỉ trả tiền cho truy vấn đã chạy – lý tưởng cho truy vấn <b>thỉnh thoảng (ad-hoc)</b>; bảng định nghĩa trong <b>Glue Data Catalog</b>. <b>A sai</b>: cluster EMR chạy liên tục tốn tiền và phải vận hành. <b>B sai</b>: Redshift cluster cho truy vấn thỉnh thoảng là lãng phí, thêm pipeline COPY. <b>D sai</b>: phải duy trì domain OpenSearch và pipeline nạp; hợp cho tìm kiếm/dashboard gần real-time, không phải SQL thỉnh thoảng rẻ nhất.</div>
+          <div class="trans">
+            <div class="tq">Một công ty lưu access log của Application Load Balancer trong một Amazon S3 bucket. Đội bảo mật thỉnh thoảng cần chạy truy vấn SQL trên log để điều tra sự cố. Giải pháp phải tiết kiệm chi phí và có LEAST operational overhead (ít công vận hành nhất). Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Khởi chạy một Amazon EMR cluster với Apache Hive và để nó chạy liên tục để truy vấn log.</span><span class="why">Sai: cluster EMR chạy liên tục tốn tiền cả khi không truy vấn và phải vận hành – không hợp với nhu cầu thỉnh thoảng.</span></li>
+              <li data-k="B"><span class="tv">Nạp log vào một Amazon Redshift provisioned cluster mỗi giờ bằng lệnh COPY.</span><span class="why">Sai: duy trì Redshift cluster và pipeline COPY cho truy vấn thỉnh thoảng là lãng phí và tốn công.</span></li>
+              <li data-k="C"><span class="tv">Tạo một bảng cho log trong AWS Glue Data Catalog và truy vấn dữ liệu tại chỗ bằng Amazon Athena.</span><span class="why">Đúng: Athena là SQL serverless chạy trực tiếp trên dữ liệu S3, không cần nạp dữ liệu và chỉ trả tiền theo truy vấn – lý tưởng cho truy vấn ad-hoc thỉnh thoảng.</span></li>
+              <li data-k="D"><span class="tv">Stream log vào một Amazon OpenSearch Service domain và truy vấn bằng OpenSearch Dashboards.</span><span class="why">Sai: phải duy trì domain OpenSearch và pipeline nạp liên tục; phù hợp tìm kiếm/dashboard gần real-time chứ không phải SQL thỉnh thoảng với chi phí thấp nhất.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A data analytics team uses Amazon Athena to query several terabytes of JSON clickstream data stored in Amazon S3. Most queries filter on the event date and select only a few columns. Query costs are high and performance is slow. Which TWO actions will reduce the amount of data scanned? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Convert the data to Apache Parquet format with compression.</li>
+            <li data-k="B">Increase the number of concurrent queries allowed in the Athena workgroup.</li>
+            <li data-k="C">Move the data to the S3 Glacier Flexible Retrieval storage class.</li>
+            <li data-k="D">Partition the data in S3 by event date (for example, dt=YYYY-MM-DD) and add the partitions to the table.</li>
+            <li data-k="E">Enable S3 Transfer Acceleration on the bucket.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> <b>Parquet</b> là định dạng cột: nén theo cột, Athena chỉ đọc cột được chọn và dùng <b>predicate pushdown</b> bỏ qua block (A). <b>Partition theo ngày</b> giúp truy vấn có điều kiện ngày trong WHERE chỉ quét partition tương ứng (D). <b>B sai</b>: concurrency không giảm dữ liệu quét. <b>C sai</b>: Athena không truy vấn trực tiếp object ở Glacier Flexible Retrieval – phải restore. <b>E sai</b>: Transfer Acceleration tăng tốc upload qua Internet, không liên quan truy vấn.</div>
+          <div class="trans">
+            <div class="tq">Một đội phân tích dữ liệu dùng Amazon Athena để truy vấn vài terabyte dữ liệu clickstream dạng JSON lưu trong Amazon S3. Hầu hết truy vấn lọc theo ngày sự kiện và chỉ chọn vài cột. Chi phí truy vấn cao và hiệu năng chậm. HAI hành động nào sẽ giảm lượng dữ liệu bị quét? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển dữ liệu sang định dạng Apache Parquet có nén.</span><span class="why">Đúng: Parquet là định dạng cột, nén tốt; Athena chỉ đọc các cột được chọn và bỏ qua block không khớp điều kiện, nên quét ít dữ liệu hơn nhiều.</span></li>
+              <li data-k="B"><span class="tv">Tăng số truy vấn đồng thời được phép trong Athena workgroup.</span><span class="why">Sai: tăng concurrency không làm giảm lượng dữ liệu mỗi truy vấn quét.</span></li>
+              <li data-k="C"><span class="tv">Chuyển dữ liệu sang storage class S3 Glacier Flexible Retrieval.</span><span class="why">Sai: Athena không truy vấn trực tiếp object ở Glacier Flexible Retrieval (phải restore trước), và điều này không giảm dữ liệu quét.</span></li>
+              <li data-k="D"><span class="tv">Phân vùng (partition) dữ liệu trên S3 theo ngày sự kiện (ví dụ dt=YYYY-MM-DD) và thêm các partition vào bảng.</span><span class="why">Đúng: truy vấn có điều kiện ngày trong WHERE chỉ quét các partition tương ứng thay vì toàn bộ dữ liệu.</span></li>
+              <li data-k="E"><span class="tv">Bật S3 Transfer Acceleration trên bucket.</span><span class="why">Sai: Transfer Acceleration tăng tốc upload/download qua Internet, không liên quan tới lượng dữ liệu Athena quét.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company has built a data lake on Amazon S3 with table metadata in the AWS Glue Data Catalog. Analysts query the tables with Amazon Athena. The marketing analysts must not be able to see columns that contain personally identifiable information (PII), while the finance analysts must see all columns. The company wants to manage these permissions centrally with minimal effort. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create separate S3 buckets with copies of the data that exclude PII columns, and use bucket policies for each team.</li>
+            <li data-k="B">Register the S3 location with AWS Lake Formation and grant column-level SELECT permissions on the tables to each analyst role.</li>
+            <li data-k="C">Use IAM policies with conditions on s3:prefix to deny access to the PII columns.</li>
+            <li data-k="D">Encrypt the PII columns with a separate AWS KMS key and deny the marketing team access to the key.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Lake Formation</b> cung cấp quyền kiểu RDBMS (grant/revoke) tới mức <b>cột</b> (và hàng/ô qua data filter) trên bảng Data Catalog, thực thi khi truy vấn qua Athena – quản lý tập trung. <b>A sai</b>: nhân bản dữ liệu, tốn công và dễ lệch. <b>C sai</b>: IAM/S3 chỉ kiểm soát tới object/prefix, không ẩn được cột bên trong file. <b>D sai</b>: S3/Athena không mã hóa riêng từng cột theo cách này; phức tạp và không phải cơ chế phân quyền cột.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đã xây dựng data lake trên Amazon S3 với metadata bảng trong AWS Glue Data Catalog. Analyst truy vấn các bảng bằng Amazon Athena. Analyst marketing không được thấy các cột chứa thông tin định danh cá nhân (PII), trong khi analyst tài chính phải thấy mọi cột. Công ty muốn quản lý tập trung các quyền này với ít công sức nhất. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo các S3 bucket riêng chứa bản sao dữ liệu đã loại bỏ cột PII, và dùng bucket policy cho từng đội.</span><span class="why">Sai: nhân bản dữ liệu tốn công duy trì, dễ lệch dữ liệu và không phải quản lý quyền tập trung.</span></li>
+              <li data-k="B"><span class="tv">Đăng ký S3 location với AWS Lake Formation và cấp quyền SELECT ở mức cột trên các bảng cho role của từng nhóm analyst.</span><span class="why">Đúng: Lake Formation cấp quyền kiểu grant/revoke tới mức cột trên bảng Data Catalog và được thực thi khi truy vấn qua Athena – quản lý tập trung, ít công.</span></li>
+              <li data-k="C"><span class="tv">Dùng IAM policy với điều kiện trên s3:prefix để từ chối truy cập các cột PII.</span><span class="why">Sai: IAM/S3 chỉ kiểm soát tới mức object/prefix, không thể ẩn các cột nằm bên trong file.</span></li>
+              <li data-k="D"><span class="tv">Mã hóa các cột PII bằng một AWS KMS key riêng và từ chối đội marketing truy cập key đó.</span><span class="why">Sai: S3/Athena không mã hóa riêng từng cột theo cách này; phức tạp và không phải cơ chế phân quyền cột.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A retail company runs an Amazon Redshift cluster that stores the most recent 12 months of sales data. Five years of older sales data is stored in Amazon S3 in Parquet format. Analysts occasionally need to run queries that join current data in Redshift with the historical data. The company does not want to increase the size of the cluster. Which solution meets these requirements MOST cost-effectively?</div>
+          <ol class="opts">
+            <li data-k="A">Load the historical data into the Redshift cluster with the COPY command and add nodes.</li>
+            <li data-k="B">Export the Redshift tables to S3 every night and query everything with Amazon EMR.</li>
+            <li data-k="C">Migrate the historical data to Amazon DynamoDB and use DynamoDB Streams to feed Redshift.</li>
+            <li data-k="D">Define external tables for the historical data in the AWS Glue Data Catalog and query them with Amazon Redshift Spectrum, joining them with local Redshift tables.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Redshift Spectrum</b> truy vấn trực tiếp file S3 <b>mà không cần nạp</b> vào cluster; xử lý lọc/aggregation diễn ra ở tầng Spectrum độc lập với cluster, và có thể <b>join</b> external table với bảng cục bộ. Định nghĩa bảng nằm trong Glue Data Catalog. <b>A sai</b>: tăng kích thước cluster – trái yêu cầu. <b>B sai</b>: thêm pipeline export và cluster EMR, vận hành nhiều. <b>C sai</b>: DynamoDB không phải kho phân tích, không hợp lý.</div>
+          <div class="trans">
+            <div class="tq">Một công ty bán lẻ chạy một Amazon Redshift cluster lưu dữ liệu bán hàng 12 tháng gần nhất. Dữ liệu bán hàng cũ hơn trong 5 năm được lưu trên Amazon S3 ở định dạng Parquet. Analyst thỉnh thoảng cần chạy truy vấn join dữ liệu hiện tại trong Redshift với dữ liệu lịch sử. Công ty không muốn tăng kích thước cluster. Giải pháp nào đáp ứng các yêu cầu này MOST cost-effectively (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Nạp dữ liệu lịch sử vào Redshift cluster bằng lệnh COPY và thêm node.</span><span class="why">Sai: thêm node chính là tăng kích thước cluster – trái yêu cầu, và tốn chi phí lưu trữ dữ liệu ít dùng.</span></li>
+              <li data-k="B"><span class="tv">Export các bảng Redshift sang S3 mỗi đêm và truy vấn mọi thứ bằng Amazon EMR.</span><span class="why">Sai: thêm pipeline export và cluster EMR, tốn công vận hành và chi phí.</span></li>
+              <li data-k="C"><span class="tv">Chuyển dữ liệu lịch sử sang Amazon DynamoDB và dùng DynamoDB Streams để đẩy vào Redshift.</span><span class="why">Sai: DynamoDB không phải kho phân tích, và đẩy dữ liệu vào Redshift vẫn làm tăng dữ liệu trên cluster.</span></li>
+              <li data-k="D"><span class="tv">Định nghĩa external table cho dữ liệu lịch sử trong AWS Glue Data Catalog và truy vấn bằng Amazon Redshift Spectrum, join với các bảng cục bộ của Redshift.</span><span class="why">Đúng: Redshift Spectrum truy vấn trực tiếp file Parquet trên S3 mà không nạp vào cluster và join được với bảng cục bộ, nên không cần tăng kích thước cluster.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company runs nightly Apache Spark batch jobs on Amazon EMR. Input and output data are stored in Amazon S3. The jobs can tolerate the loss of some compute capacity, but the cluster itself must not fail. The company wants to reduce compute costs as much as possible. Which configuration should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Use On-Demand Instances for the primary and core nodes, and Spot Instances for task nodes. Configure the cluster to terminate automatically after the steps complete.</li>
+            <li data-k="B">Use Spot Instances for the primary, core, and task nodes, and keep the cluster running continuously.</li>
+            <li data-k="C">Use Spot Instances for the primary node and On-Demand Instances for the core and task nodes.</li>
+            <li data-k="D">Store all input data in HDFS on the core nodes and use Dedicated Hosts for all nodes.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Task node</b> chỉ chạy task, không lưu HDFS – tài liệu nêu Spot thường dùng cho task node và EMR chỉ đặt application master trên core node để job không fail khi task node Spot bị thu hồi. Primary/core dùng On-Demand để cluster ổn định; dữ liệu ở S3 nên dùng <b>transient cluster</b> auto-terminate tiết kiệm thêm. <b>B sai</b>: primary/core trên Spot có thể làm hỏng cả cluster; chạy liên tục lãng phí. <b>C sai</b>: đặt primary (điểm sống còn) trên Spot là ngược. <b>D sai</b>: HDFS là ephemeral, Dedicated Hosts đắt nhất.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy các batch job Apache Spark hằng đêm trên Amazon EMR. Dữ liệu đầu vào và đầu ra được lưu trên Amazon S3. Các job chịu được việc mất một phần capacity tính toán, nhưng bản thân cluster không được hỏng. Công ty muốn giảm chi phí compute nhiều nhất có thể. Solutions architect nên đề xuất cấu hình nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng On-Demand Instances cho primary node và core node, và Spot Instances cho task node. Cấu hình cluster tự động terminate sau khi các step hoàn thành.</span><span class="why">Đúng: task node không lưu HDFS nên dùng Spot an toàn và rẻ; primary/core On-Demand giữ cluster ổn định; dữ liệu ở S3 nên transient cluster tự terminate tiết kiệm thêm.</span></li>
+              <li data-k="B"><span class="tv">Dùng Spot Instances cho primary, core và task node, và để cluster chạy liên tục.</span><span class="why">Sai: primary/core trên Spot bị thu hồi có thể làm hỏng cả cluster, và chạy liên tục cho job hằng đêm là lãng phí.</span></li>
+              <li data-k="C"><span class="tv">Dùng Spot Instances cho primary node và On-Demand Instances cho core và task node.</span><span class="why">Sai: đặt primary node – thành phần sống còn của cluster – trên Spot là ngược, mất primary là mất cluster.</span></li>
+              <li data-k="D"><span class="tv">Lưu toàn bộ dữ liệu đầu vào trong HDFS trên core node và dùng Dedicated Hosts cho mọi node.</span><span class="why">Sai: HDFS là lưu trữ tạm (ephemeral), còn Dedicated Hosts là lựa chọn đắt nhất – ngược với mục tiêu giảm chi phí.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">An AWS Glue ETL job runs every hour to transform new CSV files that arrive in an S3 prefix and write them as Parquet to another bucket. The team notices that every run processes all files in the prefix again, which creates duplicate records and increases cost. What is the MOST operationally efficient way to fix this?</div>
+          <ol class="opts">
+            <li data-k="A">Write an AWS Lambda function that moves processed files to another prefix after each job run.</li>
+            <li data-k="B">Run the AWS Glue crawler before each job run.</li>
+            <li data-k="C">Enable job bookmarks for the AWS Glue job.</li>
+            <li data-k="D">Increase the number of DPUs allocated to the job.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Job bookmark</b> lưu trạng thái lần chạy trước (với S3 dựa trên last modified time) để lần sau <b>chỉ xử lý dữ liệu mới</b>, tránh trùng lặp – mặc định là <b>Disable</b> nên job xử lý toàn bộ. <b>A sai</b>: làm được nhưng thêm code, thêm thành phần vận hành. <b>B sai</b>: crawler chỉ cập nhật metadata, không theo dõi file đã xử lý. <b>D sai</b>: thêm DPU chạy nhanh hơn nhưng vẫn xử lý lại toàn bộ và tốn tiền hơn.</div>
+          <div class="trans">
+            <div class="tq">Một AWS Glue ETL job chạy mỗi giờ để biến đổi các file CSV mới đổ về một S3 prefix và ghi chúng thành Parquet sang một bucket khác. Đội nhận thấy mỗi lần chạy đều xử lý lại toàn bộ file trong prefix, gây ra bản ghi trùng lặp và tăng chi phí. Cách khắc phục MOST operationally efficient (hiệu quả vận hành nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Viết một AWS Lambda function di chuyển các file đã xử lý sang prefix khác sau mỗi lần job chạy.</span><span class="why">Sai: làm được nhưng phải viết thêm code và vận hành thêm thành phần, kém hiệu quả hơn tính năng có sẵn của Glue.</span></li>
+              <li data-k="B"><span class="tv">Chạy AWS Glue crawler trước mỗi lần job chạy.</span><span class="why">Sai: crawler chỉ cập nhật metadata/schema, không theo dõi file nào đã được xử lý.</span></li>
+              <li data-k="C"><span class="tv">Bật job bookmarks cho AWS Glue job.</span><span class="why">Đúng: job bookmark lưu trạng thái lần chạy trước để lần sau chỉ xử lý dữ liệu mới, loại bỏ trùng lặp mà không cần code thêm (mặc định đang tắt).</span></li>
+              <li data-k="D"><span class="tv">Tăng số DPU cấp cho job.</span><span class="why">Sai: thêm DPU chỉ giúp chạy nhanh hơn nhưng vẫn xử lý lại toàn bộ file và còn tốn tiền hơn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">An e-commerce application stores its product catalog in Amazon DynamoDB. The company wants to add a search box that supports full-text search with relevance ranking and partial word matching across product names and descriptions. Changes to products must be searchable within seconds. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create a global secondary index on the product description attribute and use Scan operations with filter expressions.</li>
+            <li data-k="B">Enable DynamoDB Streams and use an AWS Lambda function to index item changes into an Amazon OpenSearch Service domain; query OpenSearch from the search box.</li>
+            <li data-k="C">Export the table to Amazon S3 every day and query it with Amazon Athena.</li>
+            <li data-k="D">Load the catalog into Amazon Redshift and use LIKE queries from the application.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>OpenSearch Service</b> được thiết kế cho <b>full-text search</b> (inverted index, xếp hạng mức liên quan, khớp một phần). <b>DynamoDB Streams → Lambda → OpenSearch</b> giữ index đồng bộ trong vài giây. <b>A sai</b>: Scan + filter đọc toàn bảng, chậm, đắt, không có xếp hạng. <b>C sai</b>: export hằng ngày không đáp ứng “vài giây”, Athena không phải engine tìm kiếm cho ứng dụng. <b>D sai</b>: Redshift là OLAP, LIKE không phải full-text search, độ trễ/tải không hợp cho ô tìm kiếm.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng thương mại điện tử lưu danh mục sản phẩm trong Amazon DynamoDB. Công ty muốn thêm một ô tìm kiếm hỗ trợ tìm kiếm toàn văn (full-text search) có xếp hạng mức độ liên quan và khớp một phần từ trên tên và mô tả sản phẩm. Các thay đổi về sản phẩm phải tìm kiếm được trong vòng vài giây. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một global secondary index trên thuộc tính mô tả sản phẩm và dùng thao tác Scan với filter expression.</span><span class="why">Sai: Scan với filter đọc toàn bảng, chậm và đắt, không có full-text search hay xếp hạng mức độ liên quan.</span></li>
+              <li data-k="B"><span class="tv">Bật DynamoDB Streams và dùng một AWS Lambda function để index các thay đổi item vào một Amazon OpenSearch Service domain; ô tìm kiếm truy vấn OpenSearch.</span><span class="why">Đúng: OpenSearch được thiết kế cho full-text search có xếp hạng và khớp một phần, còn luồng DynamoDB Streams → Lambda giữ index đồng bộ trong vài giây.</span></li>
+              <li data-k="C"><span class="tv">Export bảng sang Amazon S3 mỗi ngày và truy vấn bằng Amazon Athena.</span><span class="why">Sai: export hằng ngày không đáp ứng yêu cầu vài giây, và Athena không phải engine tìm kiếm cho ứng dụng.</span></li>
+              <li data-k="D"><span class="tv">Nạp danh mục vào Amazon Redshift và dùng truy vấn LIKE từ ứng dụng.</span><span class="why">Sai: Redshift là kho OLAP, LIKE không phải full-text search có xếp hạng, và độ trễ không hợp với ô tìm kiếm của ứng dụng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company’s Amazon QuickSight dashboards query Amazon Athena directly. Hundreds of business users open the dashboards throughout the day. The underlying data is refreshed once per day. Dashboard load times are slow and Athena costs are increasing. What should a solutions architect do to improve performance and reduce cost?</div>
+          <ol class="opts">
+            <li data-k="A">Migrate the data to Amazon OpenSearch Service and rebuild the dashboards in OpenSearch Dashboards.</li>
+            <li data-k="B">Increase the Athena workgroup data usage limit.</li>
+            <li data-k="C">Create a separate Athena workgroup for each business user.</li>
+            <li data-k="D">Import the datasets into QuickSight SPICE and schedule a daily refresh.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>SPICE</b> là engine in-memory của QuickSight: truy vấn phân tích nhanh hơn và dữ liệu SPICE <b>dùng lại nhiều lần không tốn thêm</b> – Athena chỉ bị tính phí khi tạo và khi <b>refresh</b> dataset (ở đây 1 lần/ngày). <b>A sai</b>: thay toàn bộ nền tảng, nhiều công, không cần thiết. <b>B sai</b>: tăng giới hạn chỉ cho phép tốn thêm tiền, không tăng tốc. <b>C sai</b>: workgroup tách tải/quyền, không giảm dữ liệu quét hay tăng tốc dashboard.</div>
+          <div class="trans">
+            <div class="tq">Các dashboard Amazon QuickSight của một công ty truy vấn trực tiếp Amazon Athena. Hàng trăm người dùng nghiệp vụ mở dashboard suốt cả ngày. Dữ liệu nền được làm mới mỗi ngày một lần. Dashboard tải chậm và chi phí Athena đang tăng. Solutions architect nên làm gì để cải thiện hiệu năng và giảm chi phí?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển dữ liệu sang Amazon OpenSearch Service và dựng lại dashboard trong OpenSearch Dashboards.</span><span class="why">Sai: thay toàn bộ nền tảng tốn rất nhiều công trong khi QuickSight đã có giải pháp sẵn.</span></li>
+              <li data-k="B"><span class="tv">Tăng giới hạn lượng dữ liệu sử dụng (data usage limit) của Athena workgroup.</span><span class="why">Sai: tăng giới hạn chỉ cho phép tốn thêm tiền, không làm dashboard nhanh hơn.</span></li>
+              <li data-k="C"><span class="tv">Tạo một Athena workgroup riêng cho mỗi người dùng nghiệp vụ.</span><span class="why">Sai: workgroup chỉ tách tải và quyền, không giảm dữ liệu quét hay tăng tốc dashboard.</span></li>
+              <li data-k="D"><span class="tv">Import các dataset vào QuickSight SPICE và lên lịch refresh hằng ngày.</span><span class="why">Đúng: SPICE là engine in-memory giúp dashboard nhanh, dữ liệu được dùng lại nhiều lần mà Athena chỉ bị tính phí khi refresh (1 lần/ngày, khớp với chu kỳ làm mới dữ liệu).</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company receives new datasets in CSV format in Amazon S3 from several partners. The schemas change occasionally. The company needs to automatically discover and catalog the schemas so the data can be queried with Amazon Athena, and must convert the CSV files to Apache Parquet every night. The solution must be serverless and require the LEAST operational overhead. Which TWO steps should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Launch a long-running Amazon EMR cluster with a Hive metastore to store the schemas.</li>
+            <li data-k="B">Configure an AWS Glue crawler on a schedule to populate the AWS Glue Data Catalog.</li>
+            <li data-k="C">Write an AWS Lambda function that parses each CSV header and creates Athena tables with DDL statements.</li>
+            <li data-k="D">Load the CSV files into Amazon Redshift with the COPY command and unload them as Parquet.</li>
+            <li data-k="E">Create an AWS Glue ETL job with a scheduled trigger that converts the CSV data to Parquet.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> <b>Glue crawler</b> chạy theo lịch tự suy ra schema (kể cả khi thay đổi) và ghi bảng vào <b>Data Catalog</b> mà Athena dùng (B). <b>Glue ETL job</b> (Spark serverless) với <b>scheduled trigger</b> chuyển CSV → Parquet mỗi đêm (E). <b>A sai</b>: EMR long-running không serverless, nhiều vận hành. <b>C sai</b>: tự viết code suy schema, khó bảo trì khi schema thay đổi. <b>D sai</b>: dùng Redshift làm công cụ chuyển định dạng là tốn kém và không cần thiết.</div>
+          <div class="trans">
+            <div class="tq">Một công ty nhận các dataset mới định dạng CSV trên Amazon S3 từ nhiều đối tác. Schema thỉnh thoảng thay đổi. Công ty cần tự động phát hiện và lập danh mục (catalog) schema để dữ liệu có thể truy vấn bằng Amazon Athena, và phải chuyển các file CSV sang Apache Parquet mỗi đêm. Giải pháp phải serverless và có LEAST operational overhead (ít công vận hành nhất). Solutions architect nên thực hiện HAI bước nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Khởi chạy một Amazon EMR cluster chạy lâu dài (long-running) với Hive metastore để lưu schema.</span><span class="why">Sai: EMR long-running không serverless và tốn công vận hành.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình một AWS Glue crawler chạy theo lịch để điền dữ liệu vào AWS Glue Data Catalog.</span><span class="why">Đúng: crawler chạy định kỳ tự suy ra schema (kể cả khi thay đổi) và ghi bảng vào Data Catalog mà Athena sử dụng.</span></li>
+              <li data-k="C"><span class="tv">Viết một AWS Lambda function phân tích header của từng file CSV và tạo bảng Athena bằng câu lệnh DDL.</span><span class="why">Sai: tự viết code suy schema khó bảo trì khi schema thay đổi, nhiều công hơn crawler có sẵn.</span></li>
+              <li data-k="D"><span class="tv">Nạp file CSV vào Amazon Redshift bằng lệnh COPY rồi unload ra dạng Parquet.</span><span class="why">Sai: dùng Redshift làm công cụ chuyển định dạng là tốn kém và không cần thiết.</span></li>
+              <li data-k="E"><span class="tv">Tạo một AWS Glue ETL job với scheduled trigger để chuyển dữ liệu CSV sang Parquet.</span><span class="why">Đúng: Glue ETL job là Spark serverless, scheduled trigger chạy chuyển đổi CSV sang Parquet mỗi đêm mà không phải quản lý hạ tầng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company uses an Amazon Redshift RA3 cluster for business reporting. At the start of each month, hundreds of analysts run dashboards and reports at the same time, and queries wait in queues for several minutes. For the rest of the month, the cluster is underutilized. The company wants consistent query performance during peaks without permanently resizing the cluster. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Turn on concurrency scaling for the relevant workload management (WLM) queues.</li>
+            <li data-k="B">Enable cross-Region snapshot copy and restore a second cluster each month.</li>
+            <li data-k="C">Convert the cluster to DC2 nodes to increase local SSD storage.</li>
+            <li data-k="D">Move the data to Amazon S3 and query it with Amazon Athena from the dashboards.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Concurrency scaling</b> tự thêm capacity cluster tạm khi số truy vấn vượt khả năng của queue, hỗ trợ hàng nghìn truy vấn đồng thời, và <b>chỉ tính phí khi cluster tạm đang chạy truy vấn</b> – đúng cho đỉnh tải định kỳ. <b>B sai</b>: cross-Region snapshot copy là cho DR; restore cluster thứ hai thủ công mỗi tháng nhiều vận hành. <b>C sai</b>: DC2 dành cho dữ liệu &lt; 1 TB, đổi node type không giải quyết hàng đợi đồng thời. <b>D sai</b>: thay đổi kiến trúc lớn; báo cáo join phức tạp nhiều người dùng vẫn hợp Redshift.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng Amazon Redshift RA3 cluster cho báo cáo nghiệp vụ. Vào đầu mỗi tháng, hàng trăm analyst chạy dashboard và báo cáo cùng lúc, và truy vấn phải chờ trong hàng đợi vài phút. Thời gian còn lại của tháng, cluster ít được dùng. Công ty muốn hiệu năng truy vấn ổn định trong giờ cao điểm mà không phải thay đổi kích thước cluster vĩnh viễn. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật concurrency scaling cho các hàng đợi workload management (WLM) liên quan.</span><span class="why">Đúng: concurrency scaling tự thêm capacity tạm khi truy vấn vượt khả năng của queue và chỉ tính phí khi capacity tạm đang chạy – đúng cho đỉnh tải định kỳ mà không resize vĩnh viễn.</span></li>
+              <li data-k="B"><span class="tv">Bật cross-Region snapshot copy và restore một cluster thứ hai mỗi tháng.</span><span class="why">Sai: cross-Region snapshot copy dành cho DR; restore thủ công một cluster thứ hai mỗi tháng tốn công vận hành.</span></li>
+              <li data-k="C"><span class="tv">Chuyển cluster sang node DC2 để tăng dung lượng SSD cục bộ.</span><span class="why">Sai: DC2 dành cho dữ liệu nhỏ (dưới 1 TB), và đổi node type không giải quyết hàng đợi truy vấn đồng thời.</span></li>
+              <li data-k="D"><span class="tv">Chuyển dữ liệu sang Amazon S3 và truy vấn bằng Amazon Athena từ các dashboard.</span><span class="why">Sai: thay đổi kiến trúc lớn không cần thiết; báo cáo join phức tạp cho nhiều người dùng vẫn phù hợp với Redshift.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/athena/latest/ug/when-should-i-use-ate.html" target="_blank" rel="noopener">When should I use Athena? (Athena vs EMR vs Redshift)</a></li>
+        <li><a href="https://docs.aws.amazon.com/athena/latest/ug/columnar-storage.html" target="_blank" rel="noopener">Use columnar storage formats (Athena)</a></li>
+        <li><a href="https://docs.aws.amazon.com/athena/latest/ug/partitions.html" target="_blank" rel="noopener">Partition your data (Athena)</a></li>
+        <li><a href="https://docs.aws.amazon.com/athena/latest/ug/performance-tuning.html" target="_blank" rel="noopener">Optimize Athena performance</a></li>
+        <li><a href="https://docs.aws.amazon.com/athena/latest/ug/workgroups-manage-queries-control-costs.html" target="_blank" rel="noopener">Use workgroups to control query access and costs</a></li>
+        <li><a href="https://docs.aws.amazon.com/athena/latest/ug/federated-queries.html" target="_blank" rel="noopener">Use Amazon Athena Federated Query</a></li>
+        <li><a href="https://docs.aws.amazon.com/glue/latest/dg/components-key-concepts.html" target="_blank" rel="noopener">AWS Glue concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/glue/latest/dg/add-crawler.html" target="_blank" rel="noopener">Using crawlers to populate the Data Catalog</a></li>
+        <li><a href="https://docs.aws.amazon.com/glue/latest/dg/monitor-continuations.html" target="_blank" rel="noopener">Tracking processed data using job bookmarks</a></li>
+        <li><a href="https://docs.aws.amazon.com/lake-formation/latest/dg/how-it-works.html" target="_blank" rel="noopener">AWS Lake Formation: How it works</a></li>
+        <li><a href="https://docs.aws.amazon.com/lake-formation/latest/dg/cross-account-permissions.html" target="_blank" rel="noopener">Cross-account data sharing in Lake Formation</a></li>
+        <li><a href="https://docs.aws.amazon.com/redshift/latest/mgmt/working-with-clusters.html" target="_blank" rel="noopener">Amazon Redshift provisioned clusters</a></li>
+        <li><a href="https://docs.aws.amazon.com/redshift/latest/mgmt/serverless-whatis.html" target="_blank" rel="noopener">What is Amazon Redshift Serverless?</a></li>
+        <li><a href="https://docs.aws.amazon.com/redshift/latest/dg/c-using-spectrum.html" target="_blank" rel="noopener">Amazon Redshift Spectrum</a></li>
+        <li><a href="https://docs.aws.amazon.com/redshift/latest/dg/c-spectrum-overview.html" target="_blank" rel="noopener">Amazon Redshift Spectrum overview</a></li>
+        <li><a href="https://docs.aws.amazon.com/redshift/latest/dg/concurrency-scaling.html" target="_blank" rel="noopener">Concurrency scaling (Redshift)</a></li>
+        <li><a href="https://docs.aws.amazon.com/redshift/latest/mgmt/working-with-snapshots.html" target="_blank" rel="noopener">Amazon Redshift snapshots and backups</a></li>
+        <li><a href="https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-overview.html" target="_blank" rel="noopener">Understanding how to create and work with Amazon EMR clusters</a></li>
+        <li><a href="https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-overview-arch.html" target="_blank" rel="noopener">Amazon EMR architecture and service layers</a></li>
+        <li><a href="https://docs.aws.amazon.com/emr/latest/EMR-Serverless-UserGuide/emr-serverless.html" target="_blank" rel="noopener">What is Amazon EMR Serverless?</a></li>
+        <li><a href="https://docs.aws.amazon.com/opensearch-service/latest/developerguide/ultrawarm.html" target="_blank" rel="noopener">UltraWarm storage for Amazon OpenSearch Service</a></li>
+        <li><a href="https://docs.aws.amazon.com/opensearch-service/latest/developerguide/serverless-overview.html" target="_blank" rel="noopener">What is Amazon OpenSearch Serverless?</a></li>
+        <li><a href="https://docs.aws.amazon.com/quicksight/latest/user/welcome.html" target="_blank" rel="noopener">What is Amazon Quick (QuickSight)?</a></li>
+        <li><a href="https://docs.aws.amazon.com/quicksight/latest/user/spice.html" target="_blank" rel="noopener">Importing data into SPICE</a></li>
+        <li><a href="https://docs.aws.amazon.com/quicksight/latest/user/restrict-access-to-a-data-set-using-row-level-security.html" target="_blank" rel="noopener">Using row-level security with user-based rules</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

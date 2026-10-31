@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 11 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Elastic-Block-Store.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="11" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <span class="t" data-vi="Kho lưu trữ khối co giãn">Amazon Elastic Block Store (EBS)</span> là gì: volume gắn qua mạng, <b>gắn với một Availability Zone</b>, tồn tại độc lập với vòng đời instance, được nhân bản trong AZ.</li>
+          <li>Chọn đúng <span class="t" data-vi="Loại ổ đĩa">volume type</span>: <b>gp3 / gp2</b> (đa dụng), <b>io2 Block Express / io1</b> (IOPS cao, độ trễ thấp), <b>st1 / sc1</b> (HDD theo throughput) – kèm các con số giới hạn hay thi.</li>
+          <li>Nắm cơ chế <span class="t" data-vi="Bản chụp ổ đĩa">EBS snapshot</span>: incremental, lưu trên S3, copy sang Region/account khác, <b>fast snapshot restore</b>, <b>Snapshots Archive</b>, initialization và tự động hóa bằng Data Lifecycle Manager / AWS Backup.</li>
+          <li>Biết khi nào dùng <span class="t" data-vi="Gắn một ổ vào nhiều máy">Multi-Attach</span> (chỉ io1/io2, ≤ 16 Nitro instance, cùng AZ, cần clustered file system).</li>
+          <li>Áp dụng <span class="t" data-vi="Mã hóa EBS">EBS encryption</span> với AWS KMS, <b>encryption by default</b>, và quy trình mã hóa một volume <b>đang không mã hóa</b>.</li>
+          <li>Phân biệt <span class="t" data-vi="Ổ đĩa tạm gắn trên máy chủ vật lý">instance store</span> với EBS: dữ liệu mất khi stop/hibernate/terminate, IOPS rất cao, miễn phí – dùng cho cache, buffer, scratch, dữ liệu đã được nhân bản.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 2 – Compute</span>
+        <p>Bài 8 đã dạy <b>root volume</b>, cờ <code>DeleteOnTermination</code>, EBS-backed vs S3-backed AMI, hibernate (RAM được ghi vào root EBS mã hóa), chia sẻ AMI có snapshot mã hóa và <b>Recycle Bin</b>. Bài 10 dạy mạng của instance. Bài này đi sâu vào <b>lưu trữ khối (block storage)</b> của EC2. Các lựa chọn lưu trữ khác – <b>Amazon EFS, FSx</b> (file storage dùng chung giữa nhiều instance/AZ), <b>Amazon S3</b> (object storage) – học ở Module 3; <b>AWS Backup</b> chi tiết ở Module 10.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Storage.svg" alt="">Bức tranh tổng thể: block storage cho EC2</h2>
+      <p class="lead">Một EC2 instance cần “ổ cứng” để chứa hệ điều hành, ứng dụng và dữ liệu. AWS cung cấp hai loại <span class="t" data-vi="Lưu trữ khối">block storage</span> gắn trực tiếp vào instance: <b>Amazon EBS volume</b> – ổ đĩa <b>bền vững</b> gắn <b>qua mạng</b>, và <b>instance store</b> – ổ đĩa <b>tạm thời</b> gắn <b>vật lý</b> trên máy chủ host. Ngoài ra, <b>EBS snapshot</b> là bản sao lưu point-in-time của EBS volume, lưu trong Amazon S3. Đề SAA-C03 hỏi các mảnh này ở Domain 2 (resilient – snapshot, DR) và Domain 3 (high-performing – chọn volume type, IOPS/throughput).</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Elastic-Block-Store.svg" alt="">
+          <div><h4>Amazon EBS</h4><span class="vi">Lưu trữ khối bền vững</span><p>Volume + snapshot. Trả tiền theo dung lượng/hiệu năng <b>đã provision</b>, không theo dung lượng đã dùng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume-gp3.svg" alt="">
+          <div><h4>EBS volume</h4><span class="vi">Ổ đĩa ảo qua mạng</span><p>Gắn vào instance <b>cùng AZ</b>; dùng như ổ cứng cắm vào máy; tồn tại độc lập với instance.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">
+          <div><h4>EBS snapshot</h4><span class="vi">Bản sao lưu incremental</span><p>Lưu trong S3 (không truy cập trực tiếp), nhân bản mọi AZ trong Region; restore ra volume ở AZ bất kỳ.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Multiple-Volumes.svg" alt="">
+          <div><h4>Multi-Attach</h4><span class="vi">Một volume – nhiều instance</span><p>Chỉ io1/io2; tới 16 Nitro instance cùng AZ; cần clustered file system.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">
+          <div><h4>EBS encryption</h4><span class="vi">Mã hóa bằng AWS KMS</span><p>Mã hóa data at rest, data in transit giữa instance–volume và snapshot. Mọi instance type hỗ trợ.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_I3-Instance.svg" alt="">
+          <div><h4>Instance store</h4><span class="vi">Ổ tạm trên host</span><p>Miễn phí (tính trong giá instance); mất dữ liệu khi stop/hibernate/terminate. Ổ NVMe SSD rất nhanh.</p></div></div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><b>64 TiB</b><span>kích thước tối đa gp3 &amp; io2 Block Express (gp2, io1, st1, sc1: 16 TiB)</span></div>
+        <div class="stat"><b>256.000</b><span>IOPS tối đa / volume io2 Block Express (gp3: 80.000; gp2: 16.000)</span></div>
+        <div class="stat"><b>4.000 MiB/s</b><span>throughput tối đa io2 Block Express (gp3: 2.000 MiB/s)</span></div>
+        <div class="stat"><b>99,999%</b><span>độ bền io2 Block Express (các loại khác 99,8–99,9%)</span></div>
+        <div class="stat"><b>16</b><span>Nitro instance tối đa cho một volume Multi-Attach</span></div>
+        <div class="stat"><b>75%</b><span>tiết kiệm tối đa khi chuyển snapshot sang Snapshots Archive</span></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Storage.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+            <div class="row">
+              <div class="grp az"><span class="lbl">Availability Zone a</span>
+                <div class="row center">
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 instance<small>host vật lý có ổ NVMe</small></div>
+                  <span class="arrow">gắn vật lý<br>(ephemeral)</span>
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_I3-Instance.svg" alt="">Instance store<small>mất khi stop/terminate</small></div>
+                </div>
+                <div class="row center">
+                  <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume-gp3.svg" alt="">EBS root (gp3)<small>/dev/xvda</small></div>
+                  <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" alt="">EBS data (io2)<small>nhân bản trong AZ</small></div>
+                </div>
+              </div>
+              <div class="grp az"><span class="lbl">Availability Zone b</span>
+                <div class="row center">
+                  <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" alt="">Volume mới<small>restore từ snapshot</small></div>
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 instance<small>chỉ gắn volume cùng AZ b</small></div>
+                </div>
+              </div>
+            </div>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">EBS snapshots<small>lưu trên S3 · nhân bản mọi AZ của Region</small></div>
+              <span class="arrow">copy-snapshot<br>(DR / mở rộng)</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">Snapshot copy<small>Region khác / account khác</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Phạm vi của từng loại lưu trữ: <b>instance store</b> nằm trên chính host của instance; <b>EBS volume</b> là tài nguyên <b>zonal</b> – chỉ gắn được vào instance cùng AZ và được nhân bản trên nhiều server trong AZ đó; <b>snapshot</b> là tài nguyên <b>regional</b> – muốn “chuyển” volume sang AZ b, chụp snapshot rồi tạo volume mới ở AZ b; muốn sang Region khác thì <b>copy snapshot</b>.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – ổ cứng của một văn phòng</span>
+        <p><b>EBS volume</b> giống <i>ổ cứng gắn ngoài cắm qua mạng nội bộ của tòa nhà</i>: máy tính hỏng thì rút ổ ra cắm sang máy khác <b>cùng tòa nhà</b> (cùng AZ), dữ liệu còn nguyên. <b>Instance store</b> là <i>ổ SSD hàn chết trên bo mạch của máy thuê</i>: cực nhanh, không mất tiền thêm, nhưng trả máy (stop/terminate) là ổ bị xóa sạch. <b>Snapshot</b> là <i>bản sao lưu gửi vào kho của thành phố</i> (S3, cả Region): tòa nhà nào trong thành phố cũng lấy ra được, muốn gửi sang thành phố khác thì phải <b>copy</b>.</p></div>
+
+      <!-- ===================== PHẦN 2: EBS VOLUME ===================== -->
+      <h2 id="ebs-volume"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" alt="">Amazon EBS volume – đặc điểm cốt lõi</h2>
+      <p class="lead">Một <span class="t" data-vi="Ổ đĩa EBS">EBS volume</span> là thiết bị lưu trữ <b>khối (block-level)</b>, <b>bền vững</b>, gắn vào instance. Sau khi gắn, bạn dùng nó như ổ cứng vật lý: tạo file system, cài ứng dụng, chạy database. Tài liệu mô tả EBS phù hợp cho dữ liệu <b>cập nhật thường xuyên</b> (ổ hệ thống, database) và cho ứng dụng <b>throughput-intensive</b> quét đĩa liên tục.</p>
+
+      <h3>Các đặc điểm theo tài liệu</h3>
+      <ul>
+        <li><b>Zonal</b>: volume và instance <b>phải cùng Availability Zone</b>. Dữ liệu volume được <b>tự động nhân bản trên nhiều server trong AZ</b> để không mất dữ liệu khi một thành phần đơn lẻ hỏng – nhưng <b>không</b> nhân bản sang AZ khác.</li>
+        <li><b>Persistent</b>: volume tồn tại <b>độc lập với vòng đời instance</b>. Root volume mặc định bị xóa khi terminate (<code>DeleteOnTermination=true</code>), data volume gắn thêm mặc định được giữ (Bài 8).</li>
+        <li>Một instance gắn được <b>nhiều</b> volume (số tối đa tùy instance type/size). Thông thường một volume chỉ gắn vào <b>một</b> instance – ngoại lệ là <b>Multi-Attach</b>.</li>
+        <li><span class="t" data-vi="Ổ đĩa co giãn">Elastic Volumes</span>: với volume và instance thế hệ hiện tại, bạn <b>tăng dung lượng, đổi IOPS/throughput, đổi volume type</b> ngay trên volume đang chạy production, <b>không downtime</b>.</li>
+        <li><b>Trả tiền theo cái đã provision</b> (dung lượng GiB, IOPS và throughput provision thêm) – kể cả khi volume trống hoặc instance đang stopped.</li>
+        <li>Volume trên Nitro instance hiện ra dưới dạng <b>NVMe block device</b>. Hiệu năng thực tế = <b>min(giới hạn volume, giới hạn EBS bandwidth của instance)</b> – để dùng hết IOPS đã provision, AWS khuyên dùng <span class="t" data-vi="Máy chủ tối ưu cho EBS">EBS-optimized instance</span> (băng thông dành riêng cho EBS; mặc định bật trên các type hiện tại).</li>
+        <li><b>AWS không tự sao lưu</b> EBS volume. Sao lưu (snapshot) là <b>trách nhiệm của bạn</b> – nhớ mô hình Shared Responsibility ở Bài 3.</li>
+      </ul>
+
+      <div class="callout note"><span class="ttl">IOPS và throughput – hai thước đo khác nhau</span>
+        <p><b>IOPS</b> (I/O operations per second) đo <b>số thao tác đọc/ghi mỗi giây</b> – quan trọng với workload <b>giao dịch, I/O nhỏ, ngẫu nhiên</b> (database OLTP). <b>Throughput</b> (MiB/s) đo <b>lượng dữ liệu truyền mỗi giây</b> – quan trọng với workload <b>tuần tự, I/O lớn</b> (big data, log, ETL). Công thức tài liệu đưa ra: <code>Throughput (MiB/s) = IOPS × I/O size (KiB) ÷ 1.024</code>. Vì vậy SSD được tối ưu theo <b>IOPS</b>, HDD được tối ưu theo <b>throughput</b>.</p></div>
+
+      <!-- ===================== PHẦN 3: VOLUME TYPES ===================== -->
+      <h2 id="volume-types"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume-gp3.svg" alt="">EBS volume types</h2>
+      <p class="lead">EBS chia <span class="t" data-vi="Loại ổ đĩa">volume types</span> thành hai nhóm lớn: <span class="t" data-vi="Ổ thể rắn">SSD-backed</span> cho workload <b>giao dịch</b> (thuộc tính quyết định là <b>IOPS</b>) và <span class="t" data-vi="Ổ đĩa cứng cơ">HDD-backed</span> cho workload <b>streaming lớn</b> (thuộc tính quyết định là <b>throughput</b>). Thêm loại <b>Magnetic (<code>standard</code>)</b> là thế hệ cũ.</p>
+
+      <h3>Bảng so sánh chính thức (SSD)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>gp3</th><th>gp2</th><th>io2 Block Express</th><th>io1</th></tr></thead>
+        <tbody>
+          <tr><td>Nhóm</td><td colspan="2">General Purpose SSD</td><td colspan="2">Provisioned IOPS SSD</td></tr>
+          <tr><td>Durability</td><td colspan="2">99,8% – 99,9% (AFR 0,1–0,2%)</td><td><b>99,999%</b> (AFR 0,001%)</td><td>99,8% – 99,9%</td></tr>
+          <tr><td>Kích thước</td><td>1 GiB – <b>64 TiB</b></td><td>1 GiB – 16 TiB</td><td>4 GiB – <b>64 TiB</b></td><td>4 GiB – 16 TiB</td></tr>
+          <tr><td>Max IOPS / volume</td><td><b>80.000</b></td><td>16.000</td><td><b>256.000</b></td><td>64.000</td></tr>
+          <tr><td>Max throughput / volume</td><td><b>2.000 MiB/s</b></td><td>250 MiB/s</td><td><b>4.000 MiB/s</b></td><td>1.000 MiB/s</td></tr>
+          <tr><td>Mô hình hiệu năng</td><td>Baseline 3.000 IOPS + 125 MiB/s, provision thêm <b>độc lập</b> với size</td><td>3 IOPS/GiB, burst tới 3.000 bằng I/O credit</td><td>Provision IOPS, tỉ lệ <b>1.000 IOPS : 1 GiB</b></td><td>Provision IOPS, tỉ lệ <b>50 IOPS : 1 GiB</b></td></tr>
+          <tr><td>Multi-Attach</td><td colspan="2" class="no">Không hỗ trợ</td><td colspan="2" class="yes">Hỗ trợ</td></tr>
+          <tr><td>Boot volume</td><td colspan="4" class="yes">Được</td></tr>
+          <tr><td>Use case</td><td colspan="2">Đa số workload: boot volume, virtual desktop, database vừa (một instance), ứng dụng tương tác độ trễ thấp, dev/test</td><td>Độ trễ <b>sub-millisecond</b> ổn định (&lt; 500 µs), &gt; 80.000 IOPS hoặc &gt; 2.000 MiB/s; Oracle, SAP HANA, SQL Server</td><td>Cần IOPS bền vững hoặc &gt; 16.000 IOPS; database I/O-intensive</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Bảng so sánh chính thức (HDD và thế hệ cũ)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>st1 – Throughput Optimized HDD</th><th>sc1 – Cold HDD</th><th>standard – Magnetic (cũ)</th></tr></thead>
+        <tbody>
+          <tr><td>Kích thước</td><td colspan="2">125 GiB – 16 TiB</td><td>1 GiB – 1 TiB</td></tr>
+          <tr><td>Max IOPS / volume</td><td>500 (I/O 1 MiB)</td><td>250 (I/O 1 MiB)</td><td>40–200</td></tr>
+          <tr><td>Max throughput / volume</td><td><b>500 MiB/s</b></td><td><b>250 MiB/s</b></td><td>40–90 MiB/s</td></tr>
+          <tr><td>Baseline / burst mỗi TiB</td><td>40 MiB/s / 250 MiB/s</td><td>12 MiB/s / 80 MiB/s</td><td>~100 IOPS trung bình</td></tr>
+          <tr><td>Boot volume</td><td class="no">Không</td><td class="no">Không</td><td class="yes">Được</td></tr>
+          <tr><td>Multi-Attach</td><td colspan="2" class="no">Không</td><td class="no">Không</td></tr>
+          <tr><td>Use case</td><td>Dữ liệu <b>truy cập thường xuyên</b>, tuần tự lớn: big data, Amazon EMR, ETL, data warehouse, log processing</td><td>Dữ liệu <b>ít truy cập</b>, cần <b>chi phí lưu trữ thấp nhất</b></td><td>Dataset nhỏ, ít truy cập (nên chuyển sang loại hiện tại)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>General Purpose SSD – gp3 (khuyến nghị mặc định)</h3>
+      <ul>
+        <li>Thế hệ mới nhất và là <b>SSD rẻ nhất</b> của EBS; giá mỗi GiB <b>thấp hơn gp2 khoảng 20%</b>. Console mặc định chọn gp3 khi tạo volume.</li>
+        <li><b>Baseline 3.000 IOPS và 125 MiB/s</b> đã tính trong giá lưu trữ – <b>bất kể kích thước</b> volume.</li>
+        <li>Provision thêm (trả phí): IOPS tới <b>80.000</b> (tỉ lệ tối đa <b>500 IOPS/GiB</b> ⇒ cần ≥ 160 GiB để đạt max); throughput tới <b>2.000 MiB/s</b> (tỉ lệ 0,25 MiB/s mỗi IOPS ⇒ cần ≥ 8.000 IOPS).</li>
+        <li><b>Không dùng burst</b> – duy trì hiệu năng provision vô thời hạn. Độ trễ single-digit millisecond; đạt hiệu năng provision 99% thời gian.</li>
+        <li>Điểm mấu chốt cho đề thi: gp3 cho phép <b>tăng hiệu năng mà không phải tăng dung lượng</b>.</li>
+      </ul>
+
+      <h3>General Purpose SSD – gp2 (thế hệ trước, vẫn hay gặp)</h3>
+      <ul>
+        <li>Hiệu năng <b>tỉ lệ với dung lượng</b>: <b>3 IOPS/GiB</b>, tối thiểu 100 IOPS (volume ≤ 33,33 GiB), tối đa <b>16.000 IOPS</b> (đạt ở 5.334 GiB).</li>
+        <li>Volume &lt; 1 TiB có thể <span class="t" data-vi="Bùng nổ hiệu năng">burst</span> lên <b>3.000 IOPS</b> nhờ <span class="t" data-vi="Tín dụng I/O">I/O credits</span>: mỗi volume nhận sẵn <b>5,4 triệu credit</b> (đủ burst 3.000 IOPS ít nhất 30 phút), tích lũy 3 credit/GiB/giây khi chạy dưới baseline. Theo dõi bằng metric CloudWatch <code>BurstBalance</code>. Volume ≥ 1.000 GiB có baseline ≥ 3.000 nên không cần burst.</li>
+        <li>Throughput 128 MiB/s (≤ 170 GiB) tới 250 MiB/s (≥ 334 GiB).</li>
+        <li>Chuyển gp2 ⇒ gp3 bằng Elastic Volumes, không gián đoạn instance. Nếu không chỉ định, EBS tự provision gp3 với hiệu năng = <b>max(hiệu năng gp2 cũ, baseline gp3)</b> – vd gp2 500 GiB (1.500 IOPS, 250 MiB/s) ⇒ gp3 3.000 IOPS, 250 MiB/s.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – “tăng size để có thêm IOPS”</span>
+        <ul>
+          <li>Đề mô tả database trên <b>gp2</b> chạy chậm khi <code>BurstBalance</code> về 0, hỏi cách <b>cost-effective</b> nhất ⇒ <b>đổi sang gp3</b> và provision IOPS cần thiết (không cần tăng dung lượng như với gp2, rẻ hơn ~20%/GiB).</li>
+          <li>Tăng size gp2 cũng tăng IOPS (3 IOPS/GiB) nhưng phải trả cho dung lượng không dùng tới – thường không phải đáp án tối ưu.</li>
+        </ul></div>
+
+      <h3>Provisioned IOPS SSD – io2 Block Express &amp; io1</h3>
+      <ul>
+        <li>Volume EBS <b>hiệu năng cao nhất</b>, cho workload critical, IOPS/throughput-intensive, cần độ trễ thấp; đạt IOPS đã provision <b>99,9%</b> thời gian.</li>
+        <li><b>io2 Block Express</b>: kiến trúc storage server thế hệ mới, giao tiếp với Nitro instance qua giao thức <b>SRD</b> (Bài 10) ⇒ giảm jitter. Độ trễ trung bình <b>dưới 500 micro-giây</b> với I/O 16 KiB; tần suất I/O vượt 800 µs giảm hơn 10 lần so với General Purpose. Tới <b>64 TiB</b>, <b>256.000 IOPS</b> (tỉ lệ 1.000:1 ⇒ đạt max ở 256 GiB), <b>4.000 MiB/s</b>. Độ bền <b>99,999%</b> – tức khoảng 1 volume hỏng / 100.000 volume / năm.</li>
+        <li>Từ <b>30/4/2025</b>, mọi volume io2 (mới và cũ) đều là io2 Block Express; có ở mọi Region, kể cả GovCloud và China.</li>
+        <li>Chỉ <b>Nitro instance</b> đạt tới 256.000 IOPS; instance khác gắn được volume tới 64.000 IOPS nhưng chỉ đạt <b>32.000 IOPS</b>.</li>
+        <li><b>io1</b>: 4 GiB – 16 TiB, 100 – 64.000 IOPS, tỉ lệ tối đa <b>50:1</b> (vd 100 GiB ⇒ tối đa 5.000 IOPS), throughput tối đa 1.000 MiB/s (cần 64.000 IOPS và Nitro). Tài liệu khuyên dùng <b>io2</b> vì hiệu năng, độ bền tốt hơn với chi phí thấp hơn.</li>
+      </ul>
+
+      <h3>HDD – st1 &amp; sc1</h3>
+      <ul>
+        <li>Định nghĩa hiệu năng bằng <b>throughput</b>, không phải IOPS; dùng mô hình <b>burst bucket</b> giống gp2 nhưng tính theo MiB/s.</li>
+        <li><b>st1</b>: baseline <b>40 MiB/s mỗi TiB</b>, burst <b>250 MiB/s mỗi TiB</b>, trần <b>500 MiB/s</b> (burst đạt trần ở 2 TiB, baseline đạt trần ở 12,5 TiB). Cho dữ liệu truy cập <b>thường xuyên</b>.</li>
+        <li><b>sc1</b>: baseline <b>12 MiB/s mỗi TiB</b>, burst <b>80 MiB/s mỗi TiB</b>, trần <b>250 MiB/s</b>. <b>Chi phí thấp nhất</b> trong các EBS volume, cho dữ liệu truy cập <b>không thường xuyên</b>.</li>
+        <li><b>Không làm boot volume được</b>; root volume io1/io2/gp2/gp3/standard <b>không đổi được</b> sang st1/sc1.</li>
+        <li>Tối ưu cho I/O <b>tuần tự, lớn</b>; I/O nhỏ ngẫu nhiên rất kém hiệu quả (mỗi I/O ≤ 1 MiB vẫn tính 1 MiB credit) ⇒ workload random I/O nên dùng SSD.</li>
+        <li>Khi đang chụp snapshot st1/sc1, hiệu năng có thể giảm xuống mức baseline.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 360" width="780" role="img" aria-label="Cây quyết định chọn EBS volume type">
+          <defs><marker id="ah11a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="290" y="12" width="200" height="50" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="390" y="34" font-size="13" font-weight="700" text-anchor="middle">Workload cần gì?</text>
+          <text x="390" y="52" font-size="11.5" text-anchor="middle" class="muted">I/O nhỏ ngẫu nhiên hay tuần tự lớn?</text>
+          <path class="line-o" d="M340 62 L190 110" marker-end="url(#ah11a)"/>
+          <path class="line-o" d="M440 62 L590 110" marker-end="url(#ah11a)"/>
+          <text x="230" y="84" font-size="11.5" class="muted">IOPS / giao dịch / boot</text>
+          <text x="500" y="84" font-size="11.5" class="muted">Throughput / tuần tự</text>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Volume-gp3.svg" x="160" y="110" width="40" height="40"/>
+          <text x="180" y="166" font-size="13" font-weight="700" text-anchor="middle">SSD</text>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" x="570" y="110" width="40" height="40"/>
+          <text x="590" y="166" font-size="13" font-weight="700" text-anchor="middle">HDD (không boot được)</text>
+          <path class="line-o" d="M160 176 L90 220" marker-end="url(#ah11a)"/>
+          <path class="line-o" d="M200 176 L290 220" marker-end="url(#ah11a)"/>
+          <path class="line-o" d="M570 176 L500 220" marker-end="url(#ah11a)"/>
+          <path class="line-o" d="M610 176 L680 220" marker-end="url(#ah11a)"/>
+          <rect x="10" y="222" width="170" height="122" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="95" y="244" font-size="14" font-weight="700" text-anchor="middle" style="fill:#7AA116">gp3</text>
+          <text x="95" y="264" font-size="11.5" text-anchor="middle">≤ 80.000 IOPS</text>
+          <text x="95" y="282" font-size="11.5" text-anchor="middle">≤ 2.000 MiB/s</text>
+          <text x="95" y="300" font-size="11.5" text-anchor="middle" class="muted">boot, web, dev/test,</text>
+          <text x="95" y="318" font-size="11.5" text-anchor="middle" class="muted">DB vừa – mặc định</text>
+          <rect x="200" y="222" width="190" height="122" rx="8" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <text x="295" y="244" font-size="14" font-weight="700" text-anchor="middle" style="fill:#DD344C">io2 Block Express</text>
+          <text x="295" y="264" font-size="11.5" text-anchor="middle">&gt; 80.000 IOPS, &lt; 500 µs</text>
+          <text x="295" y="282" font-size="11.5" text-anchor="middle">99,999% durability</text>
+          <text x="295" y="300" font-size="11.5" text-anchor="middle" class="muted">DB mission-critical,</text>
+          <text x="295" y="318" font-size="11.5" text-anchor="middle" class="muted">Multi-Attach</text>
+          <rect x="410" y="222" width="170" height="122" rx="8" fill="none" stroke="#ED7100" stroke-width="2"/>
+          <text x="495" y="244" font-size="14" font-weight="700" text-anchor="middle" style="fill:#ED7100">st1</text>
+          <text x="495" y="264" font-size="11.5" text-anchor="middle">≤ 500 MiB/s</text>
+          <text x="495" y="282" font-size="11.5" text-anchor="middle">truy cập thường xuyên</text>
+          <text x="495" y="300" font-size="11.5" text-anchor="middle" class="muted">big data, EMR, ETL,</text>
+          <text x="495" y="318" font-size="11.5" text-anchor="middle" class="muted">log, data warehouse</text>
+          <rect x="600" y="222" width="170" height="122" rx="8" fill="none" stroke="#8C4FFF" stroke-width="2"/>
+          <text x="685" y="244" font-size="14" font-weight="700" text-anchor="middle" style="fill:#8C4FFF">sc1</text>
+          <text x="685" y="264" font-size="11.5" text-anchor="middle">≤ 250 MiB/s</text>
+          <text x="685" y="282" font-size="11.5" text-anchor="middle">ít truy cập</text>
+          <text x="685" y="300" font-size="11.5" text-anchor="middle" class="muted">chi phí thấp nhất,</text>
+          <text x="685" y="318" font-size="11.5" text-anchor="middle" class="muted">dữ liệu “lạnh”</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Cây quyết định chọn volume type dựa trên bảng “Amazon EBS volume types”: workload giao dịch/boot ⇒ SSD (gp3 là mặc định; cần độ trễ dưới mili-giây, IOPS cực cao, độ bền 5 số 9 hoặc Multi-Attach ⇒ io2 Block Express); workload tuần tự lớn ⇒ HDD (st1 cho dữ liệu nóng, sc1 cho dữ liệu lạnh rẻ nhất).</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – chọn volume type</span>
+        <ul>
+          <li>“<i>Boot volume, general workload, most cost-effective SSD</i>” ⇒ <b>gp3</b>.</li>
+          <li>“<i>Need 10,000 IOPS on a 100 GiB volume without paying for extra storage</i>” ⇒ <b>gp3</b> (provision IOPS độc lập với size). gp2 100 GiB chỉ có 300 IOPS baseline.</li>
+          <li>“<i>More than 80,000 IOPS / sub-millisecond latency / 99.999% durability / mission-critical database</i>” ⇒ <b>io2 Block Express</b>.</li>
+          <li>“<i>Sequential, throughput-intensive, frequently accessed: big data, log processing, data warehouse</i>” ⇒ <b>st1</b>.</li>
+          <li>“<i>Infrequently accessed data, lowest cost block storage</i>” ⇒ <b>sc1</b>. Nhưng nếu đề cho phép object storage thì S3 (Glacier) còn rẻ hơn.</li>
+          <li>Đề yêu cầu volume HDD làm <b>boot volume</b> ⇒ sai – st1/sc1 không boot được.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: ELASTIC VOLUMES ===================== -->
+      <h2 id="elastic-volumes"><img src="../assets/icons/svc/Amazon-Elastic-Block-Store.svg" alt="">Elastic Volumes – sửa volume khi đang chạy</h2>
+      <p class="lead">Với <span class="t" data-vi="Ổ đĩa co giãn">Amazon EBS Elastic Volumes</span>, bạn <b>tăng dung lượng</b>, <b>đổi volume type</b> hoặc <b>điều chỉnh IOPS/throughput</b> mà <b>không cần detach volume hay restart instance</b> (nếu instance hỗ trợ) – ứng dụng tiếp tục chạy trong lúc thay đổi có hiệu lực. Thao tác sửa <b>miễn phí</b>; bạn trả theo cấu hình mới ngay khi việc sửa bắt đầu.</p>
+      <ol class="steps">
+        <li><b>Gửi yêu cầu modify</b> (console/CLI <code>modify-volume</code>). Không hủy được yêu cầu sau khi gửi.</li>
+        <li>Volume đi qua các trạng thái <code>modifying</code> ⇒ <code>optimizing</code> ⇒ <code>completed</code>. Dung lượng mới có hiệu lực ngay khi vào <code>optimizing</code> (thường vài giây); toàn bộ có thể mất vài phút tới vài giờ (1 TiB có thể tới 6 giờ).</li>
+        <li><b>Mở rộng file system</b> trong OS (vd <code>growpart</code> + <code>resize2fs</code>/<code>xfs_growfs</code> trên Linux, Disk Management trên Windows) để dùng phần dung lượng mới – EBS không tự làm bước này.</li>
+      </ol>
+      <ul>
+        <li>Chỉ <b>tăng</b>, <b>không giảm</b> được dung lượng. Muốn volume nhỏ hơn ⇒ tạo volume mới nhỏ hơn rồi chép dữ liệu bằng công cụ ứng dụng (<code>rsync</code>, <code>robocopy</code>).</li>
+        <li>Mỗi volume sửa được <b>tối đa 4 lần trong 24 giờ</b> (rolling), lần sau chỉ khi lần trước đã <code>completed</code>.</li>
+        <li>Giá trị mới phải nằm trong giới hạn của volume type đích. Volume Multi-Attach chỉ đổi type qua lại giữa <b>io1 ⇄ io2</b>.</li>
+        <li>Instance thế hệ cũ hoặc gặp lỗi: với data volume thì detach – modify – attach; với root volume thì stop – modify – start.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Elastic Volumes</span>
+        <ul>
+          <li>“<i>Increase volume size / change gp2 to gp3 / raise IOPS with no downtime</i>” ⇒ <b>Elastic Volumes</b> (modify volume), rồi <b>extend file system</b>.</li>
+          <li>“<i>Shrink an EBS volume</i>” ⇒ không làm trực tiếp được; tạo volume nhỏ hơn và migrate dữ liệu.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: SNAPSHOTS ===================== -->
+      <h2 id="snapshots"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">EBS Snapshots</h2>
+      <p class="lead">Một <span class="t" data-vi="Bản chụp ổ đĩa">EBS snapshot</span> là bản sao <b>point-in-time</b> của EBS volume, tồn tại <b>độc lập</b> với volume. Snapshot là <span class="t" data-vi="Sao lưu gia tăng">incremental backup</span>: chỉ lưu các block <b>đã thay đổi</b> kể từ snapshot gần nhất ⇒ chụp nhanh và tiết kiệm chi phí. Mỗi snapshot vẫn chứa <b>đủ thông tin</b> để khôi phục toàn bộ dữ liệu (tại thời điểm chụp) ra một volume mới.</p>
+
+      <h3>Đặc điểm theo tài liệu</h3>
+      <ul>
+        <li>Lưu trong <b>Amazon S3</b>, trong bucket <b>bạn không truy cập trực tiếp được</b> – quản lý qua EC2 console/API, không qua S3 console/API.</li>
+        <li>Dữ liệu snapshot được <b>nhân bản tự động qua mọi AZ trong Region</b> ⇒ restore được volume ở <b>bất kỳ AZ nào</b> trong Region. Đây là cách “chuyển” volume sang AZ khác.</li>
+        <li>Snapshot đầu tiên của một volume là <b>full snapshot</b>; các snapshot sau là <b>incremental</b>. Kích thước (và tiền) phụ thuộc <b>dữ liệu đã ghi</b>, không phụ thuộc kích thước volume: volume 200 GiB chứa 50 GiB dữ liệu ⇒ snapshot đầu 50 GiB; sau đó sửa 20 GiB và thêm 10 GiB ⇒ snapshot thứ hai 30 GiB.</li>
+        <li><b>Xóa snapshot chưa chắc giảm chi phí</b>: block chỉ thuộc snapshot đó mới bị xóa; block còn được snapshot khác tham chiếu vẫn được giữ. Vì vậy xóa snapshot cũ <b>không làm hỏng</b> các snapshot mới hơn.</li>
+        <li>Volume tạo từ snapshot ban đầu là <b>bản sao y hệt</b> volume gốc tại thời điểm chụp; size phải <b>bằng hoặc lớn hơn</b> size volume nguồn, có thể chọn volume type khác và AZ khác.</li>
+        <li>Có thể chụp khi volume đang dùng; snapshot chỉ ghi nhận dữ liệu <b>đã ghi xuống volume</b> tại thời điểm chụp (dữ liệu còn trong cache của OS/ứng dụng thì không). <b>Multi-volume snapshot</b> chụp crash-consistent nhiều volume của một instance cùng lúc.</li>
+        <li>Theo dõi trạng thái snapshot qua sự kiện <b>CloudWatch Events / EventBridge</b>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 320" width="780" role="img" aria-label="Snapshot incremental: Snap A full 10 GiB, Snap B 4 GiB, Snap C 2 GiB">
+          <defs><marker id="ah11b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <text x="20" y="28" font-size="13" font-weight="700" style="fill:#147EBA">Volume 1 (15 GiB) theo thời gian</text>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" x="70" y="44" width="48" height="48"/>
+          <text x="94" y="110" font-size="12.5" font-weight="700" text-anchor="middle">State 1</text>
+          <text x="94" y="128" font-size="11.5" text-anchor="middle" class="muted">10 GiB dữ liệu</text>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" x="346" y="44" width="48" height="48"/>
+          <text x="370" y="110" font-size="12.5" font-weight="700" text-anchor="middle">State 2</text>
+          <text x="370" y="128" font-size="11.5" text-anchor="middle" class="muted">10 GiB, 4 GiB đã đổi</text>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" x="626" y="44" width="48" height="48"/>
+          <text x="650" y="110" font-size="12.5" font-weight="700" text-anchor="middle">State 3</text>
+          <text x="650" y="128" font-size="11.5" text-anchor="middle" class="muted">thêm 2 GiB ⇒ 12 GiB</text>
+          <path class="line-o" d="M94 136 L94 176" marker-end="url(#ah11b)"/>
+          <path class="line-o" d="M370 136 L370 176" marker-end="url(#ah11b)"/>
+          <path class="line-o" d="M650 136 L650 176" marker-end="url(#ah11b)"/>
+          <rect x="14" y="180" width="160" height="90" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" x="26" y="196" width="40" height="40"/>
+          <text x="118" y="210" font-size="13" font-weight="700" text-anchor="middle">Snap A</text>
+          <text x="118" y="228" font-size="11.5" text-anchor="middle">FULL: 10 GiB</text>
+          <rect x="290" y="180" width="160" height="90" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" x="302" y="196" width="40" height="40"/>
+          <text x="394" y="210" font-size="13" font-weight="700" text-anchor="middle">Snap B</text>
+          <text x="394" y="228" font-size="11.5" text-anchor="middle">incremental: 4 GiB</text>
+          <rect x="570" y="180" width="160" height="90" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" x="582" y="196" width="40" height="40"/>
+          <text x="674" y="210" font-size="13" font-weight="700" text-anchor="middle">Snap C</text>
+          <text x="674" y="228" font-size="11.5" text-anchor="middle">incremental: 2 GiB</text>
+          <path d="M290 250 L176 250" fill="none" stroke="#8C4FFF" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah11b)"/>
+          <text x="233" y="244" font-size="11" text-anchor="middle" class="muted">tham chiếu 6 GiB</text>
+          <path d="M570 250 L452 250" fill="none" stroke="#8C4FFF" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah11b)"/>
+          <text x="511" y="244" font-size="11" text-anchor="middle" class="muted">tham chiếu 4 + 6 GiB</text>
+          <text x="390" y="304" font-size="12.5" font-weight="700" text-anchor="middle">Tổng lưu trữ = 10 + 4 + 2 = 16 GiB (không phải 10 + 10 + 12 = 32 GiB)</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Ví dụ trong tài liệu “How Amazon EBS snapshots work”: Snap A là full snapshot (10 GiB); Snap B chỉ lưu 4 GiB thay đổi và <b>tham chiếu</b> 6 GiB không đổi trong Snap A; Snap C chỉ lưu 2 GiB mới. Restore từ Snap C vẫn ra đủ 12 GiB. Lưu ý: nếu snapshot nguồn do account khác chia sẻ, hoặc volume mới mã hóa bằng KMS key khác, snapshot kế tiếp sẽ là <b>full</b>.</figcaption>
+      </figure>
+
+      <h3>Copy snapshot – sang Region/account khác</h3>
+      <p>Snapshot ở trạng thái <code>completed</code> có thể <b>copy</b> (bản copy có ID mới). Use case tài liệu liệt kê: <b>mở rộng địa lý</b> (launch ứng dụng ở Region mới), <b>migration</b>, <b>disaster recovery</b> (sao lưu sang Region phụ), <b>mã hóa</b> snapshot chưa mã hóa hoặc <b>re-encrypt bằng KMS key khác</b>, copy snapshot được share, lưu giữ/kiểm toán ở account khác (an toàn nếu account chính bị xâm nhập).</p>
+      <ul>
+        <li>Copy trong cùng account, cùng Region, cùng KMS key ⇒ luôn <b>incremental</b>. Copy sang Region mới lần đầu hoặc mã hóa bằng KMS key mới ⇒ <b>full copy</b> (tốn thêm lưu trữ, cộng phí data transfer cross-Region). Các lần copy sau sang cùng đích là incremental nếu bản copy gần nhất còn đó, chưa archive và cùng KMS key.</li>
+        <li>Giới hạn <b>20</b> yêu cầu copy đồng thời mỗi đích; <b>tag do người dùng đặt không được copy</b> theo.</li>
+        <li><b>Time-based copy</b>: chỉ định thời gian hoàn thành (bội số 15 phút) khi cần đáp ứng RPO.</li>
+        <li>Snapshot được share mã hóa bằng KMS ⇒ nên <b>copy và re-encrypt bằng key của mình</b> để không mất quyền truy cập nếu chủ sở hữu thu hồi key.</li>
+      </ul>
+
+      <h3>Chia sẻ snapshot</h3>
+      <ul>
+        <li>Snapshot <b>không mã hóa</b> chia sẻ được cho account cụ thể hoặc <b>public</b>. Tính năng <b>Block public access for EBS snapshots</b> chặn chia sẻ công khai ở cấp Region.</li>
+        <li>Snapshot <b>mã hóa</b> <b>không public được</b>, chỉ share cho account cụ thể, và phải share kèm quyền dùng <b>customer managed key</b>. Snapshot mã hóa bằng AWS managed key <code>aws/ebs</code> <b>không share được</b> (giống AMI ở Bài 8) ⇒ copy re-encrypt bằng customer managed key trước.</li>
+      </ul>
+
+      <h3>Initialization &amp; Fast Snapshot Restore</h3>
+      <p>Khi tạo volume <b>từ snapshot</b>, các block phải được tải từ S3 về volume – gọi là <span class="t" data-vi="Khởi tạo ổ đĩa">volume initialization</span>. Trong lúc đó volume có <b>độ trễ I/O cao hơn</b>, hiệu năng thấp hơn (block truy cập lần đầu phải kéo từ S3). Volume <b>trống</b> (không từ snapshot) đạt hiệu năng tối đa ngay. Ba cách giảm ảnh hưởng:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cách</th><th>Cơ chế</th><th>Chi phí / giới hạn</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Khôi phục snapshot nhanh">Fast Snapshot Restore (FSR)</span></td><td>Bật cho <b>từng cặp snapshot + AZ</b>; volume tạo ra được <b>khởi tạo đầy đủ ngay lúc tạo</b>, cho full hiệu năng tức thì</td><td>Tính phí mỗi phút bật, cho mỗi snapshot mỗi AZ (tối thiểu 1 giờ; ví dụ tài liệu: 0,75 USD/giờ ⇒ 540 USD/tháng cho 1 snapshot × 1 AZ). Tối đa <b>5 snapshot</b> bật FSR / Region; snapshot ≤ 16 TiB; số volume được hưởng phụ thuộc <b>volume creation credits</b>; không hỗ trợ Outposts, Local Zones, Wavelength</td></tr>
+          <tr><td><b>Provisioned Rate for Volume Initialization</b></td><td>Chỉ định tốc độ tải <b>100–300 MiB/s</b> khi tạo volume từ snapshot ⇒ thời gian khởi tạo <b>dự đoán được</b> (vd 10 GiB dữ liệu ở 300 MiB/s ≈ 34,1 giây)</td><td>Tính theo GiB dữ liệu snapshot; tổng tối đa 5.000 MiB/s đồng thời / Region</td></tr>
+          <tr><td>Khởi tạo thủ công</td><td>Đọc toàn bộ block bằng <code>dd</code> hoặc <code>fio</code> trước khi đưa vào production</td><td>Miễn phí nhưng mất vài phút tới vài giờ</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Snapshot tiers – Standard &amp; Archive</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">Standard tier (mặc định)</h4>
+          <ul>
+            <li>Snapshot <b>incremental</b>.</li>
+            <li>Dùng ngay để tạo volume, tạo AMI, copy, share.</li>
+            <li>Cho backup thường xuyên, restore nhanh.</li>
+          </ul></div>
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier.svg" alt="">EBS Snapshots Archive</h4>
+          <ul>
+            <li>Snapshot được chuyển thành <b>full snapshot</b> rồi đưa vào archive tier.</li>
+            <li>Rẻ hơn tới <b>75%</b> cho snapshot giữ <b>≥ 90 ngày</b> và hiếm khi truy cập (compliance, snapshot cuối dự án, bản hàng tháng/quý/năm).</li>
+            <li>Phải <b>restore</b> về standard tier trước khi dùng (mất nhiều giờ – thường 24–72 giờ).</li>
+            <li>Quota: 25 snapshot archive / volume; 25 archive và 5 restore đồng thời / account.</li>
+          </ul></div>
+      </div>
+
+      <h3>Tự động hóa và bảo vệ snapshot</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Amazon-Data-Lifecycle-Manager.svg" alt="">
+          <div><h4>Amazon Data Lifecycle Manager</h4><span class="vi">Quản lý vòng đời snapshot</span><p>Policy theo <b>tag</b> tự động <b>tạo, giữ (retention), copy cross-Region, xóa</b> EBS snapshot và EBS-backed AMI.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Backup.svg" alt="">
+          <div><h4>AWS Backup</h4><span class="vi">Sao lưu tập trung</span><p>Backup plan cho nhiều dịch vụ (EBS, EC2, RDS, EFS, DynamoDB…), cross-Region/cross-account. Học kỹ ở Module 10.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">
+          <div><h4>Recycle Bin &amp; Snapshot lock</h4><span class="vi">Chống xóa nhầm / WORM</span><p>Recycle Bin khôi phục snapshot bị xóa nhầm theo retention rule (Bài 8). Snapshot lock khóa snapshot không cho xóa trong một khoảng thời gian.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Elastic-Block-Store.svg" alt="">
+          <div><h4>EBS direct APIs</h4><span class="vi">Đọc/ghi trực tiếp snapshot</span><p>Tạo snapshot, ghi/đọc block trực tiếp, tìm khác biệt giữa hai snapshot – dùng cho phần mềm backup bên thứ ba.</p></div></div>
+      </div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – snapshot</span>
+        <ul>
+          <li>“AWS tự backup EBS” ⇒ <b>sai</b>. Phải tự chụp snapshot hoặc dùng DLM/AWS Backup.</li>
+          <li>Volume vừa restore từ snapshot chạy chậm lúc đầu ⇒ do <b>initialization</b>, không phải do chọn sai volume type. Cần full hiệu năng ngay ⇒ <b>Fast Snapshot Restore</b>.</li>
+          <li>Snapshot là <b>regional</b>; muốn DR sang Region khác phải <b>copy</b> (thủ công, DLM cross-Region copy, hoặc AWS Backup).</li>
+          <li>Archive không phù hợp nếu cần restore nhanh hoặc chỉ giữ &lt; 90 ngày.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – snapshot</span>
+        <ul>
+          <li>“<i>Move an EBS volume to another AZ</i>” ⇒ <b>snapshot</b> ⇒ <b>create volume</b> ở AZ đích. “<i>…to another Region</i>” ⇒ snapshot ⇒ <b>copy snapshot</b> ⇒ create volume.</li>
+          <li>“<i>Automate EBS snapshot creation and retention with least operational overhead</i>” ⇒ <b>Amazon Data Lifecycle Manager</b> (hoặc AWS Backup nếu cần nhiều dịch vụ/cross-account tập trung).</li>
+          <li>“<i>Volumes restored from snapshots must deliver full performance immediately</i>” ⇒ <b>Fast Snapshot Restore</b>.</li>
+          <li>“<i>Retain snapshots for years for compliance at lowest cost, rarely restored</i>” ⇒ <b>EBS Snapshots Archive</b>.</li>
+          <li>“<i>Recover accidentally deleted snapshots</i>” ⇒ <b>Recycle Bin</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: MULTI-ATTACH ===================== -->
+      <h2 id="multi-attach"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Multiple-Volumes.svg" alt="">EBS Multi-Attach</h2>
+      <p class="lead"><span class="t" data-vi="Gắn một ổ vào nhiều máy">Amazon EBS Multi-Attach</span> cho phép gắn <b>một</b> volume Provisioned IOPS SSD (<b>io1 hoặc io2</b>) vào <b>nhiều instance trong cùng Availability Zone</b>. Mỗi instance có <b>toàn quyền đọc và ghi</b> volume dùng chung. Mục đích: tăng availability cho ứng dụng <b>tự quản lý việc ghi đồng thời</b> (clustered application). Không tốn thêm phí ngoài giá io1/io2.</p>
+
+      <figure class="diagram">
+        <div class="grp az"><span class="lbl">Availability Zone a (Multi-Attach không vượt AZ)</span>
+          <div class="row center">
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Nitro instance 1<small>cluster node</small></div>
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Nitro instance 2<small>cluster node</small></div>
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">… tới 16 instance<small>cluster node</small></div>
+          </div>
+          <div class="flow">
+            <span class="arrow">đọc/ghi đồng thời<br>clustered file system + I/O fencing</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Multiple-Volumes.svg" alt="">io2 volume<small>Multi-Attach enabled</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> Một volume io2 bật Multi-Attach gắn vào tối đa <b>16 Nitro instance cùng AZ</b>. File system phải là <b>clustered</b> và ứng dụng phải đảm bảo thứ tự ghi, dùng <b>I/O fencing</b> (NVMe reservations) để giữ nhất quán. Cần chia sẻ file giữa nhiều AZ ⇒ dùng <b>Amazon EFS</b> (Module 3), không phải Multi-Attach.</figcaption>
+      </figure>
+
+      <h3>Điều kiện &amp; giới hạn (theo tài liệu)</h3>
+      <ul>
+        <li>Chỉ <b>io1 và io2</b>. gp2/gp3/st1/sc1 <b>không</b> hỗ trợ. Windows chỉ hỗ trợ io2 Multi-Attach; Linux hỗ trợ cả io1 và io2.</li>
+        <li>Tối đa <b>16 instance</b>, tất cả phải chạy trên <b>Nitro System</b> và <b>cùng AZ</b>.</li>
+        <li>File system chuẩn như <b>XFS, EXT4 không được thiết kế</b> cho nhiều server truy cập đồng thời ⇒ phải dùng <b>clustered file system</b>.</li>
+        <li><b>Không làm boot volume</b>; không bật được Multi-Attach lúc launch instance (console/RunInstances); bật/tắt Multi-Attach chỉ khi volume không gắn vào instance nào.</li>
+        <li>Volume bị xóa khi <b>instance cuối cùng</b> đang gắn bị terminate và instance đó có <code>DeleteOnTermination</code> = true.</li>
+        <li>Sự cố ở tầng hạ tầng EBS làm volume <b>unavailable cho mọi</b> instance đang gắn. Metric CloudWatch được <b>gộp</b> cho mọi instance.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Multi-Attach</span>
+        <ul>
+          <li>“<i>Clustered Linux application needs shared block storage with concurrent writes, same AZ</i>” ⇒ <b>io2 + Multi-Attach</b>.</li>
+          <li>“<i>Shared file system across multiple AZs / many instances</i>” ⇒ <b>Amazon EFS</b> – Multi-Attach bị giới hạn 1 AZ và 16 instance.</li>
+          <li>Đáp án gợi ý “gp3 Multi-Attach” ⇒ <b>sai</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: ENCRYPTION ===================== -->
+      <h2 id="encryption"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">EBS encryption</h2>
+      <p class="lead"><span class="t" data-vi="Mã hóa EBS">Amazon EBS encryption</span> là giải pháp mã hóa “thẳng” cho tài nguyên EBS – bạn <b>không phải tự xây, vận hành và bảo vệ hạ tầng quản lý khóa</b>. EBS dùng <span class="t" data-vi="Khóa KMS">AWS KMS keys</span> khi tạo volume và snapshot mã hóa. Việc mã hóa diễn ra <b>trên server chạy EC2 instance</b>, nên bảo vệ cả <b>data at rest</b> lẫn <b>data in transit</b> giữa instance và volume, và cả các snapshot sau đó.</p>
+
+      <h3>Những gì được mã hóa khi bạn tạo một volume mã hóa</h3>
+      <ul>
+        <li>Dữ liệu at rest bên trong volume.</li>
+        <li>Mọi dữ liệu di chuyển giữa volume và instance.</li>
+        <li>Mọi <b>snapshot</b> tạo từ volume đó.</li>
+        <li>Mọi <b>volume</b> tạo từ các snapshot đó.</li>
+      </ul>
+      <p>Mọi instance type đều hỗ trợ EBS encryption; một instance gắn đồng thời được cả volume mã hóa và không mã hóa. Thuật toán AES-256 với data key do KMS sinh, xử lý trên phần cứng Nitro nên ảnh hưởng hiệu năng không đáng kể.</p>
+
+      <h3>Quy tắc bất biến</h3>
+      <ul>
+        <li><b>Không gỡ được mã hóa</b> khỏi volume/snapshot đã mã hóa ⇒ volume tạo từ snapshot mã hóa, hay bản copy của snapshot mã hóa, <b>luôn</b> mã hóa.</li>
+        <li><b>Không mã hóa trực tiếp</b> được volume/snapshot đang không mã hóa.</li>
+        <li><b>Không đổi KMS key</b> của volume/snapshot đã có; muốn đổi key ⇒ <b>copy snapshot</b> với key mới.</li>
+        <li>Snapshot mã hóa <b>không public được</b>; chỉ share cho account cụ thể (kèm quyền KMS key).</li>
+      </ul>
+
+      <h3>Mã hóa một volume đang không mã hóa</h3>
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" alt="">Volume cũ<small>unencrypted</small></div>
+          <span class="arrow">① create<br>snapshot</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">Snapshot<small>unencrypted</small></div>
+          <span class="arrow">② copy snapshot<br>Encrypt = KMS key</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">Snapshot copy<small>encrypted</small></div>
+          <span class="arrow">③ create<br>volume</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" alt="">Volume mới<small>encrypted</small></div>
+          <span class="arrow">④ swap</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Instance<small>detach cũ, attach mới</small></div>
+        </div>
+        <figcaption><b>Hình 5.</b> Quy trình mã hóa dữ liệu cũ: chụp snapshot volume không mã hóa ⇒ tạo volume <b>mã hóa</b> từ snapshot đó (tài liệu cho phép tạo thẳng volume mã hóa từ snapshot không mã hóa; hoặc copy snapshot với tùy chọn Encrypt rồi tạo volume) ⇒ gắn volume mới thay volume cũ. Root volume thì stop instance trước khi swap (hoặc dùng <i>replace root volume</i>). Cách tương tự áp dụng cho AMI: copy AMI với tùy chọn mã hóa.</figcaption>
+      </figure>
+
+      <h3>Encryption by default &amp; KMS key</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/Amazon-Elastic-Block-Store.svg" alt="">EBS encryption by default</h4>
+          <ul>
+            <li>Thiết lập <b>cấp account, theo từng Region</b> (EC2 console ⇒ Settings ⇒ Data protection and security).</li>
+            <li>Bật rồi thì mọi <b>volume mới</b> và <b>snapshot copy</b> trong Region đều mã hóa – không tắt được cho từng volume.</li>
+            <li><b>Không ảnh hưởng</b> volume/snapshot đã tồn tại.</li>
+            <li>Hỗ trợ mọi instance type thế hệ hiện tại và trước.</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_Data-Encryption-Key.svg" alt="">KMS key cho EBS</h4>
+          <ul>
+            <li>Mặc định: <b>AWS managed key</b> alias <code>aws/ebs</code>, EBS tự tạo trong mỗi Region.</li>
+            <li>Có thể đổi default key sang <b>customer managed key</b> (symmetric) – cần khi phải <b>share snapshot/AMI cross-account</b>, kiểm soát key policy, xoay key theo ý.</li>
+            <li>Copy snapshot sang key mới ⇒ <b>full copy</b> (tốn thêm lưu trữ).</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – EBS encryption</span>
+        <ul>
+          <li>“<i>Ensure all new EBS volumes are encrypted automatically</i>” ⇒ bật <b>EBS encryption by default</b> trong <b>mỗi Region</b> (có thể kết hợp AWS Config rule <code>encrypted-volumes</code> / SCP để kiểm tra, ép buộc).</li>
+          <li>“<i>Encrypt an existing unencrypted volume</i>” ⇒ <b>snapshot ⇒ copy/restore với encryption ⇒ volume mới</b>. Không có nút “encrypt” cho volume đang chạy.</li>
+          <li>“<i>Share encrypted snapshot with another account</i>” ⇒ dùng <b>customer managed key</b>, sửa key policy cho account kia, rồi share snapshot; account kia nên copy re-encrypt bằng key của họ.</li>
+          <li>“<i>Encryption with minimal performance impact, no key infrastructure to manage</i>” ⇒ EBS encryption với KMS.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: INSTANCE STORE ===================== -->
+      <h2 id="instance-store"><img src="../assets/icons/res/Amazon-EC2_I3-Instance.svg" alt="">Instance store</h2>
+      <p class="lead">Một <span class="t" data-vi="Ổ đĩa tạm gắn trên máy chủ vật lý">instance store</span> cung cấp lưu trữ khối <b>tạm thời</b> cho EC2 instance, nằm trên các đĩa <b>gắn vật lý vào máy chủ host</b>. Tài liệu mô tả nó lý tưởng cho dữ liệu <b>thay đổi thường xuyên và tạm thời</b> – <b>buffer, cache, scratch data</b> – hoặc dữ liệu được <b>nhân bản trên cả một fleet</b> (vd pool web server sau load balancer). Instance store <b>không tính thêm phí</b> – đã gồm trong giá instance.</p>
+
+      <h3>Đặc điểm theo tài liệu</h3>
+      <ul>
+        <li>Gồm một hoặc nhiều <b>instance store volume</b> hiện ra dưới dạng block device, tên ảo <code>ephemeral0</code> … <code>ephemeral23</code>. <b>Số lượng và dung lượng phụ thuộc instance type/size</b>; <b>không phải type nào cũng có</b> instance store (thường type có chữ <b>d</b> như <code>m6id</code>, <code>c6gd</code>, hoặc dòng storage optimized <b>I</b>, <b>D</b> – Bài 8).</li>
+        <li>Chỉ gắn được <b>lúc launch</b>; <b>không</b> gắn thêm sau khi launch; <b>không</b> tháo ra gắn sang instance khác.</li>
+        <li>Chỉ tồn tại trong vòng đời instance – <b>không cấu hình</b> để tồn tại lâu hơn được. Khi stop/hibernate/terminate, <b>mọi block bị xóa bằng mật mã (cryptographically erased)</b>.</li>
+        <li>Trên các instance mới, instance store là <b>NVMe SSD</b> (một số dòng D là HDD) với <b>IOPS rất cao, độ trễ rất thấp</b> vì không đi qua mạng – thường vượt xa EBS. Dữ liệu trên NVMe instance store được mã hóa bằng khóa phần cứng XTS-AES-256.</li>
+        <li>Muốn giữ dữ liệu lâu dài ⇒ phải <b>tự chép</b> sang EBS, S3 hoặc EFS. Snapshot/AMI EBS-backed <b>không</b> bao gồm dữ liệu instance store.</li>
+      </ul>
+
+      <h3>Dữ liệu instance store có còn không? (bảng của tài liệu)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Sự kiện</th><th>Dữ liệu instance store</th></tr></thead>
+        <tbody>
+          <tr><td>Reboot instance (từ console/API hoặc restart trong OS)</td><td class="yes">Còn</td></tr>
+          <tr><td>AWS scheduled event: instance reboot / system reboot</td><td class="yes">Còn</td></tr>
+          <tr><td>Mất điện (power failure)</td><td class="yes">Còn sau khi reboot</td></tr>
+          <tr><td><b>Stop</b> instance (kể cả AWS scheduled stop, shutdown từ trong OS)</td><td class="no"><b>Mất</b></td></tr>
+          <tr><td><b>Hibernate</b></td><td class="no"><b>Mất</b></td></tr>
+          <tr><td><b>Terminate</b>, instance retirement</td><td class="no"><b>Mất</b></td></tr>
+          <tr><td>Đổi instance type</td><td class="no">Mất (type mới có instance store thì nhận volume trống)</td></tr>
+          <tr><td>Tạo EBS-backed AMI từ instance</td><td class="no">Không có trong AMI</td></tr>
+          <tr><td>Simplified automatic recovery / CloudWatch action recovery</td><td class="no">Mất</td></tr>
+          <tr><td>Đĩa vật lý bên dưới hỏng</td><td class="no">Mất dữ liệu trên đĩa hỏng</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – instance store</span>
+        <ul>
+          <li>Termination protection / stop protection <b>không</b> bảo vệ được khi shutdown từ trong OS ⇒ dữ liệu instance store vẫn mất.</li>
+          <li>“Reboot làm mất dữ liệu instance store” ⇒ <b>sai</b> – reboot giữ dữ liệu; <b>stop, hibernate, terminate</b> mới làm mất.</li>
+          <li>Instance có <b>root volume là instance store</b> (S3-backed AMI, đã end of life) <b>không stop được</b> (Bài 8).</li>
+          <li>Dữ liệu duy nhất, quan trọng (database chính) mà đặt trên instance store không có replication ⇒ thiết kế sai.</li>
+        </ul></div>
+
+      <h3>EBS vs instance store – so sánh tổng hợp</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Amazon EBS volume</th><th>Instance store</th></tr></thead>
+        <tbody>
+          <tr><td>Vị trí</td><td>Qua mạng, nhân bản trong một AZ</td><td>Đĩa gắn vật lý trên host</td></tr>
+          <tr><td>Bền vững</td><td class="yes">Độc lập với instance; còn khi stop/start</td><td class="no">Mất khi stop, hibernate, terminate, hỏng đĩa</td></tr>
+          <tr><td>Snapshot / backup</td><td class="yes">Snapshot incremental lên S3</td><td class="no">Không có – tự chép dữ liệu đi</td></tr>
+          <tr><td>Tháo/gắn sang instance khác</td><td class="yes">Được (cùng AZ); Multi-Attach với io1/io2</td><td class="no">Không</td></tr>
+          <tr><td>Thêm sau khi launch</td><td class="yes">Được</td><td class="no">Chỉ lúc launch</td></tr>
+          <tr><td>Đổi size / type</td><td class="yes">Elastic Volumes</td><td class="no">Cố định theo instance type</td></tr>
+          <tr><td>Hiệu năng</td><td>Tới 256.000 IOPS / volume (io2 BX), giới hạn bởi EBS bandwidth của instance</td><td>Rất cao (NVMe cục bộ), độ trễ thấp nhất</td></tr>
+          <tr><td>Chi phí</td><td>Trả theo GiB/IOPS/throughput provision</td><td>Đã gồm trong giá instance</td></tr>
+          <tr><td>Use case</td><td>Root/boot volume, database, dữ liệu cần giữ</td><td>Cache, buffer, scratch, temp; dữ liệu đã nhân bản (Cassandra, HDFS, Kafka nhiều node)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – instance store</span>
+        <ul>
+          <li>“<i>Highest possible I/O performance / lowest latency for temporary data, cache, scratch</i>” ⇒ <b>instance store</b> (storage optimized I-family).</li>
+          <li>“<i>Data is replicated across nodes by the application; need high random IOPS at low cost</i>” ⇒ instance store chấp nhận được.</li>
+          <li>“<i>Data must persist after stop/start</i>” ⇒ <b>EBS</b>, không phải instance store.</li>
+          <li>“<i>Retain data from instance store before stopping</i>” ⇒ chép sang <b>EBS / S3 / EFS</b> trước.</li>
+        </ul></div>
+
+      <h3>Tăng hiệu năng: RAID trên EBS</h3>
+      <p>Khi một volume không đủ, có thể gom nhiều EBS volume bằng RAID trong OS. <b>RAID 0</b> (striping) cộng dồn IOPS/throughput của các volume – nhưng mất một volume là mất cả mảng. <b>RAID 5/6 không được khuyến nghị</b> trên EBS vì thao tác parity tiêu tốn một phần IOPS. Độ dư thừa dữ liệu đã do EBS nhân bản trong AZ nên RAID 1 hiếm khi cần. Ngày nay gp3/io2 Block Express thường đủ, RAID chỉ là phương án khi vượt giới hạn một volume.</p>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>EBS volume</b>: block storage bền vững qua mạng, <b>zonal</b> (chỉ gắn instance cùng AZ), nhân bản trong AZ, độc lập vòng đời instance, trả tiền theo provision; AWS <b>không tự backup</b>.</li>
+          <li><b>gp3</b>: SSD rẻ nhất, baseline 3.000 IOPS + 125 MiB/s, tới 80.000 IOPS / 2.000 MiB/s, 64 TiB, hiệu năng <b>độc lập size</b>, rẻ hơn gp2 ~20%. <b>gp2</b>: 3 IOPS/GiB, burst 3.000 (I/O credits), tối đa 16.000.</li>
+          <li><b>io2 Block Express</b>: 256.000 IOPS, 4.000 MiB/s, 64 TiB, &lt; 500 µs, <b>99,999%</b>, tỉ lệ 1.000:1, cần Nitro. <b>io1</b>: 64.000 IOPS, 50:1. Chỉ io1/io2 có <b>Multi-Attach</b>.</li>
+          <li><b>st1</b> (500 MiB/s, dữ liệu nóng tuần tự) và <b>sc1</b> (250 MiB/s, rẻ nhất, dữ liệu lạnh): HDD, 125 GiB–16 TiB, <b>không boot</b>.</li>
+          <li><b>Elastic Volumes</b>: tăng size, đổi type/IOPS/throughput không downtime; <b>không giảm size</b>; ≤ 4 lần/24 h; nhớ extend file system.</li>
+          <li><b>Snapshot</b>: incremental, lưu S3, nhân bản mọi AZ trong Region ⇒ chuyển volume giữa AZ; <b>copy</b> sang Region/account khác (DR); FSR (5/Region, tính phí theo giờ × AZ) cho full hiệu năng ngay; <b>Archive</b> rẻ hơn 75% cho ≥ 90 ngày; tự động hóa bằng <b>DLM</b>/AWS Backup; Recycle Bin chống xóa nhầm.</li>
+          <li><b>Multi-Attach</b>: io1/io2, ≤ 16 Nitro instance, <b>cùng AZ</b>, clustered file system, không boot volume.</li>
+          <li><b>Encryption</b>: KMS (mặc định <code>aws/ebs</code>), mã hóa at rest + in transit + snapshot; <b>encryption by default</b> theo Region; không mã hóa trực tiếp volume cũ ⇒ snapshot ⇒ copy/restore mã hóa; không gỡ mã hóa; snapshot mã hóa không public, share cần customer managed key.</li>
+          <li><b>Instance store</b>: đĩa vật lý trên host, miễn phí, IOPS cực cao; chỉ gắn lúc launch; <b>reboot giữ</b>, <b>stop/hibernate/terminate mất</b>; dùng cho cache, buffer, scratch, dữ liệu đã nhân bản.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Block storage</dt><dd><b>Lưu trữ khối</b> – dữ liệu chia thành block, OS tạo file system lên trên.</dd></div>
+        <div><dt>Amazon Elastic Block Store (EBS)</dt><dd><b>Kho lưu trữ khối co giãn</b> – volume và snapshot cho EC2.</dd></div>
+        <div><dt>EBS volume</dt><dd><b>Ổ đĩa EBS</b> – thiết bị khối bền vững, zonal, gắn qua mạng.</dd></div>
+        <div><dt>IOPS</dt><dd><b>Số thao tác I/O mỗi giây</b> – thước đo của SSD/workload giao dịch.</dd></div>
+        <div><dt>General Purpose SSD (gp3 / gp2)</dt><dd><b>SSD đa dụng</b> – gp3 hiệu năng độc lập size; gp2 3 IOPS/GiB có burst.</dd></div>
+        <div><dt>Provisioned IOPS SSD (io2 Block Express / io1)</dt><dd><b>SSD IOPS cấp phát trước</b> – hiệu năng cao nhất, hỗ trợ Multi-Attach.</dd></div>
+        <div><dt>Throughput Optimized HDD (st1)</dt><dd><b>HDD tối ưu thông lượng</b> – dữ liệu tuần tự truy cập thường xuyên.</dd></div>
+        <div><dt>Cold HDD (sc1)</dt><dd><b>HDD dữ liệu lạnh</b> – rẻ nhất, ít truy cập.</dd></div>
+        <div><dt>Magnetic (standard)</dt><dd><b>Ổ từ thế hệ cũ</b>.</dd></div>
+        <div><dt>I/O credits / Burst balance</dt><dd><b>Tín dụng I/O / Số dư bùng nổ</b> – cho gp2 (IOPS) và st1/sc1 (throughput); metric <code>BurstBalance</code>.</dd></div>
+        <div><dt>Annual failure rate (AFR)</dt><dd><b>Tỉ lệ hỏng hằng năm</b> của volume.</dd></div>
+        <div><dt>EBS-optimized instance</dt><dd><b>Máy chủ tối ưu cho EBS</b> – băng thông riêng cho EBS.</dd></div>
+        <div><dt>Elastic Volumes</dt><dd><b>Ổ đĩa co giãn</b> – sửa size/type/IOPS/throughput khi đang chạy.</dd></div>
+        <div><dt>EBS snapshot</dt><dd><b>Bản chụp ổ đĩa</b> – point-in-time, lưu trên S3.</dd></div>
+        <div><dt>Incremental / Full snapshot</dt><dd><b>Bản chụp gia tăng / đầy đủ</b>.</dd></div>
+        <div><dt>Multi-volume snapshot</dt><dd><b>Chụp đồng thời nhiều volume</b> crash-consistent của một instance.</dd></div>
+        <div><dt>Volume initialization</dt><dd><b>Khởi tạo ổ đĩa</b> – tải block từ S3 khi tạo volume từ snapshot.</dd></div>
+        <div><dt>Fast Snapshot Restore (FSR)</dt><dd><b>Khôi phục snapshot nhanh</b> – volume khởi tạo đầy đủ ngay khi tạo.</dd></div>
+        <div><dt>Provisioned Rate for Volume Initialization</dt><dd><b>Tốc độ khởi tạo cấp phát</b> – 100–300 MiB/s, thời gian dự đoán được.</dd></div>
+        <div><dt>EBS Snapshots Archive</dt><dd><b>Tầng lưu trữ lâu dài cho snapshot</b> – rẻ hơn tới 75%, ≥ 90 ngày.</dd></div>
+        <div><dt>Amazon Data Lifecycle Manager (DLM)</dt><dd><b>Trình quản lý vòng đời dữ liệu</b> – tự động tạo/giữ/copy/xóa snapshot, AMI.</dd></div>
+        <div><dt>Snapshot lock</dt><dd><b>Khóa snapshot</b> – chống xóa trong một thời hạn.</dd></div>
+        <div><dt>Block public access for EBS snapshots</dt><dd><b>Chặn chia sẻ công khai snapshot</b> ở cấp Region.</dd></div>
+        <div><dt>EBS direct APIs</dt><dd><b>API truy cập trực tiếp nội dung snapshot</b>.</dd></div>
+        <div><dt>Multi-Attach</dt><dd><b>Gắn một ổ vào nhiều máy</b> – io1/io2, ≤ 16 Nitro instance cùng AZ.</dd></div>
+        <div><dt>Clustered file system</dt><dd><b>Hệ thống tệp cụm</b> – cho phép nhiều server ghi cùng lúc.</dd></div>
+        <div><dt>I/O fencing / NVMe reservations</dt><dd><b>Rào chắn I/O / Đặt chỗ NVMe</b> – kiểm soát quyền ghi trên volume dùng chung.</dd></div>
+        <div><dt>EBS encryption</dt><dd><b>Mã hóa EBS</b> bằng AWS KMS – at rest, in transit, snapshot.</dd></div>
+        <div><dt>Encryption by default</dt><dd><b>Mã hóa mặc định</b> – thiết lập theo Region cho mọi volume mới.</dd></div>
+        <div><dt>AWS managed key (aws/ebs) / Customer managed key</dt><dd><b>Khóa do AWS quản lý / Khóa do khách hàng quản lý</b>.</dd></div>
+        <div><dt>Instance store</dt><dd><b>Ổ đĩa tạm gắn trên máy chủ vật lý</b> – ephemeral.</dd></div>
+        <div><dt>Ephemeral storage</dt><dd><b>Lưu trữ tạm thời</b> – mất khi stop/terminate.</dd></div>
+        <div><dt>Cryptographically erased</dt><dd><b>Xóa bằng mật mã</b> – instance store bị xóa khi stop/hibernate/terminate.</dd></div>
+        <div><dt>RAID 0</dt><dd><b>Ghép đĩa dạng stripe</b> – cộng dồn hiệu năng, không dư thừa.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs a MySQL database on a single Amazon EC2 instance with a 200 GiB gp2 EBS volume. During peak hours, the CloudWatch BurstBalance metric drops to zero and query latency increases. The workload needs a sustained 9,000 IOPS. The data size will not grow. Which solution will meet these requirements MOST cost-effectively?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the gp2 volume size to 3,000 GiB to obtain 9,000 baseline IOPS.</li>
+            <li data-k="B">Modify the volume to gp3 by using Elastic Volumes and provision 9,000 IOPS.</li>
+            <li data-k="C">Modify the volume to io2 Block Express and provision 64,000 IOPS.</li>
+            <li data-k="D">Modify the volume to st1 to take advantage of higher burst throughput.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> gp3 cho phép provision IOPS <b>độc lập với dung lượng</b> (tỉ lệ tối đa 500 IOPS/GiB ⇒ 200 GiB cho tới 80.000 IOPS), không dùng burst nên duy trì 9.000 IOPS liên tục, giá/GiB rẻ hơn gp2 ~20%, và đổi bằng Elastic Volumes không downtime. <b>A sai</b>: gp2 3 IOPS/GiB thì 3.000 GiB cho 9.000 IOPS nhưng phải trả cho 2.800 GiB không dùng. <b>C sai</b>: io2 đắt hơn và 64.000 IOPS vượt xa nhu cầu. <b>D sai</b>: st1 là HDD tối ưu throughput tuần tự, rất kém với I/O nhỏ ngẫu nhiên của database và chỉ có tối đa 500 IOPS.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy cơ sở dữ liệu MySQL trên một Amazon EC2 instance duy nhất với một EBS volume gp2 dung lượng 200 GiB. Trong giờ cao điểm, metric CloudWatch BurstBalance giảm về 0 và độ trễ truy vấn tăng lên. Workload cần duy trì liên tục 9.000 IOPS. Kích thước dữ liệu sẽ không tăng. Giải pháp nào đáp ứng các yêu cầu này một cách MOST cost-effectively (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng dung lượng volume gp2 lên 3.000 GiB để có 9.000 IOPS baseline.</span><span class="why">Sai: gp2 cho 3 IOPS/GiB nên đúng là đạt 9.000 IOPS, nhưng phải trả tiền cho ~2.800 GiB không bao giờ dùng (dữ liệu không tăng) – tốn kém hơn nhiều so với gp3.</span></li>
+              <li data-k="B"><span class="tv">Chuyển volume sang gp3 bằng Elastic Volumes và provision 9.000 IOPS.</span><span class="why">Đúng: gp3 cho phép provision IOPS độc lập với dung lượng (200 GiB vẫn đạt 9.000 IOPS), không phụ thuộc burst, giá/GiB rẻ hơn gp2 và đổi loại volume không downtime.</span></li>
+              <li data-k="C"><span class="tv">Chuyển volume sang io2 Block Express và provision 64.000 IOPS.</span><span class="why">Sai: io2 có giá IOPS cao và 64.000 IOPS vượt xa nhu cầu 9.000 IOPS – không phải phương án rẻ nhất.</span></li>
+              <li data-k="D"><span class="tv">Chuyển volume sang st1 để tận dụng throughput burst cao hơn.</span><span class="why">Sai: st1 là HDD tối ưu cho đọc/ghi tuần tự lớn, tối đa chỉ 500 IOPS và rất kém với I/O nhỏ ngẫu nhiên của database.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A financial services company is migrating a mission-critical Oracle database to Amazon EC2. The database requires 150,000 IOPS from a single volume, consistent sub-millisecond latency, and the highest available volume durability. Which EBS volume type should a solutions architect choose?</div>
+          <ol class="opts">
+            <li data-k="A">General Purpose SSD (gp3)</li>
+            <li data-k="B">Provisioned IOPS SSD (io1)</li>
+            <li data-k="C">Throughput Optimized HDD (st1)</li>
+            <li data-k="D">Provisioned IOPS SSD (io2 Block Express) attached to a Nitro-based instance</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> io2 Block Express hỗ trợ tới <b>256.000 IOPS</b> (trên Nitro instance), độ trễ trung bình <b>dưới 500 µs</b> và độ bền <b>99,999%</b> – cao nhất trong các volume EBS; tài liệu nêu rõ phù hợp Oracle, SAP HANA, SQL Server. <b>A sai</b>: gp3 tối đa 80.000 IOPS, độ bền 99,8–99,9%. <b>B sai</b>: io1 tối đa 64.000 IOPS, độ bền 99,8–99,9%. <b>C sai</b>: st1 là HDD, tối đa 500 IOPS.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dịch vụ tài chính đang di chuyển một cơ sở dữ liệu Oracle quan trọng (mission-critical) lên Amazon EC2. Cơ sở dữ liệu yêu cầu 150.000 IOPS từ một volume duy nhất, độ trễ dưới mili giây ổn định và độ bền (durability) volume cao nhất hiện có. Solutions architect nên chọn loại EBS volume nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">General Purpose SSD (gp3)</span><span class="why">Sai: gp3 tối đa 80.000 IOPS mỗi volume và độ bền chỉ 99,8–99,9%, không đạt 150.000 IOPS.</span></li>
+              <li data-k="B"><span class="tv">Provisioned IOPS SSD (io1)</span><span class="why">Sai: io1 tối đa 64.000 IOPS mỗi volume và độ bền 99,8–99,9%, không đáp ứng cả hiệu năng lẫn độ bền yêu cầu.</span></li>
+              <li data-k="C"><span class="tv">Throughput Optimized HDD (st1)</span><span class="why">Sai: st1 là HDD, tối đa 500 IOPS, độ trễ cao – hoàn toàn không phù hợp cho database Oracle.</span></li>
+              <li data-k="D"><span class="tv">Provisioned IOPS SSD (io2 Block Express) gắn vào một instance dựa trên Nitro</span><span class="why">Đúng: io2 Block Express hỗ trợ tới 256.000 IOPS trên Nitro instance, độ trễ dưới mili giây và độ bền 99,999% – cao nhất trong các loại EBS volume.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company has an Amazon EC2 instance in us-east-1a with an attached EBS data volume. The company needs to move the instance and its data to us-east-1b with the least effort. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create a snapshot of the volume, create a new volume from the snapshot in us-east-1b, and attach it to a new instance in us-east-1b.</li>
+            <li data-k="B">Detach the volume and attach it directly to an instance in us-east-1b.</li>
+            <li data-k="C">Enable Multi-Attach on the volume and attach it to an instance in us-east-1b.</li>
+            <li data-k="D">Copy the snapshot to another AWS Region and then restore it to us-east-1b.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> EBS volume là tài nguyên <b>zonal</b>, chỉ gắn vào instance cùng AZ. Snapshot được lưu ở S3 và nhân bản qua mọi AZ của Region, nên có thể tạo volume mới ở AZ bất kỳ trong Region. <b>B sai</b>: không gắn volume cho instance khác AZ. <b>C sai</b>: Multi-Attach chỉ trong <b>cùng AZ</b> (và chỉ io1/io2). <b>D sai</b>: không cần copy sang Region khác – thừa bước, tốn phí.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có một Amazon EC2 instance ở us-east-1a với một EBS volume dữ liệu được gắn vào. Công ty cần chuyển instance và dữ liệu của nó sang us-east-1b với ít công sức nhất. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo snapshot của volume, tạo volume mới từ snapshot đó ở us-east-1b và gắn nó vào một instance mới ở us-east-1b.</span><span class="why">Đúng: EBS volume là tài nguyên zonal; snapshot được lưu ở cấp Region nên có thể khôi phục thành volume ở bất kỳ AZ nào trong cùng Region.</span></li>
+              <li data-k="B"><span class="tv">Tháo (detach) volume và gắn trực tiếp vào một instance ở us-east-1b.</span><span class="why">Sai: EBS volume chỉ gắn được vào instance trong cùng Availability Zone, không thể gắn sang AZ khác.</span></li>
+              <li data-k="C"><span class="tv">Bật Multi-Attach trên volume và gắn nó vào một instance ở us-east-1b.</span><span class="why">Sai: Multi-Attach chỉ hoạt động giữa các instance trong cùng AZ (và chỉ với io1/io2), không vượt qua ranh giới AZ.</span></li>
+              <li data-k="D"><span class="tv">Copy snapshot sang một AWS Region khác rồi khôi phục nó về us-east-1b.</span><span class="why">Sai: snapshot vốn đã dùng được ở mọi AZ trong Region; copy sang Region khác là thừa bước và tốn thêm phí truyền dữ liệu.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a fleet of EC2 instances that process video frames. Each instance needs very high random I/O performance with the lowest possible latency for temporary scratch files. The scratch data can be regenerated if lost. The company wants to minimize storage costs. Which storage option meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">io2 Block Express EBS volumes with maximum provisioned IOPS</li>
+            <li data-k="B">Amazon EFS file system in Max I/O mode</li>
+            <li data-k="C">NVMe SSD instance store volumes on storage optimized instances</li>
+            <li data-k="D">gp2 EBS volumes in a RAID 0 array</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Instance store là đĩa gắn <b>vật lý</b> trên host – IOPS rất cao, độ trễ thấp nhất, <b>không tính thêm phí</b>, phù hợp đúng với “buffers, caches, scratch data” theo tài liệu; dữ liệu mất khi stop/terminate cũng chấp nhận được vì tái tạo được. <b>A sai</b>: hiệu năng tốt nhưng chi phí IOPS rất cao cho dữ liệu tạm. <b>B sai</b>: EFS là file storage qua mạng, độ trễ cao hơn và tốn phí. <b>D sai</b>: tốn phí EBS và vẫn đi qua mạng, độ trễ cao hơn instance store.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một nhóm EC2 instance xử lý các khung hình video. Mỗi instance cần hiệu năng I/O ngẫu nhiên rất cao với độ trễ thấp nhất có thể cho các file tạm (scratch). Dữ liệu tạm có thể tạo lại nếu bị mất. Công ty muốn giảm thiểu chi phí lưu trữ. Lựa chọn lưu trữ nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">EBS volume io2 Block Express với IOPS provision tối đa</span><span class="why">Sai: hiệu năng cao nhưng phải trả phí IOPS provision rất đắt cho dữ liệu tạm có thể tạo lại, trái với yêu cầu giảm chi phí.</span></li>
+              <li data-k="B"><span class="tv">File system Amazon EFS ở chế độ Max I/O</span><span class="why">Sai: EFS là file storage qua mạng, độ trễ cao hơn ổ cục bộ và tính phí theo dung lượng.</span></li>
+              <li data-k="C"><span class="tv">Volume instance store NVMe SSD trên các instance tối ưu lưu trữ (storage optimized)</span><span class="why">Đúng: instance store là ổ gắn vật lý trên host, IOPS rất cao, độ trễ thấp nhất và đã bao gồm trong giá instance; mất dữ liệu khi stop/terminate chấp nhận được vì dữ liệu tạo lại được.</span></li>
+              <li data-k="D"><span class="tv">Các EBS volume gp2 trong mảng RAID 0</span><span class="why">Sai: vẫn tốn phí EBS và đi qua mạng nên độ trễ cao hơn instance store.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company has dozens of unencrypted EBS volumes attached to production EC2 instances. A new security policy requires that all existing data and all future EBS volumes in the Region be encrypted. Which combination of steps will meet these requirements? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Enable EBS encryption by default in the Region.</li>
+            <li data-k="B">Use the Modify Volume (Elastic Volumes) action to set the Encrypted flag on each existing volume.</li>
+            <li data-k="C">Enable default encryption on the Amazon S3 buckets where EBS snapshots are stored.</li>
+            <li data-k="D">Create snapshots of the existing volumes, create encrypted volumes from those snapshots, and replace the original volumes.</li>
+            <li data-k="E">Enable encryption by default; this automatically encrypts all existing volumes in the Region.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> <b>Encryption by default</b> (thiết lập theo Region) đảm bảo mọi volume mới và snapshot copy đều mã hóa. Với volume cũ, tài liệu ghi rõ: <b>không mã hóa trực tiếp được</b> – phải chụp snapshot rồi tạo volume mã hóa từ snapshot (hoặc copy snapshot với encryption) và thay volume. <b>B sai</b>: Elastic Volumes chỉ sửa size/type/IOPS/throughput, không bật mã hóa. <b>C sai</b>: bucket S3 chứa snapshot không truy cập được, và mã hóa EBS dùng KMS qua EBS. <b>E sai</b>: encryption by default <b>không ảnh hưởng</b> volume/snapshot đã tồn tại.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có hàng chục EBS volume chưa mã hóa đang gắn vào các EC2 instance production. Một chính sách bảo mật mới yêu cầu toàn bộ dữ liệu hiện có và mọi EBS volume trong tương lai trong Region đều phải được mã hóa. Kết hợp các bước nào sẽ đáp ứng các yêu cầu này? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật EBS encryption by default trong Region.</span><span class="why">Đúng: thiết lập này theo Region đảm bảo mọi EBS volume mới (và snapshot copy) được tạo sau đó đều tự động mã hóa – đáp ứng phần "volume trong tương lai".</span></li>
+              <li data-k="B"><span class="tv">Dùng thao tác Modify Volume (Elastic Volumes) để bật cờ Encrypted trên từng volume hiện có.</span><span class="why">Sai: Elastic Volumes chỉ thay đổi size, type, IOPS, throughput; không thể mã hóa trực tiếp một volume đang chưa mã hóa.</span></li>
+              <li data-k="C"><span class="tv">Bật default encryption trên các bucket Amazon S3 nơi lưu EBS snapshot.</span><span class="why">Sai: snapshot được lưu ở S3 do AWS quản lý, người dùng không truy cập được bucket đó; mã hóa EBS được thực hiện qua EBS với AWS KMS.</span></li>
+              <li data-k="D"><span class="tv">Tạo snapshot của các volume hiện có, tạo volume đã mã hóa từ các snapshot đó và thay thế volume gốc.</span><span class="why">Đúng: đây là cách được tài liệu hướng dẫn để mã hóa dữ liệu hiện có – snapshot rồi tạo volume mã hóa (hoặc copy snapshot có mã hóa) và thay volume cũ.</span></li>
+              <li data-k="E"><span class="tv">Bật encryption by default; việc này tự động mã hóa mọi volume hiện có trong Region.</span><span class="why">Sai: encryption by default không ảnh hưởng tới volume và snapshot đã tồn tại, chỉ áp dụng cho tài nguyên tạo mới.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a clustered Linux application on four EC2 instances in the same Availability Zone. The application requires all nodes to read from and write to the same block storage volume concurrently. The application uses a cluster-aware file system. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Attach a gp3 volume to all four instances by enabling Multi-Attach.</li>
+            <li data-k="B">Attach an st1 volume to all four instances and format it with EXT4.</li>
+            <li data-k="C">Create an io2 volume with Multi-Attach enabled and attach it to all four Nitro-based instances.</li>
+            <li data-k="D">Create one gp3 volume per instance and synchronize them with a cron job that uses rsync.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Multi-Attach</b> chỉ hỗ trợ <b>io1/io2</b>, tối đa <b>16 Nitro instance cùng AZ</b>, mỗi instance có quyền đọc/ghi đầy đủ; ứng dụng dùng clustered file system đúng yêu cầu tài liệu. <b>A sai</b>: gp3 không hỗ trợ Multi-Attach. <b>B sai</b>: st1 không hỗ trợ Multi-Attach và EXT4 không thiết kế cho nhiều server ghi đồng thời. <b>D sai</b>: không phải block storage dùng chung, rsync gây lệch dữ liệu và tăng vận hành.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng Linux dạng cluster trên bốn EC2 instance trong cùng một Availability Zone. Ứng dụng yêu cầu tất cả các node đọc và ghi đồng thời vào cùng một block storage volume. Ứng dụng sử dụng file system hỗ trợ cluster (cluster-aware). Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gắn một volume gp3 vào cả bốn instance bằng cách bật Multi-Attach.</span><span class="why">Sai: gp3 không hỗ trợ Multi-Attach; tính năng này chỉ có trên io1/io2.</span></li>
+              <li data-k="B"><span class="tv">Gắn một volume st1 vào cả bốn instance và format nó bằng EXT4.</span><span class="why">Sai: st1 không hỗ trợ Multi-Attach, và EXT4 không được thiết kế cho nhiều server ghi đồng thời (dễ hỏng dữ liệu).</span></li>
+              <li data-k="C"><span class="tv">Tạo một volume io2 có bật Multi-Attach và gắn nó vào cả bốn instance dựa trên Nitro.</span><span class="why">Đúng: Multi-Attach trên io1/io2 cho phép gắn một volume vào tối đa 16 Nitro instance trong cùng AZ với quyền đọc/ghi đầy đủ, dùng kèm cluster-aware file system như đề yêu cầu.</span></li>
+              <li data-k="D"><span class="tv">Tạo mỗi instance một volume gp3 và đồng bộ chúng bằng một cron job dùng rsync.</span><span class="why">Sai: đây không phải block storage dùng chung đồng thời; rsync định kỳ gây lệch dữ liệu và tăng gánh nặng vận hành.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company launches hundreds of EC2 instances from the same EBS snapshot during a daily batch window. The volumes must deliver their full provisioned performance immediately after creation, with no first-access latency. Which solution will meet this requirement with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Run the dd utility on each new volume to read every block before use.</li>
+            <li data-k="B">Enable Amazon EBS fast snapshot restore on the snapshot in the Availability Zones where the instances are launched.</li>
+            <li data-k="C">Move the snapshot to the EBS Snapshots Archive tier.</li>
+            <li data-k="D">Change the volume type to sc1 to increase burst throughput.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Fast snapshot restore</b> tạo volume <b>đã khởi tạo đầy đủ ngay khi tạo</b>, loại bỏ độ trễ truy cập block lần đầu; bật theo cặp snapshot + AZ và không cần thao tác trên từng volume. <b>A sai</b>: đọc toàn bộ block bằng dd/fio hiệu quả nhưng mất thời gian và tăng vận hành trên hàng trăm instance. <b>C sai</b>: archive phải restore lâu mới dùng được – ngược mục tiêu. <b>D sai</b>: sc1 là HDD chậm, không giải quyết initialization và không boot được.</div>
+          <div class="trans">
+            <div class="tq">Một công ty khởi chạy hàng trăm EC2 instance từ cùng một EBS snapshot trong khung giờ xử lý batch hằng ngày. Các volume phải đạt đầy đủ hiệu năng đã provision ngay sau khi được tạo, không có độ trễ khi truy cập lần đầu. Giải pháp nào đáp ứng yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chạy tiện ích dd trên mỗi volume mới để đọc toàn bộ block trước khi sử dụng.</span><span class="why">Sai: đọc trước mọi block có khởi tạo được volume, nhưng tốn thời gian và phải thao tác trên hàng trăm instance mỗi ngày – overhead vận hành cao.</span></li>
+              <li data-k="B"><span class="tv">Bật Amazon EBS fast snapshot restore trên snapshot ở các Availability Zone nơi khởi chạy instance.</span><span class="why">Đúng: fast snapshot restore tạo volume đã được khởi tạo đầy đủ ngay lúc tạo, loại bỏ độ trễ truy cập lần đầu; chỉ cần bật một lần theo cặp snapshot + AZ.</span></li>
+              <li data-k="C"><span class="tv">Chuyển snapshot sang tầng EBS Snapshots Archive.</span><span class="why">Sai: snapshot ở tầng archive phải restore mất nhiều giờ mới dùng được – ngược hẳn với mục tiêu hiệu năng tức thì.</span></li>
+              <li data-k="D"><span class="tv">Đổi loại volume sang sc1 để tăng throughput burst.</span><span class="why">Sai: sc1 là HDD chậm, không giải quyết vấn đề khởi tạo block và không dùng làm boot volume được.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company must keep monthly EBS snapshots for 7 years to meet compliance requirements. The snapshots are rarely accessed, and a restore time of up to 72 hours is acceptable. Which solution will reduce snapshot storage costs the MOST?</div>
+          <ol class="opts">
+            <li data-k="A">Keep the snapshots in the standard tier and enable fast snapshot restore.</li>
+            <li data-k="B">Copy the snapshots to another Region every month.</li>
+            <li data-k="C">Create AMIs from the snapshots and deregister the AMIs.</li>
+            <li data-k="D">Move the monthly snapshots to the Amazon EBS Snapshots Archive tier.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>EBS Snapshots Archive</b> giảm tới <b>75%</b> chi phí lưu trữ cho snapshot giữ ≥ 90 ngày và hiếm khi truy cập; tài liệu nêu use case “monthly, quarterly, or yearly snapshots for compliance”. Thời gian restore dài là chấp nhận được. <b>A sai</b>: FSR tốn thêm phí theo giờ, không giảm chi phí. <b>B sai</b>: copy sang Region khác làm tăng chi phí (full copy + data transfer). <b>C sai</b>: AMI không giảm chi phí lưu snapshot; deregister AMI không xóa snapshot.</div>
+          <div class="trans">
+            <div class="tq">Một công ty phải lưu giữ các EBS snapshot hằng tháng trong 7 năm để đáp ứng yêu cầu tuân thủ. Các snapshot hiếm khi được truy cập, và thời gian khôi phục tối đa 72 giờ là chấp nhận được. Giải pháp nào giảm chi phí lưu trữ snapshot nhiều nhất (MOST)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Giữ snapshot ở tầng standard và bật fast snapshot restore.</span><span class="why">Sai: fast snapshot restore tính thêm phí theo giờ cho mỗi snapshot/AZ, làm tăng chứ không giảm chi phí.</span></li>
+              <li data-k="B"><span class="tv">Copy snapshot sang một Region khác mỗi tháng.</span><span class="why">Sai: tạo thêm bản sao đầy đủ ở Region khác cộng phí truyền dữ liệu, làm chi phí tăng lên.</span></li>
+              <li data-k="C"><span class="tv">Tạo AMI từ các snapshot rồi deregister các AMI đó.</span><span class="why">Sai: AMI không thay đổi giá lưu snapshot, và deregister AMI không xóa snapshot bên dưới – không tiết kiệm gì.</span></li>
+              <li data-k="D"><span class="tv">Chuyển các snapshot hằng tháng sang tầng Amazon EBS Snapshots Archive.</span><span class="why">Đúng: Snapshots Archive giảm tới 75% chi phí cho snapshot giữ lâu (≥ 90 ngày), hiếm truy cập – đúng use case snapshot tuân thủ; thời gian restore dài vẫn trong giới hạn 72 giờ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A solutions architect is designing storage for a log analytics application on Amazon EC2. The application performs large, sequential reads over several TiB of frequently accessed data. A separate set of historical data is accessed only a few times per year and must be stored on EBS at the lowest cost. Which EBS volume types should the architect choose? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">io2 Block Express for the frequently accessed log data</li>
+            <li data-k="B">st1 for the frequently accessed log data</li>
+            <li data-k="C">gp2 for the historical data</li>
+            <li data-k="D">st1 as the boot volume for the analytics instances</li>
+            <li data-k="E">sc1 for the historical data</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> <b>st1</b> được thiết kế cho workload <b>tuần tự lớn, truy cập thường xuyên</b> như log processing, big data (tới 500 MiB/s). <b>sc1</b> là volume EBS <b>chi phí thấp nhất</b>, cho dữ liệu ít truy cập. <b>A sai</b>: io2 tối ưu IOPS và rất đắt cho workload thiên về throughput. <b>C sai</b>: gp2 là SSD, đắt hơn sc1 nhiều cho dữ liệu lạnh. <b>D sai</b>: st1/sc1 <b>không làm boot volume</b> được.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect đang thiết kế lưu trữ cho một ứng dụng phân tích log trên Amazon EC2. Ứng dụng thực hiện các lượt đọc tuần tự, khối lớn trên vài TiB dữ liệu được truy cập thường xuyên. Một tập dữ liệu lịch sử riêng chỉ được truy cập vài lần mỗi năm và phải được lưu trên EBS với chi phí thấp nhất. Architect nên chọn những loại EBS volume nào? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">io2 Block Express cho dữ liệu log truy cập thường xuyên</span><span class="why">Sai: io2 tối ưu cho IOPS ngẫu nhiên và rất đắt; workload đọc tuần tự lớn cần throughput, không cần IOPS cao.</span></li>
+              <li data-k="B"><span class="tv">st1 cho dữ liệu log truy cập thường xuyên</span><span class="why">Đúng: st1 (Throughput Optimized HDD) được thiết kế cho workload tuần tự lớn, truy cập thường xuyên như xử lý log, big data, với chi phí thấp hơn SSD.</span></li>
+              <li data-k="C"><span class="tv">gp2 cho dữ liệu lịch sử</span><span class="why">Sai: gp2 là SSD, đắt hơn sc1 nhiều cho dữ liệu lạnh hiếm khi truy cập.</span></li>
+              <li data-k="D"><span class="tv">st1 làm boot volume cho các instance phân tích</span><span class="why">Sai: các volume HDD (st1/sc1) không thể dùng làm boot volume.</span></li>
+              <li data-k="E"><span class="tv">sc1 cho dữ liệu lịch sử</span><span class="why">Đúng: sc1 (Cold HDD) là loại EBS volume rẻ nhất, dành cho dữ liệu ít truy cập – đúng yêu cầu "lưu trên EBS với chi phí thấp nhất".</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company stores session cache data on instance store volumes of its EC2 instances. An operations engineer plans maintenance that includes rebooting some instances and stopping and starting others. What will happen to the data on the instance store volumes?</div>
+          <ol class="opts">
+            <li data-k="A">The data persists on rebooted instances but is lost on instances that are stopped and started.</li>
+            <li data-k="B">The data is lost on both rebooted and stopped instances.</li>
+            <li data-k="C">The data persists in both cases because instance store volumes are automatically backed up to Amazon S3.</li>
+            <li data-k="D">The data persists on stopped instances if termination protection is enabled.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Theo bảng “Data persistence for instance store volumes”: dữ liệu <b>còn khi reboot</b>, nhưng <b>mất khi stop, hibernate hoặc terminate</b> (mọi block bị cryptographically erased). <b>B sai</b>: reboot không làm mất dữ liệu. <b>C sai</b>: instance store không có backup tự động; chỉ EBS mới có snapshot (và cũng không tự động). <b>D sai</b>: termination/stop protection không giữ dữ liệu instance store khi instance bị stop.</div>
+          <div class="trans">
+            <div class="tq">Một công ty lưu dữ liệu session cache trên các volume instance store của các EC2 instance. Một kỹ sư vận hành lên kế hoạch bảo trì, bao gồm reboot một số instance và stop rồi start một số instance khác. Điều gì sẽ xảy ra với dữ liệu trên các volume instance store?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dữ liệu được giữ lại trên các instance được reboot nhưng bị mất trên các instance bị stop rồi start.</span><span class="why">Đúng: reboot giữ instance trên cùng host nên dữ liệu instance store còn nguyên; stop/hibernate/terminate khiến instance rời host và mọi block bị xóa.</span></li>
+              <li data-k="B"><span class="tv">Dữ liệu bị mất trên cả instance được reboot lẫn instance bị stop.</span><span class="why">Sai: reboot không làm mất dữ liệu instance store; chỉ stop, hibernate hoặc terminate mới làm mất.</span></li>
+              <li data-k="C"><span class="tv">Dữ liệu được giữ lại trong cả hai trường hợp vì volume instance store được tự động sao lưu lên Amazon S3.</span><span class="why">Sai: instance store không có cơ chế sao lưu tự động nào; snapshot chỉ áp dụng cho EBS.</span></li>
+              <li data-k="D"><span class="tv">Dữ liệu được giữ lại trên các instance bị stop nếu bật termination protection.</span><span class="why">Sai: termination protection chỉ ngăn xóa nhầm instance, không giữ được dữ liệu instance store khi instance bị stop.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/ebs-volumes.html" target="_blank" rel="noopener">Amazon EBS volumes</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/general-purpose.html" target="_blank" rel="noopener">Amazon EBS General Purpose SSD volumes</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/provisioned-iops.html" target="_blank" rel="noopener">Amazon EBS Provisioned IOPS SSD volumes</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/hdd-vols.html" target="_blank" rel="noopener">Amazon EBS Throughput Optimized HDD and Cold HDD volumes</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/ebs-modify-volume.html" target="_blank" rel="noopener">Modify an Amazon EBS volume using Elastic Volumes operations</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/how_snapshots_work.html" target="_blank" rel="noopener">How Amazon EBS snapshots work</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/ebs-copy-snapshot.html" target="_blank" rel="noopener">Copy an Amazon EBS snapshot</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/ebs-fast-snapshot-restore.html" target="_blank" rel="noopener">Amazon EBS fast snapshot restore</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/initalize-volume.html" target="_blank" rel="noopener">Initialize Amazon EBS volumes</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/snapshot-archive.html" target="_blank" rel="noopener">Archive Amazon EBS snapshots</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/ebs-volumes-multi.html" target="_blank" rel="noopener">Attach an EBS volume to multiple EC2 instances using Multi-Attach</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/ebs-encryption.html" target="_blank" rel="noopener">Amazon EBS encryption</a></li>
+        <li><a href="https://docs.aws.amazon.com/ebs/latest/userguide/encryption-by-default.html" target="_blank" rel="noopener">Enable Amazon EBS encryption by default</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-store-lifetime.html" target="_blank" rel="noopener">Data persistence for Amazon EC2 instance store volumes</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

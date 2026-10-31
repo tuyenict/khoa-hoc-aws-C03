@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 23 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Direct-Connect.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="23" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Mô tả các thành phần của <span class="t" data-vi="VPN giữa hai mạng">AWS Site-to-Site VPN</span>: <i>customer gateway</i>, <i>customer gateway device</i>, <i>virtual private gateway</i>, <i>transit gateway</i>, hai <i>VPN tunnel</i>; phân biệt định tuyến <b>static</b> và <b>dynamic (BGP)</b>.</li>
+          <li>Hiểu <b>VPN CloudHub</b> (nối nhiều chi nhánh qua một virtual private gateway) và <b>Accelerated VPN</b> (qua AWS Global Accelerator).</li>
+          <li>Dùng <span class="t" data-vi="VPN cho người dùng cá nhân">AWS Client VPN</span> cho nhân viên làm việc từ xa: endpoint, target network, authorization rule, các kiểu xác thực, <i>split-tunnel</i>.</li>
+          <li>Giải thích <b>AWS Direct Connect</b>: <i>dedicated</i> vs <i>hosted connection</i>, ba loại <i>virtual interface</i> (private / public / transit), yêu cầu mạng, chi phí, và việc <b>DX không mã hóa mặc định</b>.</li>
+          <li>Thiết kế với <b>Direct Connect gateway</b> (truy cập VPC ở nhiều Region / nhiều account) và kết hợp DX với <b>Transit Gateway</b>.</li>
+          <li>Chọn mô hình kết nối lai đúng theo từ khóa đề: <i>quickly, encrypted, consistent network performance, highly resilient, cost-effective backup, remote employees</i>.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 4 – Networking</span>
+        <p><b>Bài 20</b> dạy VPC, route table, IGW, NAT; <b>Bài 21</b> dạy Security Group, NACL, Flow Logs; <b>Bài 22</b> dạy VPC peering, VPC endpoint, PrivateLink, <b>Transit Gateway</b> (attachment, route table, association/propagation) và AWS RAM. Bài này tập trung vào <b>kết nối giữa AWS và mạng on-premises / người dùng từ xa</b>: Site-to-Site VPN, Client VPN, Direct Connect, Direct Connect gateway, VPN over DX, VPN CloudHub. Phân giải DNS lai (Route 53 Resolver inbound/outbound endpoint) học ở <b>Bài 24</b>; Global Accelerator chi tiết ở <b>Bài 25</b>.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/AWS-Direct-Connect.svg" alt="">Tổng quan: ba con đường nối on-premises với AWS</h2>
+      <p class="lead">Theo mặc định, một instance chạy trong <span class="t" data-vi="Đám mây riêng ảo">VPC</span> <b>không thể</b> giao tiếp với mạng <span class="t" data-vi="Hạ tầng tại chỗ (trung tâm dữ liệu của công ty)">on-premises</span> của bạn. Kiến trúc <span class="t" data-vi="Mạng lai">hybrid networking</span> giải quyết bài toán này: nối trung tâm dữ liệu, văn phòng chi nhánh và người dùng từ xa vào VPC, sao cho tài nguyên hai bên nói chuyện với nhau bằng <b>IP private</b>.</p>
+
+      <p>AWS cung cấp ba nhóm dịch vụ, mỗi nhóm cho một đối tượng khác nhau:</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Site-to-Site-VPN.svg" alt="">
+          <div><h4>AWS Site-to-Site VPN</h4><span class="vi">VPN giữa hai mạng</span><p>Đường hầm <b>IPsec</b> mã hóa đi qua <b>internet công cộng</b>, nối cả một mạng (data center, chi nhánh) với VPC. Dựng trong vài phút, chi phí thấp, mỗi tunnel tới <b>1,25 Gbps</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Client-VPN.svg" alt="">
+          <div><h4>AWS Client VPN</h4><span class="vi">VPN cho người dùng cá nhân</span><p>Dịch vụ VPN <b>managed</b> dựa trên <b>OpenVPN</b>: từng nhân viên cài client trên laptop và kết nối an toàn (TLS) tới VPC và mạng on-premises từ bất cứ đâu.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Direct-Connect.svg" alt="">
+          <div><h4>AWS Direct Connect</h4><span class="vi">Kết nối trực tiếp</span><p>Cáp quang Ethernet <b>riêng</b> từ router của bạn tới router AWS tại một <i>Direct Connect location</i>, <b>bỏ qua nhà mạng internet</b>. Băng thông lớn (tới 400 Gbps), độ trễ ổn định.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Direct-Connect-Gateway.svg" alt="">
+          <div><h4>Direct Connect gateway</h4><span class="vi">Cổng Direct Connect</span><p>Tài nguyên <b>toàn cầu</b>: một kết nối DX truy cập VPC ở <b>nhiều Region</b> và <b>nhiều account</b> (qua virtual private gateway hoặc transit gateway).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_VPN-Gateway.svg" alt="">
+          <div><h4>Virtual private gateway</h4><span class="vi">Cổng riêng ảo</span><p>Điểm cuối phía AWS của VPN / DX private VIF, <b>gắn vào đúng một VPC</b>. Mô hình đơn giản nhất cho một VPC.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Transit-Gateway.svg" alt="">
+          <div><h4>AWS Transit Gateway</h4><span class="vi">Cổng trung chuyển</span><p>Hub cấp Region (Bài 22) nhận <b>VPN attachment</b> và <b>Direct Connect gateway attachment</b> ⇒ một đường on-premises phục vụ hàng trăm VPC; hỗ trợ <b>ECMP</b> cho VPN.</p></div></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">Corporate data center 192.168.0.0/16</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">Server</div>
+              <div class="node"><img src="../assets/icons/res/Amazon-VPC_Customer-Gateway.svg" alt="">Customer gateway device<small>router / firewall, BGP</small></div>
+            </div>
+          </div>
+          <div>
+            <div class="flow">
+              <span class="arrow">IPsec qua internet (2 tunnel)</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-VPC_VPN-Connection.svg" alt="">Site-to-Site VPN</div>
+            </div>
+            <div class="flow">
+              <span class="arrow">cáp quang riêng, 802.1Q + BGP</span>
+              <div class="node"><img src="../assets/icons/svc/AWS-Direct-Connect.svg" alt="">Direct Connect location</div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Nhân viên remote</div>
+              <span class="arrow dashed">OpenVPN / TLS</span>
+              <div class="node"><img src="../assets/icons/svc/AWS-Client-VPN.svg" alt="">Client VPN endpoint</div>
+            </div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud – Region</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-VPC_VPN-Gateway.svg" alt="">Virtual private gateway<small>vgw-… (ASN 64512)</small></div>
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 private</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Ba con đường hybrid: <b>Site-to-Site VPN</b> (mạng ↔ mạng, mã hóa, qua internet), <b>Direct Connect</b> (mạng ↔ mạng, đường vật lý riêng, không qua internet), và <b>Client VPN</b> (từng người dùng ↔ VPC). Phía AWS, VPN và DX private VIF kết thúc tại <b>virtual private gateway</b> (một VPC) hoặc <b>transit gateway</b> (nhiều VPC).</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – nối văn phòng với kho hàng</span>
+        <p><b>Site-to-Site VPN</b> giống như chở hàng bằng <b>xe bọc thép chạy trên quốc lộ công cộng</b>: hàng được khóa kỹ (mã hóa IPsec), xuất phát ngay hôm nay, nhưng tốc độ phụ thuộc tình trạng giao thông (internet). <b>Direct Connect</b> là <b>đường chuyên dụng riêng</b> làm từ kho của bạn tới cổng AWS: phải xin giấy phép, thi công lâu, nhưng đường thông thoáng, tốc độ ổn định – có điều cổng không có khóa sẵn (không mã hóa mặc định). <b>Client VPN</b> là <b>thẻ ra vào cá nhân</b> phát cho từng nhân viên để vào văn phòng từ bất cứ đâu.</p></div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Site-to-Site VPN</th><th>Direct Connect</th><th>Client VPN</th></tr></thead>
+        <tbody>
+          <tr><td>Đối tượng</td><td>Mạng ↔ mạng</td><td>Mạng ↔ mạng</td><td>Từng người dùng ↔ mạng</td></tr>
+          <tr><td>Đường truyền</td><td>Internet công cộng</td><td>Đường vật lý riêng tới DX location</td><td>Internet công cộng</td></tr>
+          <tr><td>Mã hóa</td><td class="yes">IPsec (mặc định)</td><td class="no">Không mặc định (thêm VPN hoặc MACsec)</td><td class="yes">TLS (OpenVPN)</td></tr>
+          <tr><td>Thời gian triển khai</td><td>Vài phút</td><td>Nhiều ngày → vài tuần (cần đối tác, cross connect)</td><td>Vài phút</td></tr>
+          <tr><td>Băng thông</td><td>Tới 1,25 Gbps/tunnel (5 Gbps với large bandwidth tunnel trên TGW)</td><td>50 Mbps → 400 Gbps</td><td>Baseline 50 Mbps mỗi kết nối người dùng</td></tr>
+          <tr><td>Hiệu năng</td><td>Phụ thuộc “thời tiết internet”</td><td>Ổn định, độ trễ thấp, nhất quán</td><td>Phụ thuộc internet</td></tr>
+          <tr><td>Tính phí</td><td>Giờ kết nối + data transfer out</td><td>Port-hour + data transfer out (rate DX thấp hơn)</td><td>Giờ mỗi subnet association + giờ mỗi kết nối</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted">Ghi chú: “vài phút” / “vài tuần” là kiến thức phổ biến trong đề thi; tài liệu DX chỉ ghi AWS có thể mất tới <b>72 giờ làm việc</b> để duyệt yêu cầu và cấp port, chưa tính thời gian nhà mạng kéo cáp/cross connect.</p>
+
+      <!-- ===================== PHẦN 2: SITE-TO-SITE VPN ===================== -->
+      <h2 id="site-to-site-vpn"><img src="../assets/icons/svc/AWS-Site-to-Site-VPN.svg" alt="">AWS Site-to-Site VPN</h2>
+      <p class="lead">Theo tài liệu AWS, bạn bật truy cập từ VPC tới thiết bị ở xa bằng cách tạo một <span class="t" data-vi="Kết nối VPN giữa hai mạng">Site-to-Site VPN connection</span> và cấu hình định tuyến để traffic đi qua kết nối đó. Site-to-Site VPN hỗ trợ kết nối <b>IPsec</b>. Trong tài liệu AWS, “VPN connection” nghĩa là kết nối giữa <b>VPC</b> và <b>mạng on-premises của bạn</b>.</p>
+
+      <h3>Các khái niệm chính</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Nằm ở đâu</th><th>Ý nghĩa (theo tài liệu)</th></tr></thead>
+        <tbody>
+          <tr><td><b>VPN connection</b></td><td>AWS</td><td>Kết nối an toàn giữa thiết bị on-premises và VPC.</td></tr>
+          <tr><td><b>VPN tunnel</b></td><td>Giữa hai đầu</td><td>Liên kết mã hóa để dữ liệu đi giữa mạng khách hàng và AWS. <b>Mỗi VPN connection có 2 tunnel</b>, dùng đồng thời được để có <b>high availability</b>.</td></tr>
+          <tr><td><span class="t" data-vi="Cổng phía khách hàng (tài nguyên AWS)">Customer gateway</span></td><td><b>Tài nguyên trong AWS</b></td><td>Tài nguyên AWS <b>mô tả</b> thiết bị phía bạn: IP public (hoặc private với private IP VPN), BGP ASN, chứng chỉ.</td></tr>
+          <tr><td><span class="t" data-vi="Thiết bị cổng phía khách hàng">Customer gateway device</span></td><td><b>On-premises</b></td><td>Thiết bị vật lý hoặc phần mềm (router, firewall) ở phía bạn của kết nối VPN.</td></tr>
+          <tr><td><span class="t" data-vi="Cổng đích">Target gateway</span></td><td>AWS</td><td>Tên chung cho đầu VPN phía Amazon: virtual private gateway, transit gateway (hoặc Cloud WAN core network).</td></tr>
+          <tr><td><span class="t" data-vi="Cổng riêng ảo">Virtual private gateway</span></td><td>AWS, gắn vào VPC</td><td>“VPN concentrator” phía Amazon, <b>gắn vào một VPC duy nhất</b>. ASN mặc định <b>64512</b> nếu bạn không chỉ định; <b>không đổi ASN được</b> sau khi tạo.</td></tr>
+          <tr><td><b>Transit gateway</b></td><td>AWS, cấp Region</td><td>Hub nối nhiều VPC và mạng on-premises; VPN được tạo như một <b>attachment</b> của transit gateway.</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 320" width="760" role="img" aria-label="Site-to-Site VPN với hai tunnel IPsec">
+          <defs><marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="16" y="20" width="220" height="280" rx="6" fill="rgba(125,137,152,.06)" stroke="#7D8998" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="28" y="42" font-size="13" font-weight="700">On-premises 192.168.0.0/16</text>
+          <image href="../assets/icons/res/Traditional-server.svg" x="40" y="80" width="52" height="52"/>
+          <text x="66" y="150" font-size="12" text-anchor="middle">Server</text>
+          <image href="../assets/icons/res/Amazon-VPC_Customer-Gateway.svg" x="150" y="130" width="56" height="56"/>
+          <text x="178" y="204" font-size="12" text-anchor="middle" font-weight="600">CGW device</text>
+          <text x="178" y="220" font-size="11" text-anchor="middle" class="muted">IP public 203.0.113.10</text>
+          <text x="178" y="236" font-size="11" text-anchor="middle" class="muted">BGP ASN 65000</text>
+          <image href="../assets/icons/res/Internet.svg" x="352" y="134" width="48" height="48"/>
+          <text x="376" y="200" font-size="11" text-anchor="middle" class="muted">Internet</text>
+          <path class="line-o" d="M210 145 C300 70, 450 70, 540 120" marker-end="url(#ah1)" marker-start="url(#ah1)"/>
+          <text x="376" y="76" font-size="12" text-anchor="middle" font-weight="700">Tunnel 1 (IPsec, IKEv2) – endpoint AWS #1</text>
+          <path class="line-o" d="M210 172 C300 250, 450 250, 540 172" marker-end="url(#ah1)" marker-start="url(#ah1)"/>
+          <text x="376" y="262" font-size="12" text-anchor="middle" font-weight="700">Tunnel 2 – endpoint AWS #2</text>
+          <rect x="500" y="20" width="244" height="280" rx="6" fill="rgba(140,79,255,.05)" stroke="#8C4FFF" stroke-width="2"/>
+          <text x="512" y="42" font-size="13" font-weight="700" style="fill:#8C4FFF">VPC 10.0.0.0/16</text>
+          <image href="../assets/icons/res/Amazon-VPC_VPN-Gateway.svg" x="546" y="118" width="56" height="56"/>
+          <text x="574" y="192" font-size="12" text-anchor="middle" font-weight="600">Virtual private gateway</text>
+          <text x="574" y="208" font-size="11" text-anchor="middle" class="muted">ASN 64512</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="664" y="118" width="52" height="52"/>
+          <text x="690" y="188" font-size="12" text-anchor="middle">EC2</text>
+          <text x="622" y="262" font-size="11" text-anchor="middle" class="muted">Route table: 192.168.0.0/16 → vgw-…</text>
+          <text x="622" y="278" font-size="11" text-anchor="middle" class="muted">(static hoặc propagated)</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Một Site-to-Site VPN connection luôn có <b>hai tunnel</b> tới hai endpoint khác nhau phía AWS. AWS khuyến nghị cấu hình <b>cả hai tunnel</b> trên customer gateway device và cho phép định tuyến bất đối xứng – khi AWS bảo trì một endpoint, traffic chuyển sang tunnel còn lại.</figcaption>
+      </figure>
+
+      <h3>Các bước thiết lập</h3>
+      <ol class="steps">
+        <li><b>Tạo customer gateway</b> trong AWS: khai báo IP (internet-routable) của thiết bị phía bạn và BGP ASN (nếu dùng định tuyến động).</li>
+        <li><b>Tạo target gateway</b>: tạo virtual private gateway và <b>attach vào VPC</b>, hoặc dùng transit gateway sẵn có.</li>
+        <li><b>Tạo VPN connection</b> giữa customer gateway và target gateway; chọn định tuyến <b>static</b> hoặc <b>dynamic</b>.</li>
+        <li><b>Cập nhật route table</b> của subnet: thêm route tới CIDR on-premises với target là <code>vgw-…</code>, hoặc bật <span class="t" data-vi="Lan truyền tuyến">route propagation</span> để route tự xuất hiện.</li>
+        <li><b>Cập nhật security group</b> (và NACL) cho phép traffic từ CIDR on-premises.</li>
+        <li><b>Tải file cấu hình</b> theo hãng thiết bị (Cisco, Juniper, Palo Alto…) và cấu hình customer gateway device. Mặc định <b>thiết bị phía bạn khởi tạo IKE</b> (phải sinh traffic để dựng tunnel); có thể đổi để AWS khởi tạo.</li>
+      </ol>
+
+      <h3>Định tuyến static vs dynamic (BGP)</h3>
+      <div class="compare">
+        <div style="--accent:#7D8998"><h4><img src="../assets/icons/res/Amazon-VPC_Router.svg" alt="">Static routing</h4><ul>
+          <li>Dùng khi thiết bị <b>không hỗ trợ BGP</b>.</li>
+          <li>Bạn tự nhập các prefix mạng on-premises vào VPN connection (tối đa <b>100</b> static route trên VGW).</li>
+          <li>Phát hiện tunnel chết dựa vào health check của thiết bị (nếu có).</li>
+          <li><b>Không dùng được ECMP</b> trên transit gateway.</li>
+        </ul></div>
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/res/Amazon-VPC_Router.svg" alt="">Dynamic routing (BGP)</h4><ul>
+          <li>Thiết bị quảng bá route qua <b>Border Gateway Protocol</b>; không cần khai static route.</li>
+          <li>AWS <b>khuyến nghị</b> vì BGP có cơ chế phát hiện liveness mạnh, hỗ trợ <b>failover sang tunnel thứ hai</b>.</li>
+          <li>Bắt buộc cho <b>VPN CloudHub</b> và <b>ECMP</b> trên transit gateway.</li>
+          <li>Tối đa <b>100</b> route động từ thiết bị tới VPN trên VGW (<b>1.000</b> nếu VPN gắn transit gateway).</li>
+        </ul></div>
+      </div>
+
+      <h3>Thứ tự ưu tiên route (route priority)</h3>
+      <p>Trong <b>route table của VPC</b>, AWS dùng <span class="t" data-vi="Khớp tiền tố dài nhất">longest prefix match</span>. Khi các route trùng/chồng lấn:</p>
+      <ul>
+        <li>Route propagated từ VPN/DX chồng lấn với route <b>local</b> của VPC ⇒ <b>local luôn thắng</b>, kể cả khi route propagated cụ thể hơn.</li>
+        <li>Route propagated <b>cùng CIDR</b> với một route <b>static</b> (target IGW, VGW, ENI, peering, NAT, TGW, gateway endpoint…) ⇒ <b>static thắng</b>.</li>
+      </ul>
+      <p>Bên trong <b>virtual private gateway</b>, nếu prefix giống nhau (và các tunnel đều khỏe – <b>sức khỏe tunnel được ưu tiên hơn mọi thuộc tính định tuyến</b>), thứ tự ưu tiên từ cao xuống thấp là:</p>
+      <ol class="steps">
+        <li>Route <b>BGP propagated từ Direct Connect</b>.</li>
+        <li>Route <b>static</b> thêm thủ công cho Site-to-Site VPN.</li>
+        <li>Route <b>BGP propagated từ Site-to-Site VPN</b>.</li>
+        <li>Nhiều VPN cùng dùng BGP cho cùng prefix ⇒ so <b>AS PATH</b>, ngắn hơn thắng.</li>
+        <li>AS PATH bằng nhau ⇒ so <b>MED</b> (multi-exit discriminator), thấp hơn thắng.</li>
+      </ol>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Thứ tự “<b>DX &gt; VPN static &gt; VPN BGP</b>” giải thích vì sao mô hình <b>DX chính + VPN dự phòng</b> hoạt động tự nhiên: khi cả hai quảng bá cùng prefix, VGW ưu tiên DX; DX hỏng thì route DX rút đi và traffic chuyển sang VPN.</li>
+          <li>Muốn ép traffic ưu tiên một đường cụ thể ⇒ quảng bá <b>prefix cụ thể hơn</b> (AWS khuyến nghị cách này để tác động quyết định định tuyến).</li>
+          <li>“<i>Instances can't reach on-premises after VPN is UP</i>” ⇒ thiếu route tới CIDR on-premises trong route table (hoặc chưa bật <b>route propagation</b>), hoặc security group/NACL chưa mở.</li>
+        </ul></div>
+
+      <h3>Tính năng và giới hạn</h3>
+      <ul>
+        <li>Hỗ trợ <b>IKEv2</b>, <b>NAT traversal (NAT-T)</b>, AES 256-bit, SHA-2, thêm nhóm Diffie-Hellman; tunnel option tùy chỉnh; CloudWatch metrics; chứng chỉ từ <b>AWS Private CA</b>.</li>
+        <li>ASN phía Amazon (VGW) là 4-byte trong khoảng 1–2147483647; ASN của customer gateway 2-byte 1–65535 (theo trang tổng quan).</li>
+        <li><b>IPv6</b>: VGW <b>không hỗ trợ</b> traffic IPv6 qua VPN; muốn IPv6 (trong tunnel hoặc làm IP ngoài của tunnel) phải dùng <b>transit gateway</b> hoặc Cloud WAN. Một VPN connection không chở đồng thời IPv4 và IPv6 – cần hai kết nối riêng.</li>
+        <li><b>Không hỗ trợ Path MTU Discovery</b>; MTU tối đa <b>1446 byte</b> (MSS 1406); <b>không hỗ trợ jumbo frame</b>.</li>
+        <li>Nhiều VPC nối về cùng mạng on-premises: dùng CIDR <b>không chồng lấn</b>.</li>
+        <li>Một VPC chỉ gắn được <b>một virtual private gateway</b> tại một thời điểm; muốn một VPN phục vụ nhiều VPC ⇒ AWS khuyến nghị dùng <b>transit gateway</b>.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>2</b><span>tunnel IPsec trong mỗi VPN connection</span></div>
+        <div class="stat"><b>1,25 Gbps</b><span>băng thông tối đa mỗi tunnel chuẩn (~140.000 pps)</span></div>
+        <div class="stat"><b>5 Gbps</b><span>mỗi large bandwidth tunnel (chỉ TGW / Cloud WAN)</span></div>
+        <div class="stat"><b>1446</b><span>byte MTU tối đa (MSS 1406), không jumbo frame</span></div>
+        <div class="stat"><b>10</b><span>VPN connection mỗi virtual private gateway (tăng được)</span></div>
+        <div class="stat"><b>5 / 50</b><span>VGW / customer gateway mỗi Region (mặc định)</span></div>
+      </div>
+
+      <h3>Site-to-Site VPN trên Transit Gateway – ECMP và nhiều VPC</h3>
+      <p>Khi VPN là một <b>attachment</b> của transit gateway (Bài 22), một kết nối VPN phục vụ <b>mọi VPC</b> gắn vào TGW. Thêm nữa:</p>
+      <ul>
+        <li><span class="t" data-vi="Định tuyến đa đường chi phí bằng nhau">Equal Cost Multipath (ECMP)</span>: gộp nhiều tunnel VPN để tăng băng thông vượt 1,25 Gbps. Yêu cầu VPN dùng <b>dynamic routing (BGP)</b>; <b>VGW không hỗ trợ ECMP</b> – trên VGW, chỉ một tunnel trên toàn bộ các VPN connection của gateway được chọn làm đường ra.</li>
+        <li><b>Large Bandwidth Tunnel</b>: tới <b>5 Gbps</b>/tunnel (400.000 pps), chỉ cho VPN gắn transit gateway hoặc Cloud WAN.</li>
+        <li>Hỗ trợ IPv6 (cả inner lẫn outer tunnel IP) và giới hạn route lớn hơn (1.000 route vào / 5.000 route ra).</li>
+        <li>Có thể <b>đổi target gateway</b> của VPN đang chạy từ VGW sang transit gateway.</li>
+      </ul>
+
+      <h3>Accelerated Site-to-Site VPN</h3>
+      <p>Bật <span class="t" data-vi="VPN được tăng tốc">acceleration</span> thì VPN dùng <b>AWS Global Accelerator</b>: traffic từ on-premises đi tới <b>edge location gần customer gateway nhất</b>, rồi chạy trên mạng toàn cầu không tắc nghẽn của AWS – tránh gián đoạn do internet công cộng. AWS tạo và quản lý <b>hai accelerator</b> (mỗi tunnel một), bạn không xem/quản lý được chúng.</p>
+      <ul>
+        <li><b>Chỉ hỗ trợ VPN gắn transit gateway</b> – virtual private gateway không hỗ trợ.</li>
+        <li>Không bật/tắt được trên VPN đã tạo – phải tạo VPN mới.</li>
+        <li><b>NAT-T bắt buộc</b> (mặc định bật); IKE phải do thiết bị phía khách hàng khởi tạo.</li>
+        <li>Không dùng cùng Direct Connect public VIF; tính thêm phí giờ + data transfer cho mỗi accelerator.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Connect on-premises to AWS <b>quickly</b>, <b>encrypted</b>, over the internet, low cost</i>” ⇒ <b>Site-to-Site VPN</b>.</li>
+          <li>“<i>VPN throughput is limited to ~1.25 Gbps; need more VPN bandwidth</i>” ⇒ nhiều VPN tunnel + <b>Transit Gateway ECMP</b> (BGP) – không phải thêm VPN vào VGW.</li>
+          <li>“<i>VPN performance is inconsistent for a branch far from the Region</i>” ⇒ <b>Accelerated Site-to-Site VPN</b> (cần transit gateway).</li>
+          <li>“<i>Highly available VPN</i>” ⇒ cấu hình <b>cả hai tunnel</b>; muốn chịu lỗi cả thiết bị phía bạn ⇒ thêm <b>customer gateway device thứ hai</b> và VPN connection thứ hai.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>Customer gateway</b> là <b>tài nguyên trong AWS</b> mô tả thiết bị; <b>customer gateway device</b> mới là thiết bị thật on-premises. <b>Virtual private gateway</b> nằm phía <b>AWS</b>. Đề hay tráo tên các thành phần này.</li>
+          <li>VPC peering <b>không</b> cho VPC khác dùng chung VPN của VPC peer (edge-to-edge – Bài 22). Nhiều VPC dùng chung một VPN ⇒ transit gateway.</li>
+          <li>VPN chạy qua internet nên dù mã hóa vẫn <b>không đảm bảo băng thông/độ trễ ổn định</b> – đề có “<i>consistent network performance</i>” thì nghĩ tới Direct Connect.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: VPN CLOUDHUB ===================== -->
+      <h2 id="vpn-cloudhub"><img src="../assets/icons/res/Amazon-VPC_VPN-Connection.svg" alt="">AWS VPN CloudHub – nối các chi nhánh với nhau</h2>
+      <p class="lead">Nếu bạn có nhiều Site-to-Site VPN connection, <span class="t" data-vi="Trung tâm VPN đám mây">AWS VPN CloudHub</span> cho phép các <b>site giao tiếp với nhau</b>, không chỉ với tài nguyên trong VPC. CloudHub hoạt động theo mô hình <b>hub-and-spoke</b> đơn giản, dùng được <b>có hoặc không có VPC</b>. Thiết kế này phù hợp khi bạn có <b>nhiều văn phòng chi nhánh</b> với kết nối internet sẵn có và muốn một mô hình hub-and-spoke tiện lợi, <b>chi phí thấp</b> làm kết nối <b>chính hoặc dự phòng</b> giữa các site.</p>
+
+      <h3>Cách thiết lập (theo tài liệu)</h3>
+      <ol class="steps">
+        <li>Tạo <b>một</b> virtual private gateway.</li>
+        <li>Tạo nhiều customer gateway (mỗi chi nhánh một), mỗi cái với IP public của thiết bị. <b>Mỗi customer gateway phải có BGP ASN riêng, không trùng</b>.</li>
+        <li>Tạo Site-to-Site VPN <b>định tuyến động (BGP)</b> từ mỗi customer gateway tới virtual private gateway chung.</li>
+        <li>Cấu hình thiết bị mỗi site quảng bá prefix riêng của site (vd <code>10.0.0.0/24</code>, <code>10.0.1.0/24</code>). VGW nhận và <b>quảng bá lại</b> cho mọi BGP peer ⇒ các site gửi/nhận dữ liệu với nhau.</li>
+        <li>Cấu hình route table của subnet (bật route propagation) để instance trong VPC tới được các site; có thể dùng route tổng hợp (vd <code>10.0.0.0/16</code>).</li>
+      </ol>
+      <p>Các site <b>không được có dải IP chồng lấn</b>. Site dùng <b>Direct Connect</b> tới cùng virtual private gateway cũng tham gia CloudHub được – vd trụ sở New York dùng DX, chi nhánh Los Angeles và Miami dùng VPN, cả ba vẫn trao đổi dữ liệu với nhau.</p>
+
+      <figure class="diagram">
+        <div class="row">
+          <div>
+            <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">Chi nhánh Los Angeles 10.0.0.0/24</span>
+              <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_Customer-Gateway.svg" alt="">CGW<small>ASN 65001</small></div></div></div>
+            <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">Chi nhánh Miami 10.0.1.0/24</span>
+              <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_Customer-Gateway.svg" alt="">CGW<small>ASN 65002</small></div></div></div>
+            <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">Trụ sở New York 10.0.2.0/24</span>
+              <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_Customer-Gateway.svg" alt="">CGW<small>ASN 65003 (VPN hoặc DX)</small></div></div></div>
+          </div>
+          <div class="flow">
+            <span class="arrow">VPN BGP ×3</span>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Amazon-VPC_VPN-Gateway.svg" alt="">Virtual private gateway<small>hub – quảng bá lại route</small></div>
+            </div>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC (tùy chọn)</span>
+              <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2</div></div></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> VPN CloudHub: một virtual private gateway làm hub, mỗi chi nhánh một VPN BGP với ASN riêng. Traffic LA ↔ Miami đi vào VGW rồi đi ra qua VPN tới site kia – vẫn chạy trên internet nên không đảm bảo hiệu năng, nhưng rẻ và dựng nhanh.</figcaption>
+      </figure>
+
+      <p><b>Chi phí</b>: trả giá VPN connection-giờ cho <b>mỗi</b> VPN gắn vào VGW (tài liệu lấy ví dụ minh họa: nếu giá là $0,05/giờ thì hai site trả $0,10/giờ). Gửi dữ liệu <b>từ site tới VGW miễn phí</b>; dữ liệu VGW chuyển tiếp <b>ra</b> site đích tính theo giá data transfer chuẩn.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Multiple branch offices</i> must communicate <b>with each other</b> and with the VPC, using existing internet connections, <i>low cost</i>” ⇒ <b>VPN CloudHub</b>.</li>
+          <li>Nhớ 3 điều kiện: <b>một VGW</b>, <b>BGP (dynamic routing)</b>, <b>ASN khác nhau</b> cho từng customer gateway; CIDR các site không chồng lấn.</li>
+          <li>Khi số site rất lớn hoặc cần định tuyến phân đoạn ⇒ cân nhắc <b>Transit Gateway</b> nhận nhiều VPN attachment (TGW cũng định tuyến bắc cầu giữa các VPN).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: CLIENT VPN ===================== -->
+      <h2 id="client-vpn"><img src="../assets/icons/svc/AWS-Client-VPN.svg" alt="">AWS Client VPN – truy cập từ xa cho người dùng</h2>
+      <p class="lead"><span class="t" data-vi="VPN cho người dùng cá nhân">AWS Client VPN</span> là dịch vụ VPN <b>managed, dựa trên client</b>, cho phép người dùng truy cập an toàn tài nguyên AWS <b>và</b> tài nguyên trong mạng on-premises từ bất cứ đâu, bằng một <b>OpenVPN-based VPN client</b>. Kết nối được mã hóa <b>TLS</b>; dịch vụ <b>tự co giãn</b> theo số người dùng, loại bỏ gánh nặng tự dựng và vận hành VPN server của bên thứ ba.</p>
+
+      <h3>Các thành phần</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Điểm cuối Client VPN">Client VPN endpoint</span></td><td>Tài nguyên bạn tạo để bật và quản lý phiên VPN; là <b>điểm kết thúc</b> của mọi phiên Client VPN.</td></tr>
+          <tr><td><span class="t" data-vi="Mạng đích">Target network</span></td><td>Mạng gắn với endpoint: <b>subnet của VPC</b> (subnet association) hoặc gắn trực tiếp <b>Transit Gateway</b>. Khi associate subnet, AWS tạo <b>Client VPN network interface</b> trong subnet đó.</td></tr>
+          <tr><td><b>Route</b></td><td>Mỗi endpoint có <b>route table</b> riêng mô tả các mạng đích có thể tới (VPC, on-premises qua VPN/DX của VPC, internet…).</td></tr>
+          <tr><td><span class="t" data-vi="Quy tắc phân quyền">Authorization rule</span></td><td>Giới hạn <b>nhóm người dùng</b> (nhóm Active Directory / IdP) được truy cập một mạng. <b>Mặc định không có rule nào</b> ⇒ phải tạo rule thì người dùng mới vào được.</td></tr>
+          <tr><td><b>Client CIDR range</b></td><td>Dải IP cấp cho client (vd <code>10.2.0.0/16</code>). Kích thước <b>/22 → /12</b>; <b>không chồng lấn</b> CIDR của VPC; <b>không đổi được</b> sau khi tạo; nên cấp gấp đôi số IP cần cho số kết nối đồng thời tối đa.</td></tr>
+          <tr><td><b>Client</b></td><td>Người dùng cuối tải OpenVPN client (hoặc AWS VPN Client) + file cấu hình endpoint. Có <b>self-service portal</b> để tải client và cấu hình (không dùng được với mutual authentication).</td></tr>
+          <tr><td><b>Connection logging</b></td><td>Ghi sự kiện kết nối vào <b>CloudWatch Logs</b> – phục vụ điều tra, phân tích, gỡ lỗi; có thể xem và ngắt kết nối đang hoạt động.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Traffic IPv4 từ client vào VPC được <b>SNAT</b> thành IP của Client VPN network interface (nên phía đích thấy IP của ENI đó); IPv6 thì không NAT. Client VPN hỗ trợ cổng <b>443</b> và <b>1194</b> (TCP/UDP), mặc định 443.</p>
+
+      <h3>Xác thực và phân quyền</h3>
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/svc/AWS-Directory-Service.svg" alt="">Active Directory authentication</h4><ul>
+          <li>Xác thực theo <b>người dùng</b> qua AWS Directory Service (AWS Managed Microsoft AD, hoặc AD Connector tới AD on-premises).</li>
+          <li>Hỗ trợ MFA nếu AD bật MFA.</li>
+          <li>Authorization rule theo <b>nhóm AD</b>.</li>
+        </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/AWS-Certificate-Manager.svg" alt="">Mutual authentication</h4><ul>
+          <li>Xác thực bằng <b>chứng chỉ</b> client – server.</li>
+          <li>Chứng chỉ server (và CA của client) nạp vào <b>AWS Certificate Manager</b>.</li>
+          <li>Không dùng được self-service portal.</li>
+        </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Users.svg" alt="">Single sign-on (SAML federated)</h4><ul>
+          <li>Xác thực theo <b>người dùng</b> qua IdP SAML 2.0 (vd Okta, Microsoft Entra ID, IAM Identity Center).</li>
+          <li>Authorization rule theo <b>nhóm của IdP</b>.</li>
+        </ul></div>
+      </div>
+      <p>Có thể dùng <b>một</b> phương thức, hoặc <b>kết hợp mutual authentication với một phương thức user-based</b> (mutual + AD, hoặc mutual + federated) – khi kết hợp thì phải qua <b>cả hai</b>. Dù chọn kiểu nào, <b>luôn cần một server certificate trong ACM</b>. Ngoài authorization rule, có thể kiểm soát bằng <b>security group</b> gắn vào endpoint, <i>client connect handler</i> (Lambda) và <i>device posture</i> (kiểm tra tình trạng thiết bị).</p>
+
+      <h3>Full-tunnel vs split-tunnel</h3>
+      <div class="compare">
+        <div style="--accent:#7D8998"><h4>Mặc định: full-tunnel</h4><ul>
+          <li><b>Toàn bộ</b> traffic của client đi qua tunnel Client VPN (route table của client bị ghi đè bằng <code>0.0.0.0/0</code>).</li>
+          <li>Muốn người dùng ra internet qua VPC ⇒ endpoint cần route <code>0.0.0.0/0</code> qua subnet có đường ra IGW/NAT + authorization rule cho <code>0.0.0.0/0</code>.</li>
+        </ul></div>
+        <div style="--accent:#8C4FFF"><h4><span class="t" data-vi="Chia đường hầm">Split-tunnel</span></h4><ul>
+          <li>AWS đẩy các route trong route table của endpoint xuống thiết bị ⇒ <b>chỉ</b> traffic tới mạng khớp route (vd VPC <code>172.31.0.0/16</code>) mới đi qua tunnel; traffic khác đi thẳng ra mạng của người dùng.</li>
+          <li>Lợi ích: tối ưu định tuyến và <b>giảm lượng data transfer ra từ AWS ⇒ giảm chi phí</b>.</li>
+          <li>Sửa route table của endpoint khi đang bật split-tunnel ⇒ mọi kết nối client bị reset.</li>
+        </ul></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Nhân viên remote<small>AWS VPN Client / OpenVPN</small></div>
+            <span class="arrow">TLS, port 443</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Client-VPN.svg" alt="">Client VPN endpoint<small>client CIDR 10.2.0.0/22</small></div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud – Region</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 172.31.0.0/16</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">AZ a – associated subnet</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/svc/AWS-Client-VPN.svg" alt="">Client VPN ENI<small>SNAT</small></div></div></div>
+                <div class="grp az"><span class="lbl">AZ b – associated subnet</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/svc/AWS-Client-VPN.svg" alt="">Client VPN ENI<small>SNAT</small></div></div></div>
+              </div>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">App / DB nội bộ</div>
+                <span class="arrow dashed">VGW / TGW</span>
+                <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">On-premises</div>
+              </div>
+            </div>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/svc/AWS-Directory-Service.svg" alt="">AD / SAML IdP<small>xác thực</small></div>
+              <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">CloudWatch Logs<small>connection log</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> Client VPN: endpoint associate với subnet ở <b>2 AZ</b> để sẵn sàng cao (tối đa một subnet mỗi AZ, tất cả cùng một VPC). Người dùng xác thực bằng AD / SAML / chứng chỉ, được phép theo authorization rule, rồi truy cập VPC – và cả on-premises nếu VPC có VPN/DX và endpoint có route tương ứng.</figcaption>
+      </figure>
+
+      <div class="stats">
+        <div class="stat"><b>/22 → /12</b><span>kích thước client CIDR (không đổi sau khi tạo)</span></div>
+        <div class="stat"><b>50 Mbps</b><span>băng thông baseline tối đa mỗi kết nối người dùng</span></div>
+        <div class="stat"><b>1 subnet / AZ</b><span>mỗi endpoint; các subnet phải cùng một VPC</span></div>
+        <div class="stat"><b>443 / 1194</b><span>cổng TCP/UDP được hỗ trợ (mặc định 443)</span></div>
+      </div>
+
+      <p><b>Chi phí</b>: tính <b>theo giờ cho mỗi endpoint association</b> và <b>theo giờ cho mỗi kết nối VPN</b>, cộng data transfer out; connection log tính phí CloudWatch Logs. Nếu VPC của subnet có IGW, AWS gắn Elastic IP vào ENI của Client VPN và tính phí như public IPv4 đang dùng.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Remote employees / work from home</i> must securely access resources in a VPC <b>and</b> on-premises; <i>managed</i>, <i>least operational overhead</i>” ⇒ <b>AWS Client VPN</b> (không phải Site-to-Site VPN, không tự dựng OpenVPN trên EC2).</li>
+          <li>“<i>Authenticate with existing Active Directory</i>” ⇒ Client VPN + <b>AD authentication</b>. “<i>Use corporate SAML IdP / SSO</i>” ⇒ <b>federated authentication</b>.</li>
+          <li>“<i>Only traffic destined for the VPC should go through the VPN; reduce data transfer costs</i>” ⇒ bật <b>split-tunnel</b>.</li>
+          <li>Người dùng đã kết nối nhưng không vào được subnet ⇒ thiếu <b>authorization rule</b> (mặc định không có) hoặc thiếu route trong route table của endpoint.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: DIRECT CONNECT ===================== -->
+      <h2 id="direct-connect"><img src="../assets/icons/svc/AWS-Direct-Connect.svg" alt="">AWS Direct Connect</h2>
+      <p class="lead"><span class="t" data-vi="Kết nối trực tiếp">AWS Direct Connect</span> (DX) nối mạng nội bộ của bạn tới một <span class="t" data-vi="Điểm kết nối Direct Connect">Direct Connect location</span> bằng <b>cáp quang Ethernet chuẩn</b>: một đầu cắm vào router của bạn, đầu kia vào router Direct Connect của AWS. Từ kết nối này bạn tạo các <span class="t" data-vi="Giao diện ảo">virtual interface</span> trực tiếp tới dịch vụ AWS public (vd Amazon S3) hoặc tới VPC, <b>bỏ qua nhà cung cấp dịch vụ internet</b> trên đường đi. Mỗi DX location gắn với một Region; một kết nối ở Region public cũng truy cập được dịch vụ public ở <b>mọi Region public khác</b>.</p>
+
+      <h3>Hai thành phần chính</h3>
+      <ul>
+        <li><b>Connection</b> – kết nối mạng tại một DX location, từ cơ sở của bạn tới một AWS Region. Có hai loại: <b>dedicated</b> và <b>hosted</b>.</li>
+        <li><b>Virtual interface (VIF)</b> – kênh logic (một VLAN 802.1Q + một phiên BGP) chạy trên connection để truy cập dịch vụ AWS. Phải tạo VIF thì mới dùng được connection.</li>
+      </ul>
+
+      <h3>Dedicated connection vs hosted connection</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th><span class="t" data-vi="Kết nối chuyên dụng">Dedicated connection</span></th><th><span class="t" data-vi="Kết nối qua đối tác">Hosted connection</span></th></tr></thead>
+        <tbody>
+          <tr><td>Bản chất</td><td>Kết nối Ethernet vật lý gắn với <b>một khách hàng duy nhất</b></td><td>Kết nối Ethernet vật lý do <b>AWS Direct Connect Partner</b> cấp phát thay mặt khách hàng</td></tr>
+          <tr><td>Cách đặt</td><td>Bạn tự yêu cầu qua <b>console / CLI / API</b></td><td>Liên hệ partner; <b>không yêu cầu được qua console</b>. Partner tạo xong, bạn phải <b>accept</b> trong console</td></tr>
+          <tr><td>Tốc độ</td><td><b>1, 10, 100, 400 Gbps</b></td><td><b>50, 100, 200, 300, 400, 500 Mbps; 1, 2, 5, 10, 25 Gbps</b> (≥ 1 Gbps chỉ partner đủ điều kiện)</td></tr>
+          <tr><td>Đổi tốc độ</td><td><b>Không đổi được</b> sau khi tạo yêu cầu – phải tạo connection mới</td><td>Chỉ partner đổi được (nếu partner hỗ trợ nâng/hạ)</td></tr>
+          <tr><td>Số VIF</td><td>Tới <b>50</b> private/public VIF; tối đa <b>4</b> transit VIF; tổng tối đa <b>51</b></td><td><b>1</b> VIF mỗi hosted connection (không tăng được)</td></tr>
+          <tr><td>Thủ tục</td><td>AWS cấp <b>LOA-CFA</b>; nhà mạng dùng nó đặt <b>cross connect</b> tại DX location</td><td>Partner lo phần kết nối tới DX location</td></tr>
+          <tr><td>Ghi chú khác</td><td>Gộp được vào <b>LAG</b>; hỗ trợ <b>MACsec</b> (trên cổng hỗ trợ)</td><td>AWS áp <b>traffic policing</b>: vượt tốc độ cấu hình thì gói thừa bị drop</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Quy trình với dedicated connection</h3>
+      <ol class="steps">
+        <li>Yêu cầu connection (Connection wizard theo mô hình resiliency, hoặc Classic): chọn DX location, port speed. AWS có thể mất tới <b>72 giờ làm việc</b> để duyệt và cấp port; nếu AWS email hỏi thêm thông tin, phải trả lời trong <b>7 ngày</b> nếu không connection bị xóa.</li>
+        <li>Tải <span class="t" data-vi="Thư ủy quyền và chỉ định điểm kết nối">LOA-CFA</span> (Letter of Authorization and Connecting Facility Assignment): giấy ủy quyền kết nối vào AWS, có chữ ký số; nhà mạng dùng nó để đặt <b>cross connect</b>. Nếu bạn không có thiết bị tại DX location thì không tự đặt cross connect được – cần partner.</li>
+        <li>Kéo cross connect tại DX location giữa thiết bị của bạn (hoặc của partner) và cổng AWS.</li>
+        <li>Tạo <b>virtual interface</b> (private / public / transit) và cấu hình BGP trên router.</li>
+      </ol>
+      <p><b>Tính phí</b> bắt đầu khi port <b>active</b> hoặc <b>90 ngày</b> sau khi LOA được cấp, tùy điều kiện nào đến trước.</p>
+
+      <h3>Yêu cầu mạng</h3>
+      <ul>
+        <li>Mạng của bạn phải: đặt chung (colocated) tại một DX location, <b>hoặc</b> làm việc với một Direct Connect Partner (APN), <b>hoặc</b> một nhà cung cấp dịch vụ độc lập.</li>
+        <li>Cáp quang <b>single-mode</b>: 1000BASE-LX (1 Gbps), 10GBASE-LR (10 Gbps), 100GBASE-LR4 (100 Gbps), 400GBASE-LR4 (400 Gbps).</li>
+        <li><b>802.1Q VLAN encapsulation</b> trên toàn tuyến, kể cả thiết bị trung gian.</li>
+        <li>Thiết bị phải hỗ trợ <b>BGP</b> và <b>BGP MD5 authentication</b> (AWS bật MD5 mặc định). Tùy chọn <b>BFD</b> để phát hiện lỗi nhanh.</li>
+        <li>Hỗ trợ cả IPv4 và IPv6.</li>
+      </ul>
+
+      <h3>Ba loại virtual interface</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại VIF</th><th>Truy cập tới</th><th>Gắn với</th><th>MTU</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Giao diện ảo riêng">Private VIF</span></td><td>VPC bằng <b>IP private</b></td><td>Một <b>virtual private gateway</b> (một VPC, cùng Region) <b>hoặc</b> một <b>Direct Connect gateway</b> (nhiều VGW ở nhiều account/Region)</td><td>1500 hoặc <b>9001</b> (jumbo)</td></tr>
+          <tr><td><span class="t" data-vi="Giao diện ảo công khai">Public VIF</span></td><td><b>Mọi dịch vụ AWS public</b> (S3, DynamoDB, API endpoint, IP public của EC2…) <b>toàn cầu</b> bằng IP public</td><td>Không qua VPC; AWS quảng bá các prefix của Amazon cho bạn</td><td>—</td></tr>
+          <tr><td><span class="t" data-vi="Giao diện ảo trung chuyển">Transit VIF</span></td><td>Một hoặc nhiều <b>Transit Gateway</b></td><td>Một <b>Direct Connect gateway</b> được associate với transit gateway</td><td>1500 hoặc <b>8500</b> (jumbo)</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Mỗi VIF cần: <b>VLAN</b> (1–4094, chưa dùng trên connection), địa chỉ peer IP, <b>BGP ASN</b> phía bạn (public hoặc private; private 16-bit 64512–65534), khóa MD5.</li>
+        <li>Public VIF: bạn quảng bá ít nhất 1, tối đa <b>1.000</b> prefix public của mình; AWS <b>không quảng bá lại</b> prefix của bạn ra ngoài AWS; bạn chỉ tới được prefix của Amazon.</li>
+        <li>Giới hạn route: private/transit VIF mặc định <b>100</b> route mỗi phiên BGP (mỗi họ IPv4/IPv6; tăng tới 1.000 bằng prefix controls) – quảng bá vượt quá thì phiên BGP chuyển <b>idle (DOWN)</b>.</li>
+        <li><b>SiteLink</b> (tùy chọn, tính phí riêng): nối hai DX location với nhau theo đường ngắn nhất trên mạng AWS mà không phải đi qua Region – cho private/transit VIF gắn DX gateway.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>1 / 10 / 100 / 400 Gbps</b><span>tốc độ dedicated connection</span></div>
+        <div class="stat"><b>50 Mbps → 25 Gbps</b><span>tốc độ hosted connection (qua partner)</span></div>
+        <div class="stat"><b>51</b><span>VIF tối đa mỗi dedicated connection (≤ 4 transit VIF)</span></div>
+        <div class="stat"><b>1</b><span>VIF mỗi hosted connection</span></div>
+        <div class="stat"><b>100</b><span>route mặc định mỗi phiên BGP private/transit VIF</span></div>
+        <div class="stat"><b>90 ngày</b><span>sau LOA thì bắt đầu tính phí nếu port chưa active</span></div>
+      </div>
+
+      <h3>Chi phí</h3>
+      <p>Direct Connect có hai thành phần tính phí: <b>port hours</b> (theo tốc độ và loại dedicated/hosted) và <b>data transfer out</b>. Data transfer out qua private/transit VIF tính cho account chịu trách nhiệm data transfer; <b>không có phí thêm</b> khi dùng Direct Connect gateway đa account. Data transfer out qua DX tính theo đơn giá DX – thấp hơn đơn giá data transfer ra internet (vì vậy đề hay nói DX giúp “<i>reduce network costs</i>” khi truyền khối lượng dữ liệu lớn, thường xuyên).</p>
+
+      <h3>Mã hóa: DX không mã hóa mặc định</h3>
+      <p>Tài liệu ghi rõ: <b>AWS Direct Connect không mã hóa traffic đang truyền theo mặc định</b>. Các lựa chọn mã hóa:</p>
+      <ul>
+        <li><b>Site-to-Site VPN chạy trên DX</b>: kết hợp DX với VPN ⇒ kết nối private <b>mã hóa IPsec</b>, đồng thời giảm chi phí mạng, tăng băng thông và ổn định hơn VPN qua internet. Cách truyền thống: dựng VPN tới endpoint public của AWS qua <b>public VIF</b>.</li>
+        <li><span class="t" data-vi="VPN dùng IP riêng">Private IP VPN</span>: IPsec VPN chạy trên <b>transit VIF</b> với IP private ở cả hai đầu – cần <b>Direct Connect gateway + transit gateway</b>. Không cần IP public (giảm nguy cơ tấn công DoS), không phải mở public VIF tới mọi dịch vụ AWS; giới hạn route cao hơn (5.000 route ra / 1.000 route vào). Phù hợp ngành tài chính, y tế, chính phủ.</li>
+        <li><b>MACsec</b> (chuẩn IEEE): mã hóa từ data center tới DX location, trên dedicated connection hỗ trợ MACsec.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Dedicated, private connection</i>”, “<i>consistent network performance / predictable latency</i>”, “<i>transfer large amounts of data regularly</i>”, “<i>not over the public internet</i>” ⇒ <b>Direct Connect</b>.</li>
+          <li>“<i>Need connectivity <b>immediately / within days</b></i>” ⇒ Direct Connect thường <b>không kịp</b> (partner, LOA, cross connect) ⇒ dựng <b>Site-to-Site VPN</b> trước, DX sau.</li>
+          <li>“<i>Need 200 Mbps / 500 Mbps via a partner</i>” ⇒ <b>hosted connection</b>; “<i>10 Gbps / 100 Gbps dedicated port</i>” ⇒ <b>dedicated connection</b>.</li>
+          <li>On-premises truy cập <b>S3 bằng IP public</b> qua DX ⇒ <b>public VIF</b>. Truy cập S3 <b>bằng IP private</b> qua DX ⇒ private VIF + <b>S3 interface endpoint</b> (Bài 22).</li>
+          <li>“<i>Direct Connect and data must be encrypted in transit</i>” ⇒ <b>VPN over DX</b> (hoặc MACsec cho dedicated connection).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Đáp án nói “<i>Direct Connect encrypts traffic by default</i>” là <b>sai</b>. DX là đường <b>riêng</b>, không phải đường <b>mã hóa</b>.</li>
+          <li>Private VIF gắn thẳng VGW chỉ tới <b>một VPC cùng Region</b>. Nhiều VPC / nhiều Region ⇒ cần <b>Direct Connect gateway</b>.</li>
+          <li>Hosted connection chỉ có <b>1 VIF</b> – muốn vừa private vừa public VIF thì cần thêm hosted connection hoặc dùng dedicated connection.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: DIRECT CONNECT GATEWAY ===================== -->
+      <h2 id="dx-gateway"><img src="../assets/icons/res/AWS-Direct-Connect-Gateway.svg" alt="">Direct Connect gateway – một kết nối, nhiều VPC, nhiều Region</h2>
+      <p class="lead"><span class="t" data-vi="Cổng Direct Connect">Direct Connect gateway</span> là tài nguyên <b>có sẵn toàn cầu (globally available)</b>: bạn kết nối tới <b>bất kỳ Region nào</b> (kể cả GovCloud US, trừ các Region Trung Quốc) qua một Direct Connect gateway. Về bản chất, nó là một <b>tập route reflector BGP phân tán</b> – nằm <b>ngoài đường đi của dữ liệu</b>, nên không tạo điểm lỗi đơn, không phụ thuộc một Region cụ thể; tính sẵn sàng cao có sẵn trong thiết kế, <b>không cần tạo nhiều DX gateway</b> để dự phòng.</p>
+
+      <p>Bạn associate Direct Connect gateway với một trong các đối tượng:</p>
+      <ul>
+        <li><b>Virtual private gateway</b> – qua <b>private VIF</b> gắn vào DX gateway. Tối đa <b>20 VGW</b> mỗi DX gateway.</li>
+        <li><b>Transit Gateway</b> – qua <b>transit VIF</b>, khi có nhiều VPC trong cùng Region. Tối đa <b>6 transit gateway</b> mỗi DX gateway.</li>
+        <li><b>AWS Cloud WAN core network</b>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 360" width="780" role="img" aria-label="Direct Connect gateway nối VPC ở hai Region">
+          <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="12" y="110" width="150" height="140" rx="6" fill="rgba(125,137,152,.06)" stroke="#7D8998" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="22" y="130" font-size="12" font-weight="700">Data center</text>
+          <image href="../assets/icons/res/Amazon-VPC_Customer-Gateway.svg" x="58" y="148" width="54" height="54"/>
+          <text x="86" y="220" font-size="11" text-anchor="middle">Router (BGP)</text>
+          <image href="../assets/icons/svc/AWS-Direct-Connect.svg" x="208" y="150" width="52" height="52"/>
+          <text x="234" y="220" font-size="11" text-anchor="middle" font-weight="600">DX location</text>
+          <text x="234" y="236" font-size="10" text-anchor="middle" class="muted">(us-east-1)</text>
+          <path class="line-o" d="M162 176 H206" marker-end="url(#ah2)" marker-start="url(#ah2)"/>
+          <image href="../assets/icons/res/AWS-Direct-Connect-Gateway.svg" x="330" y="146" width="60" height="60"/>
+          <text x="360" y="224" font-size="12" text-anchor="middle" font-weight="700">Direct Connect gateway</text>
+          <text x="360" y="240" font-size="10" text-anchor="middle" class="muted">toàn cầu – BGP route reflector</text>
+          <path class="line-o" d="M262 176 H328" marker-end="url(#ah2)"/>
+          <text x="295" y="168" font-size="10" text-anchor="middle">private VIF</text>
+          <rect x="470" y="14" width="296" height="150" rx="6" fill="rgba(0,164,166,.05)" stroke="#00A4A6" stroke-width="2"/>
+          <text x="480" y="34" font-size="12" font-weight="700" style="fill:#00A4A6">Region us-east-1 (account A)</text>
+          <image href="../assets/icons/res/Amazon-VPC_VPN-Gateway.svg" x="490" y="60" width="48" height="48"/>
+          <text x="514" y="124" font-size="11" text-anchor="middle">VGW</text>
+          <image href="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" x="600" y="60" width="48" height="48"/>
+          <text x="624" y="124" font-size="11" text-anchor="middle">VPC 10.1.0.0/16</text>
+          <rect x="470" y="196" width="296" height="150" rx="6" fill="rgba(0,164,166,.05)" stroke="#00A4A6" stroke-width="2"/>
+          <text x="480" y="216" font-size="12" font-weight="700" style="fill:#00A4A6">Region us-west-1 (account B)</text>
+          <image href="../assets/icons/res/Amazon-VPC_VPN-Gateway.svg" x="490" y="242" width="48" height="48"/>
+          <text x="514" y="306" font-size="11" text-anchor="middle">VGW</text>
+          <image href="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" x="600" y="242" width="48" height="48"/>
+          <text x="624" y="306" font-size="11" text-anchor="middle">VPC 10.2.0.0/16</text>
+          <path class="line-o" d="M392 166 L488 86" marker-end="url(#ah2)"/>
+          <path class="line-o" d="M392 186 L488 266" marker-end="url(#ah2)"/>
+          <text x="440" y="110" font-size="10" text-anchor="middle">association</text>
+          <text x="440" y="252" font-size="10" text-anchor="middle">association (proposal)</text>
+          <path d="M624 118 V240" stroke="#DD344C" stroke-width="2" stroke-dasharray="6 5" fill="none"/>
+          <text x="700" y="184" font-size="11" text-anchor="middle" style="fill:#DD344C" font-weight="700">VPC ↔ VPC qua DXGW: ✘</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Kịch bản trong tài liệu: một kết nối DX ở us-east-1 + một <b>Direct Connect gateway</b> cho phép truy cập VPC ở cả us-east-1 và us-west-1, kể cả VPC thuộc account khác (qua <b>association proposal</b>). DX gateway <b>không</b> cho các VGW gắn cùng nó gửi traffic cho nhau.</figcaption>
+      </figure>
+
+      <h3>Các kịch bản chính</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Kịch bản</th><th>Thành phần</th><th>Lợi ích</th></tr></thead>
+        <tbody>
+          <tr><td><b>VGW associations</b></td><td>Mỗi VPC có VGW; VGW associate với DX gateway; DX gateway dùng <b>private VIF</b></td><td>Một kết nối DX ở một Region truy cập VPC ở <b>Region khác</b></td></tr>
+          <tr><td><b>VGW associations across accounts</b></td><td>Account A, B gửi <b>association proposal</b> tới chủ DX gateway (account Z); Z accept và có thể giới hạn <b>allowed prefixes</b></td><td>Chia sẻ một DX cho nhiều account; Z kiểm soát định tuyến</td></tr>
+          <tr><td><b>Transit Gateway associations</b></td><td>TGW có nhiều VPC attachment; DX gateway associate với TGW; <b>transit VIF</b> gắn vào DX gateway</td><td>Quản lý <b>một</b> kết nối cho nhiều VPC/VPN trong cùng Region; quảng bá prefix hai chiều</td></tr>
+          <tr><td><b>TGW associations across accounts</b></td><td>Chủ TGW (account A) đề xuất; chủ DX gateway (Z) accept</td><td>Tách vai trò team mạng và team ứng dụng</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Giới hạn quan trọng</h3>
+      <ul>
+        <li>DX gateway <b>không cho phép các gateway association trên cùng DX gateway gửi traffic cho nhau</b> (vd VGW → VGW). Ngoại lệ (từ 11/2021): khi on-premises quảng bá một <b>supernet</b> (vd <code>10.0.0.0/8</code>) bao trùm các VPC trên cùng VIF, các VPC có thể nói chuyện với nhau qua DX endpoint. Muốn chặn: dùng security group, không quảng bá supernet chồng lấn, hoặc dùng DX gateway riêng cho từng VPC (vd tách dev/prod).</li>
+        <li>Nhiều VPC gắn các TGW cùng associate một DX gateway có thể giao tiếp được; muốn chặn thì dùng TGW route table với route <b>blackhole</b>.</li>
+        <li>Số lượng: <b>200</b> DX gateway mỗi account; <b>20</b> VGW và <b>6</b> TGW mỗi DX gateway; <b>30</b> private/transit VIF mỗi DX gateway; một TGW associate tối đa <b>20</b> DX gateway; tối đa <b>200</b> prefix (IPv4 + IPv6) từ AWS ra on-premises mỗi TGW trên transit VIF.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>Toàn cầu</b><span>DX gateway dùng được với mọi Region (trừ Trung Quốc)</span></div>
+        <div class="stat"><b>20</b><span>virtual private gateway mỗi DX gateway</span></div>
+        <div class="stat"><b>6</b><span>transit gateway mỗi DX gateway</span></div>
+        <div class="stat"><b>30</b><span>private/transit VIF mỗi DX gateway</span></div>
+        <div class="stat"><b>200</b><span>DX gateway mỗi account</span></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Use the existing Direct Connect connection to reach VPCs in <b>another Region</b> / <b>other accounts</b></i>” ⇒ <b>Direct Connect gateway</b> (không cần kết nối DX mới).</li>
+          <li>“<i>Dozens/hundreds of VPCs in a Region must share one DX connection</i>” ⇒ <b>DX gateway + transit VIF + Transit Gateway</b> (vượt giới hạn 20 VGW, và TGW còn định tuyến giữa các VPC).</li>
+          <li>“<i>VPCs attached to the same DX gateway can't talk to each other</i>” ⇒ đúng thiết kế; muốn VPC ↔ VPC dùng peering / Transit Gateway (Bài 22).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: RESILIENCY & VPN OVER DX ===================== -->
+      <h2 id="resiliency"><img src="../assets/icons/res/Amazon-VPC_VPN-Connection.svg" alt="">Thiết kế chịu lỗi: DX dự phòng, VPN backup, VPN over DX</h2>
+      <p class="lead">Một kết nối DX đơn lẻ là <b>điểm lỗi đơn</b> (đứt cáp, hỏng thiết bị, sự cố cả DX location). <span class="t" data-vi="Bộ công cụ khả năng phục hồi Direct Connect">AWS Direct Connect Resiliency Toolkit</span> có Connection wizard giúp đặt đúng số dedicated connection ở đúng số location để đạt mục tiêu SLA. Ba mô hình:</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Mô hình</th><th>Cách bố trí</th><th>Chịu được</th><th>SLA</th></tr></thead>
+        <tbody>
+          <tr><td><b>Maximum resiliency</b></td><td>Các connection riêng biệt kết thúc trên <b>thiết bị khác nhau</b> ở <b>hơn một location</b> (thường 2 location × 2 connection)</td><td>Lỗi thiết bị, lỗi kết nối, <b>mất cả một location</b></td><td class="yes"><b>99,99%</b></td></tr>
+          <tr><td><b>High resiliency</b></td><td><b>Hai</b> connection đơn tới <b>nhiều location</b> (mỗi location một)</td><td>Đứt cáp, hỏng thiết bị; tránh mất trọn một location</td><td><b>99,9%</b></td></tr>
+          <tr><td><b>Development and test</b></td><td>Các connection riêng kết thúc trên thiết bị khác nhau ở <b>một location</b></td><td>Lỗi thiết bị – <b>không</b> chịu được mất location</td><td>—</td></tr>
+        </tbody>
+      </table></div>
+      <p>Toolkit còn: đảm bảo các connection dự phòng <b>cùng tốc độ</b>, ngăn kết thúc hai connection trên cùng thiết bị DX, tự tạo <b>LAG</b> khi bạn chọn tốc độ khác 1/10/100/400 Gbps, và cho phép <b>Failover Test</b> (tắt phiên BGP để kiểm tra traffic có chuyển sang VIF dự phòng).</p>
+
+      <h3>Link Aggregation Group (LAG)</h3>
+      <p><span class="t" data-vi="Nhóm gộp liên kết">LAG</span> gộp nhiều <b>dedicated connection</b> cùng tốc độ, cùng location thành một kết nối logic: tối đa <b>4</b> connection khi tốc độ &lt; 100G, <b>2</b> khi 100G; tối đa 10 LAG mỗi Region. LAG tăng băng thông nhưng vẫn ở <b>một location</b> – không thay thế cho dự phòng đa location.</p>
+
+      <h3>Site-to-Site VPN làm đường dự phòng cho DX</h3>
+      <p>Mô hình rất hay thi: <b>DX là đường chính</b>, <b>Site-to-Site VPN là đường backup</b>, cùng kết thúc tại VGW hoặc transit gateway và cùng quảng bá prefix on-premises. Nhờ thứ tự ưu tiên route (<b>DX BGP &gt; VPN static &gt; VPN BGP</b>), traffic tự đi DX; DX hỏng thì BGP rút route và traffic chuyển sang VPN. Chi phí thấp hơn nhiều so với một DX thứ hai, nhưng băng thông khi failover bị giới hạn ở mức VPN qua internet.</p>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">Corporate data center</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Amazon-VPC_Customer-Gateway.svg" alt="">Router A<small>DX, BGP</small></div>
+              <div class="node"><img src="../assets/icons/res/Amazon-VPC_Customer-Gateway.svg" alt="">Router B<small>VPN, BGP</small></div>
+            </div>
+          </div>
+          <div>
+            <div class="flow">
+              <span class="arrow">Chính: DX (private / transit VIF)</span>
+              <div class="node"><img src="../assets/icons/svc/AWS-Direct-Connect.svg" alt="">DX location<small>có thể + VPN over DX để mã hóa</small></div>
+            </div>
+            <div class="flow">
+              <span class="arrow dashed">Dự phòng: Site-to-Site VPN qua internet</span>
+              <div class="node"><img src="../assets/icons/res/Internet.svg" alt="">Internet</div>
+            </div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud – Region</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/AWS-Direct-Connect-Gateway.svg" alt="">DX gateway</div>
+              <div class="node"><img src="../assets/icons/svc/AWS-Transit-Gateway.svg" alt="">Transit gateway<small>DXGW attachment + VPN attachment</small></div>
+            </div>
+            <div class="row center">
+              <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC Prod</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">App</div></div></div>
+              <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC Shared</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">DB</div></div></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 6.</b> Kiến trúc hybrid “chuẩn doanh nghiệp”: DX (qua DX gateway + transit VIF) là đường chính tới transit gateway phục vụ nhiều VPC; Site-to-Site VPN gắn cùng transit gateway làm đường dự phòng. Cần mã hóa trên DX ⇒ thêm <b>private IP VPN</b> trên transit VIF. Cần SLA cao nhất ⇒ thêm DX ở location thứ hai (maximum resiliency).</figcaption>
+      </figure>
+
+      <h3>VPN over Direct Connect – hai cách</h3>
+      <div class="compare">
+        <div style="--accent:#7D8998"><h4><img src="../assets/icons/res/Amazon-VPC_VPN-Connection.svg" alt="">VPN qua public VIF (cách truyền thống)</h4><ul>
+          <li>Tạo <b>public VIF</b> trên DX; VPN dùng <b>IP public</b> của endpoint AWS, nhưng đường đi là DX chứ không phải internet.</li>
+          <li>Đích có thể là VGW hoặc transit gateway.</li>
+          <li>Nhược: cần IP public; public VIF mở đường tới mọi dịch vụ AWS public ⇒ phạm vi rủi ro rộng hơn.</li>
+        </ul></div>
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/svc/AWS-Transit-Gateway.svg" alt="">Private IP VPN qua transit VIF</h4><ul>
+          <li>Tunnel IPsec dùng <b>IP private</b> (RFC1918 / RFC6598) ở cả TGW và customer gateway device.</li>
+          <li>Yêu cầu: <b>transit gateway</b> (khai CIDR cho TGW), <b>DX gateway</b>, association DXGW–TGW với allowed prefix chứa CIDR đó.</li>
+          <li>Định tuyến được <b>đồng thời</b> traffic mã hóa (VPN attachment) và không mã hóa (DX attachment).</li>
+          <li>Không hỗ trợ IPv6 cho IP ngoài của tunnel.</li>
+        </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Most <b>cost-effective</b> way to add redundancy to an existing DX connection</i>” ⇒ <b>Site-to-Site VPN backup</b>.</li>
+          <li>“<i>Critical workload, <b>maximum resiliency</b>, survive the failure of an entire DX location</i>” ⇒ DX ở <b>hai location</b>, mỗi location <b>hai connection</b> trên thiết bị riêng (maximum resiliency, SLA 99,99%).</li>
+          <li>“<i>Encrypt traffic over DX without public IP addresses</i>” ⇒ <b>private IP VPN</b> trên transit VIF (DX gateway + transit gateway).</li>
+          <li>“<i>Increase bandwidth at one location</i>” ⇒ <b>LAG</b>; “<i>survive location failure</i>” ⇒ thêm <b>location</b> (LAG không giúp).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: CHỌN GIẢI PHÁP ===================== -->
+      <h2 id="chon-giai-phap"><img src="../assets/icons/svc/AWS-Transit-Gateway.svg" alt="">Chọn giải pháp hybrid theo đề bài</h2>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu trong đề</th><th>Giải pháp</th><th>Vì sao không phải phương án khác</th></tr></thead>
+        <tbody>
+          <tr><td>Nối data center với VPC nhanh, mã hóa, rẻ</td><td><b>Site-to-Site VPN</b> (VGW)</td><td>DX mất thời gian triển khai, không mã hóa mặc định</td></tr>
+          <tr><td>Băng thông lớn, độ trễ ổn định, không qua internet</td><td><b>Direct Connect</b></td><td>VPN phụ thuộc internet, ~1,25 Gbps/tunnel</td></tr>
+          <tr><td>DX + yêu cầu mã hóa in transit</td><td><b>VPN over DX</b> (private IP VPN hoặc qua public VIF) / MACsec</td><td>DX không tự mã hóa</td></tr>
+          <tr><td>Dự phòng rẻ nhất cho DX</td><td><b>Site-to-Site VPN backup</b></td><td>DX thứ hai đắt hơn (nhưng cần khi đòi hỏi hiệu năng khi failover)</td></tr>
+          <tr><td>Một DX truy cập VPC ở nhiều Region/account</td><td><b>Direct Connect gateway</b></td><td>Private VIF gắn VGW chỉ tới một VPC cùng Region</td></tr>
+          <tr><td>Một DX/VPN cho hàng chục, hàng trăm VPC</td><td><b>Transit Gateway</b> + DX gateway (transit VIF) / VPN attachment</td><td>VGW gắn một VPC; peering không cho dùng VPN/DX của VPC peer</td></tr>
+          <tr><td>VPN cần &gt; 1,25 Gbps</td><td><b>TGW + ECMP</b> nhiều tunnel (BGP), hoặc large bandwidth tunnel</td><td>VGW không hỗ trợ ECMP</td></tr>
+          <tr><td>Nhiều chi nhánh nói chuyện với nhau qua AWS, rẻ</td><td><b>VPN CloudHub</b></td><td>Tự dựng mesh VPN giữa các chi nhánh tốn công</td></tr>
+          <tr><td>Nhân viên làm việc từ xa, managed</td><td><b>AWS Client VPN</b></td><td>Site-to-Site VPN dành cho mạng ↔ mạng; OpenVPN tự dựng trên EC2 tốn vận hành</td></tr>
+          <tr><td>Chi nhánh xa Region, VPN chập chờn</td><td><b>Accelerated Site-to-Site VPN</b> (cần TGW)</td><td>VGW không hỗ trợ acceleration</td></tr>
+          <tr><td>On-premises truy cập S3 qua DX bằng IP public</td><td><b>Public VIF</b></td><td>Private VIF chỉ tới VPC</td></tr>
+        </tbody>
+      </table></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>Site-to-Site VPN</b>: IPsec qua internet; mỗi connection <b>2 tunnel</b>; customer gateway (tài nguyên AWS) ↔ customer gateway device (on-prem) ↔ VGW (1 VPC, ASN mặc định 64512) hoặc transit gateway. 1,25 Gbps/tunnel, MTU 1446. Static hoặc BGP (khuyến nghị). Route propagation; ưu tiên: local &gt; static &gt; propagated trong VPC; trong VGW: <b>DX &gt; VPN static &gt; VPN BGP</b> &gt; AS PATH &gt; MED.</li>
+          <li><b>Transit gateway cho VPN</b>: ECMP (cần BGP), large bandwidth tunnel 5 Gbps, IPv6, <b>accelerated VPN</b> (Global Accelerator) – VGW không có các tính năng này.</li>
+          <li><b>VPN CloudHub</b>: một VGW + nhiều VPN BGP, mỗi CGW <b>ASN riêng</b>, CIDR không chồng lấn ⇒ các chi nhánh nói chuyện với nhau; rẻ.</li>
+          <li><b>Client VPN</b>: managed OpenVPN/TLS cho người dùng; endpoint + target network (subnet / TGW) + route + <b>authorization rule</b> (mặc định không có); xác thực AD / mutual cert / SAML; client CIDR /22–/12; <b>split-tunnel</b> giảm data transfer.</li>
+          <li><b>Direct Connect</b>: cáp quang riêng tới DX location, bỏ qua ISP; <b>dedicated</b> 1/10/100/400 Gbps (tự đặt, LOA-CFA) vs <b>hosted</b> 50 Mbps–25 Gbps (qua partner, 1 VIF). VIF: <b>private</b> (VPC), <b>public</b> (dịch vụ public toàn cầu), <b>transit</b> (TGW qua DX gateway). Cần 802.1Q, BGP + MD5. <b>Không mã hóa mặc định</b>.</li>
+          <li><b>DX gateway</b>: toàn cầu, nối một DX tới VGW/TGW ở nhiều Region/account; không cho VPC ↔ VPC qua nó; 20 VGW / 6 TGW mỗi DX gateway.</li>
+          <li><b>Resiliency</b>: maximum (2 location, thiết bị riêng, 99,99%) / high (2 location, 99,9%) / dev-test (1 location). VPN làm backup rẻ; VPN over DX (private IP VPN) hoặc MACsec để mã hóa; LAG để tăng băng thông tại một location.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Hybrid networking</dt><dd><b>Mạng lai</b> – kết nối mạng on-premises / người dùng từ xa với VPC bằng IP private.</dd></div>
+        <div><dt>AWS Site-to-Site VPN</dt><dd><b>VPN giữa hai mạng</b> – kết nối IPsec giữa mạng on-premises và VPC qua internet (hoặc qua DX).</dd></div>
+        <div><dt>VPN tunnel</dt><dd><b>Đường hầm VPN</b> – liên kết mã hóa; mỗi VPN connection có 2 tunnel để sẵn sàng cao.</dd></div>
+        <div><dt>Customer gateway (CGW)</dt><dd><b>Cổng phía khách hàng</b> – tài nguyên AWS mô tả thiết bị on-premises (IP, BGP ASN).</dd></div>
+        <div><dt>Customer gateway device</dt><dd><b>Thiết bị cổng phía khách hàng</b> – router/firewall vật lý hoặc phần mềm ở phía bạn.</dd></div>
+        <div><dt>Target gateway</dt><dd><b>Cổng đích</b> – đầu VPN phía Amazon: virtual private gateway, transit gateway hoặc Cloud WAN.</dd></div>
+        <div><dt>Virtual private gateway (VGW)</dt><dd><b>Cổng riêng ảo</b> – đầu VPN/DX phía AWS gắn vào một VPC; ASN mặc định 64512.</dd></div>
+        <div><dt>Static routing / Dynamic routing (BGP)</dt><dd><b>Định tuyến tĩnh / động</b> – tự khai prefix hoặc quảng bá qua BGP; BGP được khuyến nghị.</dd></div>
+        <div><dt>Border Gateway Protocol (BGP)</dt><dd><b>Giao thức cổng biên</b> – giao thức trao đổi route giữa các hệ thống tự trị; dùng cho VPN động và DX.</dd></div>
+        <div><dt>Autonomous System Number (ASN)</dt><dd><b>Số hiệu hệ thống tự trị</b> – định danh mỗi bên trong phiên BGP.</dd></div>
+        <div><dt>Route propagation</dt><dd><b>Lan truyền tuyến</b> – VGW tự thêm route on-premises vào route table của VPC.</dd></div>
+        <div><dt>ECMP (Equal Cost Multipath)</dt><dd><b>Định tuyến đa đường chi phí bằng nhau</b> – gộp nhiều tunnel VPN trên TGW để tăng băng thông; cần BGP.</dd></div>
+        <div><dt>Accelerated Site-to-Site VPN</dt><dd><b>VPN được tăng tốc</b> – VPN đi qua Global Accelerator/edge location; chỉ cho VPN gắn TGW.</dd></div>
+        <div><dt>Large Bandwidth Tunnel</dt><dd><b>Tunnel băng thông lớn</b> – tới 5 Gbps/tunnel, chỉ trên TGW/Cloud WAN.</dd></div>
+        <div><dt>AWS VPN CloudHub</dt><dd><b>Trung tâm VPN đám mây</b> – một VGW làm hub cho nhiều VPN BGP để các site nói chuyện với nhau.</dd></div>
+        <div><dt>AWS Client VPN</dt><dd><b>VPN cho người dùng cá nhân</b> – dịch vụ VPN managed dựa trên OpenVPN cho truy cập từ xa.</dd></div>
+        <div><dt>Client VPN endpoint</dt><dd><b>Điểm cuối Client VPN</b> – nơi kết thúc mọi phiên VPN của client.</dd></div>
+        <div><dt>Target network</dt><dd><b>Mạng đích</b> – subnet VPC (hoặc TGW) được associate với Client VPN endpoint.</dd></div>
+        <div><dt>Authorization rule</dt><dd><b>Quy tắc phân quyền</b> – nhóm người dùng nào được vào mạng nào; mặc định không có.</dd></div>
+        <div><dt>Client CIDR range</dt><dd><b>Dải IP của client</b> – /22 → /12, không chồng lấn VPC, không đổi được.</dd></div>
+        <div><dt>Mutual authentication</dt><dd><b>Xác thực hai chiều bằng chứng chỉ</b> – client và server xác thực nhau qua certificate (ACM).</dd></div>
+        <div><dt>Split-tunnel</dt><dd><b>Chia đường hầm</b> – chỉ traffic tới mạng có route mới đi qua VPN.</dd></div>
+        <div><dt>AWS Direct Connect (DX)</dt><dd><b>Kết nối trực tiếp</b> – đường cáp quang riêng từ mạng của bạn tới AWS, bỏ qua ISP.</dd></div>
+        <div><dt>Direct Connect location</dt><dd><b>Điểm kết nối Direct Connect</b> – trung tâm dữ liệu nơi có router AWS để cross connect.</dd></div>
+        <div><dt>Dedicated connection</dt><dd><b>Kết nối chuyên dụng</b> – cổng vật lý riêng 1/10/100/400 Gbps, tự đặt qua console.</dd></div>
+        <div><dt>Hosted connection</dt><dd><b>Kết nối qua đối tác</b> – do DX Partner cấp, 50 Mbps–25 Gbps, 1 VIF.</dd></div>
+        <div><dt>LOA-CFA</dt><dd><b>Thư ủy quyền và chỉ định điểm kết nối</b> – giấy để nhà mạng đặt cross connect tới cổng AWS.</dd></div>
+        <div><dt>Cross connect</dt><dd><b>Đấu nối chéo</b> – dây nối vật lý giữa thiết bị của bạn/partner và router AWS tại DX location.</dd></div>
+        <div><dt>Virtual interface (VIF)</dt><dd><b>Giao diện ảo</b> – VLAN + phiên BGP trên connection: private, public hoặc transit.</dd></div>
+        <div><dt>Private / Public / Transit VIF</dt><dd><b>Giao diện ảo riêng / công khai / trung chuyển</b> – tới VPC / dịch vụ AWS public / Transit Gateway qua DX gateway.</dd></div>
+        <div><dt>Direct Connect gateway</dt><dd><b>Cổng Direct Connect</b> – tài nguyên toàn cầu nối DX tới VGW/TGW ở nhiều Region, nhiều account.</dd></div>
+        <div><dt>Association proposal</dt><dd><b>Đề xuất liên kết</b> – account khác xin associate VGW/TGW với DX gateway; chủ DX gateway duyệt.</dd></div>
+        <div><dt>Link Aggregation Group (LAG)</dt><dd><b>Nhóm gộp liên kết</b> – gộp nhiều dedicated connection cùng tốc độ, cùng location.</dd></div>
+        <div><dt>MACsec</dt><dd><b>Bảo mật lớp MAC</b> – chuẩn IEEE mã hóa tầng 2 trên dedicated connection.</dd></div>
+        <div><dt>Private IP VPN</dt><dd><b>VPN dùng IP riêng</b> – IPsec trên transit VIF, IP private hai đầu; cần DX gateway + TGW.</dd></div>
+        <div><dt>Direct Connect Resiliency Toolkit</dt><dd><b>Bộ công cụ khả năng phục hồi</b> – wizard đặt connection theo mô hình maximum / high / dev-test.</dd></div>
+        <div><dt>SiteLink</dt><dd><b>Liên kết giữa các site</b> – nối hai DX location qua mạng AWS không cần đi qua Region.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company needs to connect its on-premises data center to a VPC within the next two days. The connection must encrypt all traffic in transit. Bandwidth requirements are under 1 Gbps, and the company wants the MOST cost-effective solution. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Order a 1 Gbps AWS Direct Connect dedicated connection and create a private virtual interface.</li>
+            <li data-k="B">Deploy AWS Client VPN and install the VPN client on every on-premises server.</li>
+            <li data-k="C">Create a virtual private gateway, a customer gateway, and an AWS Site-to-Site VPN connection.</li>
+            <li data-k="D">Create a VPC peering connection between the on-premises network and the VPC.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Site-to-Site VPN dựng trong thời gian ngắn, mã hóa IPsec mặc định, chi phí thấp và đủ cho &lt; 1 Gbps (1,25 Gbps/tunnel). <b>A sai</b>: DX cần LOA-CFA, cross connect, thường không kịp trong 2 ngày, và <b>không mã hóa mặc định</b>. <b>B sai</b>: Client VPN dành cho từng người dùng, không phải nối cả mạng; cài lên mọi server rất tốn vận hành. <b>D sai</b>: VPC peering chỉ nối VPC với VPC.</div>
+          <div class="trans">
+            <div class="tq">Một công ty cần kết nối data center on-premises với một VPC trong vòng hai ngày tới. Kết nối phải mã hóa toàn bộ traffic khi truyền. Yêu cầu băng thông dưới 1 Gbps, và công ty muốn giải pháp MOST cost-effective (tiết kiệm chi phí nhất). Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt một AWS Direct Connect dedicated connection 1 Gbps và tạo một private virtual interface.</span><span class="why">Sai: Direct Connect cần LOA-CFA và cross connect nên thường không kịp trong 2 ngày, đắt hơn và không mã hóa mặc định.</span></li>
+              <li data-k="B"><span class="tv">Triển khai AWS Client VPN và cài VPN client lên mọi server on-premises.</span><span class="why">Sai: Client VPN dành cho từng người dùng, không dùng để nối cả mạng; cài lên mọi server rất tốn công vận hành.</span></li>
+              <li data-k="C"><span class="tv">Tạo một virtual private gateway, một customer gateway và một kết nối AWS Site-to-Site VPN.</span><span class="why">Đúng: Site-to-Site VPN dựng nhanh, mã hóa IPsec mặc định, chi phí thấp và đủ băng thông dưới 1 Gbps (1,25 Gbps mỗi tunnel).</span></li>
+              <li data-k="D"><span class="tv">Tạo một VPC peering connection giữa mạng on-premises và VPC.</span><span class="why">Sai: VPC peering chỉ nối VPC với VPC, không nối được với mạng on-premises.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company has an AWS Direct Connect connection from its data center to a VPC in us-east-1 through a private virtual interface attached to a virtual private gateway. The company has deployed new VPCs in us-west-2 and eu-west-1 in other AWS accounts. The company wants to access all VPCs from on premises by using the existing Direct Connect connection, with the LEAST operational overhead. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Order new Direct Connect connections at locations in us-west-2 and eu-west-1.</li>
+            <li data-k="B">Create a Direct Connect gateway, attach a private virtual interface to it, and associate the virtual private gateways of all VPCs with the Direct Connect gateway (accepting association proposals from the other accounts).</li>
+            <li data-k="C">Create VPC peering connections from the us-east-1 VPC to the other VPCs and route on-premises traffic through the peering connections.</li>
+            <li data-k="D">Create a public virtual interface and access the VPCs through their public IP addresses.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Direct Connect gateway</b> là tài nguyên toàn cầu: một private VIF gắn DX gateway truy cập được nhiều VGW ở nhiều Region và nhiều account (qua association proposal). <b>A sai</b>: tốn chi phí và thời gian, không cần thiết. <b>C sai</b>: peering không hỗ trợ edge-to-edge routing – traffic từ DX của VPC A không được chuyển tiếp sang VPC peer. <b>D sai</b>: public VIF chỉ tới dịch vụ AWS public; dùng IP public cho workload nội bộ không đáp ứng kết nối private.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có kết nối AWS Direct Connect từ data center tới một VPC ở us-east-1 thông qua một private virtual interface gắn với một virtual private gateway. Công ty đã triển khai các VPC mới ở us-west-2 và eu-west-1 trong các AWS account khác. Công ty muốn truy cập tất cả VPC từ on-premises bằng kết nối Direct Connect hiện có, với LEAST operational overhead (ít công vận hành nhất). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt các kết nối Direct Connect mới tại các location ở us-west-2 và eu-west-1.</span><span class="why">Sai: tốn chi phí và thời gian, không cần thiết vì một kết nối hiện có có thể tới nhiều Region qua Direct Connect gateway.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Direct Connect gateway, gắn một private virtual interface vào nó, và associate virtual private gateway của tất cả VPC với Direct Connect gateway (chấp nhận association proposal từ các account khác).</span><span class="why">Đúng: Direct Connect gateway là tài nguyên toàn cầu, một private VIF gắn vào nó truy cập được nhiều VGW ở nhiều Region và nhiều account.</span></li>
+              <li data-k="C"><span class="tv">Tạo VPC peering connection từ VPC us-east-1 tới các VPC khác và định tuyến traffic on-premises qua các peering connection.</span><span class="why">Sai: peering không hỗ trợ edge-to-edge routing, traffic từ Direct Connect vào VPC A không được chuyển tiếp sang VPC peer.</span></li>
+              <li data-k="D"><span class="tv">Tạo một public virtual interface và truy cập các VPC qua địa chỉ IP public của chúng.</span><span class="why">Sai: public VIF chỉ tới endpoint dịch vụ AWS public; dùng IP public cho workload nội bộ không phải kết nối private.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A financial services company uses AWS Direct Connect to connect its data center to AWS. A new compliance requirement states that all data between the data center and AWS must be encrypted in transit. The company must keep the consistent performance of Direct Connect and must not use public IP addresses for the encryption endpoints. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Enable encryption on the private virtual interface in the Direct Connect console.</li>
+            <li data-k="B">Replace Direct Connect with an AWS Site-to-Site VPN connection over the internet.</li>
+            <li data-k="C">Create a public virtual interface and establish an AWS Site-to-Site VPN connection to the virtual private gateway over the public virtual interface.</li>
+            <li data-k="D">Create a private IP AWS Site-to-Site VPN connection over a transit virtual interface by using a Direct Connect gateway and a transit gateway.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Private IP VPN</b> chạy IPsec trên transit VIF với IP private ở cả transit gateway và customer gateway device – mã hóa, giữ đường DX, không cần IP public (đúng use case tài chính/y tế/chính phủ trong tài liệu). <b>A sai</b>: DX không có tùy chọn “bật mã hóa” trên VIF; DX không mã hóa mặc định. <b>B sai</b>: bỏ DX thì mất hiệu năng ổn định. <b>C sai</b>: mã hóa được nhưng VPN qua public VIF dùng <b>IP public</b>, trái yêu cầu.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dịch vụ tài chính dùng AWS Direct Connect để kết nối data center với AWS. Một yêu cầu tuân thủ mới quy định mọi dữ liệu giữa data center và AWS phải được mã hóa khi truyền. Công ty phải giữ được hiệu năng ổn định của Direct Connect và không được dùng địa chỉ IP public cho các điểm đầu cuối mã hóa. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật mã hóa trên private virtual interface trong Direct Connect console.</span><span class="why">Sai: Direct Connect không có tùy chọn "bật mã hóa" trên VIF và không mã hóa traffic mặc định.</span></li>
+              <li data-k="B"><span class="tv">Thay Direct Connect bằng một kết nối AWS Site-to-Site VPN qua Internet.</span><span class="why">Sai: bỏ Direct Connect sẽ mất hiệu năng ổn định mà đề yêu cầu giữ lại.</span></li>
+              <li data-k="C"><span class="tv">Tạo một public virtual interface và thiết lập kết nối AWS Site-to-Site VPN tới virtual private gateway qua public virtual interface.</span><span class="why">Sai: cách này mã hóa được nhưng VPN qua public VIF dùng địa chỉ IP public, trái yêu cầu.</span></li>
+              <li data-k="D"><span class="tv">Tạo một kết nối private IP AWS Site-to-Site VPN qua transit virtual interface bằng cách dùng Direct Connect gateway và transit gateway.</span><span class="why">Đúng: Private IP VPN chạy IPsec trên transit VIF với IP private ở cả transit gateway và customer gateway, vừa mã hóa vừa giữ đường Direct Connect, không cần IP public.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company has a 10 Gbps AWS Direct Connect connection that supports critical workloads. The company wants to add a backup path in case the Direct Connect connection fails. The backup does not need to match Direct Connect performance, and the solution must be the MOST cost-effective. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Configure an AWS Site-to-Site VPN connection to the same virtual private gateway as a backup and advertise the same prefixes by using BGP.</li>
+            <li data-k="B">Order a second 10 Gbps dedicated connection at a different Direct Connect location.</li>
+            <li data-k="C">Add a second connection to the existing connection by using a link aggregation group (LAG).</li>
+            <li data-k="D">Configure AWS Client VPN for all on-premises servers.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> VPN làm backup cho DX là mô hình rẻ nhất; VGW ưu tiên route BGP từ <b>Direct Connect</b> hơn route từ VPN, nên bình thường traffic đi DX và tự chuyển sang VPN khi DX hỏng. <b>B sai</b>: DX thứ hai ở location khác chịu lỗi tốt hơn nhưng đắt hơn nhiều – chỉ chọn khi cần hiệu năng tương đương khi failover. <b>C sai</b>: LAG ở cùng location, tăng băng thông nhưng không chịu được mất location và tốn tiền hơn VPN. <b>D sai</b>: Client VPN dành cho người dùng, không phải đường dự phòng mạng ↔ mạng.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có kết nối AWS Direct Connect 10 Gbps phục vụ các workload quan trọng. Công ty muốn thêm một đường dự phòng phòng khi kết nối Direct Connect bị lỗi. Đường dự phòng không cần đạt hiệu năng như Direct Connect, và giải pháp phải MOST cost-effective (tiết kiệm chi phí nhất). Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình một kết nối AWS Site-to-Site VPN tới cùng virtual private gateway làm dự phòng và quảng bá cùng các prefix bằng BGP.</span><span class="why">Đúng: VPN làm backup cho Direct Connect là phương án rẻ nhất; VGW ưu tiên route từ Direct Connect nên bình thường traffic đi DX và tự chuyển sang VPN khi DX hỏng.</span></li>
+              <li data-k="B"><span class="tv">Đặt thêm một dedicated connection 10 Gbps thứ hai tại một Direct Connect location khác.</span><span class="why">Sai: chịu lỗi tốt hơn nhưng đắt hơn nhiều, chỉ cần khi failover phải giữ hiệu năng tương đương, trong khi đề không yêu cầu.</span></li>
+              <li data-k="C"><span class="tv">Thêm một kết nối thứ hai vào kết nối hiện có bằng link aggregation group (LAG).</span><span class="why">Sai: LAG nằm ở cùng location, tăng băng thông nhưng không chịu được mất location và tốn tiền hơn VPN.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình AWS Client VPN cho tất cả server on-premises.</span><span class="why">Sai: Client VPN dành cho người dùng cá nhân, không phải đường dự phòng mạng ↔ mạng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,D">
+          <div class="qh">A company has five branch offices, each with its own internet connection and a VPN-capable router. The company wants the branch offices to communicate with each other and with a VPC in AWS by using a low-cost hub-and-spoke design. Which TWO actions are required? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Create a separate virtual private gateway for each branch office and attach all of them to the VPC.</li>
+            <li data-k="B">Create a single virtual private gateway and create a dynamically routed (BGP) Site-to-Site VPN connection from each branch's customer gateway to it.</li>
+            <li data-k="C">Use static routing on all VPN connections and add each branch's prefix manually to the other branches' routers.</li>
+            <li data-k="D">Assign a unique BGP ASN to each customer gateway and ensure that the branch IP ranges do not overlap.</li>
+            <li data-k="E">Order an AWS Direct Connect hosted connection for each branch office.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, D.</b> Đây là <b>AWS VPN CloudHub</b>: <b>một</b> VGW, mỗi chi nhánh một VPN <b>định tuyến động (BGP)</b> (B); mỗi customer gateway phải có <b>ASN riêng</b> và các site không được có dải IP chồng lấn (D); VGW nhận và quảng bá lại route cho các site. <b>A sai</b>: một VPC chỉ gắn được một VGW tại một thời điểm, và CloudHub cần một VGW chung. <b>C sai</b>: CloudHub dựa vào BGP để quảng bá lại route; static không đáp ứng. <b>E sai</b>: DX cho từng chi nhánh đắt, trái yêu cầu low-cost dùng internet sẵn có.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có năm văn phòng chi nhánh, mỗi chi nhánh có kết nối Internet riêng và một router hỗ trợ VPN. Công ty muốn các chi nhánh giao tiếp với nhau và với một VPC trên AWS bằng thiết kế hub-and-spoke chi phí thấp. HAI hành động nào là bắt buộc? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một virtual private gateway riêng cho mỗi chi nhánh và gắn tất cả vào VPC.</span><span class="why">Sai: một VPC chỉ gắn được một VGW tại một thời điểm, và VPN CloudHub cần một VGW chung làm hub.</span></li>
+              <li data-k="B"><span class="tv">Tạo một virtual private gateway duy nhất và tạo một kết nối Site-to-Site VPN định tuyến động (BGP) từ customer gateway của mỗi chi nhánh tới nó.</span><span class="why">Đúng: đây là mô hình AWS VPN CloudHub: một VGW làm hub, mỗi chi nhánh một VPN dùng BGP để VGW quảng bá lại route giữa các site.</span></li>
+              <li data-k="C"><span class="tv">Dùng static routing trên tất cả kết nối VPN và thêm thủ công prefix của mỗi chi nhánh vào router của các chi nhánh khác.</span><span class="why">Sai: CloudHub dựa vào BGP để quảng bá lại route; static routing không đáp ứng được.</span></li>
+              <li data-k="D"><span class="tv">Gán một BGP ASN duy nhất cho mỗi customer gateway và đảm bảo các dải IP của chi nhánh không chồng lấn.</span><span class="why">Đúng: CloudHub yêu cầu mỗi customer gateway có ASN riêng và các site không có dải IP chồng lấn để định tuyến đúng.</span></li>
+              <li data-k="E"><span class="tv">Đặt một AWS Direct Connect hosted connection cho mỗi chi nhánh.</span><span class="why">Sai: Direct Connect cho từng chi nhánh rất đắt, trái yêu cầu chi phí thấp dùng Internet sẵn có.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company's employees work remotely and need secure access to applications in a VPC and to file servers in the on-premises data center, which is connected to the VPC by AWS Site-to-Site VPN. Users must authenticate with the company's existing Active Directory. The solution must be fully managed and scale automatically. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Deploy OpenVPN Access Server on Amazon EC2 instances in an Auto Scaling group behind a Network Load Balancer.</li>
+            <li data-k="B">Create an AWS Site-to-Site VPN connection from each employee's home router to the virtual private gateway.</li>
+            <li data-k="C">Create an AWS Client VPN endpoint with Active Directory authentication, associate it with subnets in the VPC, and add routes and authorization rules for the VPC and on-premises CIDR ranges.</li>
+            <li data-k="D">Use AWS Direct Connect hosted connections for each employee.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Client VPN</b> là dịch vụ managed, tự co giãn, hỗ trợ <b>Active Directory authentication</b>; với route và authorization rule cho cả CIDR VPC lẫn on-premises, người dùng truy cập cả hai qua một tunnel. <b>A sai</b>: tự dựng VPN server trên EC2 không phải fully managed. <b>B sai</b>: Site-to-Site VPN cho mạng ↔ mạng, không thực tế cho từng nhân viên, và quota chỉ 10 VPN/VGW mặc định. <b>D sai</b>: DX không dành cho người dùng cá nhân.</div>
+          <div class="trans">
+            <div class="tq">Nhân viên của một công ty làm việc từ xa và cần truy cập an toàn tới các ứng dụng trong một VPC và tới các file server trong data center on-premises, vốn được nối với VPC bằng AWS Site-to-Site VPN. Người dùng phải xác thực bằng Active Directory hiện có của công ty. Giải pháp phải fully managed (được quản lý hoàn toàn) và tự động co giãn. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Triển khai OpenVPN Access Server trên các Amazon EC2 instance trong một Auto Scaling group phía sau một Network Load Balancer.</span><span class="why">Sai: tự dựng VPN server trên EC2 phải tự vận hành, không phải fully managed.</span></li>
+              <li data-k="B"><span class="tv">Tạo một kết nối AWS Site-to-Site VPN từ router tại nhà của mỗi nhân viên tới virtual private gateway.</span><span class="why">Sai: Site-to-Site VPN dành cho mạng ↔ mạng, không thực tế cho từng nhân viên và bị giới hạn mặc định 10 VPN mỗi VGW.</span></li>
+              <li data-k="C"><span class="tv">Tạo một AWS Client VPN endpoint với xác thực Active Directory, associate nó với các subnet trong VPC, và thêm route cùng authorization rule cho các dải CIDR của VPC và on-premises.</span><span class="why">Đúng: Client VPN là dịch vụ managed, tự co giãn, hỗ trợ Active Directory authentication; có route và authorization rule cho cả hai dải CIDR nên người dùng vào được cả VPC lẫn on-premises.</span></li>
+              <li data-k="D"><span class="tv">Dùng AWS Direct Connect hosted connection cho mỗi nhân viên.</span><span class="why">Sai: Direct Connect không dành cho người dùng cá nhân làm việc từ xa.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company uses AWS Client VPN for remote employees. All client traffic, including internet browsing, currently flows through the VPN, which increases AWS data transfer costs. The company wants only traffic destined for the VPC to use the VPN. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Enable split-tunnel on the Client VPN endpoint.</li>
+            <li data-k="B">Remove the authorization rules for the VPC CIDR range.</li>
+            <li data-k="C">Associate the Client VPN endpoint with an additional subnet in another Availability Zone.</li>
+            <li data-k="D">Change the client CIDR range to a smaller block.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Mặc định Client VPN là full-tunnel (mọi traffic qua VPN). <b>Split-tunnel</b> đẩy route của endpoint xuống client, chỉ traffic tới mạng có route mới qua tunnel – tài liệu nêu rõ lợi ích giảm data transfer ra từ AWS. <b>B sai</b>: xóa authorization rule khiến người dùng mất quyền vào VPC. <b>C sai</b>: thêm subnet chỉ tăng tính sẵn sàng. <b>D sai</b>: client CIDR không đổi được sau khi tạo và không liên quan tới định tuyến internet.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng AWS Client VPN cho nhân viên làm việc từ xa. Hiện tại toàn bộ traffic của client, kể cả lướt web, đều đi qua VPN, làm tăng chi phí data transfer trên AWS. Công ty muốn chỉ traffic hướng tới VPC mới đi qua VPN. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật split-tunnel trên Client VPN endpoint.</span><span class="why">Đúng: split-tunnel chỉ đẩy route của endpoint xuống client nên chỉ traffic tới VPC đi qua tunnel, traffic Internet đi thẳng, giảm data transfer ra từ AWS.</span></li>
+              <li data-k="B"><span class="tv">Xóa các authorization rule cho dải CIDR của VPC.</span><span class="why">Sai: xóa authorization rule khiến người dùng mất quyền truy cập VPC, ngược với mục tiêu.</span></li>
+              <li data-k="C"><span class="tv">Associate Client VPN endpoint với thêm một subnet ở Availability Zone khác.</span><span class="why">Sai: thêm subnet chỉ tăng tính sẵn sàng, không thay đổi việc mọi traffic đi qua VPN.</span></li>
+              <li data-k="D"><span class="tv">Đổi dải client CIDR sang một block nhỏ hơn.</span><span class="why">Sai: client CIDR không đổi được sau khi tạo và không liên quan tới việc định tuyến traffic Internet.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company has 40 VPCs in one AWS Region connected to a transit gateway. The company is adding AWS Site-to-Site VPN connectivity from its data center and needs more than 1.25 Gbps of aggregate VPN throughput. The customer gateway device supports BGP. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Attach a virtual private gateway to each VPC and create one VPN connection per VPC.</li>
+            <li data-k="B">Create multiple VPN connections to a single virtual private gateway and enable ECMP on the virtual private gateway.</li>
+            <li data-k="C">Create a static-routed VPN connection on the transit gateway and increase the tunnel MTU to 9001 bytes.</li>
+            <li data-k="D">Create multiple dynamically routed VPN attachments on the transit gateway and enable Equal Cost Multipath (ECMP) routing support.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Trên transit gateway, <b>ECMP</b> gộp băng thông nhiều tunnel VPN; yêu cầu VPN dùng <b>dynamic routing (BGP)</b>. Một attachment phục vụ cả 40 VPC. <b>A sai</b>: 40 VPN riêng tốn vận hành và mỗi tunnel vẫn 1,25 Gbps cho từng VPC. <b>B sai</b>: VGW <b>không hỗ trợ ECMP</b> (chỉ một tunnel được chọn làm đường ra). <b>C sai</b>: ECMP không hỗ trợ static routing, và VPN chỉ hỗ trợ MTU 1446, không jumbo frame.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 40 VPC trong một AWS Region được kết nối với một transit gateway. Công ty đang bổ sung kết nối AWS Site-to-Site VPN từ data center và cần tổng thông lượng VPN lớn hơn 1,25 Gbps. Thiết bị customer gateway hỗ trợ BGP. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gắn một virtual private gateway vào mỗi VPC và tạo một kết nối VPN cho mỗi VPC.</span><span class="why">Sai: 40 VPN riêng tốn nhiều công vận hành và mỗi VPC vẫn bị giới hạn 1,25 Gbps mỗi tunnel.</span></li>
+              <li data-k="B"><span class="tv">Tạo nhiều kết nối VPN tới một virtual private gateway duy nhất và bật ECMP trên virtual private gateway.</span><span class="why">Sai: virtual private gateway không hỗ trợ ECMP, chỉ một tunnel được chọn làm đường đi.</span></li>
+              <li data-k="C"><span class="tv">Tạo một kết nối VPN định tuyến tĩnh trên transit gateway và tăng MTU của tunnel lên 9001 byte.</span><span class="why">Sai: ECMP không hỗ trợ static routing, và VPN chỉ hỗ trợ MTU 1446, không có jumbo frame.</span></li>
+              <li data-k="D"><span class="tv">Tạo nhiều VPN attachment định tuyến động trên transit gateway và bật hỗ trợ định tuyến Equal Cost Multipath (ECMP).</span><span class="why">Đúng: ECMP trên transit gateway gộp băng thông của nhiều tunnel VPN dùng BGP, và attachment trên TGW phục vụ cả 40 VPC.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs a mission-critical application that depends on AWS Direct Connect. The company requires the highest level of network resiliency and wants to remain connected even if an entire Direct Connect location fails or a single device fails. Which configuration meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Two dedicated connections that terminate on separate devices at a single Direct Connect location.</li>
+            <li data-k="B">Separate dedicated connections that terminate on separate devices at two different Direct Connect locations (two connections at each location).</li>
+            <li data-k="C">A link aggregation group (LAG) with four 10 Gbps connections at one Direct Connect location.</li>
+            <li data-k="D">One hosted connection with two virtual interfaces.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Mô hình <b>Maximum resiliency</b> trong Resiliency Toolkit: connection riêng biệt trên thiết bị riêng ở <b>nhiều location</b> – chịu được lỗi thiết bị, lỗi kết nối và mất cả location; hướng tới SLA 99,99%. <b>A sai</b>: mô hình development and test – không chịu được mất location. <b>C sai</b>: LAG vẫn ở một location. <b>D sai</b>: hosted connection chỉ có <b>1 VIF</b>, và một connection là điểm lỗi đơn.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng mission-critical phụ thuộc vào AWS Direct Connect. Công ty yêu cầu mức khả năng phục hồi mạng cao nhất và muốn vẫn duy trì kết nối ngay cả khi toàn bộ một Direct Connect location bị lỗi hoặc một thiết bị đơn lẻ bị hỏng. Cấu hình nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Hai dedicated connection kết thúc trên các thiết bị riêng biệt tại một Direct Connect location duy nhất.</span><span class="why">Sai: đây là mô hình development and test, chịu được lỗi thiết bị nhưng không chịu được mất cả location.</span></li>
+              <li data-k="B"><span class="tv">Các dedicated connection riêng biệt kết thúc trên các thiết bị riêng biệt tại hai Direct Connect location khác nhau (hai connection ở mỗi location).</span><span class="why">Đúng: đây là mô hình Maximum resiliency, chịu được lỗi thiết bị, lỗi kết nối và mất cả một location.</span></li>
+              <li data-k="C"><span class="tv">Một link aggregation group (LAG) với bốn connection 10 Gbps tại một Direct Connect location.</span><span class="why">Sai: LAG vẫn nằm ở một location nên mất location là mất kết nối.</span></li>
+              <li data-k="D"><span class="tv">Một hosted connection với hai virtual interface.</span><span class="why">Sai: hosted connection chỉ có 1 VIF, và một connection duy nhất là điểm lỗi đơn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C,E">
+          <div class="qh">An on-premises team reports that after a new AWS Site-to-Site VPN connection shows both tunnels as UP, EC2 instances in private subnets still cannot reach on-premises servers in 192.168.0.0/16. The VPN uses a virtual private gateway attached to the VPC. Which TWO actions could resolve the issue? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Attach an internet gateway to the VPC and add a 0.0.0.0/0 route to it.</li>
+            <li data-k="B">Create a VPC peering connection between the VPC and the customer gateway.</li>
+            <li data-k="C">Enable route propagation for the virtual private gateway on the private subnets' route tables, or add a static route for 192.168.0.0/16 that targets the virtual private gateway.</li>
+            <li data-k="D">Replace the virtual private gateway with a Direct Connect gateway.</li>
+            <li data-k="E">Update the security groups and network ACLs to allow traffic to and from 192.168.0.0/16.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C, E.</b> Tunnel UP chỉ nghĩa là IPsec đã dựng; VPC vẫn cần <b>route tới CIDR on-premises</b> với target VGW (static hoặc bật <b>route propagation</b>) (C), và <b>security group / NACL</b> phải cho phép traffic với dải on-premises (E) – đúng các bước trong tài liệu thiết lập VPN. <b>A sai</b>: IGW đưa traffic ra internet, không tới mạng private on-premises. <b>B sai</b>: không thể peer VPC với customer gateway. <b>D sai</b>: DX gateway dùng cho Direct Connect, không thay VGW cho VPN.</div>
+          <div class="trans">
+            <div class="tq">Nhóm on-premises báo rằng sau khi một kết nối AWS Site-to-Site VPN mới hiển thị cả hai tunnel ở trạng thái UP, các EC2 instance trong private subnet vẫn không kết nối được tới các server on-premises trong dải 192.168.0.0/16. VPN dùng một virtual private gateway gắn vào VPC. HAI hành động nào có thể khắc phục sự cố? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gắn một internet gateway vào VPC và thêm route 0.0.0.0/0 trỏ tới nó.</span><span class="why">Sai: internet gateway đưa traffic ra Internet, không tới được mạng private on-premises.</span></li>
+              <li data-k="B"><span class="tv">Tạo một VPC peering connection giữa VPC và customer gateway.</span><span class="why">Sai: không thể peer VPC với customer gateway; peering chỉ giữa VPC với VPC.</span></li>
+              <li data-k="C"><span class="tv">Bật route propagation cho virtual private gateway trên route table của các private subnet, hoặc thêm static route cho 192.168.0.0/16 với target là virtual private gateway.</span><span class="why">Đúng: tunnel UP chỉ nghĩa là IPsec đã dựng; VPC vẫn cần route tới CIDR on-premises trỏ về VGW thì traffic mới đi vào tunnel.</span></li>
+              <li data-k="D"><span class="tv">Thay virtual private gateway bằng một Direct Connect gateway.</span><span class="why">Sai: Direct Connect gateway dùng cho Direct Connect, không thay thế VGW cho Site-to-Site VPN.</span></li>
+              <li data-k="E"><span class="tv">Cập nhật security group và network ACL để cho phép traffic tới và từ 192.168.0.0/16.</span><span class="why">Đúng: ngoài route, security group và NACL cũng phải cho phép traffic với dải on-premises thì kết nối mới thông.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/vpn/latest/s2svpn/how_it_works.html" target="_blank" rel="noopener">How AWS Site-to-Site VPN works</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpn/latest/s2svpn/vpn-static-dynamic.html" target="_blank" rel="noopener">Static and dynamic routing in Site-to-Site VPN</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpn/latest/s2svpn/vpn-route-priority.html" target="_blank" rel="noopener">Route tables and Site-to-Site VPN route priority</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpn/latest/s2svpn/vpn-limits.html" target="_blank" rel="noopener">AWS Site-to-Site VPN quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpn/latest/s2svpn/accelerated-vpn.html" target="_blank" rel="noopener">Accelerated Site-to-Site VPN connections</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpn/latest/s2svpn/VPN_CloudHub.html" target="_blank" rel="noopener">VPN CloudHub</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpn/latest/s2svpn/private-ip-dx.html" target="_blank" rel="noopener">Private IP Site-to-Site VPN with Direct Connect</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/client-authentication.html" target="_blank" rel="noopener">Client authentication in AWS Client VPN</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/split-tunnel-vpn.html" target="_blank" rel="noopener">Split-tunnel on Client VPN endpoints</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/what-is-best-practices.html" target="_blank" rel="noopener">Rules and best practices for AWS Client VPN</a></li>
+        <li><a href="https://docs.aws.amazon.com/directconnect/latest/UserGuide/dedicated_connection.html" target="_blank" rel="noopener">Dedicated Direct Connect connections (LOA-CFA)</a></li>
+        <li><a href="https://docs.aws.amazon.com/directconnect/latest/UserGuide/hosted_connection.html" target="_blank" rel="noopener">Hosted Direct Connect connections</a></li>
+        <li><a href="https://docs.aws.amazon.com/directconnect/latest/UserGuide/WorkingWithVirtualInterfaces.html" target="_blank" rel="noopener">Direct Connect virtual interfaces (MTU, SiteLink)</a></li>
+        <li><a href="https://docs.aws.amazon.com/directconnect/latest/UserGuide/direct-connect-gateways-intro.html" target="_blank" rel="noopener">Direct Connect gateways</a></li>
+        <li><a href="https://docs.aws.amazon.com/directconnect/latest/UserGuide/resiliency_toolkit.html" target="_blank" rel="noopener">AWS Direct Connect Resiliency Toolkit</a></li>
+        <li><a href="https://docs.aws.amazon.com/directconnect/latest/UserGuide/encryption-in-transit.html" target="_blank" rel="noopener">Encryption in AWS Direct Connect</a></li>
+        <li><a href="https://docs.aws.amazon.com/directconnect/latest/UserGuide/limits.html" target="_blank" rel="noopener">Direct Connect quotas</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

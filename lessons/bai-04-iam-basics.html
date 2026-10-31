@@ -1,0 +1,857 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 4 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/cat/Security-Identity-Compliance.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="4" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <span class="t" data-vi="Dịch vụ quản lý định danh và truy cập">AWS Identity and Access Management (IAM)</span> làm gì: kiểm soát <b>ai được xác thực (authentication)</b> và <b>ai được phép làm gì (authorization)</b> trên tài nguyên AWS.</li>
+          <li>Phân biệt 3 loại <span class="t" data-vi="Định danh">IAM identity</span>: <b>IAM user</b>, <b>IAM user group</b>, <b>IAM role</b> – và biết khi nào dùng loại nào (đề rất hay hỏi “user hay role?”).</li>
+          <li>Đọc và viết được một <span class="t" data-vi="Tài liệu chính sách JSON">JSON policy</span> với các phần tử <code>Version</code>, <code>Statement</code>, <code>Effect</code>, <code>Principal</code>, <code>Action</code>, <code>Resource</code>, <code>Condition</code>.</li>
+          <li>So sánh <b>identity-based policy</b> (AWS managed, customer managed, inline) với <b>resource-based policy</b> (bucket policy, trust policy…) và hiểu quy tắc cross-account cần “cả hai phía cùng Allow”.</li>
+          <li>Áp dụng <span class="t" data-vi="Đặc quyền tối thiểu">least privilege</span>, MFA, quản lý <span class="t" data-vi="Khóa truy cập">access keys</span> và các công cụ hỗ trợ (IAM Access Analyzer, last accessed information, credential report).</li>
+          <li>Ghi nhớ các con số/giới hạn quan trọng của IAM (2 access key/user, 10 managed policy/user, kích thước policy, thời lượng role session…).</li>
+        </ul>
+      </div>
+
+      <!-- ===================== PHẦN 1: IAM LÀ GÌ ===================== -->
+      <h2 id="iam-la-gi"><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">IAM là gì và hoạt động thế nào?</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ quản lý định danh và truy cập">AWS Identity and Access Management (IAM)</span> là dịch vụ web giúp bạn <b>kiểm soát an toàn quyền truy cập vào tài nguyên AWS</b>. Với IAM, bạn quản lý permissions quyết định người dùng được truy cập tài nguyên nào; IAM kiểm soát ai được <span class="t" data-vi="Xác thực – chứng minh bạn là ai">authenticated</span> (đã đăng nhập) và ai được <span class="t" data-vi="Phân quyền – được phép làm gì">authorized</span> (có quyền) sử dụng tài nguyên.</p>
+
+      <p>Khi tạo tài khoản AWS, bạn bắt đầu với một định danh duy nhất là <b>root user</b> có toàn quyền (đã học ở Bài 3). AWS <b>khuyến nghị mạnh mẽ không dùng root user cho việc hằng ngày</b>; thay vào đó dùng IAM để tạo các định danh khác như administrators, analysts, developers và cấp đúng quyền họ cần.</p>
+
+      <h3>Luồng xử lý một request trong IAM</h3>
+      <p>AWS mô tả quá trình truy cập gồm các bước: <b>principal</b> dùng credentials để <b>xác thực</b> → gửi <b>request</b> → AWS <b>phân quyền</b> dựa trên các policy → nếu được phép, principal thực hiện <b>actions</b> trên <b>resources</b>.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/User.svg" alt="">Principal<small>IAM user, role, federated, app</small></div>
+          <span class="arrow">credentials</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_Long-Term-Security-Credential.svg" alt="">Authentication<small>password / access key / temp creds</small></div>
+          <span class="arrow">request</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Authorization<small>đánh giá policies: Allow / Deny</small></div>
+          <span class="arrow">allowed</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">Actions<small>vd ec2:RunInstances</small></div>
+          <span class="arrow">trên</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Resources<small>vd S3 bucket, EC2 instance</small></div>
+        </div>
+        <figcaption><b>Hình 1.</b> Luồng truy cập trong IAM: xác thực principal → request → phân quyền dựa trên policies → thực hiện action trên resource. Request có thể đến từ AWS Management Console, AWS CLI, SDK hay API – policy áp dụng như nhau.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khái niệm</th><th>Ý nghĩa (theo tài liệu IAM)</th></tr></thead>
+        <tbody>
+          <tr><td><b><span class="t" data-vi="Chủ thể thực hiện request">Principal</span></b></td><td>Thực thể có thể thực hiện action và truy cập tài nguyên: root user, IAM user, IAM role, AWS STS federated principal, ứng dụng. Định danh của một dịch vụ AWS gọi là <b>service principal</b> (vd <code>ec2.amazonaws.com</code>).</td></tr>
+          <tr><td><b>Authentication</b></td><td>Đối chiếu sign-in credentials với một principal mà tài khoản AWS tin cậy.</td></tr>
+          <tr><td><b><span class="t" data-vi="Yêu cầu">Request</span></b></td><td>Gồm action, resource, principal, môi trường (IP, thời gian, có MFA không…), dữ liệu tài nguyên.</td></tr>
+          <tr><td><b>Authorization</b></td><td>Dịch vụ được gọi kiểm tra các policies đang áp dụng để quyết định cho phép hay từ chối. Request có thể đến từ principal trong cùng tài khoản hoặc tài khoản khác được tin cậy.</td></tr>
+          <tr><td><b>Actions / Resources</b></td><td>Sau khi được phép, principal có thể vd launch EC2 instance, sửa group membership, xóa S3 bucket.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>$0</b><span>IAM, IAM Identity Center và AWS STS miễn phí – chỉ trả tiền cho dịch vụ khác mà identity sử dụng</span></div>
+        <div class="stat"><b>Global</b><span>IAM là dịch vụ toàn cầu: user, group, role, policy không gắn với Region</span></div>
+        <div class="stat"><b>Eventually consistent</b><span>Thay đổi IAM cần thời gian để lan truyền – không đặt vào “critical path” của ứng dụng</span></div>
+      </div>
+
+      <div class="callout note"><span class="ttl">Tính nhất quán cuối cùng (eventual consistency)</span>
+        <p>IAM đạt high availability bằng cách sao chép dữ liệu qua nhiều server trong các data center của Amazon trên toàn cầu. Một thay đổi (tạo/sửa user, group, role, policy) được commit an toàn nhưng cần thời gian để lan truyền. AWS khuyên <b>không đưa thao tác thay đổi IAM vào các code path quan trọng, cần high availability</b> của ứng dụng; hãy làm trong routine khởi tạo/thiết lập riêng và kiểm tra thay đổi đã lan truyền trước khi production phụ thuộc vào nó.</p></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>IAM giống hệ thống <b>thẻ ra vào của một tòa văn phòng</b>. <b>Authentication</b> là bước bảo vệ kiểm tra thẻ nhân viên có thật không. <b>Authorization</b> là việc đầu đọc thẻ ở mỗi cửa kiểm tra thẻ này có được mở phòng server, phòng kế toán hay không. <b>Policy</b> là bảng phân quyền “ai được vào phòng nào, giờ nào”. <b>Role</b> giống thẻ khách tạm thời – ai được phép thì mượn, dùng xong hết hạn.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>IAM là <b>global service</b> – không cần “tạo IAM user ở từng Region”. Đáp án kiểu “replicate IAM roles to the DR Region” là sai/không cần thiết.</li>
+          <li>Policy kiểm soát quyền <b>bất kể bạn dùng console, CLI hay API</b> – cùng một quyền <code>iam:GetUser</code> cho phép thao tác ở cả ba nơi.</li>
+          <li>Đề hỏi “control who can access which AWS resources” ⇒ <b>IAM</b>; “manage workforce access across multiple accounts with SSO” ⇒ <b>IAM Identity Center</b>; “sign-up/sign-in cho người dùng ứng dụng web/mobile” ⇒ <b>Amazon Cognito</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: IAM IDENTITIES ===================== -->
+      <h2 id="identities"><img src="../assets/icons/res/Users.svg" alt="">IAM identities: users, groups và roles</h2>
+      <p class="lead">Một <span class="t" data-vi="Định danh IAM">IAM identity</span> có thể gắn một hoặc nhiều policy, quyết định nó được làm action gì, trên tài nguyên nào, trong điều kiện nào. IAM identities gồm <b>IAM users</b>, <b>IAM groups</b> và <b>IAM roles</b>. Trong đó <span class="t" data-vi="Thực thể IAM (có thể xác thực)">IAM entity</span> là loại identity đại diện cho người hoặc workload <b>có thể được xác thực</b> – gồm <b>IAM users và IAM roles</b> (group <i>không</i> phải entity).</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/User.svg" alt="">
+          <div><h4>IAM user</h4><span class="vi">Người dùng IAM</span><p>Identity trong tài khoản, có quyền cụ thể cho <b>một người hoặc một ứng dụng</b>. Gồm tên + <b>long-term credentials</b> (console password, access keys).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Users.svg" alt="">
+          <div><h4>IAM user group</h4><span class="vi">Nhóm người dùng</span><p>Tập hợp các IAM user. Gắn policy vào group thì <b>mọi user trong group</b> nhận quyền. Không có credentials, không đăng nhập được.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_Role.svg" alt="">
+          <div><h4>IAM role</h4><span class="vi">Vai trò IAM</span><p>Identity có quyền cụ thể nhưng <b>không gắn với một người</b>; ai cần thì <b>assume</b>. Không có password/access key – cấp <b>temporary security credentials</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Single-Sign-On.svg" alt="">
+          <div><h4>IAM Identity Center</h4><span class="vi">Đăng nhập một lần cho workforce</span><p>Tạo/quản lý định danh tập trung; <b>permission sets</b> tự tạo các IAM role cần thiết trong các tài khoản (chi tiết Bài 5–6).</p></div></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">AWS account 111122223333 (IAM là global)</span>
+          <div class="row">
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/Users.svg" alt="">Group: Admins</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/User.svg" alt="">Anaya<small>password + MFA</small></div>
+              </div></div>
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/Users.svg" alt="">Group: Developers</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/User.svg" alt="">Jim<small>Developers + Test</small></div>
+                <div class="node"><img src="../assets/icons/res/User.svg" alt="">Brad</div>
+              </div></div>
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/Users.svg" alt="">Group: Test</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/User.svg" alt="">Jim</div>
+                <div class="node"><img src="../assets/icons/res/Client.svg" alt="">TestApp1<small>service account</small></div>
+              </div></div>
+          </div>
+          <div class="row center">
+            <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_Role.svg" alt="">Role: EC2-S3-ReadOnly<small>trust: ec2.amazonaws.com</small></div>
+            <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_Role.svg" alt="">Role: AuditorCrossAccount<small>trust: account 444455556666</small></div>
+            <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Managed policies<small>gắn vào user/group/role</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> Quan hệ giữa account, users, groups và roles: một user (Jim) có thể thuộc <b>nhiều</b> group; group chỉ chứa user (không lồng group); role không thuộc group mà được <b>assume</b> bởi principal được tin cậy trong trust policy.</figcaption>
+      </figure>
+
+      <h3>IAM user</h3>
+      <p>Một <span class="t" data-vi="Người dùng IAM">IAM user</span> là thực thể bạn tạo trong tài khoản, đại diện cho <b>người</b> hoặc <b>workload</b> tương tác với tài nguyên AWS; gồm <b>tên</b> và <b>credentials</b>. Lưu ý: một IAM user có quyền administrator <b>không phải</b> là root user.</p>
+      <ul>
+        <li><b>Cách AWS định danh user</b>: <i>friendly name</i> (vd <code>Richard</code>, hiển thị trên console – không nên chứa thông tin cá nhân vì xuất hiện trong ARN); <b>ARN</b> <code>arn:aws:iam::123456789012:user/Richard</code> (dùng làm <code>Principal</code> trong bucket policy); <b>unique ID</b> (bắt đầu bằng <code>AIDA</code>, chỉ trả về qua API/CLI).</li>
+        <li><b>Credentials</b> có thể có: <b>console password</b> (đăng nhập console; tắt password không thay đổi permissions), <b>access keys</b> (CLI/SDK/API), <b>SSH keys</b> cho CodeCommit, <b>server certificates</b> (SSL/TLS – AWS khuyên dùng ACM, chỉ dùng IAM khi Region không hỗ trợ ACM), và thiết bị <b>MFA</b>.</li>
+        <li><b>Mặc định user mới không có quyền gì</b> (“no permissions to do anything”). User tạo bằng CLI/API mặc định không có credentials nào.</li>
+        <li>Mỗi IAM user thuộc <b>đúng một</b> tài khoản AWS; mọi hoạt động của user được tính tiền vào tài khoản đó.</li>
+        <li>IAM user đại diện cho ứng dụng thường gọi là <span class="t" data-vi="Tài khoản dịch vụ">service account</span> – <b>không bao giờ nhúng access key trực tiếp vào code</b>.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">AWS hiện khuyến nghị hạn chế IAM user cho con người</span>
+        <p>Best practice hiện tại: <b>con người (human users) nên dùng federation với identity provider</b> (khuyến nghị IAM Identity Center) để nhận <b>temporary credentials</b>, thay vì IAM user có long-term credentials. Chỉ dùng IAM user cho các trường hợp federation không hỗ trợ:</p>
+        <ul>
+          <li><b>Workloads that cannot use IAM roles</b> – vd WordPress plugin chạy ngoài AWS.</li>
+          <li><b>Third-party AWS clients</b> không hỗ trợ IAM Identity Center.</li>
+          <li><b>AWS CodeCommit</b> (SSH keys / service-specific credentials) và <b>Amazon Keyspaces</b> (service-specific credentials).</li>
+          <li><b>Emergency access</b> – khi identity provider không truy cập được (“break-glass” user), phải bảo vệ chặt bằng MFA.</li>
+        </ul></div>
+
+      <h3>IAM user group</h3>
+      <p>Một <span class="t" data-vi="Nhóm người dùng IAM">IAM user group</span> là tập hợp các IAM user, giúp chỉ định quyền cho nhiều user cùng lúc. Ví dụ group <b>Admins</b> có quyền quản trị; nhân viên mới cần quyền admin thì chỉ cần thêm vào group; nhân viên đổi việc thì chuyển group thay vì sửa quyền từng người.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Đặc điểm của group (theo AWS)</th><th>Hệ quả khi thi</th></tr></thead>
+        <tbody>
+          <tr><td>Một group chứa nhiều user; một user thuộc <b>nhiều group</b>.</td><td>Quyền của user = hợp (union) các policy của user và mọi group chứa user.</td></tr>
+          <tr><td>Group <b>không thể lồng nhau</b> (no nesting) – chỉ chứa user, không chứa group khác.</td><td>Đáp án “create a parent group containing child groups” là <b>sai</b>.</td></tr>
+          <tr><td><b>Không có group mặc định</b> chứa mọi user trong tài khoản.</td><td>Muốn có thì phải tự tạo và tự thêm từng user mới.</td></tr>
+          <tr><td>Group <b>không thể là <code>Principal</code></b> trong policy (vd resource-based policy) – vì group liên quan đến permissions, không phải authentication.</td><td>Bucket policy không thể ghi <code>"Principal": group/Developers</code>; phải dùng user/role ARN hoặc account.</td></tr>
+          <tr><td>Group không có credentials, không đăng nhập, <b>không assume role</b> được.</td><td>Group chỉ là công cụ <b>gom quyền</b>.</td></tr>
+          <tr><td>Số group/account và số group mỗi user tham gia có giới hạn (quotas).</td><td>Mặc định 300 group/account (tối đa 500); mỗi user tối đa 10 group.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>IAM role</h3>
+      <p>Một <span class="t" data-vi="Vai trò IAM">IAM role</span> giống IAM user ở chỗ là identity có permissions policy. Nhưng <b>thay vì gắn với một người, role được thiết kế để bất kỳ ai cần đều có thể assume</b>, và role <b>không có long-term credentials</b> (password, access keys). Khi assume role, bạn nhận <span class="t" data-vi="Thông tin xác thực tạm thời">temporary security credentials</span> cho <span class="t" data-vi="Phiên làm việc của vai trò">role session</span>.</p>
+      <p>Theo AWS, role có thể được assume bởi:</p>
+      <ul>
+        <li>IAM user trong <b>cùng tài khoản hoặc tài khoản khác</b>;</li>
+        <li>IAM role trong cùng tài khoản (role chaining);</li>
+        <li><b>Service principals</b> – dịch vụ chạy code như <b>Amazon EC2, AWS Lambda</b>; tính năng thao tác tài nguyên thay bạn như <b>S3 object replication</b>; dịch vụ cấp credentials cho ứng dụng chạy ngoài AWS như <b>IAM Roles Anywhere, Amazon ECS Anywhere</b>;</li>
+        <li>Người dùng bên ngoài được xác thực bởi <b>external identity provider (IdP)</b> tương thích <b>SAML 2.0</b> hoặc <b>OpenID Connect (OIDC)</b>.</li>
+      </ul>
+
+      <p>Mỗi role luôn có <b>hai</b> loại policy:</p>
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_Role.svg" alt="">Trust policy – AI được assume?</h4>
+          <ul>
+            <li>Là <b>resource-based policy bắt buộc</b> gắn vào role (loại resource-based policy duy nhất của IAM).</li>
+            <li>Khai báo <code>Principal</code> được tin cậy: user, role, account, service, federated.</li>
+            <li>Action thường là <code>sts:AssumeRole</code> (hoặc <code>AssumeRoleWithSAML</code>, <code>AssumeRoleWithWebIdentity</code>).</li>
+            <li>Không được dùng wildcard <code>*</code> trong ARN của principal.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Permissions policy – Được làm GÌ?</h4>
+          <ul>
+            <li>Là <b>identity-based policy</b> (managed hoặc inline) gắn vào role.</li>
+            <li>Quy định action/resource/condition mà role session được phép.</li>
+            <li>Có thể bị giới hạn thêm bởi <b>permissions boundary</b>, <b>session policy</b>, <b>SCP</b>.</li>
+            <li>Ví dụ: <code>s3:GetObject</code> trên <code>arn:aws:s3:::reports/*</code>.</li>
+          </ul></div>
+      </div>
+
+      <pre><span class="c">// Trust policy: cho phép EC2 assume role (dùng qua instance profile)</span>
+{
+  <span class="k">"Version"</span>: <span class="s">"2012-10-17"</span>,
+  <span class="k">"Statement"</span>: [{
+    <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+    <span class="k">"Principal"</span>: { <span class="k">"Service"</span>: <span class="s">"ec2.amazonaws.com"</span> },
+    <span class="k">"Action"</span>: <span class="s">"sts:AssumeRole"</span>
+  }]
+}</pre>
+
+      <h3>Các thuật ngữ về role cần nắm</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thuật ngữ</th><th>Ý nghĩa</th><th>Ví dụ / lưu ý thi</th></tr></thead>
+        <tbody>
+          <tr><td><b><span class="t" data-vi="Vai trò dịch vụ">AWS service role</span></b></td><td>Role mà một dịch vụ assume để thay bạn thực hiện action. Admin <b>tạo, sửa, xóa</b> được.</td><td>Role cho EC2 đọc S3, execution role cho Lambda.</td></tr>
+          <tr><td><b><span class="t" data-vi="Vai trò liên kết dịch vụ">Service-linked role</span></b></td><td>Loại service role <b>gắn với một dịch vụ</b>, do dịch vụ sở hữu; admin <b>chỉ xem, không sửa được permissions</b>. Muốn xóa phải xóa tài nguyên liên quan trước. Không áp dụng permissions boundary.</td><td><code>AWSServiceRoleForAutoScaling</code>, <code>AWSServiceRoleForElasticLoadBalancing</code>. Thấy role lạ xuất hiện ⇒ đừng xóa thủ công.</td></tr>
+          <tr><td><b><span class="t" data-vi="Hồ sơ instance">Instance profile</span></b></td><td>“Vỏ chứa” role để gắn vào EC2 instance; ứng dụng trên instance lấy temporary credentials qua instance metadata, SDK tự phát hiện.</td><td>Console tự tạo instance profile cùng tên khi tạo role cho EC2. Mỗi instance gắn 1 instance profile.</td></tr>
+          <tr><td><b><span class="t" data-vi="Ủy quyền">Delegation</span></b></td><td>Cấp quyền cho người khác truy cập tài nguyên bạn kiểm soát, qua quan hệ tin cậy giữa <b>trusting account</b> (sở hữu tài nguyên, chứa role) và <b>trusted account</b> (chứa user).</td><td>Cần 2 nửa: trust policy ở role + identity policy cho phép user <code>sts:AssumeRole</code>.</td></tr>
+          <tr><td><b><span class="t" data-vi="Mã định danh bên ngoài">External ID</span></b></td><td>Tham số bổ sung khi cho bên thứ ba (khác tổ chức) assume role, chống <b>confused deputy problem</b>. Dài 2–1.224 ký tự.</td><td>“Third-party SaaS needs access to our account” ⇒ cross-account role + external ID.</td></tr>
+          <tr><td><b><span class="t" data-vi="Chuỗi vai trò">Role chaining</span></b></td><td>Dùng role A để assume role B. Session bị giới hạn <b>tối đa 1 giờ</b> bất kể maximum session duration.</td><td>Truyền <code>DurationSeconds</code> &gt; 3600 khi chaining ⇒ lỗi.</td></tr>
+          <tr><td><b>Maximum session duration</b></td><td>Cấu hình của role: <b>1–12 giờ</b>. <code>DurationSeconds</code> từ 900 giây (15 phút) tới max; không truyền thì mặc định <b>1 giờ</b>.</td><td>Không giới hạn session do AWS service assume.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout note"><span class="ttl">Khi assume role, quyền cũ “tạm gác lại”</span>
+        <p>Theo AWS: user assume role sẽ <b>tạm thời từ bỏ quyền của chính mình</b> và nhận quyền của role; khi thoát role, quyền gốc được khôi phục. Khi mới tạo tài khoản <b>không có role nào</b> được tạo sẵn; các dịch vụ có thể tự thêm service-linked role khi bạn bắt đầu dùng chúng.</p></div>
+
+      <h3>User hay role? – bảng chọn nhanh</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tình huống</th><th>Lựa chọn đúng</th><th>Lý do</th></tr></thead>
+        <tbody>
+          <tr><td>Ứng dụng trên <b>EC2</b> cần đọc/ghi S3, DynamoDB</td><td class="yes">IAM role + instance profile</td><td>Credentials tạm thời tự xoay vòng, không lưu key trên đĩa.</td></tr>
+          <tr><td>Hàm <b>Lambda</b> cần ghi log, đọc SQS</td><td class="yes">Lambda execution role</td><td>Lambda tự assume role khi chạy.</td></tr>
+          <tr><td>Nhân viên công ty dùng <b>Active Directory / Okta / Entra ID</b></td><td class="yes">Federation (IAM Identity Center hoặc SAML 2.0) → role</td><td>Không tạo IAM user trùng lặp; dùng temporary credentials.</td></tr>
+          <tr><td>User/ứng dụng ở <b>tài khoản khác</b> cần truy cập tài nguyên</td><td class="yes">Cross-account role (hoặc resource-based policy)</td><td>Role là cách chính để cấp cross-account access.</td></tr>
+          <tr><td><b>Mobile app</b> cần gọi AWS</td><td class="yes">Role qua web identity (Amazon Cognito)</td><td>Không nhúng access key vào app (dễ bị trích xuất).</td></tr>
+          <tr><td>Server <b>on-premises</b> có PKI cần credentials AWS</td><td class="yes">IAM Roles Anywhere (X.509)</td><td>Vẫn dùng temporary credentials ngoài AWS.</td></tr>
+          <tr><td>Công cụ bên thứ ba <b>chỉ hỗ trợ access key</b>, chạy ngoài AWS</td><td>IAM user + access key (xoay vòng định kỳ)</td><td>Một trong số ít trường hợp AWS chấp nhận long-term credentials.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – “Don't store credentials”</span>
+        <p>Thấy đề có “<i>application running on EC2 needs to access S3/DynamoDB… MOST secure</i>” ⇒ <b>tạo IAM role, gắn vào EC2 qua instance profile</b>. Các phương án “store access keys in the application configuration / environment variables / AMI / user data” luôn <b>sai</b>. Với Lambda ⇒ <b>execution role</b>. Với ECS task ⇒ <b>task role</b>.</p></div>
+
+      <!-- ===================== PHẦN 3: POLICY JSON ===================== -->
+      <h2 id="policy-json"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Policy và cấu trúc JSON policy</h2>
+      <p class="lead">Một <span class="t" data-vi="Chính sách">policy</span> là đối tượng trong AWS, khi gắn vào identity hoặc resource sẽ <b>định nghĩa quyền</b> của chúng. AWS đánh giá policies khi một principal (user hoặc role) gửi request; permissions trong policy quyết định request được <b>allow</b> hay <b>deny</b>. Phần lớn policy được lưu dưới dạng <b>tài liệu JSON</b>.</p>
+
+      <h3>Các phần tử của một JSON policy</h3>
+      <p>Một JSON policy gồm thông tin chung (tùy chọn) ở đầu và <b>một hoặc nhiều statement</b>. Mỗi statement mô tả một quyền. Nhiều statement trong cùng policy – hoặc nhiều policy cùng áp dụng – được AWS kết hợp bằng <b>logical OR</b>.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Phần tử</th><th>Bắt buộc?</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><code>Version</code></td><td>Nên có</td><td>Phiên bản ngôn ngữ policy – AWS khuyến nghị bản mới nhất <code>"2012-10-17"</code> (đây <b>không phải</b> ngày tạo policy).</td></tr>
+          <tr><td><code>Statement</code></td><td>Có</td><td>Phần tử chính, chứa các phần tử bên dưới; có thể có nhiều statement.</td></tr>
+          <tr><td><code>Sid</code></td><td>Tùy chọn</td><td>Statement ID để phân biệt các statement.</td></tr>
+          <tr><td><code>Effect</code></td><td>Có</td><td><code>Allow</code> hoặc <code>Deny</code>.</td></tr>
+          <tr><td><code>Principal</code></td><td>Tùy trường hợp</td><td><b>Bắt buộc</b> trong resource-based policy (account, user, role, federated principal được allow/deny). <b>Không được có</b> trong identity-based policy – principal ngầm định là user/role được gắn policy.</td></tr>
+          <tr><td><code>Action</code></td><td>Có</td><td>Danh sách action được allow/deny, dạng <code>service:Action</code>, hỗ trợ wildcard (<code>s3:Get*</code>).</td></tr>
+          <tr><td><code>Resource</code></td><td>Tùy trường hợp</td><td>Bắt buộc trong IAM permissions policy: danh sách ARN tài nguyên áp dụng. Với resource-based policy thì tùy dịch vụ.</td></tr>
+          <tr><td><code>Condition</code></td><td>Tùy chọn</td><td>Điều kiện để statement có hiệu lực (vd yêu cầu MFA, IP nguồn, TLS, tag…). Statement chỉ áp dụng khi Condition = true.</td></tr>
+        </tbody>
+      </table></div>
+
+      <p>Ví dụ AWS đưa ra – một policy với 3 statement: tự đổi mật khẩu, liệt kê bucket, và đọc bucket bí mật <b>chỉ khi đã xác thực MFA</b>:</p>
+      <pre>{
+  <span class="k">"Version"</span>: <span class="s">"2012-10-17"</span>,
+  <span class="k">"Statement"</span>: [
+    { <span class="k">"Sid"</span>: <span class="s">"FirstStatement"</span>, <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+      <span class="k">"Action"</span>: [<span class="s">"iam:ChangePassword"</span>], <span class="k">"Resource"</span>: <span class="s">"*"</span> },
+    { <span class="k">"Sid"</span>: <span class="s">"SecondStatement"</span>, <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+      <span class="k">"Action"</span>: <span class="s">"s3:ListAllMyBuckets"</span>, <span class="k">"Resource"</span>: <span class="s">"*"</span> },
+    { <span class="k">"Sid"</span>: <span class="s">"ThirdStatement"</span>, <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+      <span class="k">"Action"</span>: [<span class="s">"s3:List*"</span>, <span class="s">"s3:Get*"</span>],
+      <span class="k">"Resource"</span>: [
+        <span class="s">"arn:aws:s3:::amzn-s3-demo-bucket-confidential-data"</span>,
+        <span class="s">"arn:aws:s3:::amzn-s3-demo-bucket-confidential-data/*"</span>
+      ],
+      <span class="k">"Condition"</span>: {<span class="k">"Bool"</span>: {<span class="k">"aws:MultiFactorAuthPresent"</span>: <span class="s">"true"</span>}} }
+  ]
+}</pre>
+      <ul>
+        <li><b>Statement 1</b>: <code>Resource "*"</code> nhưng thực tế <code>ChangePassword</code> chỉ tác động lên mật khẩu của chính user gửi request.</li>
+        <li><b>Statement 2</b>: liệt kê mọi bucket – chỉ trong tài khoản của user, vì policy không cấp quyền vào tài khoản khác.</li>
+        <li><b>Statement 3</b>: lưu ý <b>hai ARN</b> – <code>bucket</code> (cho action cấp bucket như ListBucket) và <code>bucket/*</code> (cho action cấp object như GetObject). Không có MFA ⇒ Condition false ⇒ statement không áp dụng ⇒ không có quyền.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp về JSON policy</span>
+        <ul>
+          <li>Quên ARN <code>arn:aws:s3:::bucket/*</code> ⇒ <code>s3:GetObject</code> bị từ chối dù đã có ARN bucket. Ngược lại, <code>s3:ListBucket</code> cần ARN của <b>bucket</b>, không phải <code>/*</code>.</li>
+          <li>Đặt <code>Principal</code> trong identity-based policy ⇒ policy không hợp lệ.</li>
+          <li><code>"Version": "2008-10-17"</code> là bản cũ – không hỗ trợ policy variables như <code>${aws:username}</code>.</li>
+        </ul></div>
+
+      <h3>Least privilege và access levels</h3>
+      <p>Khi viết policy, hãy cấp <span class="t" data-vi="Đặc quyền tối thiểu">least privilege</span> – chỉ cấp quyền cần cho tác vụ: xác định user/role cần làm gì rồi viết policy chỉ cho phép đúng những việc đó. <b>Bắt đầu từ tập quyền tối thiểu rồi cấp thêm khi cần</b> an toàn hơn là bắt đầu rộng rồi thu hẹp. IAM phân loại action theo <span class="t" data-vi="Mức truy cập">access level</span>: <b>List</b>, <b>Read</b>, <b>Write</b>, <b>Permissions management</b>, <b>Tagging</b> – vd chọn List + Read để cấp quyền read-only.</p>
+
+      <!-- ===================== PHẦN 4: POLICY TYPES ===================== -->
+      <h2 id="policy-types"><img src="../assets/icons/res/AWS-IoT_Policy.svg" alt="">Các loại policy: identity-based vs resource-based</h2>
+      <p class="lead">AWS hỗ trợ <b>9 loại policy</b>: identity-based, resource-based, VPC endpoint policies, permissions boundaries, SCPs, RCPs, ACLs, AWS RAM resource shares và session policies. Với SAA-C03 cần nắm chắc nhất là <span class="t" data-vi="Chính sách gắn vào định danh">identity-based policy</span> và <span class="t" data-vi="Chính sách gắn vào tài nguyên">resource-based policy</span>; các loại “guardrail” còn lại được học kỹ ở Bài 5.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại policy</th><th>Gắn vào</th><th>Cấp quyền?</th><th>Vai trò chính</th></tr></thead>
+        <tbody>
+          <tr><td><b>Identity-based</b></td><td>User, group, role</td><td class="yes">Có</td><td>Identity được làm gì, trên resource nào, điều kiện nào. Managed hoặc inline.</td></tr>
+          <tr><td><b>Resource-based</b></td><td>Resource (S3 bucket, SQS queue, SNS topic, KMS key, Lambda function, role trust policy…)</td><td class="yes">Có</td><td>Ai (<code>Principal</code>) được làm gì trên resource; principal có thể ở tài khoản khác. <b>Chỉ inline</b>.</td></tr>
+          <tr><td><b>VPC endpoint policy</b></td><td>VPC endpoint</td><td>Không (lớp giới hạn bổ sung)</td><td>Giới hạn principal/resource đi qua endpoint; mặc định cho full access.</td></tr>
+          <tr><td><b>Permissions boundary</b></td><td>User, role (dùng managed policy)</td><td class="no">Không</td><td>Quyền <b>tối đa</b> identity-based policy có thể cấp cho entity.</td></tr>
+          <tr><td><b>SCP</b> (Organizations)</td><td>Org root, OU, account</td><td class="no">Không</td><td>Quyền tối đa cho IAM users/roles (kể cả root user) trong member accounts.</td></tr>
+          <tr><td><b>RCP</b> (Organizations)</td><td>Org root, OU, account</td><td class="no">Không</td><td>Quyền tối đa trên <b>resources</b> trong member accounts.</td></tr>
+          <tr><td><b>ACL</b></td><td>Resource (S3, WAF, VPC…)</td><td class="yes">Có (chỉ cross-account)</td><td>Loại duy nhất <b>không dùng JSON</b>; không cấp quyền cho entity cùng tài khoản.</td></tr>
+          <tr><td><b>AWS RAM resource share</b></td><td>Resource được chia sẻ</td><td class="yes">Có</td><td>Chia sẻ subnet, Transit Gateway… cho account/OU/org mà không viết resource policy từng cái.</td></tr>
+          <tr><td><b>Session policy</b></td><td>Truyền khi assume role / federation</td><td class="no">Không</td><td>Giới hạn quyền của session = giao (intersection) với identity policy. Tối đa 1 inline + 10 managed ARN.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Identity-based policies: AWS managed, customer managed, inline</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>AWS managed policy</th><th>Customer managed policy</th><th>Inline policy</th></tr></thead>
+        <tbody>
+          <tr><td>Ai tạo &amp; quản lý</td><td>AWS</td><td>Bạn</td><td>Bạn</td></tr>
+          <tr><td>Sửa permissions được?</td><td class="no">Không (AWS tự cập nhật, vd thêm quyền khi có dịch vụ mới)</td><td class="yes">Có, tùy ý</td><td class="yes">Có</td></tr>
+          <tr><td>Gắn cho bao nhiêu identity</td><td>Nhiều (kể cả ở nhiều tài khoản)</td><td>Nhiều (trong tài khoản)</td><td>Đúng <b>một</b> (quan hệ 1-1)</td></tr>
+          <tr><td>Có ARN riêng (standalone)</td><td class="yes">Có – <code>arn:aws:iam::aws:policy/ReadOnlyAccess</code></td><td class="yes">Có – <code>arn:aws:iam::123456789012:policy/...</code></td><td class="no">Không – là một phần của identity</td></tr>
+          <tr><td>Versioning / rollback</td><td>AWS quản lý</td><td class="yes">Lưu tối đa 5 phiên bản, rollback được</td><td class="no">Không</td></tr>
+          <tr><td>Khi xóa identity</td><td>Policy vẫn còn</td><td>Policy vẫn còn</td><td>Policy <b>bị xóa theo</b></td></tr>
+          <tr><td>Khi nào dùng</td><td>Bắt đầu nhanh, job function</td><td><b>Khuyến nghị</b> – least privilege cho use case cụ thể</td><td>Muốn quyền <b>không bao giờ</b> bị gắn nhầm sang identity khác</td></tr>
+        </tbody>
+      </table></div>
+
+      <p>Các nhóm AWS managed policy:</p>
+      <ul>
+        <li><b>Full access</b> – cho admin của một dịch vụ: <code>AmazonDynamoDBFullAccess</code>, <code>IAMFullAccess</code>.</li>
+        <li><b>Power-user</b> – full access dịch vụ nhưng không quản lý user/group: <code>AWSCodeCommitPowerUser</code>, <code>AWSKeyManagementServicePowerUser</code>.</li>
+        <li><b>Partial access</b> – một mức truy cập, không có permissions management: <code>AmazonEC2ReadOnlyAccess</code>.</li>
+        <li><b><span class="t" data-vi="Chính sách theo chức năng công việc">Job function</span></b> – theo chức danh: <code>AdministratorAccess</code> (toàn quyền, chỉ dùng cho account admin), <code>PowerUserAccess</code> (mọi dịch vụ trừ quản lý IAM/Organizations hạn chế), <code>ReadOnlyAccess</code>, <code>Billing</code>, <code>DatabaseAdministrator</code>, <code>SecurityAudit</code>, <code>ViewOnlyAccess</code>…</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>Start quickly, then move to least privilege</i>” ⇒ bắt đầu với <b>AWS managed policies</b>, sau đó viết <b>customer managed policies</b> riêng cho use case (AWS managed policy dùng chung cho mọi khách hàng nên thường không least privilege). Đề hỏi “<i>reuse the same permissions for many roles and be able to roll back changes</i>” ⇒ <b>customer managed policy</b> (có versioning). “<i>Permissions must be deleted together with the user</i>” ⇒ <b>inline policy</b>.</p></div>
+
+      <h3>Resource-based policies và cross-account access</h3>
+      <p>Resource-based policy là JSON policy gắn vào resource như <b>S3 bucket policy</b>, <b>SQS queue policy</b>, <b>SNS topic policy</b>, <b>KMS key policy</b>, <b>Lambda resource policy</b>, <b>DynamoDB table/stream</b>, <b>VPC endpoint</b> và <b>IAM role trust policy</b>. Chúng chỉ định <b>ai</b> được truy cập resource và làm <b>gì</b>; luôn là inline, <b>không có managed resource-based policy</b>.</p>
+
+      <div class="callout note"><span class="ttl">Resource-based ≠ resource-level</span>
+        <p><b>Resource-based policy</b> = policy gắn trực tiếp vào resource. <b>Resource-level permission</b> = khả năng dùng ARN để chỉ định từng resource cụ thể trong phần <code>Resource</code> của một policy (kể cả identity-based policy). Hai khái niệm khác nhau.</p></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 360" width="760" role="img" aria-label="Cross-account access: cần identity-based policy ở tài khoản A và resource-based policy ở tài khoản B">
+          <defs><marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <!-- Account A -->
+          <rect x="10" y="10" width="330" height="300" rx="8" fill="none" stroke="#147EBA" stroke-width="2.5"/>
+          <image href="../assets/icons/res/AWS-Organizations_Account.svg" x="22" y="20" width="30" height="30"/>
+          <text x="60" y="40" font-size="14" font-weight="700" style="fill:#147EBA">Account A – 111122223333 (trusted)</text>
+          <image href="../assets/icons/res/User.svg" x="40" y="80" width="48" height="48"/>
+          <text x="64" y="146" font-size="13" font-weight="600" text-anchor="middle">IAM user Carlos</text>
+          <rect x="120" y="70" width="205" height="110" rx="6" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+          <text x="222" y="92" font-size="12" font-weight="700" text-anchor="middle">① Identity-based policy</text>
+          <text x="222" y="112" font-size="11" text-anchor="middle" class="muted">Effect: Allow</text>
+          <text x="222" y="130" font-size="11" text-anchor="middle" class="muted">Action: s3:GetObject</text>
+          <text x="222" y="148" font-size="11" text-anchor="middle" class="muted">Resource: arn:aws:s3:::bucket-b/*</text>
+          <text x="222" y="168" font-size="11" text-anchor="middle" class="muted">(cho phép GỬI request)</text>
+          <rect x="30" y="210" width="295" height="80" rx="6" fill="none" stroke="#147EBA" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="178" y="236" font-size="12" font-weight="700" text-anchor="middle">Cách 2: assume role ở Account B</text>
+          <text x="178" y="256" font-size="11" text-anchor="middle" class="muted">Allow sts:AssumeRole trên</text>
+          <text x="178" y="274" font-size="11" text-anchor="middle" class="muted">arn:aws:iam::444455556666:role/ReadReports</text>
+          <!-- Account B -->
+          <rect x="420" y="10" width="330" height="300" rx="8" fill="none" stroke="#DD344C" stroke-width="2.5"/>
+          <image href="../assets/icons/res/AWS-Organizations_Account.svg" x="432" y="20" width="30" height="30"/>
+          <text x="470" y="40" font-size="14" font-weight="700" style="fill:#DD344C">Account B – 444455556666 (trusting)</text>
+          <image href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" x="440" y="80" width="48" height="48"/>
+          <text x="464" y="146" font-size="13" font-weight="600" text-anchor="middle">bucket-b</text>
+          <rect x="520" y="70" width="215" height="110" rx="6" fill="none" stroke="#DD344C" stroke-width="1.5"/>
+          <text x="627" y="92" font-size="12" font-weight="700" text-anchor="middle">② Resource-based policy</text>
+          <text x="627" y="112" font-size="11" text-anchor="middle" class="muted">Principal: arn:...:111122223333:user/Carlos</text>
+          <text x="627" y="130" font-size="11" text-anchor="middle" class="muted">Effect: Allow</text>
+          <text x="627" y="148" font-size="11" text-anchor="middle" class="muted">Action: s3:GetObject</text>
+          <text x="627" y="168" font-size="11" text-anchor="middle" class="muted">(cho phép NHẬN request)</text>
+          <image href="../assets/icons/res/AWS-Identity-Access-Management_Role.svg" x="440" y="222" width="44" height="44"/>
+          <rect x="500" y="210" width="235" height="80" rx="6" fill="none" stroke="#DD344C" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="617" y="236" font-size="12" font-weight="700" text-anchor="middle">Role ReadReports</text>
+          <text x="617" y="256" font-size="11" text-anchor="middle" class="muted">Trust policy: Principal = account A</text>
+          <text x="617" y="274" font-size="11" text-anchor="middle" class="muted">Permissions: s3:GetObject bucket-b/*</text>
+          <!-- arrows -->
+          <path class="line-o" d="M330 125 H510" marker-end="url(#ah4)"/>
+          <text x="420" y="117" font-size="11" text-anchor="middle">request</text>
+          <path class="line-o" d="M330 250 H430" marker-end="url(#ah4)" stroke-dasharray="6 4"/>
+          <text x="380" y="242" font-size="11" text-anchor="middle">AssumeRole</text>
+          <text x="380" y="340" font-size="12" text-anchor="middle" class="muted">Cross-account: CẢ HAI phía phải Allow. Cùng account: chỉ cần MỘT Allow (identity HOẶC resource) và không có Deny.</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Hai cách cấp cross-account access: (1) resource-based policy trên bucket chỉ định principal ở Account A, kết hợp identity-based policy ở Account A; (2) role trong Account B có trust policy tin Account A – user assume role và nhận temporary credentials.</figcaption>
+      </figure>
+
+      <h3>Quy tắc đánh giá cơ bản (chi tiết ở Bài 5)</h3>
+      <ol class="steps">
+        <li><b>Mặc định là Deny</b> (implicit deny) – không có Allow nào thì request bị từ chối. Đó là lý do user mới không có quyền gì.</li>
+        <li><b>Explicit Deny luôn thắng</b> – nếu bất kỳ policy nào có <code>Deny</code> khớp request ⇒ từ chối, bất kể bao nhiêu Allow.</li>
+        <li><b>Trong cùng một tài khoản</b>: chỉ cần <b>ít nhất một Allow</b> ở identity-based <i>hoặc</i> resource-based policy (không quan trọng nằm ở đâu).</li>
+        <li><b>Cross-account</b>: requester ở Account A phải có identity-based policy cho phép, <b>và</b> resource-based policy ở Account B phải cho phép requester. Thiếu một phía ⇒ thất bại. (Nếu dùng role ở Account B thì user cần quyền <code>sts:AssumeRole</code> và trust policy của role phải tin user/account A.)</li>
+      </ol>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ AWS: John, Carlos, Mary, Zhang</span>
+        <p>Tài liệu IAM có ví dụ: <b>Carlos</b> có identity-based policy cho phép truy cập Resource Z, nhưng resource-based policy của Z <b>Deny</b> Carlos ⇒ <b>bị từ chối</b> (explicit Deny thắng). <b>Zhang</b> không có identity-based policy nào, nhưng resource-based policy của Resource Z cho phép full access ⇒ Zhang <b>vẫn truy cập được</b> Z (cùng tài khoản chỉ cần một Allow).</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Role hay resource-based policy cho cross-account?</span>
+        <ul>
+          <li>Dùng <b>resource-based policy</b> (S3, SQS, SNS, KMS, Lambda…) khi principal cần <b>giữ quyền của chính mình</b> trong lúc truy cập tài nguyên tài khoản khác – vd copy object từ bucket tài khoản B sang bucket tài khoản A trong một lệnh.</li>
+          <li>Dùng <b>cross-account role</b> khi dịch vụ không hỗ trợ resource-based policy, hoặc cần thao tác nhiều tài nguyên ở tài khoản kia; lưu ý khi assume role user <b>tạm bỏ quyền gốc</b>.</li>
+          <li>Bên thứ ba (vendor, auditor) ⇒ cross-account role + <b>external ID</b>.</li>
+          <li>Chia sẻ subnet/Transit Gateway giữa các tài khoản ⇒ <b>AWS RAM</b>.</li>
+        </ul></div>
+
+      <h3>Policies và root user</h3>
+      <p>Root user chịu tác động của một số loại policy nhưng không phải tất cả: <b>không thể gắn identity-based policy</b> cho root user, <b>không thể đặt permissions boundary</b> cho root user; nhưng có thể chỉ định root (account) làm <code>Principal</code> trong resource-based policy hoặc ACL. Nếu tài khoản thuộc AWS Organizations, root user của member account <b>bị ảnh hưởng bởi SCP và RCP</b>.</p>
+
+      <!-- ===================== PHẦN 5: CREDENTIALS, MFA, ACCESS KEYS ===================== -->
+      <h2 id="credentials"><img src="../assets/icons/res/AWS-Identity-Access-Management_MFA-Token.svg" alt="">Credentials: password, MFA và access keys</h2>
+      <p class="lead">IAM phân biệt <span class="t" data-vi="Thông tin xác thực dài hạn">long-term credentials</span> (password, access keys của IAM user/root) với <span class="t" data-vi="Thông tin xác thực tạm thời">temporary credentials</span> (do AWS STS cấp khi assume role/federation, tự hết hạn). Best practice xuyên suốt: <b>ưu tiên temporary credentials</b>.</p>
+
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_Long-Term-Security-Credential.svg" alt="">Long-term credentials</h4>
+          <ul>
+            <li>Console password của IAM user / root user.</li>
+            <li>Access key: <b>access key ID</b> (vd <code>AKIAIOSFODNN7EXAMPLE</code>) + <b>secret access key</b>.</li>
+            <li>Không tự hết hạn – phải tự xoay vòng (rotate), xóa khi không dùng.</li>
+            <li>Bị lộ ⇒ kẻ tấn công có quyền “vĩnh viễn” tới khi bạn vô hiệu hóa.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_Temporary-Security-Credential.svg" alt="">Temporary credentials</h4>
+          <ul>
+            <li>Do <b>AWS STS</b> cấp: access key ID (thường bắt đầu <code>ASIA</code>) + secret + <b>session token</b>.</li>
+            <li>Hết hạn sau 15 phút – 12 giờ (role session; mặc định 1 giờ).</li>
+            <li>EC2/Lambda: AWS tự giao credentials của role cho compute, SDK tự tìm và làm mới.</li>
+            <li>Ngoài AWS: IAM Roles Anywhere (X.509), <code>AssumeRoleWithSAML</code>, <code>AssumeRoleWithWebIdentity</code> (JWT), ECS Anywhere, EKS Hybrid Nodes, SSM Hybrid Activations.</li>
+          </ul></div>
+      </div>
+
+      <h3>Access keys – quy tắc quan trọng</h3>
+      <div class="stats">
+        <div class="stat"><b>2</b><span>access key tối đa cho mỗi IAM user (để xoay vòng không gián đoạn)</span></div>
+        <div class="stat"><b>1 lần</b><span>secret access key chỉ xem/tải được lúc tạo – mất thì xóa và tạo key mới</span></div>
+        <div class="stat"><b>0</b><span>số access key nên có cho root user</span></div>
+        <div class="stat"><b>Plaintext</b><span>key trong shared credentials file (~/.aws/credentials) được lưu dạng văn bản thường</span></div>
+      </div>
+      <ul>
+        <li><b>KHÔNG</b> dùng root credentials để tạo access key; <b>KHÔNG</b> đưa access key vào file ứng dụng hay project (vd commit lên Git); không đưa key cho người không có thẩm quyền, kể cả “để giúp tìm account ID”.</li>
+        <li>Access key có trạng thái <b>Active / Inactive</b>. Quy trình xoay vòng: tạo key thứ 2 → cập nhật ứng dụng dùng key mới → đặt key cũ <b>Inactive</b> → kiểm tra không lỗi → <b>xóa</b> key cũ.</li>
+        <li>Dùng <b>IAM access last used information</b> để biết key còn được dùng không trước khi xóa; xoay vòng ngay khi nhân viên nghỉ việc.</li>
+        <li>Giám sát: <b>CloudTrail</b> ghi việc dùng access key; <b>CloudWatch alarm</b> cho các lần access denied để phát hiện hành vi đáng ngờ.</li>
+        <li>Thay thế access key dài hạn: <b>AWS CloudShell</b> (CLI trong trình duyệt), <b>IAM role</b>, <b>IAM Identity Center + AWS CLI</b>, lệnh <code>aws login</code> (dùng credentials console để lấy credentials CLI tạm thời).</li>
+      </ul>
+
+      <h3>Password policy và MFA cho IAM user</h3>
+      <ul>
+        <li><span class="t" data-vi="Chính sách mật khẩu">Password policy</span> của tài khoản áp đặt độ phức tạp tối thiểu (độ dài, loại ký tự, hết hạn, chống dùng lại) và cho phép IAM user tự đổi mật khẩu. Mật khẩu login profile dài 1–128 ký tự.</li>
+        <li>AWS khuyến nghị <b>bắt buộc MFA cho mọi IAM user</b> (và root). Ưu tiên <b>phishing-resistant MFA</b>: passkeys, security keys (FIDO). Mỗi user tối đa <b>8 thiết bị MFA</b> (đã học ở Bài 3).</li>
+        <li>Ép MFA bằng policy: điều kiện <code>"aws:MultiFactorAuthPresent": "true"</code> (như ví dụ ở phần 3) – vd chỉ cho xóa/terminate tài nguyên quan trọng khi có MFA.</li>
+        <li>Dùng IAM Identity Center thì dùng tính năng MFA của Identity Center (identity store, AWS Managed Microsoft AD, AD Connector).</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“<i>Developer accidentally committed access keys to a public GitHub repository</i>” ⇒ việc đầu tiên: <b>vô hiệu hóa/xóa (deactivate/delete) access key bị lộ</b>, tạo key mới, rà soát CloudTrail. Chỉ “đổi mật khẩu console” là <b>không đủ</b> – mật khẩu và access key độc lập.</li>
+          <li>Tắt console password <b>không</b> vô hiệu hóa access keys – user vẫn gọi API được nếu key còn Active.</li>
+          <li>Đưa access key vào <b>EC2 user data</b> hay <b>AMI</b> là sai – dùng instance profile.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: BEST PRACTICES ===================== -->
+      <h2 id="best-practices"><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-IAM-Access-Analyzer.svg" alt="">Security best practices trong IAM</h2>
+      <p class="lead">AWS công bố danh sách <span class="t" data-vi="Thực hành bảo mật tốt nhất">security best practices</span> cho IAM. Đây là “kim chỉ nam” cho rất nhiều câu hỏi Domain 1 (<i>Design secure access to AWS resources</i>).</p>
+
+      <ol class="steps">
+        <li><b>Human users dùng federation với identity provider</b> để truy cập bằng temporary credentials. Quản lý tập trung: <b>IAM Identity Center</b> (định danh trong Identity Center hoặc từ external IdP).</li>
+        <li><b>Workloads dùng temporary credentials qua IAM roles</b> – EC2, Lambda nhận credentials của role; workload ngoài AWS dùng IAM Roles Anywhere, SAML/OIDC, IoT Core (mTLS)…</li>
+        <li><b>Require MFA</b> cho các trường hợp còn cần IAM user hoặc root user; ưu tiên passkeys/security keys.</li>
+        <li><b>Update access keys</b> khi cần cho use case bắt buộc long-term credentials; dùng access last used information để xoay vòng/xóa an toàn.</li>
+        <li><b>Bảo vệ root user credentials</b> (Bài 3).</li>
+        <li><b>Apply least-privilege permissions</b> – chỉ cấp action trên resource cụ thể với điều kiện cụ thể; có thể bắt đầu rộng khi khám phá rồi thu hẹp dần.</li>
+        <li><b>Bắt đầu với AWS managed policies rồi tiến tới least privilege</b> bằng customer managed policies riêng.</li>
+        <li><b>Dùng IAM Access Analyzer để generate policy</b> dựa trên access activity trong CloudTrail – tạo policy chi tiết chỉ gồm action đã dùng.</li>
+        <li><b>Thường xuyên rà soát và xóa</b> users, roles, permissions, policies, credentials không dùng (dựa vào <b>last accessed information</b>).</li>
+        <li><b>Dùng conditions</b> để hạn chế thêm – vd bắt buộc request qua TLS, chỉ cho phép khi đi qua một dịch vụ cụ thể như CloudFormation (<code>aws:CalledVia</code>), giới hạn IP nguồn (<code>aws:SourceIp</code>).</li>
+        <li><b>Kiểm tra public và cross-account access</b> bằng IAM Access Analyzer (findings) – preview tác động trước khi triển khai, giám sát liên tục.</li>
+        <li><b>Validate policies</b> bằng IAM Access Analyzer policy validation (hơn 100 policy checks, khuyến nghị cụ thể).</li>
+        <li><b>Permissions guardrails cho nhiều tài khoản</b> bằng SCPs và RCPs (Organizations) – lưu ý chúng <b>không cấp quyền</b>.</li>
+        <li><b>Permissions boundaries để ủy quyền quản lý quyền</b> trong một tài khoản – vd cho developer tự tạo role cho workload nhưng không vượt quá boundary.</li>
+      </ol>
+
+      <h3>Công cụ hỗ trợ least privilege và kiểm toán</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-IAM-Access-Analyzer.svg" alt="">
+          <div><h4>IAM Access Analyzer</h4><span class="vi">Phân tích quyền truy cập</span><p><b>External access</b> findings (public/cross-account – miễn phí), <b>unused access</b> analysis, <b>policy validation</b> (100+ checks), <b>policy generation</b> từ CloudTrail, custom policy checks.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">
+          <div><h4>Last accessed information</h4><span class="vi">Tab Access Advisor</span><p>Xem dịch vụ (và một số action với EC2, IAM, Lambda, S3) mà user/group/role/policy dùng lần cuối – để gỡ quyền thừa. Có cả cho Organizations.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_Long-Term-Security-Credential.svg" alt="">
+          <div><h4>Credential report</h4><span class="vi">Báo cáo thông tin xác thực</span><p>File CSV liệt kê <b>mọi IAM user</b> và trạng thái password, access keys, MFA, thời điểm dùng gần nhất – phục vụ audit tuân thủ.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">
+          <div><h4>AWS CloudTrail</h4><span class="vi">Nhật ký API</span><p>Ghi lại mọi API call của IAM/STS và các dịch vụ – “ai làm gì, khi nào, từ đâu”. Event history giúp thu hẹp policy.</p></div></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Từ khóa ⇒ công cụ</span>
+        <ul>
+          <li>“<i>Identify resources shared with external entities / publicly accessible S3 buckets, KMS keys, roles</i>” ⇒ <b>IAM Access Analyzer</b> (external access).</li>
+          <li>“<i>Generate a least-privilege policy based on actual usage</i>” ⇒ <b>IAM Access Analyzer policy generation</b> (dựa trên CloudTrail).</li>
+          <li>“<i>Find permissions/services a role hasn't used in 90 days</i>” ⇒ <b>last accessed information</b> (Access Advisor) hoặc Access Analyzer unused access.</li>
+          <li>“<i>Audit list of all users and the status of their passwords, access keys, MFA</i>” ⇒ <b>IAM credential report</b>.</li>
+          <li>“<i>Let developers create roles but never exceed a set of permissions</i>” ⇒ <b>permissions boundary</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: QUOTAS ===================== -->
+      <h2 id="quotas"><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">Các con số &amp; giới hạn (quotas) cần nhớ</h2>
+      <p class="lead">IAM và AWS STS có <span class="t" data-vi="Hạn mức">quotas</span> về số lượng và kích thước đối tượng. Một số quota điều chỉnh được qua <b>Service Quotas</b> (chọn Region US East (N. Virginia) để tìm IAM); giới hạn về ký tự thì <b>không tăng được</b>.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tài nguyên</th><th>Mặc định</th><th>Tối đa (tăng được)</th></tr></thead>
+        <tbody>
+          <tr><td>IAM users / account</td><td colspan="2">5.000 (không tăng được – cần nhiều hơn thì dùng federation)</td></tr>
+          <tr><td>Groups / account</td><td>300</td><td>500</td></tr>
+          <tr><td>Groups mà một user có thể tham gia</td><td colspan="2">10</td></tr>
+          <tr><td>Roles / account</td><td>1.000</td><td>10.000</td></tr>
+          <tr><td>Customer managed policies / account</td><td>1.500</td><td>10.000</td></tr>
+          <tr><td>Managed policies gắn vào một <b>user</b></td><td>10</td><td>20</td></tr>
+          <tr><td>Managed policies gắn vào một <b>group</b></td><td>10</td><td>10</td></tr>
+          <tr><td>Managed policies gắn vào một <b>role</b></td><td>20</td><td>25</td></tr>
+          <tr><td>Role trust policy length</td><td>2.048 ký tự</td><td>8.192 ký tự</td></tr>
+          <tr><td>Instance profiles / account</td><td>1.000</td><td>10.000</td></tr>
+          <tr><td>Access keys / user</td><td colspan="2">2</td></tr>
+          <tr><td>Thiết bị MFA / user (và root)</td><td colspan="2">8</td></tr>
+          <tr><td>Phiên bản lưu trữ của một customer managed policy</td><td colspan="2">5</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Giới hạn kích thước / ký tự (không tăng được)</th><th>Giá trị</th></tr></thead>
+        <tbody>
+          <tr><td>Tổng inline policy của một <b>user</b></td><td>2.048 ký tự</td></tr>
+          <tr><td>Tổng inline policy của một <b>group</b></td><td>5.120 ký tự</td></tr>
+          <tr><td>Tổng inline policy của một <b>role</b></td><td>10.240 ký tự</td></tr>
+          <tr><td>Mỗi managed policy</td><td>6.144 ký tự (không tính khoảng trắng)</td></tr>
+          <tr><td>Role session duration</td><td>15 phút – 12 giờ (max session duration của role: 1–12 giờ; mặc định 1 giờ; role chaining tối đa 1 giờ)</td></tr>
+          <tr><td>Session policies</td><td>1 JSON inline + tối đa 10 managed policy ARN; tổng 2.048 ký tự</td></tr>
+          <tr><td>Session tags</td><td>Tối đa 50; key 128, value 256 ký tự</td></tr>
+          <tr><td>Tên user / role</td><td>64 ký tự; tên group / policy: 128 ký tự; path: 512 ký tự</td></tr>
+          <tr><td>Account alias</td><td>3–63 ký tự, chữ thường, không phải số 12 chữ số</td></tr>
+          <tr><td>AWS STS request quota</td><td>600 request/giây/account/Region (AssumeRole, GetCallerIdentity, GetSessionToken… dùng chung)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout note"><span class="ttl">Tên và tiền tố ID</span>
+        <p>Tên user, group, role, instance profile phải <b>duy nhất trong tài khoản</b> và <b>không phân biệt hoa thường</b> (không thể có cả <code>ADMINS</code> và <code>admins</code>). Unique ID của IAM có tiền tố gợi ý loại: <code>AIDA</code> (user), <code>AGPA</code> (group), <code>AROA</code> (role), <code>ANPA</code> (managed policy), <code>ASCA</code> (server certificate).</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>Company has 10,000+ employees who need AWS access</i>” ⇒ <b>không</b> tạo IAM user cho từng người (giới hạn 5.000 user/account và trái best practice) – dùng <b>federation / IAM Identity Center</b>. “<i>Policy exceeds the maximum size</i>” ⇒ tách thành nhiều <b>customer managed policies</b> hoặc gắn qua group.</p></div>
+
+      <!-- ===================== PHẦN 8: TỪ KHÓA ĐỀ ===================== -->
+      <h2 id="tu-khoa"><img src="../assets/icons/cat/Security-Identity-Compliance.svg" alt="">Từ khóa trong đề ⇒ đáp án</h2>
+      <p class="lead">IAM thuộc <b>Domain 1 – Design Secure Architectures</b>, Task 1.1 “<i>Design secure access to AWS resources</i>”: Exam Guide liệt kê kiến thức về IAM users, groups, roles, policies, MFA, least privilege, cross-account access, federation và kỹ năng “<i>applying AWS security best practices to IAM users and root users</i>”.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cụm từ trong đề</th><th>Hướng đáp án</th></tr></thead>
+        <tbody>
+          <tr><td><i>EC2 application needs access to S3/DynamoDB securely</i></td><td><b>IAM role + instance profile</b></td></tr>
+          <tr><td><i>Lambda function needs permissions</i></td><td><b>Execution role</b> (least privilege)</td></tr>
+          <tr><td><i>Many users with the same job need the same permissions</i></td><td><b>IAM group</b> + managed policy</td></tr>
+          <tr><td><i>Employees already in Active Directory / corporate IdP</i></td><td><b>Federation</b> (IAM Identity Center, SAML 2.0) – không tạo IAM user</td></tr>
+          <tr><td><i>Grant users in another account access</i></td><td><b>Cross-account role</b> (trust policy) hoặc <b>resource-based policy</b></td></tr>
+          <tr><td><i>Third party / vendor access to our account</i></td><td>Cross-account role + <b>external ID</b></td></tr>
+          <tr><td><i>Require MFA before deleting / stopping critical resources</i></td><td>Condition <code>aws:MultiFactorAuthPresent</code></td></tr>
+          <tr><td><i>Grant only the permissions required</i></td><td><b>Least privilege</b>, customer managed policy, Access Analyzer</td></tr>
+          <tr><td><i>Exposed / leaked access keys</i></td><td>Deactivate/delete key, rotate, dùng role thay thế</td></tr>
+          <tr><td><i>Deny overrides</i>, <i>user still can't access despite Allow</i></td><td>Có <b>explicit Deny</b> ở đâu đó (resource policy, SCP, boundary)</td></tr>
+          <tr><td><i>Delegate permission management to developers safely</i></td><td><b>Permissions boundary</b></td></tr>
+          <tr><td><i>Restrict all accounts in an organization</i></td><td><b>SCP</b> (Bài 5–6)</td></tr>
+        </tbody>
+      </table></div>
+
+      <!-- TÓM TẮT -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>IAM</b> = authentication (ai) + authorization (được làm gì); <b>global</b>, <b>miễn phí</b>, <b>eventually consistent</b>.</li>
+          <li><b>IAM user</b>: một người/ứng dụng, long-term credentials, mặc định <b>không có quyền</b>. Con người nên dùng <b>federation / IAM Identity Center</b> thay vì IAM user.</li>
+          <li><b>IAM group</b>: chỉ chứa user, <b>không lồng nhau</b>, không có group mặc định, <b>không làm Principal</b> được; user thuộc tối đa 10 group.</li>
+          <li><b>IAM role</b>: không gắn người cụ thể, không có password/access key, cấp <b>temporary credentials</b>; gồm <b>trust policy</b> (ai được assume) + <b>permissions policy</b> (được làm gì). Session 15 phút–12 giờ, mặc định 1 giờ, role chaining ≤ 1 giờ.</li>
+          <li>Service role (bạn quản lý) vs <b>service-linked role</b> (dịch vụ sở hữu, không sửa quyền). EC2 dùng role qua <b>instance profile</b>.</li>
+          <li>JSON policy: <code>Version 2012-10-17</code>, <code>Statement</code>, <code>Effect</code>, <code>Principal</code> (chỉ trong resource-based), <code>Action</code>, <code>Resource</code>, <code>Condition</code>. Nhiều statement/policy kết hợp bằng OR.</li>
+          <li>Identity-based: <b>AWS managed</b> (không sửa), <b>customer managed</b> (khuyến nghị, 5 versions), <b>inline</b> (1-1, xóa theo identity). Resource-based: luôn inline, có <code>Principal</code>, cho phép cross-account.</li>
+          <li>Đánh giá: mặc định <b>implicit deny</b> → <b>explicit Deny thắng</b> → cùng account chỉ cần 1 Allow; <b>cross-account cần Allow ở cả hai phía</b>.</li>
+          <li>Access keys: tối đa <b>2/user</b>, secret chỉ xem lúc tạo, không tạo cho root, không nhúng vào code; xoay vòng (tạo mới → inactive → xóa).</li>
+          <li>Best practices: federation, roles cho workloads, MFA (phishing-resistant), least privilege, Access Analyzer (external access, policy generation, validation), last accessed info, credential report, conditions, SCP/RCP guardrails, permissions boundaries.</li>
+        </ul></div>
+
+      <!-- THUẬT NGỮ -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>AWS Identity and Access Management (IAM)</dt><dd><b>Dịch vụ quản lý định danh và truy cập</b> – kiểm soát xác thực và phân quyền trên tài nguyên AWS.</dd></div>
+        <div><dt>Authentication</dt><dd><b>Xác thực</b> – chứng minh principal là ai bằng credentials.</dd></div>
+        <div><dt>Authorization</dt><dd><b>Phân quyền</b> – quyết định request được allow hay deny dựa trên policies.</dd></div>
+        <div><dt>Principal</dt><dd><b>Chủ thể</b> – thực thể thực hiện request: root user, IAM user, role, federated principal, service principal.</dd></div>
+        <div><dt>Service principal</dt><dd><b>Chủ thể dịch vụ</b> – định danh của dịch vụ AWS, vd <code>ec2.amazonaws.com</code>.</dd></div>
+        <div><dt>IAM identity / IAM entity</dt><dd><b>Định danh / Thực thể IAM</b> – identity gồm user, group, role; entity (xác thực được) chỉ gồm user và role.</dd></div>
+        <div><dt>IAM user</dt><dd><b>Người dùng IAM</b> – identity cho một người/ứng dụng, có long-term credentials.</dd></div>
+        <div><dt>IAM user group</dt><dd><b>Nhóm người dùng IAM</b> – tập hợp user để gán quyền chung; không lồng nhau.</dd></div>
+        <div><dt>IAM role</dt><dd><b>Vai trò IAM</b> – identity được assume, cấp temporary credentials.</dd></div>
+        <div><dt>Role session</dt><dd><b>Phiên làm việc của vai trò</b> – khoảng thời gian dùng temporary credentials sau khi assume role.</dd></div>
+        <div><dt>Trust policy</dt><dd><b>Chính sách tin cậy</b> – resource-based policy của role, khai báo ai được assume.</dd></div>
+        <div><dt>Permissions policy</dt><dd><b>Chính sách quyền</b> – identity-based policy quy định role/user được làm gì.</dd></div>
+        <div><dt>AWS service role</dt><dd><b>Vai trò dịch vụ</b> – role mà dịch vụ assume để làm việc thay bạn; bạn tạo/sửa/xóa được.</dd></div>
+        <div><dt>Service-linked role</dt><dd><b>Vai trò liên kết dịch vụ</b> – do dịch vụ sở hữu, chỉ xem, không sửa quyền.</dd></div>
+        <div><dt>Instance profile</dt><dd><b>Hồ sơ instance</b> – vỏ chứa role để gắn vào EC2 instance.</dd></div>
+        <div><dt>Delegation</dt><dd><b>Ủy quyền</b> – cấp quyền truy cập tài nguyên cho người khác qua quan hệ tin cậy giữa trusting và trusted account.</dd></div>
+        <div><dt>Trusting account / Trusted account</dt><dd><b>Tài khoản tin cậy (sở hữu tài nguyên) / Tài khoản được tin cậy (chứa user)</b>.</dd></div>
+        <div><dt>External ID</dt><dd><b>Mã định danh bên ngoài</b> – tham số khi bên thứ ba assume role, chống confused deputy.</dd></div>
+        <div><dt>Confused deputy problem</dt><dd><b>Vấn đề “người ủy nhiệm bị lừa”</b> – bên có quyền bị lợi dụng để thao tác thay kẻ không có quyền.</dd></div>
+        <div><dt>Role chaining</dt><dd><b>Chuỗi vai trò</b> – dùng role này để assume role khác; session tối đa 1 giờ.</dd></div>
+        <div><dt>Identity federation</dt><dd><b>Liên kết định danh</b> – tin cậy IdP bên ngoài (SAML 2.0, OIDC) để người dùng assume role.</dd></div>
+        <div><dt>Identity provider (IdP)</dt><dd><b>Nhà cung cấp định danh</b> – vd Active Directory, Okta, Entra ID, Google.</dd></div>
+        <div><dt>Service account</dt><dd><b>Tài khoản dịch vụ</b> – IAM user đại diện cho ứng dụng.</dd></div>
+        <div><dt>Policy / JSON policy document</dt><dd><b>Chính sách / Tài liệu chính sách JSON</b> – định nghĩa quyền bằng các statement.</dd></div>
+        <div><dt>Statement / Effect / Action / Resource / Condition</dt><dd><b>Câu lệnh / Hiệu lực / Hành động / Tài nguyên / Điều kiện</b> – các phần tử của policy.</dd></div>
+        <div><dt>Identity-based policy</dt><dd><b>Chính sách gắn vào định danh</b> – gắn vào user, group, role.</dd></div>
+        <div><dt>Resource-based policy</dt><dd><b>Chính sách gắn vào tài nguyên</b> – gắn vào resource, có Principal, hỗ trợ cross-account.</dd></div>
+        <div><dt>Resource-level permission</dt><dd><b>Quyền cấp tài nguyên</b> – chỉ định resource cụ thể bằng ARN trong policy.</dd></div>
+        <div><dt>AWS managed policy</dt><dd><b>Chính sách do AWS quản lý</b> – standalone, không sửa được.</dd></div>
+        <div><dt>Customer managed policy</dt><dd><b>Chính sách do khách hàng quản lý</b> – standalone, sửa được, có versioning.</dd></div>
+        <div><dt>Inline policy</dt><dd><b>Chính sách nhúng</b> – gắn chặt 1-1 với một identity, xóa theo identity.</dd></div>
+        <div><dt>Job function policy</dt><dd><b>Chính sách theo chức năng công việc</b> – AWS managed policy như AdministratorAccess, PowerUserAccess.</dd></div>
+        <div><dt>Access level</dt><dd><b>Mức truy cập</b> – List, Read, Write, Permissions management, Tagging.</dd></div>
+        <div><dt>Implicit deny / Explicit deny</dt><dd><b>Từ chối ngầm định / Từ chối tường minh</b> – không có Allow / có statement Deny (luôn thắng).</dd></div>
+        <div><dt>Cross-account access</dt><dd><b>Truy cập liên tài khoản</b> – cần Allow ở cả tài khoản gửi và tài khoản nhận.</dd></div>
+        <div><dt>Permissions boundary</dt><dd><b>Giới hạn quyền</b> – managed policy đặt quyền tối đa cho user/role, không tự cấp quyền.</dd></div>
+        <div><dt>Session policy</dt><dd><b>Chính sách phiên</b> – truyền khi assume role để giới hạn quyền của session.</dd></div>
+        <div><dt>Access key (access key ID + secret access key)</dt><dd><b>Khóa truy cập</b> – long-term credentials cho CLI/SDK/API; tối đa 2/user.</dd></div>
+        <div><dt>Access key rotation</dt><dd><b>Xoay vòng khóa truy cập</b> – tạo key mới, chuyển ứng dụng, inactive rồi xóa key cũ.</dd></div>
+        <div><dt>Password policy</dt><dd><b>Chính sách mật khẩu</b> – quy định độ phức tạp, thời hạn mật khẩu IAM user.</dd></div>
+        <div><dt>IAM Access Analyzer</dt><dd><b>Bộ phân tích quyền truy cập IAM</b> – phát hiện external/unused access, validate và generate policy.</dd></div>
+        <div><dt>Last accessed information (Access Advisor)</dt><dd><b>Thông tin truy cập gần nhất</b> – dịch vụ/action được dùng lần cuối, để gỡ quyền thừa.</dd></div>
+        <div><dt>Credential report</dt><dd><b>Báo cáo thông tin xác thực</b> – CSV trạng thái password, access key, MFA của mọi IAM user.</dd></div>
+        <div><dt>IAM Roles Anywhere</dt><dd><b>IAM Roles ở mọi nơi</b> – workload ngoài AWS lấy temporary credentials bằng chứng chỉ X.509.</dd></div>
+        <div><dt>Eventual consistency</dt><dd><b>Tính nhất quán cuối cùng</b> – thay đổi IAM cần thời gian để lan truyền.</dd></div>
+        <div><dt>Amazon Resource Name (ARN)</dt><dd><b>Tên tài nguyên Amazon</b> – định danh duy nhất của tài nguyên, vd <code>arn:aws:iam::123456789012:user/Richard</code>.</dd></div>
+      </dl>
+
+      <!-- CÂU HỎI ÔN TẬP -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs an application on Amazon EC2 instances. The application must read objects from an Amazon S3 bucket and write items to an Amazon DynamoDB table. Currently, a developer has stored an IAM user's access key ID and secret access key in a configuration file on each instance. A solutions architect must make the solution MORE secure. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Encrypt the configuration file with AWS KMS and rotate the IAM user's access keys every 30 days.</li>
+            <li data-k="B">Create an IAM role with the required S3 and DynamoDB permissions, attach the role to the EC2 instances through an instance profile, and remove the stored access keys.</li>
+            <li data-k="C">Store the access keys in the EC2 user data so that they are not saved on the disk.</li>
+            <li data-k="D">Create a separate IAM user for each EC2 instance and attach the AdministratorAccess policy to each user.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Best practice của AWS: workload chạy trên EC2 dùng <b>IAM role</b>; AWS giao temporary credentials của role cho instance (qua instance profile), SDK tự phát hiện và làm mới – không cần phân phối long-term credentials. <b>A sai</b>: vẫn dùng access key dài hạn, chỉ giảm nhẹ rủi ro. <b>C sai</b>: user data đọc được qua instance metadata, vẫn là long-term key, thậm chí kém an toàn hơn. <b>D sai</b>: vẫn dùng long-term credentials và vi phạm least privilege nghiêm trọng.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng trên các Amazon EC2 instance. Ứng dụng phải đọc object từ một bucket Amazon S3 và ghi item vào một bảng Amazon DynamoDB. Hiện tại, một lập trình viên đã lưu access key ID và secret access key của một IAM user trong file cấu hình trên từng instance. Solutions architect phải làm cho giải pháp MORE secure (an toàn hơn). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Mã hóa file cấu hình bằng AWS KMS và xoay vòng access key của IAM user mỗi 30 ngày.</span><span class="why">Sai: vẫn dùng access key dài hạn, chỉ giảm nhẹ rủi ro chứ không loại bỏ long-term credentials.</span></li>
+              <li data-k="B"><span class="tv">Tạo một IAM role với các quyền S3 và DynamoDB cần thiết, gắn role vào các EC2 instance qua instance profile, và xóa các access key đang lưu.</span><span class="why">Đúng: AWS cấp temporary credentials của role cho instance qua instance profile, SDK tự lấy và làm mới – không còn key dài hạn cần phân phối.</span></li>
+              <li data-k="C"><span class="tv">Lưu access key trong EC2 user data để chúng không bị lưu trên đĩa.</span><span class="why">Sai: user data đọc được qua instance metadata, vẫn là long-term key, thậm chí kém an toàn hơn.</span></li>
+              <li data-k="D"><span class="tv">Tạo một IAM user riêng cho mỗi EC2 instance và gắn policy AdministratorAccess cho từng user.</span><span class="why">Sai: vẫn dùng long-term credentials và cấp quyền admin là vi phạm least privilege nghiêm trọng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company has 40 developers who all need the same set of permissions to work with AWS CodeBuild, Amazon ECR, and Amazon CloudWatch Logs in a single AWS account. New developers join every month. The company wants to manage these permissions with the LEAST administrative effort. The company does not use an external identity provider. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Attach an inline policy with the required permissions to each developer's IAM user.</li>
+            <li data-k="B">Create a single IAM user and share its credentials among all developers.</li>
+            <li data-k="C">Create a nested group structure in which a parent group contains a Developers group, and attach the policy to the parent group.</li>
+            <li data-k="D">Create an IAM user group named Developers, attach a customer managed policy with the required permissions to the group, and add each developer's IAM user to the group.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> User group cho phép chỉ định quyền cho nhiều user cùng lúc; developer mới chỉ cần thêm vào group. Customer managed policy tái sử dụng được và có versioning. <b>A sai</b>: inline policy 1-1 cho từng user – overhead lớn, khó cập nhật đồng loạt. <b>B sai</b>: chia sẻ credentials vi phạm best practice và mất khả năng truy vết (CloudTrail không phân biệt người). <b>C sai</b>: IAM groups <b>không thể lồng nhau</b>.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 40 lập trình viên cùng cần một bộ quyền giống nhau để làm việc với AWS CodeBuild, Amazon ECR và Amazon CloudWatch Logs trong một tài khoản AWS duy nhất. Mỗi tháng đều có lập trình viên mới gia nhập. Công ty muốn quản lý các quyền này với LEAST administrative effort (ít công sức quản trị nhất). Công ty không dùng identity provider bên ngoài. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gắn một inline policy chứa các quyền cần thiết vào IAM user của từng lập trình viên.</span><span class="why">Sai: inline policy gắn 1-1 với từng user – 40+ bản sao, khó cập nhật đồng loạt, overhead lớn.</span></li>
+              <li data-k="B"><span class="tv">Tạo một IAM user duy nhất và chia sẻ credentials của nó cho tất cả lập trình viên.</span><span class="why">Sai: chia sẻ credentials vi phạm best practice và mất khả năng truy vết từng người trong CloudTrail.</span></li>
+              <li data-k="C"><span class="tv">Tạo cấu trúc group lồng nhau, trong đó một group cha chứa group Developers, và gắn policy vào group cha.</span><span class="why">Sai: IAM user group không thể lồng nhau – group chỉ chứa IAM user.</span></li>
+              <li data-k="D"><span class="tv">Tạo một IAM user group tên Developers, gắn một customer managed policy chứa các quyền cần thiết vào group, và thêm IAM user của từng lập trình viên vào group.</span><span class="why">Đúng: group cấp quyền cho nhiều user cùng lúc, người mới chỉ cần thêm vào group; customer managed policy tái sử dụng được và có versioning.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">Which TWO statements about IAM roles are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">A role does not have standard long-term credentials such as a password or access keys; assuming a role provides temporary security credentials.</li>
+            <li data-k="B">A role can be added as a member of an IAM user group to inherit the group's permissions.</li>
+            <li data-k="C">A role's trust policy defines which principals are allowed to assume the role.</li>
+            <li data-k="D">An IAM administrator can edit the permissions of a service-linked role at any time.</li>
+            <li data-k="E">When a user assumes a role, the user keeps their original permissions in addition to the role's permissions.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> Theo AWS, role không có long-term credentials, khi assume sẽ nhận temporary credentials cho role session; trust policy (resource-based policy bắt buộc của role) xác định principal được assume. <b>B sai</b>: group chỉ chứa IAM user. <b>D sai</b>: service-linked role do dịch vụ sở hữu – admin chỉ xem, không sửa được permissions. <b>E sai</b>: user tạm thời <b>từ bỏ</b> quyền của mình khi dùng role, thoát role mới khôi phục.</div>
+          <div class="trans">
+            <div class="tq">HAI phát biểu nào về IAM role là đúng? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Role không có credentials dài hạn tiêu chuẩn như mật khẩu hay access key; việc assume role sẽ cung cấp credentials bảo mật tạm thời.</span><span class="why">Đúng: role không có long-term credentials; assume role trả về temporary credentials cho role session.</span></li>
+              <li data-k="B"><span class="tv">Role có thể được thêm làm thành viên của một IAM user group để kế thừa quyền của group.</span><span class="why">Sai: IAM user group chỉ chứa IAM user, không chứa role.</span></li>
+              <li data-k="C"><span class="tv">Trust policy của role xác định những principal nào được phép assume role đó.</span><span class="why">Đúng: trust policy là resource-based policy bắt buộc của role, chỉ định principal được assume.</span></li>
+              <li data-k="D"><span class="tv">IAM administrator có thể chỉnh sửa quyền của service-linked role bất cứ lúc nào.</span><span class="why">Sai: service-linked role do dịch vụ AWS định nghĩa và sở hữu – admin chỉ xem, không sửa được quyền.</span></li>
+              <li data-k="E"><span class="tv">Khi user assume một role, user vẫn giữ quyền ban đầu của mình cộng thêm quyền của role.</span><span class="why">Sai: user tạm thời từ bỏ quyền gốc khi dùng role, chỉ khôi phục khi thoát khỏi role.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">An IAM user in Account A (111122223333) needs to download objects from an Amazon S3 bucket in Account B (444455556666). The bucket owner in Account B has added a bucket policy that allows s3:GetObject for the user's ARN. However, the user still receives an Access Denied error. No explicit Deny exists in any policy. What is the MOST likely cause?</div>
+          <ol class="opts">
+            <li data-k="A">Bucket policies cannot grant access to principals in other AWS accounts.</li>
+            <li data-k="B">The bucket policy must specify an IAM group instead of an IAM user as the principal.</li>
+            <li data-k="C">The user's identity-based policy in Account A does not allow s3:GetObject on the bucket in Account B.</li>
+            <li data-k="D">Cross-account access to S3 requires an Enterprise Support plan.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Với request cross-account, requester ở Account A phải có <b>identity-based policy cho phép</b> request tới resource ở Account B, <b>và</b> resource-based policy ở Account B phải cho phép requester – thiếu một phía thì thất bại. <b>A sai</b>: resource-based policy chính là cách phổ biến để cấp cross-account access. <b>B sai</b>: group không thể là <code>Principal</code> trong policy. <b>D sai</b>: không liên quan gói Support.</div>
+          <div class="trans">
+            <div class="tq">Một IAM user ở Account A (111122223333) cần tải object từ một bucket Amazon S3 ở Account B (444455556666). Chủ bucket ở Account B đã thêm bucket policy cho phép s3:GetObject đối với ARN của user. Tuy nhiên, user vẫn nhận lỗi Access Denied. Không có Deny tường minh (explicit Deny) trong policy nào. Nguyên nhân MOST likely (khả dĩ nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bucket policy không thể cấp quyền cho principal ở tài khoản AWS khác.</span><span class="why">Sai: resource-based policy như bucket policy chính là cách phổ biến để cấp quyền cross-account.</span></li>
+              <li data-k="B"><span class="tv">Bucket policy phải chỉ định một IAM group thay vì IAM user làm principal.</span><span class="why">Sai: IAM group không thể là Principal trong policy.</span></li>
+              <li data-k="C"><span class="tv">Identity-based policy của user ở Account A không cho phép s3:GetObject trên bucket ở Account B.</span><span class="why">Đúng: với truy cập cross-account, cần cả hai phía cho phép – bucket policy ở B đã có, nên thiếu identity-based policy ở A là nguyên nhân.</span></li>
+              <li data-k="D"><span class="tv">Truy cập S3 cross-account yêu cầu gói Enterprise Support.</span><span class="why">Sai: quyền truy cập không liên quan đến gói Support.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company's security team wants to ensure that IAM users can terminate Amazon EC2 instances only if they have authenticated with multi-factor authentication (MFA) during their current session. Which approach meets this requirement?</div>
+          <ol class="opts">
+            <li data-k="A">Add a policy statement that allows ec2:TerminateInstances only when the condition key aws:MultiFactorAuthPresent is true.</li>
+            <li data-k="B">Enable MFA on the AWS account root user only.</li>
+            <li data-k="C">Attach the AWS managed policy AmazonEC2ReadOnlyAccess to all IAM users.</li>
+            <li data-k="D">Create a resource-based policy on each EC2 instance that requires MFA.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Phần tử <code>Condition</code> chỉ cho statement có hiệu lực khi điều kiện đúng; AWS minh họa đúng mẫu <code>{"Bool": {"aws:MultiFactorAuthPresent": "true"}}</code> để chỉ cấp quyền khi đã xác thực MFA. <b>B sai</b>: MFA của root chỉ ảnh hưởng root user, không ràng buộc IAM user. <b>C sai</b>: ReadOnly không cho terminate kể cả khi có MFA – không đáp ứng yêu cầu. <b>D sai</b>: EC2 instance không hỗ trợ resource-based policy.</div>
+          <div class="trans">
+            <div class="tq">Nhóm bảo mật của một công ty muốn đảm bảo IAM user chỉ có thể terminate Amazon EC2 instance nếu họ đã xác thực bằng multi-factor authentication (MFA) trong phiên làm việc hiện tại. Cách tiếp cận nào đáp ứng yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một policy statement cho phép ec2:TerminateInstances chỉ khi condition key aws:MultiFactorAuthPresent có giá trị true.</span><span class="why">Đúng: phần tử Condition chỉ cho statement có hiệu lực khi phiên đã xác thực MFA – đúng mẫu AWS hướng dẫn.</span></li>
+              <li data-k="B"><span class="tv">Chỉ bật MFA cho root user của tài khoản AWS.</span><span class="why">Sai: MFA của root chỉ bảo vệ root user, không ràng buộc hành động của IAM user.</span></li>
+              <li data-k="C"><span class="tv">Gắn AWS managed policy AmazonEC2ReadOnlyAccess cho tất cả IAM user.</span><span class="why">Sai: quyền ReadOnly không cho terminate kể cả khi đã có MFA – không đáp ứng yêu cầu.</span></li>
+              <li data-k="D"><span class="tv">Tạo một resource-based policy trên từng EC2 instance yêu cầu MFA.</span><span class="why">Sai: EC2 instance không hỗ trợ resource-based policy.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A developer accidentally pushed a file that contains an IAM user's access key ID and secret access key to a public code repository. What should the solutions architect do FIRST to reduce the security risk?</div>
+          <ol class="opts">
+            <li data-k="A">Change the IAM user's console password.</li>
+            <li data-k="B">Enable MFA for the IAM user.</li>
+            <li data-k="C">Delete the public repository and wait for search engines to remove the cached content.</li>
+            <li data-k="D">Deactivate and then delete the exposed access key, create a new key if still needed, and review AWS CloudTrail for unauthorized activity.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Access key là long-term credentials – bị lộ thì kẻ tấn công có quyền cho tới khi key bị vô hiệu hóa. Bước đầu tiên là <b>deactivate/delete</b> key, sau đó rà soát CloudTrail (AWS khuyến nghị dùng CloudTrail giám sát việc dùng access key). <b>A sai</b>: console password độc lập với access key. <b>B sai</b>: MFA không chặn request API ký bằng access key thông thường (trừ khi policy có điều kiện MFA). <b>C sai</b>: key có thể đã bị sao chép; xóa repo không thu hồi được key.</div>
+          <div class="trans">
+            <div class="tq">Một lập trình viên vô tình đẩy (push) một file chứa access key ID và secret access key của một IAM user lên một kho mã công khai. Solutions architect nên làm gì FIRST (đầu tiên) để giảm rủi ro bảo mật?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đổi mật khẩu console của IAM user.</span><span class="why">Sai: mật khẩu console độc lập với access key; key bị lộ vẫn gọi API được.</span></li>
+              <li data-k="B"><span class="tv">Bật MFA cho IAM user.</span><span class="why">Sai: MFA không chặn request API ký bằng access key thông thường (trừ khi policy có điều kiện MFA).</span></li>
+              <li data-k="C"><span class="tv">Xóa kho mã công khai và chờ công cụ tìm kiếm xóa nội dung đã cache.</span><span class="why">Sai: key có thể đã bị sao chép; xóa repo không thu hồi được key.</span></li>
+              <li data-k="D"><span class="tv">Vô hiệu hóa (deactivate) rồi xóa access key bị lộ, tạo key mới nếu vẫn cần, và rà soát AWS CloudTrail để tìm hoạt động trái phép.</span><span class="why">Đúng: key còn hiệu lực thì kẻ tấn công còn quyền – vô hiệu hóa/xóa key là bước đầu tiên, sau đó kiểm tra CloudTrail.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company wants to move toward least-privilege permissions for its IAM roles. The security team wants to identify unused permissions and create fine-grained policies based on the actions that the roles actually perform. Which TWO AWS features should the team use? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">AWS Trusted Advisor cost optimization checks</li>
+            <li data-k="B">IAM Access Analyzer policy generation based on AWS CloudTrail activity</li>
+            <li data-k="C">Amazon Inspector</li>
+            <li data-k="D">IAM credential report</li>
+            <li data-k="E">IAM last accessed information (Access Advisor)</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> <b>IAM Access Analyzer</b> xem CloudTrail logs và generate policy template chỉ chứa các quyền entity đã dùng; <b>last accessed information</b> cho biết dịch vụ/action được dùng lần cuối để gỡ quyền thừa – cả hai được AWS nêu trong mục “Grant least privilege”. <b>A sai</b>: cost checks không phân tích quyền IAM. <b>C sai</b>: Inspector quét lỗ hổng phần mềm/mạng của EC2, ECR, Lambda. <b>D sai</b>: credential report liệt kê trạng thái password/access key/MFA của <b>user</b>, không phân tích action của role.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn tiến tới cấp quyền least-privilege (tối thiểu) cho các IAM role. Nhóm bảo mật muốn xác định các quyền không dùng đến và tạo policy chi tiết dựa trên các action mà role thực sự thực hiện. Nhóm nên dùng HAI tính năng AWS nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Các check cost optimization của AWS Trusted Advisor</span><span class="why">Sai: check chi phí không phân tích quyền IAM.</span></li>
+              <li data-k="B"><span class="tv">Tính năng tạo policy (policy generation) của IAM Access Analyzer dựa trên hoạt động AWS CloudTrail</span><span class="why">Đúng: Access Analyzer đọc CloudTrail log và sinh policy template chỉ chứa các action role đã thực sự dùng.</span></li>
+              <li data-k="C"><span class="tv">Amazon Inspector</span><span class="why">Sai: Inspector quét lỗ hổng phần mềm/mạng của EC2, ECR, Lambda, không phân tích quyền IAM.</span></li>
+              <li data-k="D"><span class="tv">IAM credential report</span><span class="why">Sai: credential report liệt kê trạng thái password/access key/MFA của IAM user, không phân tích action của role.</span></li>
+              <li data-k="E"><span class="tv">Thông tin truy cập gần nhất của IAM (IAM last accessed information / Access Advisor)</span><span class="why">Đúng: cho biết dịch vụ/action được dùng lần cuối khi nào, giúp gỡ các quyền không dùng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company uses a third-party SaaS monitoring provider that needs read-only access to resources in the company's AWS account. The provider serves many customers. The company wants to avoid sharing long-term credentials and to protect against the confused deputy problem. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create an IAM user with the ReadOnlyAccess policy and send its access keys to the provider.</li>
+            <li data-k="B">Share the root user credentials with the provider and enable MFA.</li>
+            <li data-k="C">Create an IAM role with read-only permissions and a trust policy that allows the provider's AWS account to assume the role only when a unique external ID is supplied.</li>
+            <li data-k="D">Add the provider's AWS account to an IAM user group that has read-only permissions.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Cross-account role cấp temporary credentials; <b>external ID</b> là tham số AWS khuyến nghị để dùng role an toàn giữa các tài khoản <b>không cùng tổ chức</b>, chống confused deputy. <b>A sai</b>: chia sẻ long-term access key – đúng điều công ty muốn tránh. <b>B sai</b>: không bao giờ chia sẻ root credentials. <b>D sai</b>: group chỉ chứa IAM user trong cùng tài khoản, không chứa account khác.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng nhà cung cấp dịch vụ giám sát SaaS bên thứ ba, cần quyền chỉ đọc (read-only) tới tài nguyên trong tài khoản AWS của công ty. Nhà cung cấp phục vụ nhiều khách hàng. Công ty muốn tránh chia sẻ credentials dài hạn và phòng chống vấn đề confused deputy. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một IAM user với policy ReadOnlyAccess và gửi access key của nó cho nhà cung cấp.</span><span class="why">Sai: chia sẻ access key dài hạn – chính điều công ty muốn tránh.</span></li>
+              <li data-k="B"><span class="tv">Chia sẻ credentials của root user cho nhà cung cấp và bật MFA.</span><span class="why">Sai: không bao giờ chia sẻ root credentials, càng không cho bên thứ ba.</span></li>
+              <li data-k="C"><span class="tv">Tạo một IAM role với quyền read-only và trust policy cho phép tài khoản AWS của nhà cung cấp assume role chỉ khi cung cấp một external ID duy nhất.</span><span class="why">Đúng: cross-account role cấp temporary credentials, và external ID là cơ chế AWS khuyến nghị để chống confused deputy với bên thứ ba phục vụ nhiều khách hàng.</span></li>
+              <li data-k="D"><span class="tv">Thêm tài khoản AWS của nhà cung cấp vào một IAM user group có quyền read-only.</span><span class="why">Sai: group chỉ chứa IAM user trong cùng tài khoản, không thể chứa tài khoản khác.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company wants its platform team to allow application developers to create IAM roles for their own AWS Lambda functions. The security team requires that no role created by developers can ever have more permissions than a predefined set, even if a developer attaches the AdministratorAccess policy to the role. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Require developers to attach a permissions boundary (a managed policy that defines the maximum permissions) to every role they create, and enforce this with a condition in the developers' IAM policy.</li>
+            <li data-k="B">Use inline policies instead of managed policies for all developer-created roles.</li>
+            <li data-k="C">Create a service-linked role for AWS Lambda and let developers edit its permissions.</li>
+            <li data-k="D">Attach a session policy to each developer's IAM user.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> AWS khuyến nghị dùng <b>permissions boundaries</b> để <b>ủy quyền quản lý quyền</b> trong một tài khoản (vd cho developer tự tạo role cho workload): entity chỉ làm được những gì <b>vừa được identity-based policy cho phép vừa nằm trong boundary</b>, nên gắn AdministratorAccess cũng không vượt được. <b>B sai</b>: inline hay managed không giới hạn được quyền tối đa. <b>C sai</b>: không thể sửa permissions của service-linked role. <b>D sai</b>: session policy chỉ truyền khi tạo session tạm thời (assume role/federation), không gắn vào IAM user và không kiểm soát role do developer tạo.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn nhóm platform cho phép lập trình viên ứng dụng tự tạo IAM role cho các AWS Lambda function của họ. Nhóm bảo mật yêu cầu không role nào do lập trình viên tạo có thể có nhiều quyền hơn một tập quyền định sẵn, kể cả khi lập trình viên gắn policy AdministratorAccess vào role. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bắt buộc lập trình viên gắn một permissions boundary (một managed policy định nghĩa quyền tối đa) cho mọi role họ tạo, và cưỡng chế điều này bằng một điều kiện trong IAM policy của lập trình viên.</span><span class="why">Đúng: quyền hiệu lực là giao của identity-based policy và boundary, nên gắn AdministratorAccess cũng không vượt được tập quyền định sẵn.</span></li>
+              <li data-k="B"><span class="tv">Dùng inline policy thay cho managed policy cho mọi role do lập trình viên tạo.</span><span class="why">Sai: inline hay managed chỉ là cách gắn policy, không giới hạn được quyền tối đa.</span></li>
+              <li data-k="C"><span class="tv">Tạo một service-linked role cho AWS Lambda và cho phép lập trình viên chỉnh sửa quyền của nó.</span><span class="why">Sai: không thể chỉnh sửa quyền của service-linked role, và nó không phải execution role cho function.</span></li>
+              <li data-k="D"><span class="tv">Gắn một session policy vào IAM user của từng lập trình viên.</span><span class="why">Sai: session policy chỉ truyền khi tạo phiên tạm thời (assume role/federation), không gắn vào IAM user và không kiểm soát role do lập trình viên tạo.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A large enterprise with 25,000 employees wants to give its workforce access to multiple AWS accounts. All employees already have identities in the corporate Microsoft Active Directory. The company wants to follow AWS best practices and minimize the management of long-term credentials. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Create an IAM user for each employee in every AWS account and enforce a strong password policy.</li>
+            <li data-k="B">Use AWS IAM Identity Center connected to the corporate directory so that employees federate into the AWS accounts and receive temporary credentials through roles.</li>
+            <li data-k="C">Create one IAM user per department and share its access keys within the department.</li>
+            <li data-k="D">Create IAM users for all employees in a single account and add them to IAM groups in the other accounts.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Best practice đầu tiên của IAM: <b>human users dùng federation với identity provider</b> để nhận temporary credentials; AWS khuyến nghị <b>IAM Identity Center</b> để quản lý truy cập tập trung nhiều tài khoản, có thể dùng định danh từ IdP bên ngoài/AD. <b>A sai</b>: 25.000 user vượt quota 5.000 IAM user/account, tạo long-term credentials hàng loạt. <b>C sai</b>: chia sẻ credentials, mất truy vết. <b>D sai</b>: IAM user/group chỉ thuộc một tài khoản; không thể thêm user của tài khoản này vào group của tài khoản khác.</div>
+          <div class="trans">
+            <div class="tq">Một doanh nghiệp lớn với 25.000 nhân viên muốn cho lực lượng lao động truy cập nhiều tài khoản AWS. Tất cả nhân viên đã có định danh trong Microsoft Active Directory của công ty. Công ty muốn tuân theo best practice của AWS và giảm thiểu việc quản lý credentials dài hạn. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một IAM user cho mỗi nhân viên trong từng tài khoản AWS và áp dụng password policy mạnh.</span><span class="why">Sai: 25.000 user vượt quota 5.000 IAM user mỗi tài khoản và tạo ra hàng loạt long-term credentials.</span></li>
+              <li data-k="B"><span class="tv">Dùng AWS IAM Identity Center kết nối với thư mục của công ty để nhân viên federate vào các tài khoản AWS và nhận temporary credentials thông qua role.</span><span class="why">Đúng: best practice là cho người dùng federate qua identity provider để nhận credentials tạm thời; IAM Identity Center quản lý truy cập tập trung cho nhiều tài khoản và dùng được định danh từ AD.</span></li>
+              <li data-k="C"><span class="tv">Tạo một IAM user cho mỗi phòng ban và chia sẻ access key trong phòng ban đó.</span><span class="why">Sai: chia sẻ credentials vi phạm best practice và mất khả năng truy vết từng người.</span></li>
+              <li data-k="D"><span class="tv">Tạo IAM user cho tất cả nhân viên trong một tài khoản và thêm họ vào IAM group ở các tài khoản khác.</span><span class="why">Sai: IAM user và group chỉ thuộc một tài khoản; không thể thêm user của tài khoản này vào group của tài khoản khác.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- NGUỒN -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_users.html" target="_blank" rel="noopener">IAM users</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_groups.html" target="_blank" rel="noopener">IAM user groups</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles.html" target="_blank" rel="noopener">IAM roles – terms and concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_identity-vs-resource.html" target="_blank" rel="noopener">Identity-based policies and resource-based policies</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_managed-vs-inline.html" target="_blank" rel="noopener">Managed policies and inline policies</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html" target="_blank" rel="noopener">Manage access keys for IAM users</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html" target="_blank" rel="noopener">IAM and AWS STS quotas</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

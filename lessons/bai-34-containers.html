@@ -1,0 +1,949 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 34 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Elastic-Container-Service.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="34" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Nắm các khái niệm cốt lõi của <b>Amazon ECS</b>: <b>cluster</b>, <b>task definition</b>, <b>task</b>, <b>service</b>, ba “lớp” <b>capacity – controller – provisioning</b>.</li>
+          <li>Chọn đúng nơi chạy container: <b>EC2 launch type</b>, <b>AWS Fargate</b> (và <b>Fargate Spot</b>), <b>ECS Managed Instances</b>, <b>ECS Anywhere</b>; hiểu vì sao AWS khuyên dùng <b>capacity provider</b>.</li>
+          <li>Phân biệt <b>task IAM role</b>, <b>task execution role</b> và <b>container instance role</b> – chủ đề bảo mật rất hay ra đề.</li>
+          <li>Cấu hình <b>ECS Service Auto Scaling</b> (target tracking, step, scheduled, predictive, theo SQS backlog) và phân biệt với <b>cluster auto scaling</b>.</li>
+          <li>Hiểu <b>Amazon EKS</b>: control plane do AWS quản lý, các lựa chọn compute (<b>managed node groups</b>, self-managed, <b>Fargate</b>, <b>EKS Auto Mode</b>, Karpenter, Hybrid Nodes).</li>
+          <li>Dùng <b>Amazon ECR</b> đúng cách (auth token 12 giờ, lifecycle policy, image scanning, replication, pull through cache) và biết vị trí của <b>AWS App Runner</b>.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 6 – Application Integration &amp; Serverless</span>
+        <p>Bài này khép lại Module 6 bằng mảng <b>container</b>. Các kiến thức nền đã học: <b>EC2 &amp; Spot</b> (Bài 8, 9), <b>security group / ENI</b> (Bài 10), <b>ALB / NLB / target type</b> (Bài 12), <b>EC2 Auto Scaling &amp; các scaling policy</b> (Bài 13), <b>EFS</b> (Bài 17), <b>VPC endpoint / PrivateLink</b> (Bài 22), <b>SQS</b> (Bài 30), <b>Lambda</b> (Bài 32), <b>API Gateway + VPC link</b> (Bài 33). Ở đây chỉ nhắc lại khi cần. <b>Secrets Manager / Parameter Store / KMS</b> học sâu ở Bài 38, <b>Amazon Inspector / GuardDuty</b> ở Bài 39, <b>CloudWatch</b> ở Bài 40, <b>Elastic Beanstalk / CloudFormation</b> ở Bài 41.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Containers.svg" alt="">Container trên AWS: bức tranh tổng thể</h2>
+      <p class="lead">Một <span class="t" data-vi="Vùng chứa – gói ứng dụng kèm thư viện phụ thuộc">container</span> đóng gói code ứng dụng cùng runtime, thư viện và cấu hình vào một <span class="t" data-vi="Ảnh container – khuôn mẫu bất biến để chạy container">container image</span> (định dạng Docker hoặc <b>OCI</b> – Open Container Initiative). Image chạy giống hệt nhau trên laptop, máy chủ on-premises hay trên AWS. Khi có hàng chục, hàng trăm container, ta cần một <span class="t" data-vi="Bộ điều phối container">container orchestrator</span> để đặt container lên máy, khởi động lại khi lỗi, cân bằng tải và scale.</p>
+
+      <p>Trên AWS, bài toán container được chia thành <b>ba câu hỏi</b> độc lập – đề thi SAA-C03 thường xoay quanh việc trả lời đúng từng câu:</p>
+      <ol>
+        <li><b>Lưu image ở đâu?</b> ⇒ <b>Amazon ECR</b> (registry được quản lý).</li>
+        <li><b>Ai điều phối (orchestration)?</b> ⇒ <b>Amazon ECS</b> (orchestrator riêng của AWS, đơn giản) hoặc <b>Amazon EKS</b> (Kubernetes được quản lý, chuẩn mở).</li>
+        <li><b>Container chạy trên hạ tầng nào?</b> ⇒ <b>EC2 instance</b> bạn tự quản lý, <b>AWS Fargate</b> (serverless), <b>ECS Managed Instances / EKS Auto Mode</b> (EC2 nhưng AWS vận hành), hoặc máy <b>on-premises</b> (ECS Anywhere, EKS Hybrid Nodes / EKS Anywhere).</li>
+      </ol>
+
+      <h3>Dịch vụ và tài nguyên trong bài</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Elastic-Container-Service.svg" alt="">
+          <div><h4>Amazon ECS</h4><span class="vi">Dịch vụ điều phối container</span><p>Orchestrator được quản lý hoàn toàn, tích hợp sẵn best practice của AWS; không phải vận hành control plane; không tính phí riêng cho ECS.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Elastic-Kubernetes-Service.svg" alt="">
+          <div><h4>Amazon EKS</h4><span class="vi">Kubernetes được quản lý</span><p>AWS vận hành Kubernetes control plane trải 3 AZ; certified Kubernetes-conformant, dùng được công cụ cộng đồng. Tính phí theo cluster.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Fargate.svg" alt="">
+          <div><h4>AWS Fargate</h4><span class="vi">Compute serverless cho container</span><p>Chạy task ECS / Pod EKS không cần quản lý EC2: chỉ khai báo CPU, memory, mạng, IAM. Mỗi task có ranh giới cô lập riêng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Elastic-Container-Registry.svg" alt="">
+          <div><h4>Amazon ECR</h4><span class="vi">Kho image container</span><p>Registry private/public cho Docker &amp; OCI image; IAM, scan lỗ hổng, lifecycle policy, replication cross-Region/cross-account.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-App-Runner.svg" alt="">
+          <div><h4>AWS App Runner</h4><span class="vi">Chạy web app từ code / image</span><p>Đưa thẳng source code hoặc image thành web app có scale, load balancing, TLS. Hiện <b>không nhận khách hàng mới</b> (AWS khuyên ECS Express Mode).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Elastic-Container-Service_ECS-Anywhere.svg" alt="">
+          <div><h4>ECS Anywhere / EKS Anywhere</h4><span class="vi">Container trên hạ tầng của bạn</span><p>Đăng ký máy chủ / VM on-premises vào cluster ECS; EKS Anywhere &amp; EKS Hybrid Nodes cho Kubernetes ở data center.</p></div></div>
+      </div>
+
+      <h3>Container khác EC2 và Lambda thế nào?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>EC2 (Bài 8)</th><th>Container (ECS/EKS)</th><th>Lambda (Bài 32)</th></tr></thead>
+        <tbody>
+          <tr><td>Đơn vị triển khai</td><td>Máy ảo + AMI</td><td>Container image</td><td>Function (zip hoặc image ≤ 10 GB)</td></tr>
+          <tr><td>Thời gian chạy</td><td>Không giới hạn</td><td>Không giới hạn (service chạy lâu dài, hoặc task batch)</td><td>Tối đa 15 phút / lần gọi</td></tr>
+          <tr><td>Quản lý máy chủ</td><td>Bạn quản lý OS, patch</td><td>EC2 launch type: bạn; Fargate: AWS</td><td>AWS</td></tr>
+          <tr><td>Phù hợp</td><td>Lift-and-shift, phần mềm cần OS đầy đủ</td><td>Microservice, ứng dụng web dài hạn, batch, <b>đóng gói lại app có sẵn</b> (re-platform)</td><td>Event-driven, ngắn, lưu lượng thất thường</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – công-te-nơ và cảng biển</span>
+        <p><b>Container image</b> giống chiếc <b>công-te-nơ tiêu chuẩn</b>: hàng gì bên trong cũng được, nhưng kích thước chuẩn nên tàu nào, cần cẩu nào cũng xếp được. <b>ECR</b> là <b>bãi lưu công-te-nơ</b>. <b>ECS/EKS</b> là <b>ban điều độ cảng</b> quyết định công-te-nơ nào lên tàu nào, thay chiếc bị hỏng. <b>EC2 launch type</b> là bạn <b>tự mua và bảo dưỡng tàu</b>; <b>Fargate</b> là <b>thuê chỗ trên tàu của hãng</b> – chỉ trả tiền theo kích thước công-te-nơ và thời gian chở.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Containerize an existing application</i>”, “<i>run Docker containers</i>”, “<i>least operational overhead</i>”, “<i>do not want to manage servers / EC2 instances</i>” ⇒ <b>ECS on Fargate</b>.</li>
+          <li>“<i>Already uses Kubernetes on-premises</i>”, “<i>open-source, portable, Kubernetes tooling (kubectl, Helm)</i>” ⇒ <b>Amazon EKS</b> (thêm Fargate nếu không muốn quản lý node).</li>
+          <li>“<i>Store / version / scan Docker images</i>” ⇒ <b>Amazon ECR</b>.</li>
+          <li>Tác vụ chạy <b>quá 15 phút</b> mà muốn serverless ⇒ <b>không phải Lambda</b> ⇒ <b>ECS task trên Fargate</b> (kích hoạt bằng EventBridge / Step Functions).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: AMAZON ECS ===================== -->
+      <h2 id="ecs"><img src="../assets/icons/svc/Amazon-Elastic-Container-Service.svg" alt="">Amazon ECS: cluster, task definition, task, service</h2>
+      <p class="lead"><b>Amazon Elastic Container Service (ECS)</b> là dịch vụ <span class="t" data-vi="Điều phối container">container orchestration</span> được quản lý hoàn toàn, giúp triển khai, quản lý và scale ứng dụng container. ECS đã có sẵn cấu hình và best practice vận hành của AWS, tích hợp với ECR, Elastic Load Balancing, CloudWatch, IAM và công cụ bên thứ ba như Docker. Bạn chạy workload trên nhiều Region, cả on-premises, <b>mà không phải quản lý control plane</b>.</p>
+
+      <h3>Ba lớp của Amazon ECS (theo tài liệu)</h3>
+      <ul>
+        <li><span class="t" data-vi="Năng lực tính toán – hạ tầng chạy container">Capacity</span>: hạ tầng nơi container chạy – <b>Amazon ECS Managed Instances</b>, <b>EC2 instance</b> trong AWS Cloud, <b>Fargate</b> (serverless), hoặc <b>VM/máy chủ on-premises</b> (ECS Anywhere).</li>
+        <li><span class="t" data-vi="Bộ điều khiển – scheduler của ECS">Controller</span>: triển khai và quản lý ứng dụng chạy trong container – chính là <b>Amazon ECS scheduler</b>.</li>
+        <li><span class="t" data-vi="Công cụ cấp phát">Provisioning</span>: công cụ để làm việc với scheduler – <b>Console, AWS CLI, AWS SDK, AWS CDK</b> (CDK provision qua CloudFormation), cùng Copilot CLI, Terraform…</li>
+      </ul>
+
+      <h3>Các thành phần cốt lõi</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Định nghĩa trong tài liệu</th><th>Giải thích</th></tr></thead>
+        <tbody>
+          <tr><td><b>Task definition</b></td><td>“The blueprint for the application”</td><td>File <b>JSON</b> mô tả <b>1 hoặc nhiều container</b> tạo nên ứng dụng: image, CPU/memory, OS, <b>network mode</b>, logging, lệnh khởi động, volume, container nào là <i>essential</i>, và <b>IAM role</b> của task. Mỗi lần sửa tạo một <b>revision</b> mới (vd <code>web:1</code>, <code>web:2</code>).</td></tr>
+          <tr><td><b>Cluster</b></td><td>“The infrastructure your application runs on”</td><td>Nhóm logic chứa task/service và capacity (EC2 instance, Fargate, Managed Instances, máy on-prem). Một cluster có thể trộn nhiều loại capacity provider.</td></tr>
+          <tr><td><b>Task</b></td><td>“An application such as a batch job that performs work, and then stops”</td><td>Một <b>bản chạy (instantiation)</b> của task definition trong cluster. Chạy bằng <code>RunTask</code> – hợp với batch, job định kỳ (EventBridge Scheduler), bước trong Step Functions.</td></tr>
+          <tr><td><b>Service</b></td><td>“A long running stateless application”</td><td>Duy trì <b>số task mong muốn (desired count)</b> chạy đồng thời; task lỗi/dừng ⇒ <b>service scheduler</b> khởi chạy task mới thay thế. Có thể đặt sau load balancer, gắn Service Auto Scaling.</td></tr>
+          <tr><td>Container agent</td><td>—</td><td>Phần mềm chạy trên mỗi container instance (EC2/on-prem), báo trạng thái về ECS và nhận lệnh start/stop task. Với Fargate, agent do AWS quản lý.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Task definition – những tham số đáng nhớ</h3>
+      <ul>
+        <li><code>requiresCompatibilities</code>: khai báo task tương thích với <code>EC2</code>, <code>FARGATE</code>, <code>EXTERNAL</code>, <code>MANAGED_INSTANCES</code> – ECS kiểm tra task definition có hợp lệ cho loại capacity đó không.</li>
+        <li><code>cpu</code>, <code>memory</code>: ở cấp task (bắt buộc với Fargate) và/hoặc cấp container.</li>
+        <li><code>networkMode</code>: <span class="t" data-vi="Chế độ mạng của task">network mode</span>:
+          <ul>
+            <li><code>awsvpc</code> – mỗi task có <b>một elastic network interface (ENI) riêng</b>, IP private riêng trong VPC và <b>security group riêng</b> theo task. <b>Fargate luôn dùng <code>awsvpc</code></b>. Target group của ALB/NLB phải chọn target type <b><code>ip</code></b> (không phải <code>instance</code>).</li>
+            <li><code>bridge</code> – (EC2) container dùng mạng ảo Docker trong instance; kết hợp <b>dynamic host port mapping</b> để nhiều task cùng service chạy trên một instance sau ALB.</li>
+            <li><code>host</code> – (EC2) container dùng thẳng mạng của instance; mỗi port chỉ một task/instance.</li>
+            <li><code>none</code> – không có mạng ngoài.</li>
+          </ul></li>
+        <li><code>taskRoleArn</code> (quyền cho <b>code trong container</b>) và <code>executionRoleArn</code> (quyền cho <b>agent</b> kéo image, ghi log, lấy secret) – xem phần IAM.</li>
+        <li><code>logConfiguration</code>: Fargate hỗ trợ log driver <code>awslogs</code> (CloudWatch Logs), <code>splunk</code>, <code>awsfirelens</code> (FireLens – chuyển log tới dịch vụ AWS/partner).</li>
+        <li><code>secrets</code>: tham chiếu <b>Secrets Manager secret</b> hoặc <b>SSM Parameter Store parameter</b> – giá trị được inject thành biến môi trường lúc task khởi động, không ghi cứng trong image hay task definition.</li>
+        <li><code>volumes</code>: bind mount (ephemeral), <b>Amazon EFS</b> (lưu trữ bền vững, chia sẻ giữa nhiều task, nhiều AZ), <b>Amazon EBS</b> volume gắn cho task.</li>
+      </ul>
+
+      <h3>ECS service – scheduler, load balancing, kết nối giữa service</h3>
+      <ul>
+        <li>Service scheduler <b>thay task không healthy</b> khi container health check hoặc <b>health check của target group</b> thất bại: khởi động task thay thế trước (nếu <code>maximumPercent</code> cho phép), rồi mới dừng task lỗi. Task lỗi khởi động liên tục thì scheduler <b>giãn tần suất thử lại</b> (service throttle logic) để không lãng phí tài nguyên.</li>
+        <li>Hai <span class="t" data-vi="Chiến lược lập lịch">scheduling strategy</span>: <b>REPLICA</b> (duy trì desired count, trải đều theo AZ – mặc định) và <b>DAEMON</b> (đúng <b>một task trên mỗi container instance</b> – dùng cho agent log/monitoring; không dùng được trên Fargate). <i>(kiến thức phổ biến)</i></li>
+        <li><b>Load balancer cho service</b> (service trên Fargate hỗ trợ cả ba loại):
+          <ul>
+            <li><b>ALB</b> – lưu lượng HTTP/HTTPS (layer 7); một service có thể gắn <b>nhiều target group</b>; hỗ trợ <b>dynamic host port mapping</b> (nhiều task của cùng service trên một instance); <b>path-based routing</b> để nhiều service dùng chung một listener port.</li>
+            <li><b>NLB</b> – TCP/UDP (layer 4); UDP trên Fargate cần platform version 1.4 trở lên.</li>
+            <li><b>GWLB</b> – đưa lưu lượng qua virtual appliance (firewall, IDS/IPS).</li>
+          </ul></li>
+        <li>Kết nối service-to-service <b>không cần load balancer</b>: <b>Service Connect</b> (tự khám phá bằng tên ngắn + port chuẩn), <b>service discovery</b> (dùng <b>Route 53 / AWS Cloud Map</b> tạo namespace DNS), <b>Amazon VPC Lattice</b> (kết nối, bảo mật, giám sát service xuyên account/VPC – có tính phí).</li>
+        <li>Triển khai phiên bản mới: <b>rolling update</b> (mặc định, điều khiển bằng <code>minimumHealthyPercent</code> / <code>maximumPercent</code>, thường 100% / 200%), <b>blue/green</b> (ECS native hoặc qua AWS CodeDeploy), <b>deployment circuit breaker</b> tự rollback khi task mới không lên được. <i>(kiến thức phổ biến)</i></li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Containers.svg" alt="">AWS Cloud – web app trên ECS Fargate</span>
+          <div class="grp region"><span class="lbl">Region</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng<small>HTTPS</small></div>
+              <span class="arrow">443</span>
+              <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Application Load Balancer<small>public subnet · target type ip</small></div>
+            </div>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC – ECS cluster “prod”</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">AZ a – private subnet</span>
+                  <div class="flow">
+                    <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Service_Task.svg" alt="">Task web:7<small>ENI riêng · SG task</small></div>
+                    <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Service_Task.svg" alt="">Task web:7<small>Fargate</small></div>
+                  </div>
+                </div>
+                <div class="grp az"><span class="lbl">AZ b – private subnet</span>
+                  <div class="flow">
+                    <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Service_Task.svg" alt="">Task web:7<small>ENI riêng · SG task</small></div>
+                    <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Service_Task.svg" alt="">Task web:7<small>Fargate</small></div>
+                  </div>
+                </div>
+              </div>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Service_Service.svg" alt="">ECS service “web”<small>desired count = 4 · REPLICA</small></div>
+                <span class="arrow dashed">đọc</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Registry_Image.svg" alt="">Task definition web:7<small>image ECR · 1 vCPU / 2 GB</small></div>
+                <span class="arrow dashed">mount</span>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Elastic-File-System.svg" alt="">Amazon EFS<small>dữ liệu dùng chung</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Kiến trúc ECS điển hình: <b>service</b> “web” duy trì 4 <b>task</b> (bản chạy của task definition revision 7) trải trên hai AZ; mỗi task Fargate có <b>ENI và security group riêng</b> (network mode <code>awsvpc</code>) nên target group của ALB dùng target type <b><code>ip</code></b>. Task lỗi ⇒ scheduler tự thay; dữ liệu cần chia sẻ/bền vững đặt trên EFS thay vì trong container.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Long-running web application / microservice must always have N copies running and be load balanced</i>” ⇒ <b>ECS service</b> (+ ALB). “<i>Batch job that runs and then exits</i>” ⇒ <b>ECS task</b> (RunTask, kích hoạt bằng EventBridge).</li>
+          <li>“<i>Multiple containers / microservices behind a single ALB, routed by URL path</i>” ⇒ ALB <b>path-based routing</b> tới nhiều target group / service.</li>
+          <li>“<i>Each task needs its own security group</i>” hoặc “<i>tasks need their own IP address in the VPC</i>” ⇒ network mode <b><code>awsvpc</code></b>.</li>
+          <li>“<i>Containers need shared persistent storage across AZs</i>” ⇒ <b>Amazon EFS</b> volume trong task definition (Fargate cũng hỗ trợ).</li>
+          <li>“<i>Pass database credentials to containers securely</i>” ⇒ tham chiếu <b>Secrets Manager / Parameter Store</b> trong mục <code>secrets</code> của task definition (không đặt trong image/biến môi trường plain text).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: LAUNCH TYPE / FARGATE ===================== -->
+      <h2 id="fargate"><img src="../assets/icons/svc/AWS-Fargate.svg" alt="">EC2 launch type vs AWS Fargate và capacity provider</h2>
+      <p class="lead">ECS có hai cách cấu hình capacity: <span class="t" data-vi="Kiểu khởi chạy">launch type</span> (EC2, Fargate, External) và <span class="t" data-vi="Nhà cung cấp năng lực tính toán">capacity provider</span>. Tài liệu nói rõ: <b>capacity provider là cách được khuyến nghị</b>; launch type nên chỉ dùng để khai báo <b>tính tương thích</b> (<code>requiresCompatibilities</code>) trong task definition.</p>
+
+      <h3>AWS Fargate – serverless compute cho container</h3>
+      <ul>
+        <li>Fargate cho phép chạy container <b>không phải provision, cấu hình hay scale cluster EC2</b>: không chọn loại server, không quyết định khi nào scale cluster, không tối ưu “xếp” task lên máy (cluster packing).</li>
+        <li>Bạn chỉ: đóng gói container, khai báo <b>CPU &amp; memory</b> cấp task, định nghĩa <b>networking và IAM policy</b>, rồi chạy.</li>
+        <li><b>Cô lập</b>: mỗi task Fargate có <b>ranh giới cô lập riêng</b>, <b>không chia sẻ kernel, CPU, memory hay ENI</b> với task khác. Tài liệu khuyên: workload yêu cầu cô lập nghiêm ngặt ⇒ dùng Fargate.</li>
+        <li>OS/kiến trúc: Linux (x86_64 hoặc <b>ARM64/Graviton</b>), Windows Server 2019/2022 Full &amp; Core (chỉ x86_64).</li>
+        <li><span class="t" data-vi="Phiên bản nền tảng Fargate">Platform version</span>: tổ hợp kernel + container runtime (Linux 1.4.0, 1.3.0; Windows). Task mới luôn chạy trên <b>revision mới nhất</b> – đã vá bảo mật. Khi revision có lỗ hổng, AWS tạo revision mới và <b>retire</b> task chạy trên revision cũ (bạn có thể nhận thông báo task retirement).</li>
+        <li><b>Lưu trữ</b>: bind mount (ephemeral), <b>EFS</b> (bền vững), <b>EBS</b> volume. Ephemeral storage mặc định <b>20 GiB</b>, mở rộng tới <b>200 GiB</b> <i>(kiến thức phổ biến)</i>.</li>
+        <li><b>Không hỗ trợ trên Fargate</b>: <code>privileged</code> container, <code>gpu</code>, <code>placementConstraints</code>, <code>links</code>, <code>ipcMode</code>, <code>dockerSecurityOptions</code>, <code>disableNetworking</code>… Linux capability duy nhất được thêm là <code>CAP_SYS_PTRACE</code>.</li>
+        <li><b>SOCI (Seekable OCI) lazy loading</b>: với platform 1.4.0 và image trong ECR có SOCI index, container khởi động sau vài giây kéo image, phần còn lại tải nền – tài liệu khuyên thử với image &gt; <b>250 MiB</b> (nén).</li>
+      </ul>
+
+      <h3>Kích thước task Fargate hợp lệ (CPU ↔ memory)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>CPU (CPU units)</th><th>Memory hợp lệ</th><th>OS</th></tr></thead>
+        <tbody>
+          <tr><td>256 (0,25 vCPU)</td><td>512 MiB, 1 GB, 2 GB</td><td>Linux</td></tr>
+          <tr><td>512 (0,5 vCPU)</td><td>1 – 4 GB</td><td>Linux</td></tr>
+          <tr><td>1024 (1 vCPU)</td><td>2 – 8 GB</td><td>Linux, Windows</td></tr>
+          <tr><td>2048 (2 vCPU)</td><td>4 – 16 GB (bước 1 GB)</td><td>Linux, Windows</td></tr>
+          <tr><td>4096 (4 vCPU)</td><td>8 – 30 GB (bước 1 GB)</td><td>Linux, Windows</td></tr>
+          <tr><td>8192 (8 vCPU)</td><td>16 – 60 GB (bước 4 GB) – cần Linux platform 1.4.0+</td><td>Linux</td></tr>
+          <tr><td>16384 (16 vCPU)</td><td>32 – 120 GB (bước 8 GB) – cần Linux platform 1.4.0+</td><td>Linux</td></tr>
+          <tr><td>32768 (32 vCPU)</td><td>60 GB, 120 GB, 244 GB – cần Linux platform 1.4.0+</td><td>Linux</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>0,25 – 32 vCPU</b><span>dải CPU của một task Fargate</span></div>
+        <div class="stat"><b>tối đa 244 GB</b><span>memory của một task Fargate (32 vCPU)</span></div>
+        <div class="stat"><b>2 phút</b><span>cảnh báo trước khi Fargate Spot thu hồi task</span></div>
+        <div class="stat"><b>awsvpc</b><span>network mode bắt buộc của Fargate (1 ENI / task)</span></div>
+        <div class="stat"><b>65.535</b><span><code>nofile</code> mặc định (soft &amp; hard) trên Fargate, nâng được tới 1.048.576</span></div>
+        <div class="stat"><b>20 → 200 GiB</b><span>ephemeral storage mặc định → tối đa (kiến thức phổ biến)</span></div>
+      </div>
+
+      <h3>So sánh các lựa chọn capacity của ECS</h3>
+      <div class="compare">
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 (Auto Scaling group capacity provider)</h4>
+          <ul>
+            <li>Bạn chọn <b>instance type, số lượng</b>, quản lý capacity, AMI (ECS-optimized AMI), patch OS.</li>
+            <li>Cần khi dùng <b>GPU</b>, instance đặc thù, <b>privileged</b> container, <b>DAEMON</b> service, kiểm soát sâu host.</li>
+            <li>Tối ưu chi phí bằng <b>Reserved Instances / Savings Plans / Spot</b> khi tải ổn định, mật độ task cao.</li>
+            <li>Nhiều task chia chung kernel instance ⇒ <b>không có cô lập task</b> mặc định.</li>
+          </ul></div>
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/svc/AWS-Fargate.svg" alt="">Fargate / Fargate Spot</h4>
+          <ul>
+            <li><b>Serverless</b>, trả tiền theo vCPU + memory của task trong thời gian chạy.</li>
+            <li><b>FARGATE</b> và <b>FARGATE_SPOT</b> capacity provider được ECS <b>tạo sẵn trên mọi cluster</b>.</li>
+            <li><b>Fargate Spot</b>: chạy task <b>chịu được gián đoạn</b> với giá giảm, trên capacity dư; khi AWS cần lại ⇒ task bị gián đoạn với <b>cảnh báo 2 phút</b>.</li>
+            <li>Cô lập mạnh mỗi task; ít vận hành nhất.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-Elastic-Container-Service.svg" alt="">ECS Managed Instances</h4>
+          <ul>
+            <li>Chạy trên <b>nhiều loại EC2</b> (GPU, kiến trúc CPU riêng, mạng hiệu năng cao…) nhưng <b>AWS lo provisioning, patching, scaling, bảo trì</b>.</li>
+            <li>“Kết hợp sự đơn giản của Fargate với sự linh hoạt của EC2”.</li>
+            <li>Chỉ dùng qua <b>capacity provider strategy</b>.</li>
+          </ul></div>
+        <div style="--accent:#2E73B8"><h4><img src="../assets/icons/res/Amazon-Elastic-Container-Service_ECS-Anywhere.svg" alt="">External (ECS Anywhere)</h4>
+          <ul>
+            <li>Đăng ký <b>máy chủ / VM on-premises</b> làm external instance của cluster ECS.</li>
+            <li>Dùng cùng control plane ECS cho hybrid; yêu cầu dữ liệu phải ở lại data center.</li>
+          </ul></div>
+      </div>
+
+      <h3>Capacity provider và capacity provider strategy</h3>
+      <ul>
+        <li>Capacity provider được hỗ trợ: <b>FARGATE</b>, <b>FARGATE_SPOT</b>, <b>Auto Scaling group</b> (EC2 tự quản), <b>ECS Managed Instances</b>. Spot Fleet chỉ có dưới dạng capacity provider, không phải launch type.</li>
+        <li><span class="t" data-vi="Chiến lược phân bổ capacity provider">Capacity provider strategy</span> gắn vào service/task để chia task giữa các provider bằng <b>base</b> (số task tối thiểu chạy trên một provider) và <b>weight</b> (tỉ lệ phân bổ phần còn lại) – vd <code>FARGATE base=2, weight=1</code> + <code>FARGATE_SPOT weight=3</code> ⇒ 2 task nền on-demand, phần còn lại 75% chạy Spot. <i>(base/weight: kiến thức phổ biến)</i></li>
+        <li>Một cluster có thể chứa mọi loại capacity provider, nhưng <b>một strategy không trộn được các loại khác nhau</b> (vd không trộn Fargate với Auto Scaling group trong cùng strategy).</li>
+        <li>Đổi compute cho service chỉ cần <b>cập nhật capacity provider strategy</b> (vd từ ASG sang Fargate). Không chuyển trực tiếp từ <i>EC2 launch type</i> sang <i>Fargate launch type</i> – phải dùng capacity provider tương ứng.</li>
+        <li>Với Auto Scaling group capacity provider, bật <b>managed scaling</b> ⇒ ECS tự tăng/giảm số EC2 theo nhu cầu task (<b>Cluster Auto Scaling</b>), và <b>managed termination protection</b> để không tắt instance còn task. <i>(chi tiết managed scaling: kiến thức phổ biến)</i></li>
+      </ul>
+
+      <h3>Mạng của task Fargate – kéo image từ ECR</h3>
+      <ul>
+        <li>Task ở <b>public subnet</b>: phải <b>gán public IP</b> cho ENI của task (<code>assignPublicIp: ENABLED</code>) và có route ra Internet Gateway thì mới kéo được image.</li>
+        <li>Task ở <b>private subnet</b>: cần <b>NAT gateway</b>, hoặc – tốt hơn về bảo mật và chi phí data processing – tạo <b>interface VPC endpoint</b> cho ECR (<code>com.amazonaws.<i>region</i>.ecr.api</code> và <code>.ecr.dkr</code>) cùng <b>S3 gateway endpoint</b> (layer image lưu trên S3); thêm endpoint <code>logs</code> nếu dùng awslogs, <code>secretsmanager</code>/<code>ssm</code> nếu dùng secrets.</li>
+        <li>Có thể giới hạn task execution role chỉ được kéo image qua một VPC endpoint cụ thể bằng điều kiện <code>aws:SourceVpce</code> / <code>aws:SourceVpc</code>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp region"><span class="lbl">Region – Fargate task trong private subnet, không có Internet</span>
+          <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+            <div class="grp priv"><span class="lbl">Private subnet (không route 0.0.0.0/0)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Service_Task.svg" alt="">Fargate task<small>ENI 10.0.3.25</small></div>
+                <span class="arrow">ecr.api / ecr.dkr</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">Interface endpoints<small>ECR, CloudWatch Logs, Secrets Manager</small></div>
+              </div>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Service_Task.svg" alt="">Fargate task<small>kéo layer image</small></div>
+                <span class="arrow">route table</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">S3 gateway endpoint<small>miễn phí</small></div>
+              </div>
+            </div>
+          </div>
+          <div class="flow">
+            <span class="arrow">PrivateLink</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Elastic-Container-Registry.svg" alt="">Amazon ECR<small>manifest &amp; auth</small></div>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Amazon S3<small>lưu layer image</small></div>
+            <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">CloudWatch Logs<small>awslogs driver</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> Task Fargate trong private subnet không có NAT gateway vẫn kéo được image nhờ <b>interface endpoint</b> <code>ecr.api</code> + <code>ecr.dkr</code> và <b>S3 gateway endpoint</b> (layer image nằm trên S3). Thêm endpoint CloudWatch Logs và Secrets Manager/SSM nếu task ghi log hoặc đọc secret. Lưu lượng không rời mạng AWS.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>No EC2 instances to manage / patch</i>”, “<i>serverless containers</i>” ⇒ <b>Fargate</b>. Cần <b>GPU</b>, <b>privileged</b>, kiểm soát AMI/host, tối ưu chi phí bằng RI ⇒ <b>EC2 launch type / ASG capacity provider</b> (hoặc ECS Managed Instances nếu muốn AWS vận hành host).</li>
+          <li>“<i>Fault-tolerant / interruptible batch containers at lowest cost, serverless</i>” ⇒ <b>Fargate Spot</b>; trộn <b>base</b> trên FARGATE + <b>weight</b> trên FARGATE_SPOT để vừa rẻ vừa luôn có tối thiểu task.</li>
+          <li>“<i>Tasks in private subnets cannot pull images (CannotPullContainerError)</i>” ⇒ thêm <b>NAT gateway</b> hoặc <b>VPC endpoints cho ECR (api + dkr) và S3 gateway endpoint</b>.</li>
+          <li>“<i>Strict isolation between workloads</i>” ⇒ Fargate (mỗi task không chia sẻ kernel).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Tạo target group kiểu <b><code>instance</code></b> cho service Fargate ⇒ <b>sai</b>; task <code>awsvpc</code> gắn với ENI nên phải là <b><code>ip</code></b>.</li>
+          <li>Fargate <b>không</b> hỗ trợ GPU (trên cả ECS lẫn EKS), privileged container, DAEMON service. Đề đòi những thứ này mà chọn Fargate là sai.</li>
+          <li>Fargate Spot phù hợp tác vụ <b>chịu được gián đoạn</b>; không chọn cho service “must not be interrupted”. <b>EKS không hỗ trợ Fargate Spot.</b></li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: IAM ===================== -->
+      <h2 id="iam"><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">Task IAM role, task execution role và container instance role</h2>
+      <p class="lead">Đây là chủ đề bảo mật container được hỏi nhiều nhất. ECS có <b>ba loại role</b> phục vụ ba “người dùng” khác nhau: <b>code ứng dụng</b> trong container, <b>agent</b> của ECS/Fargate, và <b>EC2 instance</b> chạy container.</p>
+
+      <h3>Task IAM role – quyền cho code trong container</h3>
+      <ul>
+        <li><span class="t" data-vi="Vai trò IAM của task">Task IAM role</span> (<code>taskRoleArn</code>): quyền trong role được <b>cấp cho các container trong task</b>, để <b>code ứng dụng</b> gọi dịch vụ AWS khác (đọc S3, ghi DynamoDB, gửi SQS…). Tài liệu: “<i>The task role is required when your application accesses other AWS services, such as Amazon S3.</i>”</li>
+        <li>Role phải có trust policy cho principal <b><code>ecs-tasks.amazonaws.com</code></b>; nên thêm điều kiện <code>aws:SourceAccount</code> / <code>aws:SourceArn</code> để chống <b>confused deputy</b>.</li>
+        <li>AWS SDK/CLI trong container tự lấy credential tạm thời qua <b>container credential provider</b> (endpoint nội bộ <code>169.254.170.2</code>) – không cần access key trong code. Khi task có task role, SDK dùng <b>độc quyền</b> credential của task role, <b>không kế thừa</b> quyền của EC2 instance.</li>
+        <li>Lợi ích theo tài liệu:
+          <ul>
+            <li><b>Separation of concerns</b>: không phải nhét quyền của mọi ứng dụng vào instance profile của EC2.</li>
+            <li><b>Auditability</b>: credential mang ngữ cảnh <code>taskArn</code> ⇒ CloudTrail cho biết <b>task nào</b> đã dùng role.</li>
+            <li><b>Uniform credentials delivery</b>: cùng cơ chế trên EC2, Fargate, Managed Instances, ECS Anywhere. Trên Fargate <b>không có instance profile</b> cho container ⇒ task role là cách duy nhất.</li>
+          </ul></li>
+        <li>Best practice: <b>mỗi task definition / service một role</b> với quyền tối thiểu (least privilege).</li>
+      </ul>
+
+      <h3>Task execution role – quyền cho ECS agent / Fargate agent</h3>
+      <ul>
+        <li><span class="t" data-vi="Vai trò thực thi task">Task execution role</span> (<code>executionRoleArn</code>) cấp quyền cho <b>container agent và Fargate agent</b> gọi API AWS <b>thay mặt bạn</b> để <b>khởi động task</b>. Container <b>không truy cập trực tiếp</b> được các quyền này.</li>
+        <li>Dùng khi task cần:
+          <ul>
+            <li><b>Kéo image từ ECR private</b> (kể cả ECR ở account khác).</li>
+            <li>Gửi log tới <b>CloudWatch Logs</b> bằng log driver <code>awslogs</code>.</li>
+            <li>Lấy <b>Secrets Manager secret</b> / <b>SSM Parameter Store parameter</b> được tham chiếu trong task definition (<code>secretsmanager:GetSecretValue</code>, <code>ssm:GetParameters</code>, <code>kms:Decrypt</code> nếu dùng customer managed key).</li>
+            <li><b>Private registry authentication</b> (Docker Hub, Quay.io… qua <code>repositoryCredentials</code> lưu trong Secrets Manager).</li>
+          </ul></li>
+        <li>Managed policy: <b><code>AmazonECSTaskExecutionRolePolicy</code></b>; tên role thường là <code>ecsTaskExecutionRole</code>.</li>
+      </ul>
+
+      <h3>So sánh ba role</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Role</th><th>Ai dùng</th><th>Dùng để làm gì</th><th>Ví dụ quyền</th></tr></thead>
+        <tbody>
+          <tr><td><b>Task IAM role</b></td><td>Code ứng dụng trong container</td><td>Gọi dịch vụ AWS lúc ứng dụng chạy</td><td><code>s3:GetObject</code>, <code>dynamodb:PutItem</code>, <code>sqs:SendMessage</code>; ECS Exec cần <code>ssmmessages:*</code></td></tr>
+          <tr><td><b>Task execution role</b></td><td>ECS container agent / Fargate agent</td><td>Chuẩn bị &amp; khởi động task</td><td><code>ecr:GetAuthorizationToken</code>, <code>ecr:BatchGetImage</code>, <code>logs:PutLogEvents</code>, <code>secretsmanager:GetSecretValue</code></td></tr>
+          <tr><td><b>Container instance role</b> (instance profile)</td><td>EC2 instance + ECS agent (chỉ EC2 launch type)</td><td>Đăng ký instance vào cluster, giao tiếp với ECS</td><td>Managed policy <code>AmazonEC2ContainerServiceforEC2Role</code> – tài liệu khuyên giữ ở mức tối thiểu này</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 300" width="760" role="img" aria-label="Task role và task execution role">
+          <defs><marker id="a34" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#ED7100"/></marker>
+          <marker id="b34" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#2E73B8"/></marker></defs>
+          <rect x="230" y="20" width="300" height="260" rx="8" fill="#ED7100" fill-opacity="0.08" stroke="#ED7100"/>
+          <text x="245" y="42" font-size="13" font-weight="700">ECS task (Fargate / EC2)</text>
+          <rect x="250" y="60" width="260" height="90" rx="6" fill="#8C4FFF" fill-opacity="0.12" stroke="#8C4FFF"/>
+          <image href="../assets/icons/res/Amazon-Elastic-Container-Service_Container-1.svg" x="262" y="72" width="34" height="34"/>
+          <text x="305" y="88" font-size="12" font-weight="700">Container ứng dụng</text>
+          <text x="305" y="106" font-size="10" class="muted">AWS SDK → 169.254.170.2</text>
+          <text x="262" y="135" font-size="11">dùng <tspan font-weight="700">task IAM role</tspan></text>
+          <rect x="250" y="170" width="260" height="90" rx="6" fill="#2E73B8" fill-opacity="0.12" stroke="#2E73B8"/>
+          <image href="../assets/icons/svc/Amazon-Elastic-Container-Service.svg" x="262" y="182" width="34" height="34"/>
+          <text x="305" y="198" font-size="12" font-weight="700">ECS / Fargate agent</text>
+          <text x="305" y="216" font-size="10" class="muted">chạy trước khi app khởi động</text>
+          <text x="262" y="245" font-size="11">dùng <tspan font-weight="700">task execution role</tspan></text>
+
+          <image href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" x="600" y="40" width="32" height="32"/>
+          <text x="640" y="61" font-size="11">S3</text>
+          <image href="../assets/icons/svc/Amazon-DynamoDB.svg" x="600" y="85" width="32" height="32"/>
+          <text x="640" y="106" font-size="11">DynamoDB</text>
+          <path d="M510 95 H590" stroke="#ED7100" stroke-width="2.5" marker-end="url(#a34)"/>
+          <text x="520" y="88" font-size="10" class="muted">runtime</text>
+
+          <image href="../assets/icons/svc/Amazon-Elastic-Container-Registry.svg" x="600" y="160" width="32" height="32"/>
+          <text x="640" y="181" font-size="11">ECR (pull image)</text>
+          <image href="../assets/icons/res/Amazon-CloudWatch_Logs.svg" x="600" y="200" width="32" height="32"/>
+          <text x="640" y="221" font-size="11">CloudWatch Logs</text>
+          <image href="../assets/icons/svc/AWS-Secrets-Manager.svg" x="600" y="240" width="32" height="32"/>
+          <text x="640" y="261" font-size="11">Secrets / SSM</text>
+          <path d="M510 215 H590" stroke="#2E73B8" stroke-width="2.5" marker-end="url(#b34)"/>
+          <text x="520" y="208" font-size="10" class="muted">khởi động</text>
+
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="30" y="110" width="40" height="40"/>
+          <text x="20" y="170" font-size="12" font-weight="700">EC2 container instance</text>
+          <text x="20" y="188" font-size="10" class="muted">instance role: đăng ký cluster</text>
+          <text x="20" y="204" font-size="10" class="muted">(chặn container truy cập IMDS)</text>
+          <path d="M180 130 H225" stroke="#7AA116" stroke-width="2" stroke-dasharray="5 4"/>
+        </svg>
+        <figcaption><b>Hình 3.</b> Hai role trong task definition phục vụ hai đối tượng: <b>task execution role</b> cho agent <b>kéo image ECR, ghi CloudWatch Logs, lấy secret</b> trước khi ứng dụng chạy; <b>task IAM role</b> cho <b>code ứng dụng</b> gọi S3, DynamoDB… lúc chạy. Với EC2 launch type còn có <b>container instance role</b> – không nên để ứng dụng dựa vào role này.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – container không phải ranh giới bảo mật</span>
+        <ul>
+          <li>Tài liệu nhấn mạnh: “<i>Containers are not a security boundary</i>”. Trên <b>EC2 / Managed Instances / ECS Anywhere</b> <b>không có cô lập task</b>: container có thể đọc credential của task khác trên cùng instance, đọc <b>instance role</b> qua <b>IMDS</b>. Hãy chặn IMDS (biến <code>ECS_AWSVPC_BLOCK_IMDS=true</code> cho <code>awsvpc</code>, hoặc iptables cho <code>bridge</code>).</li>
+          <li>Gắn quyền S3 vào <b>instance profile</b> của EC2 cho “tiện” ⇒ mọi task trên instance đều có quyền đó – vi phạm least privilege. Đáp án đúng là <b>task IAM role riêng cho từng service</b>.</li>
+          <li>Lỗi “<i>task cannot pull image from ECR</i>” / “<i>cannot send logs</i>” ⇒ sửa <b>task execution role</b>, không phải task role.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Application running in ECS containers needs to read from an S3 bucket / write to DynamoDB, following least privilege</i>” ⇒ <b>task IAM role</b> trong task definition (không dùng access key, không dùng instance profile).</li>
+          <li>“<i>Different services on the same cluster need different permissions</i>” ⇒ mỗi task definition một <b>task role</b>.</li>
+          <li>“<i>Inject database password into container at startup</i>” ⇒ <code>secrets</code> trong task definition + <b>task execution role</b> có quyền <code>secretsmanager:GetSecretValue</code>.</li>
+          <li>Với EKS, tương đương task role là <b>IAM roles for service accounts (IRSA)</b> / <b>EKS Pod Identity</b> – gán role cho Pod qua Kubernetes service account.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: AUTO SCALING ===================== -->
+      <h2 id="auto-scaling"><img src="../assets/icons/svc/AWS-Application-Auto-Scaling.svg" alt="">ECS Service Auto Scaling và Cluster Auto Scaling</h2>
+      <p class="lead">Container cần scale ở <b>hai tầng</b>: <span class="t" data-vi="Tự động co giãn số task của service">Service Auto Scaling</span> thay đổi <b>số task</b> (desired count), còn <span class="t" data-vi="Tự động co giãn số EC2 của cluster">Cluster Auto Scaling</span> thay đổi <b>số EC2 instance</b> để có chỗ đặt task. Với Fargate chỉ cần tầng thứ nhất – AWS lo phần capacity.</p>
+
+      <h3>Service Auto Scaling – dùng Application Auto Scaling</h3>
+      <p>ECS dùng dịch vụ <b>Application Auto Scaling</b> để tăng/giảm desired count. ECS gửi metric CPU và memory trung bình của service lên CloudWatch (chu kỳ <b>1 phút</b>). Các kiểu scaling được hỗ trợ:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Kiểu</th><th>Cách hoạt động</th><th>Khi nào dùng</th></tr></thead>
+        <tbody>
+          <tr><td><b>Target tracking</b></td><td>Đặt giá trị mục tiêu cho một metric – “như bộ điều nhiệt”. Metric định sẵn hay dùng: <code>ECSServiceAverageCPUUtilization</code>, <code>ECSServiceAverageMemoryUtilization</code>, <code>ALBRequestCountPerTarget</code> <i>(tên metric: kiến thức phổ biến)</i>.</td><td><b>Dễ nhất</b>, mặc định nên chọn.</td></tr>
+          <tr><td><b>Step scaling</b></td><td>Bậc điều chỉnh (step adjustment) theo <b>mức vượt ngưỡng</b> của CloudWatch alarm.</td><td>Muốn phản ứng <b>nhanh, mạnh</b> khi tải tăng đột ngột.</td></tr>
+          <tr><td><b>Scheduled scaling</b></td><td>Đổi min/max/desired theo ngày giờ.</td><td>Tải theo lịch biết trước (giờ hành chính, sự kiện).</td></tr>
+          <tr><td><b>Predictive scaling</b></td><td>Phân tích dữ liệu lịch sử để phát hiện chu kỳ ngày/tuần và scale trước.</td><td>Tải có tính chu kỳ lặp lại.</td></tr>
+          <tr><td><b>Theo SQS queue</b></td><td>Custom metric <b>backlog per task</b> = số message trong queue / số task đang chạy, kết hợp target tracking.</td><td>Task là <b>worker</b> xử lý message bất đồng bộ (Bài 30).</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Những điểm cần nhớ (theo tài liệu)</h3>
+      <ul>
+        <li><b>Cooldown</b>: scale-out liên tục nhưng không quá đà; scale-in <b>thận trọng</b> – bị chặn tới khi hết cooldown, nhưng nếu alarm khác yêu cầu scale-out trong lúc đó thì scale-out ngay.</li>
+        <li>Có scaling policy đang hoạt động thì Service Auto Scaling <b>có thể ghi đè desired count bạn đặt tay</b>.</li>
+        <li>Tính toán dựa trên <b>số task đang chạy thực tế</b> chứ không phải desired count – tránh “runaway scaling” khi cluster không đủ tài nguyên đặt task.</li>
+        <li>Muốn <b>scale về 0</b> khi không có việc ⇒ đặt minimum capacity = 0.</li>
+        <li>Trong lúc <b>deployment</b>, Application Auto Scaling <b>tắt scale-in</b> nhưng vẫn scale-out (trừ khi bạn suspend).</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp region"><span class="lbl"><img src="../assets/icons/svc/Amazon-Elastic-Container-Service.svg" alt="">Hai tầng scaling – worker xử lý hàng đợi trên ECS</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">SQS queue<small>ApproximateNumberOfMessagesVisible</small></div>
+            <span class="arrow">metric</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">CloudWatch<small>backlog per task</small></div>
+            <span class="arrow">target tracking</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Application-Auto-Scaling.svg" alt="">Application Auto Scaling<small>desired count 2 → 10</small></div>
+            <span class="arrow">tầng 1</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Service_Service.svg" alt="">ECS service “worker”<small>thêm task</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Service_Task.svg" alt="">Task ở trạng thái PROVISIONING<small>thiếu chỗ trên EC2</small></div>
+            <span class="arrow">tầng 2</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Elastic-Container-Service.svg" alt="">Capacity provider (ASG)<small>managed scaling</small></div>
+            <span class="arrow">scale out</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">EC2 Auto Scaling group<small>thêm instance</small></div>
+            <span class="arrow dashed">hoặc</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Fargate.svg" alt="">Fargate<small>không cần tầng 2</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> <b>Tầng 1 – Service Auto Scaling</b>: Application Auto Scaling tăng desired count theo metric (ở đây là backlog SQS mỗi task). <b>Tầng 2 – Cluster Auto Scaling</b>: nếu task không có chỗ trên EC2, capacity provider (ASG, managed scaling) tăng số instance. Dùng <b>Fargate</b> thì bỏ hẳn tầng 2.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>ECS service must scale based on CPU / number of requests</i>” ⇒ <b>Service Auto Scaling target tracking</b> (<code>ECSServiceAverageCPUUtilization</code> / <code>ALBRequestCountPerTarget</code>).</li>
+          <li>“<i>Workers consume from SQS; scale with queue depth</i>” ⇒ target tracking trên <b>backlog per task</b>.</li>
+          <li>“<i>Tasks stuck in PROVISIONING / not enough EC2 capacity</i>” ⇒ dùng <b>ASG capacity provider với managed scaling</b> (Cluster Auto Scaling) hoặc chuyển sang <b>Fargate</b>.</li>
+          <li>Đừng nhầm: EC2 Auto Scaling (Bài 13) scale <b>instance</b>; Service Auto Scaling scale <b>task</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: AMAZON EKS ===================== -->
+      <h2 id="eks"><img src="../assets/icons/svc/Amazon-Elastic-Kubernetes-Service.svg" alt="">Amazon EKS: Kubernetes được quản lý</h2>
+      <p class="lead"><b>Amazon Elastic Kubernetes Service (EKS)</b> là dịch vụ <span class="t" data-vi="Hệ thống điều phối container mã nguồn mở">Kubernetes</span> được quản lý hoàn toàn, loại bỏ độ phức tạp khi vận hành cluster Kubernetes. EKS <b>certified Kubernetes-conformant</b> ⇒ ứng dụng Kubernetes chạy được mà <b>không phải refactor</b>, dùng được tooling cộng đồng (kubectl, Helm, Argo CD…). EKS chạy trên AWS Cloud và cả data center của bạn (<b>EKS Anywhere</b>, <b>EKS Hybrid Nodes</b>).</p>
+
+      <h3>Control plane do AWS quản lý</h3>
+      <ul>
+        <li>Mỗi cluster có <b>control plane riêng</b>, không chia sẻ giữa cluster hay account.</li>
+        <li>Control plane có <b>ít nhất 2 API server instance</b> và <b>3 etcd instance</b> trải trên <b>3 Availability Zone</b> trong một Region. Instance lỗi được thay tự động (có thể sang AZ khác) ⇒ có <b>SLA</b> cho API server endpoint.</li>
+        <li>Control plane giao tiếp với worker node qua <b>requester-managed ENI</b> trong VPC của bạn.</li>
+        <li>Quyền truy cập: kết hợp <b>IAM</b> (ai được gọi Kubernetes API) và <b>Kubernetes RBAC</b>; workload lấy quyền AWS qua <b>IAM roles for service accounts</b> / EKS Pod Identity.</li>
+        <li><b>Giá</b>: trả <b>phí theo cluster</b> (theo mức hỗ trợ phiên bản Kubernetes – standard / extended support), cộng tiền EC2, EBS, Fargate… cho worker node; EKS Auto Mode có phí riêng cho instance nó quản lý. Savings Plans áp dụng được cho compute của EKS.</li>
+      </ul>
+
+      <h3>Các lựa chọn compute (data plane) của EKS</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Lựa chọn</th><th>Ai quản lý node</th><th>Đặc điểm chính (theo tài liệu)</th></tr></thead>
+        <tbody>
+          <tr><td><b>Managed node groups</b></td><td>EKS tạo &amp; quản lý vòng đời; EC2 nằm trong account bạn</td><td>Mỗi node thuộc một <b>EC2 Auto Scaling group do EKS quản lý</b>, trải qua nhiều AZ bạn chọn. Tạo/cập nhật/terminate bằng <b>một thao tác</b>; khi update/terminate EKS tự <b>drain</b> node (tôn trọng Pod disruption budget khi update). Capacity type <b>On-Demand</b> (mặc định) hoặc <b>Spot</b>. Hỗ trợ launch template, custom AMI, node auto repair. <b>Không thêm phí</b>.</td></tr>
+          <tr><td><b>Self-managed nodes</b></td><td>Bạn</td><td>Toàn quyền kiểm soát EC2; tự quản lý, scale, patch. Hỗ trợ mọi tiêu chí nhưng tốn công nhất.</td></tr>
+          <tr><td><b>AWS Fargate</b></td><td>AWS (serverless)</td><td>Pod chạy trên Fargate theo <b>Fargate profile</b>; mỗi Pod có kernel, CPU, memory, ENI riêng (cô lập bằng VM). Không quản lý EC2, không SSH.</td></tr>
+          <tr><td><b>EKS Auto Mode</b></td><td>AWS quản lý cả node</td><td>Mở rộng quản lý sang data plane: tự provision, chọn instance tối ưu, scale, patch OS, tích hợp load balancing, storage (EBS), GPU. Dành cho ai muốn giảm vận hành tối đa.</td></tr>
+          <tr><td><b>Karpenter</b></td><td>Autoscaler mã nguồn mở</td><td>Cluster autoscaler hiệu năng cao, <b>launch đúng kích cỡ compute just-in-time</b> theo nhu cầu Pod.</td></tr>
+          <tr><td><b>EKS Hybrid Nodes</b></td><td>Bạn (máy on-prem/edge)</td><td>Dùng máy on-premises/edge làm node của cluster EKS; control plane vẫn do AWS quản lý. Tính phí theo vCPU.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>So sánh nhanh managed node groups và Fargate trên EKS</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Managed node groups</th><th>Fargate (EKS)</th></tr></thead>
+        <tbody>
+          <tr><td>Phải quản lý / patch EC2</td><td class="yes">Có (EKS build AMI vá lỗi, bạn triển khai)</td><td class="no">Không</td></tr>
+          <tr><td>Windows container</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>GPU / Inferentia / Arm</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>DaemonSet</td><td class="yes">Có</td><td class="no">Không (chuyển thành sidecar)</td></tr>
+          <tr><td>Privileged container, HostPort/HostNetwork</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Amazon EBS cho Pod</td><td class="yes">Có</td><td class="no">Không (dùng EFS – static provisioning)</td></tr>
+          <tr><td>Pod ở public subnet</td><td class="yes">Có</td><td class="no">Không – chỉ private subnet (ra ngoài qua NAT)</td></tr>
+          <tr><td>Security group riêng cho từng Pod</td><td>Có (chỉ Linux)</td><td class="yes">Có</td></tr>
+          <tr><td>Spot</td><td class="yes">Spot capacity type</td><td class="no">EKS không hỗ trợ Fargate Spot</td></tr>
+          <tr><td>Load balancer</td><td>ALB/NLB</td><td>ALB/NLB với <b>target type IP</b></td></tr>
+          <tr><td>Giá</td><td>Tiền EC2 (nhiều Pod / instance)</td><td>Mỗi Pod trả theo cấu hình vCPU + memory riêng</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Fargate profile và Spot trong managed node group</h3>
+      <ul>
+        <li><span class="t" data-vi="Hồ sơ Fargate – quy tắc chọn Pod chạy trên Fargate">Fargate profile</span>: định nghĩa Pod nào (theo <b>namespace</b> và <b>label</b>) chạy trên Fargate. Pod không khớp profile lúc được lập lịch có thể kẹt ở trạng thái <code>Pending</code>. Pod trên Fargate <b>không dùng được IMDS</b> ⇒ cấp IAM bằng <b>IAM roles for service accounts</b>.</li>
+        <li>Managed node group <b>Spot</b>: allocation strategy <code>price-capacity-optimized</code> (Kubernetes 1.28+), bật <b>Capacity Rebalancing</b> để EKS khởi node thay thế và <b>cordon + drain</b> node có nguy cơ bị thu hồi. Spot hợp với workload <b>stateless, chịu lỗi</b> (batch, ML training, Spark ETL, xử lý queue, API stateless); <b>On-Demand</b> cho StatefulSet, database, công cụ giám sát. Nên dùng <b>nhiều instance type</b> cùng vCPU/memory để tăng số Spot pool.</li>
+        <li>Managed node group ở private subnet cần kéo image từ ECR qua <b>NAT gateway</b> hoặc endpoint <code>ecr.api</code>, <code>ecr.dkr</code> + S3 gateway endpoint (giống Hình 2).</li>
+        <li>Chạy ứng dụng stateful dùng EBS qua nhiều AZ với Cluster Autoscaler ⇒ tạo <b>mỗi AZ một node group</b> (EBS gắn theo AZ).</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/Amazon-Elastic-Kubernetes-Service.svg" alt="">Amazon EKS cluster</span>
+          <div class="grp plain"><span class="lbl">Control plane – VPC do AWS quản lý (≥ 2 API server, 3 etcd, 3 AZ)</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/svc/Amazon-Elastic-Kubernetes-Service.svg" alt="">API server<small>AZ a</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Elastic-Kubernetes-Service.svg" alt="">API server<small>AZ b</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-EKS-Cloud.svg" alt="">etcd ×3<small>AZ a / b / c</small></div>
+            </div>
+          </div>
+          <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC của bạn – data plane</span>
+            <div class="row">
+              <div class="grp priv"><span class="lbl">Managed node group (On-Demand)</span>
+                <div class="flow">
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">EC2 nodes<small>ASG do EKS quản lý · StatefulSet</small></div>
+                </div>
+              </div>
+              <div class="grp priv"><span class="lbl">Managed node group (Spot)</span>
+                <div class="flow">
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" alt="">Spot nodes<small>nhiều instance type · batch</small></div>
+                </div>
+              </div>
+              <div class="grp priv"><span class="lbl">Fargate profile: namespace=api</span>
+                <div class="flow">
+                  <div class="node"><img src="../assets/icons/svc/AWS-Fargate.svg" alt="">Pod trên Fargate<small>1 Pod / microVM</small></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> EKS tách <b>control plane</b> (AWS vận hành, trải 3 AZ) và <b>data plane</b> trong VPC của bạn. Một cluster có thể trộn <b>managed node group On-Demand</b> cho workload stateful, <b>node group Spot</b> cho batch chịu gián đoạn, và <b>Fargate profile</b> cho Pod cần cô lập/không muốn quản lý node.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Migrate existing Kubernetes workloads to AWS with minimal changes</i>” ⇒ <b>EKS</b> (không phải ECS – ECS dùng task definition riêng).</li>
+          <li>“<i>EKS, least operational overhead for worker nodes</i>” ⇒ <b>managed node groups</b> (vẫn EC2) hoặc <b>Fargate</b> / <b>EKS Auto Mode</b> (không quản lý node). Cần GPU/DaemonSet/Windows ⇒ managed node groups.</li>
+          <li>“<i>Pods need AWS permissions</i>” ⇒ <b>IAM roles for service accounts (IRSA)</b> / EKS Pod Identity – không gán quyền vào node role.</li>
+          <li>“<i>Run Kubernetes on-premises with AWS-managed control plane</i>” ⇒ <b>EKS Hybrid Nodes</b>; “<i>fully on-premises Kubernetes supported by AWS</i>” ⇒ <b>EKS Anywhere</b>.</li>
+          <li>“<i>Cost-optimize stateless EKS workloads</i>” ⇒ <b>Spot managed node group</b> nhiều instance type (+ Karpenter).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: AMAZON ECR ===================== -->
+      <h2 id="ecr"><img src="../assets/icons/svc/Amazon-Elastic-Container-Registry.svg" alt="">Amazon ECR: kho container image</h2>
+      <p class="lead"><b>Amazon Elastic Container Registry (ECR)</b> là <span class="t" data-vi="Kho lưu ảnh container">container image registry</span> được AWS quản lý – an toàn, có khả năng mở rộng và tin cậy. ECR hỗ trợ <b>private repository</b> với quyền dựa trên <b>IAM</b> (resource-based) và cả <b>ECR Public</b>; lưu Docker image, <b>OCI image</b> và artifact tương thích OCI. ECR được xem là “phần mở rộng” của ECS và EKS.</p>
+
+      <h3>Khái niệm cơ bản</h3>
+      <ul>
+        <li><span class="t" data-vi="Kho đăng ký riêng">Private registry</span>: mỗi account có <b>một private registry mặc định</b> (theo Region), URL <code>https://<i>aws_account_id</i>.dkr.ecr.<i>region</i>.amazonaws.com</code>.</li>
+        <li><span class="t" data-vi="Kho chứa image">Repository</span>: chứa các image cùng tên với nhiều <b>tag</b> / digest. Kiểm soát bằng <b>IAM policy</b> (identity-based) và <b>repository policy</b> (resource-based – vd cho account khác pull).</li>
+        <li><b>Authentication</b>: Docker CLI không hiểu IAM ⇒ dùng <code>aws ecr get-login-password | docker login --username AWS ...</code> hoặc <b>ECR credential helper</b>. <b>Authorization token có hiệu lực 12 giờ</b>, phạm vi quyền đúng bằng IAM principal đã lấy token.</li>
+        <li>Mã hóa at rest: mặc định <b>AES-256 (SSE-S3)</b>, tùy chọn <b>KMS</b> khi tạo repository <i>(kiến thức phổ biến)</i>. <span class="t" data-vi="Tag bất biến">Tag immutability</span>: chặn ghi đè tag (vd <code>v1.2.0</code>) – đảm bảo image đã deploy không bị thay ngầm.</li>
+        <li>Giá: trả theo <b>dung lượng lưu trữ</b>, <b>data transfer</b> khi push/pull, và các tính năng opt-in (signing, replication).</li>
+      </ul>
+
+      <h3>Các tính năng chính (theo tài liệu)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tính năng</th><th>Chi tiết</th></tr></thead>
+        <tbody>
+          <tr><td><b>Lifecycle policy</b></td><td>Quy tắc tự <b>expire/archive</b> image không dùng. Rule theo <code>imageCountMoreThan</code> (giữ N image mới nhất), <code>sinceImagePushed</code> (cũ hơn N ngày), <code>sinceImagePulled</code>; lọc theo <code>tagStatus</code> và tag prefix/pattern. Có <b>preview</b> trước khi áp dụng; image bị xử lý <b>trong vòng 24 giờ</b> sau khi thỏa điều kiện; rule priority số nhỏ hơn được ưu tiên; mỗi hành động ghi vào CloudTrail.</td></tr>
+          <tr><td><b>Image scanning</b></td><td><b>Basic scanning</b>: công nghệ AWS + CVE database, quét lỗ hổng <b>OS</b>; tần suất <b>manual</b> hoặc <b>scan on push</b>. <b>Enhanced scanning</b>: tích hợp <b>Amazon Inspector</b>, quét cả <b>OS và package ngôn ngữ lập trình</b>; tần suất <b>scan on push</b> và <b>continuous scan</b> – có lỗ hổng mới thì kết quả tự cập nhật và Inspector phát sự kiện tới <b>EventBridge</b>.</td></tr>
+          <tr><td><b>Replication</b></td><td><b>Cross-Region</b> và <b>cross-account</b>, cấu hình ở mức <b>registry</b> (theo Region). Tối đa <b>25 đích</b> và <b>25 rule</b>, mỗi rule ≤ 100 filter (lọc theo prefix repository). Chỉ image push <b>sau khi bật</b> mới được sao chép (image cũ cần <i>replication backfill</i>). Phần lớn image sao chép <b>dưới 30 phút</b>. Không sao chép lệnh xóa; repository policy và lifecycle policy <b>không được sao chép</b> (dùng repository creation template). Cross-account: chỉ account <b>đích</b> cần <b>registry permissions policy</b> cho phép <code>ecr:ReplicateImage</code> (+ <code>ecr:CreateRepository</code>).</td></tr>
+          <tr><td><b>Pull through cache</b></td><td>Cache repository từ <b>registry upstream</b> (vd Docker Hub, ECR Public, Quay…) vào private registry; ECR định kỳ đồng bộ để giữ image cache mới. Giảm phụ thuộc giới hạn của Docker Hub, kéo image nhanh hơn trong VPC.</td></tr>
+          <tr><td><b>Repository creation template</b></td><td>Định nghĩa sẵn tag immutability, encryption, repository policy, lifecycle policy, tag cho repository mà ECR <b>tự tạo</b> khi pull through cache, create on push hay replication.</td></tr>
+          <tr><td><b>Managed signing</b></td><td>Tự tạo chữ ký mật mã khi push image – đơn giản hóa việc ký image.</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-CodePipeline.svg" alt="">Pipeline image: build → scan → replicate → deploy</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/AWS-CodeBuild.svg" alt="">CI build<small>docker build · docker push</small></div>
+            <span class="arrow">push (token 12 h)</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Registry_Registry.svg" alt="">ECR us-east-1<small>tag immutable · lifecycle policy</small></div>
+            <span class="arrow">scan on push</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Inspector.svg" alt="">Amazon Inspector<small>enhanced / continuous</small></div>
+            <span class="arrow dashed">finding</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">EventBridge<small>chặn deploy / cảnh báo</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Registry_Registry.svg" alt="">ECR us-east-1</div>
+            <span class="arrow">replication (&lt; 30 phút)</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Container-Registry_Image.svg" alt="">ECR eu-west-1 / account prod<small>registry policy ở đích</small></div>
+            <span class="arrow">pull cục bộ</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Elastic-Container-Service.svg" alt="">ECS / EKS ở Region DR<small>khởi động nhanh, pull trong Region</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 6.</b> Vòng đời image trên ECR: CI push image (đăng nhập bằng token 12 giờ), <b>enhanced scanning</b> qua Inspector phát hiện lỗ hổng và báo về EventBridge; <b>replication</b> sao chép image sang Region/account khác để workload ở đó pull cục bộ (DR, multi-Region); <b>lifecycle policy</b> dọn image cũ để giảm chi phí lưu trữ.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Automatically scan container images for vulnerabilities when pushed</i>” ⇒ ECR <b>scan on push</b>; “<i>continuously, including programming language packages</i>” ⇒ <b>enhanced scanning (Amazon Inspector)</b>.</li>
+          <li>“<i>Reduce storage cost of old / untagged images</i>” ⇒ <b>ECR lifecycle policy</b>.</li>
+          <li>“<i>Images must be available in another Region / account for DR or multi-Region deployments</i>” ⇒ <b>ECR cross-Region / cross-account replication</b>.</li>
+          <li>“<i>Docker Hub rate limits</i>”, “<i>cache public images privately</i>” ⇒ <b>pull through cache</b>.</li>
+          <li>“<i>Prevent image tags from being overwritten</i>” ⇒ <b>tag immutability</b>. “<i>Allow another account to pull</i>” ⇒ <b>repository policy</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Bật replication rồi mong image <b>cũ</b> tự xuất hiện ở Region đích ⇒ sai; chỉ image push sau khi bật (hoặc dùng backfill).</li>
+          <li>Cross-account replication: policy đặt ở <b>registry đích</b>, không phải repository nguồn.</li>
+          <li>Basic scanning <b>không</b> quét package ngôn ngữ (npm, pip, Maven…) và không quét liên tục – cần enhanced scanning.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: APP RUNNER & CHỌN DỊCH VỤ ===================== -->
+      <h2 id="app-runner"><img src="../assets/icons/svc/AWS-App-Runner.svg" alt="">AWS App Runner và cách chọn dịch vụ compute cho container</h2>
+      <p class="lead"><b>AWS App Runner</b> là cách “nhanh, đơn giản, tiết kiệm” để đưa <b>source code</b> hoặc <b>container image</b> thành <b>web application</b> có scale và bảo mật trên AWS – không cần học công nghệ mới, không cần chọn dịch vụ compute hay cấu hình tài nguyên.</p>
+
+      <ul>
+        <li>App Runner <b>kết nối trực tiếp</b> tới code repository hoặc image repository (ECR), cung cấp pipeline tích hợp &amp; triển khai tự động: mỗi commit mới hoặc image mới ⇒ <b>tự deploy</b>.</li>
+        <li>Fully managed: load balancing, TLS, <b>auto scaling</b> (bạn đặt số instance tối thiểu/tối đa và tải tối đa mỗi instance), scale xuống khi ít request ⇒ chỉ trả tiền tài nguyên dùng.</li>
+        <li><b>Lưu ý cập nhật (theo tài liệu)</b>: <i>App Runner không còn mở cho khách hàng mới</i>; khách hàng hiện tại vẫn dùng bình thường. AWS khuyến nghị khách hàng mới dùng <b>Amazon ECS Express Mode</b>. Đề SAA-C03 vẫn có thể nhắc App Runner với ý nghĩa “cách đơn giản nhất để chạy web app/API container mà không cần kiến thức hạ tầng”.</li>
+      </ul>
+
+      <h3>Bảng chọn nhanh</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu trong đề</th><th>Lựa chọn phù hợp</th></tr></thead>
+        <tbody>
+          <tr><td>Web app / API từ code hoặc image, <b>không muốn biết gì về hạ tầng</b>, tự động deploy</td><td><b>App Runner</b> (khách mới: ECS Express Mode)</td></tr>
+          <tr><td>Container, <b>không quản lý server</b>, cần kiểm soát mạng (VPC, SG theo task), IAM, load balancer</td><td><b>ECS on Fargate</b></td></tr>
+          <tr><td>Container cần <b>GPU</b>, instance đặc thù, privileged, tối ưu chi phí bằng RI/Savings Plans với mật độ cao</td><td><b>ECS on EC2</b> (ASG capacity provider) hoặc <b>ECS Managed Instances</b></td></tr>
+          <tr><td>Đã dùng <b>Kubernetes</b>, cần chuẩn mở, đa cloud / hybrid, hệ sinh thái Helm/Argo CD</td><td><b>Amazon EKS</b> (+ managed node groups / Fargate / Auto Mode)</td></tr>
+          <tr><td>Hàm ngắn ≤ 15 phút, event-driven, scale về 0</td><td><b>AWS Lambda</b> (Bài 32)</td></tr>
+          <tr><td>Job container chạy lâu, theo lịch hoặc theo sự kiện</td><td><b>ECS task trên Fargate</b> do <b>EventBridge Scheduler / Step Functions</b> kích hoạt</td></tr>
+          <tr><td>Container phải chạy trong <b>data center</b> của công ty</td><td><b>ECS Anywhere</b> / <b>EKS Anywhere</b> / <b>EKS Hybrid Nodes</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Thứ tự “ít vận hành nhất” thường gặp: <b>App Runner</b> &lt; <b>ECS Fargate</b> &lt; <b>EKS Fargate / Auto Mode</b> &lt; <b>ECS/EKS trên EC2</b> &lt; tự cài Docker/Kubernetes trên EC2.</li>
+          <li>Đề nói “<i>Kubernetes</i>” ⇒ gần như chắc chắn EKS; không nói Kubernetes mà muốn “<i>simplest container orchestration on AWS</i>” ⇒ ECS.</li>
+          <li>API Gateway gọi service ECS trong private subnet ⇒ <b>VPC link</b> tới NLB/ALB (Bài 33) hoặc Cloud Map với HTTP API.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải thuộc</span>
+        <ul>
+          <li><b>ECS</b>: task definition (blueprint JSON, có revision) → <b>task</b> (bản chạy, batch) / <b>service</b> (duy trì desired count, thay task lỗi, sau ALB/NLB) → trong <b>cluster</b>. Ba lớp: capacity – controller – provisioning.</li>
+          <li><b>Fargate</b>: serverless, mỗi task cô lập (không chia kernel/ENI), <b>awsvpc</b> bắt buộc ⇒ target type <b>ip</b>; 0,25–32 vCPU, tới 244 GB; không GPU, không privileged. <b>Fargate Spot</b>: rẻ, cảnh báo <b>2 phút</b> (chỉ ECS).</li>
+          <li><b>Capacity provider</b> là cách khuyến nghị: FARGATE, FARGATE_SPOT (có sẵn mọi cluster), ASG (managed scaling = Cluster Auto Scaling), ECS Managed Instances.</li>
+          <li><b>Task IAM role</b> = quyền cho <b>code ứng dụng</b>; <b>task execution role</b> = quyền cho <b>agent</b> kéo ECR, ghi CloudWatch Logs, lấy secret (<code>AmazonECSTaskExecutionRolePolicy</code>); container instance role = EC2 đăng ký cluster. Container không phải ranh giới bảo mật.</li>
+          <li><b>Service Auto Scaling</b> (Application Auto Scaling): target tracking, step, scheduled, predictive, SQS backlog per task; metric 1 phút; scale-in tắt trong lúc deploy.</li>
+          <li><b>EKS</b>: control plane ≥ 2 API server + 3 etcd trên 3 AZ, phí theo cluster; compute: managed node groups (ASG do EKS quản lý, On-Demand/Spot, tự drain), self-managed, Fargate (profile, chỉ private subnet, không DaemonSet/EBS/GPU), Auto Mode, Karpenter, Hybrid Nodes. Pod lấy quyền qua IRSA / Pod Identity.</li>
+          <li><b>ECR</b>: token <b>12 giờ</b>; lifecycle policy (thực thi trong 24 giờ); basic scan (OS, manual/on push) vs enhanced (Inspector, OS + language, continuous); replication cross-Region/account (≤ 25 đích, &lt; 30 phút, chỉ image mới); pull through cache; tag immutability.</li>
+          <li>Private subnet không NAT ⇒ endpoint <b>ecr.api + ecr.dkr + S3 gateway</b> (+ logs, secretsmanager).</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="glossary">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Container / Container image</dt><dd><b>Vùng chứa / Ảnh container</b> – gói ứng dụng kèm phụ thuộc; image theo chuẩn Docker/OCI.</dd></div>
+        <div><dt>Container orchestration</dt><dd><b>Điều phối container</b> – đặt, khởi động lại, scale, cân bằng tải container.</dd></div>
+        <div><dt>Amazon ECS</dt><dd><b>Dịch vụ điều phối container của AWS</b> – không phải vận hành control plane.</dd></div>
+        <div><dt>Task definition / Revision</dt><dd><b>Bản thiết kế ứng dụng / Phiên bản</b> – JSON mô tả container, CPU/memory, mạng, IAM role.</dd></div>
+        <div><dt>Task</dt><dd><b>Bản chạy của task definition</b> – thường cho batch, chạy xong thì dừng.</dd></div>
+        <div><dt>Service (ECS)</dt><dd><b>Dịch vụ chạy dài hạn</b> – duy trì desired count, thay task lỗi.</dd></div>
+        <div><dt>Cluster (ECS)</dt><dd><b>Cụm</b> – nhóm logic chứa task/service và capacity.</dd></div>
+        <div><dt>Container agent</dt><dd><b>Tác tử container</b> – phần mềm trên instance nhận lệnh từ ECS.</dd></div>
+        <div><dt>Network mode (awsvpc / bridge / host)</dt><dd><b>Chế độ mạng</b> – awsvpc: mỗi task một ENI + SG; bridge: mạng ảo Docker; host: dùng mạng instance.</dd></div>
+        <div><dt>Launch type</dt><dd><b>Kiểu khởi chạy</b> – EC2, Fargate, External; nên dùng để khai báo tương thích.</dd></div>
+        <div><dt>Capacity provider / Capacity provider strategy</dt><dd><b>Nhà cung cấp năng lực / Chiến lược phân bổ</b> – FARGATE, FARGATE_SPOT, ASG, Managed Instances; base + weight.</dd></div>
+        <div><dt>AWS Fargate</dt><dd><b>Compute serverless cho container</b> – mỗi task/Pod cô lập riêng.</dd></div>
+        <div><dt>Fargate Spot</dt><dd><b>Fargate giá rẻ dùng capacity dư</b> – bị thu hồi với cảnh báo 2 phút.</dd></div>
+        <div><dt>Platform version (Fargate)</dt><dd><b>Phiên bản nền tảng</b> – kernel + runtime; task mới luôn dùng revision mới nhất.</dd></div>
+        <div><dt>ECS Managed Instances</dt><dd><b>EC2 do ECS vận hành</b> – linh hoạt loại instance, AWS lo patch/scale.</dd></div>
+        <div><dt>ECS Anywhere</dt><dd><b>ECS trên máy on-premises</b> – external instance.</dd></div>
+        <div><dt>Task IAM role</dt><dd><b>Vai trò IAM của task</b> – quyền cho code ứng dụng gọi dịch vụ AWS.</dd></div>
+        <div><dt>Task execution role</dt><dd><b>Vai trò thực thi task</b> – quyền cho agent kéo ECR, ghi log, lấy secret.</dd></div>
+        <div><dt>Container instance role</dt><dd><b>Vai trò của EC2 chạy container</b> – đăng ký cluster.</dd></div>
+        <div><dt>Service Auto Scaling</dt><dd><b>Tự động co giãn số task</b> – qua Application Auto Scaling.</dd></div>
+        <div><dt>Cluster Auto Scaling / Managed scaling</dt><dd><b>Tự động co giãn số EC2 của cluster</b> – qua ASG capacity provider.</dd></div>
+        <div><dt>Backlog per task</dt><dd><b>Số message tồn mỗi task</b> – metric để scale worker theo SQS.</dd></div>
+        <div><dt>Amazon EKS</dt><dd><b>Kubernetes được quản lý</b> – control plane trên 3 AZ.</dd></div>
+        <div><dt>Control plane / Data plane</dt><dd><b>Mặt điều khiển / Mặt dữ liệu</b> – API server + etcd / các node chạy Pod.</dd></div>
+        <div><dt>Pod / Node</dt><dd><b>Đơn vị chạy nhỏ nhất của Kubernetes / Máy chạy Pod</b>.</dd></div>
+        <div><dt>Managed node group</dt><dd><b>Nhóm node được quản lý</b> – ASG do EKS quản lý, tự drain, On-Demand/Spot.</dd></div>
+        <div><dt>Self-managed nodes</dt><dd><b>Node tự quản lý</b> – bạn lo toàn bộ EC2.</dd></div>
+        <div><dt>Fargate profile</dt><dd><b>Hồ sơ Fargate</b> – chọn Pod chạy trên Fargate theo namespace/label.</dd></div>
+        <div><dt>EKS Auto Mode</dt><dd><b>Chế độ tự động của EKS</b> – AWS quản lý cả node.</dd></div>
+        <div><dt>Karpenter</dt><dd><b>Bộ tự động co giãn cluster</b> – launch node đúng cỡ just-in-time.</dd></div>
+        <div><dt>EKS Hybrid Nodes / EKS Anywhere</dt><dd><b>Node on-prem cho cluster EKS / Kubernetes on-prem do AWS hỗ trợ</b>.</dd></div>
+        <div><dt>IAM roles for service accounts (IRSA) / EKS Pod Identity</dt><dd><b>Gán IAM role cho Pod</b> qua Kubernetes service account.</dd></div>
+        <div><dt>DaemonSet</dt><dd><b>Tập daemon</b> – một Pod trên mỗi node; không chạy trên Fargate.</dd></div>
+        <div><dt>Amazon ECR / Private registry / Repository</dt><dd><b>Kho image / Kho đăng ký riêng / Kho chứa image</b>.</dd></div>
+        <div><dt>Authorization token (ECR)</dt><dd><b>Mã ủy quyền</b> – dùng cho docker login, hiệu lực 12 giờ.</dd></div>
+        <div><dt>Lifecycle policy (ECR)</dt><dd><b>Chính sách vòng đời image</b> – expire/archive image cũ trong 24 giờ.</dd></div>
+        <div><dt>Basic / Enhanced scanning</dt><dd><b>Quét cơ bản / Quét nâng cao</b> – OS (CVE) / OS + package ngôn ngữ qua Inspector, continuous.</dd></div>
+        <div><dt>Pull through cache</dt><dd><b>Bộ đệm kéo qua</b> – cache image từ registry upstream.</dd></div>
+        <div><dt>Tag immutability</dt><dd><b>Tag bất biến</b> – không cho ghi đè tag image.</dd></div>
+        <div><dt>AWS App Runner</dt><dd><b>Chạy web app từ code/image</b> – fully managed; không nhận khách mới.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company wants to containerize a legacy Java web application and run it on AWS. The company does not want to provision, patch, or scale any Amazon EC2 instances, and it needs each container to be placed behind an Application Load Balancer with its own security group. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Run the containers on an Amazon ECS cluster that uses the EC2 launch type with an Auto Scaling group.</li>
+            <li data-k="B">Install Docker on Amazon EC2 instances in an Auto Scaling group behind the ALB.</li>
+            <li data-k="C">Run the containers as an Amazon ECS service on AWS Fargate with the awsvpc network mode, and register the tasks in an ALB target group that uses the ip target type.</li>
+            <li data-k="D">Run the application on Amazon EKS self-managed nodes and use a NodePort service.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Fargate</b> loại bỏ hoàn toàn việc quản lý EC2; Fargate luôn dùng <b><code>awsvpc</code></b> nên mỗi task có ENI và <b>security group riêng</b>; target group của ALB phải là kiểu <b><code>ip</code></b>. <b>A sai</b>: EC2 launch type vẫn phải quản lý và patch instance. <b>B sai</b>: tự vận hành Docker trên EC2 – nhiều công nhất, không có orchestration. <b>D sai</b>: self-managed nodes là lựa chọn EKS tốn công vận hành nhất.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn container hóa một ứng dụng web Java cũ (legacy) và chạy nó trên AWS. Công ty không muốn cấp phát, vá lỗi (patch) hay scale bất kỳ Amazon EC2 instance nào, và cần mỗi container được đặt sau một Application Load Balancer với security group riêng. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chạy các container trên một Amazon ECS cluster dùng EC2 launch type với một Auto Scaling group.</span><span class="why">Sai: EC2 launch type vẫn bắt công ty cấp phát, patch và scale EC2 instance – trái yêu cầu không quản lý EC2.</span></li>
+              <li data-k="B"><span class="tv">Cài Docker trên các Amazon EC2 instance trong một Auto Scaling group đặt sau ALB.</span><span class="why">Sai: tự vận hành Docker trên EC2 là tốn công nhất, phải quản lý EC2 và không có orchestration container.</span></li>
+              <li data-k="C"><span class="tv">Chạy các container dưới dạng Amazon ECS service trên AWS Fargate với network mode awsvpc, và đăng ký các task vào một ALB target group dùng target type ip.</span><span class="why">Đúng: Fargate loại bỏ việc quản lý EC2; awsvpc cấp cho mỗi task một ENI và security group riêng, và target type ip là bắt buộc để ALB định tuyến tới IP của task.</span></li>
+              <li data-k="D"><span class="tv">Chạy ứng dụng trên Amazon EKS với self-managed nodes và dùng một NodePort service.</span><span class="why">Sai: self-managed nodes nghĩa là tự quản lý và patch EC2 node – lựa chọn EKS tốn công vận hành nhất.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">An application runs as an Amazon ECS service on AWS Fargate. The application code must read objects from a specific Amazon S3 bucket. A security review requires that no long-term credentials be stored in the container image or environment variables and that permissions follow the principle of least privilege. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create an IAM role with s3:GetObject permission for the bucket, trusted by ecs-tasks.amazonaws.com, and specify it as the task IAM role in the task definition.</li>
+            <li data-k="B">Add the s3:GetObject permission to the task execution role.</li>
+            <li data-k="C">Create an IAM user, store its access keys in the task definition environment variables, and rotate the keys every 90 days.</li>
+            <li data-k="D">Attach the permission to the EC2 instance profile of the container instances.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Task IAM role</b> cấp quyền cho <b>code ứng dụng</b> trong container; SDK tự lấy credential tạm thời, không cần access key. Role có trust <code>ecs-tasks.amazonaws.com</code>, quyền chỉ trên bucket cần thiết. <b>B sai</b>: task execution role dành cho <b>agent</b> (kéo image, ghi log, lấy secret), container không dùng được quyền này. <b>C sai</b>: lưu access key dài hạn – trái yêu cầu. <b>D sai</b>: Fargate không có EC2 instance profile cho container; và trên EC2 thì gán vào instance profile sẽ chia quyền cho mọi task.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng chạy dưới dạng Amazon ECS service trên AWS Fargate. Code ứng dụng phải đọc các object từ một Amazon S3 bucket cụ thể. Một đợt rà soát bảo mật yêu cầu không được lưu credential dài hạn trong container image hay biến môi trường, và quyền phải tuân theo nguyên tắc least privilege (đặc quyền tối thiểu). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một IAM role có quyền s3:GetObject trên bucket đó, tin cậy ecs-tasks.amazonaws.com, và chỉ định nó làm task IAM role trong task definition.</span><span class="why">Đúng: task IAM role cấp credential tạm thời cho code ứng dụng trong container, không cần access key, và quyền chỉ giới hạn trên đúng bucket cần đọc.</span></li>
+              <li data-k="B"><span class="tv">Thêm quyền s3:GetObject vào task execution role.</span><span class="why">Sai: task execution role dành cho ECS agent (kéo image, ghi log, lấy secret); code ứng dụng trong container không dùng quyền của role này.</span></li>
+              <li data-k="C"><span class="tv">Tạo một IAM user, lưu access key của nó trong biến môi trường của task definition, và xoay vòng (rotate) key mỗi 90 ngày.</span><span class="why">Sai: lưu access key dài hạn trong biến môi trường vi phạm trực tiếp yêu cầu bảo mật, dù có rotate.</span></li>
+              <li data-k="D"><span class="tv">Gắn quyền vào EC2 instance profile của các container instance.</span><span class="why">Sai: Fargate không có EC2 instance profile cho bạn quản lý; kể cả trên EC2, gắn vào instance profile sẽ chia quyền cho mọi task – trái least privilege.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company runs Amazon ECS tasks on AWS Fargate in private subnets that have no route to the internet. The tasks fail to start with the error "CannotPullContainerError" when pulling images from Amazon ECR. The company must not allow any traffic to the internet. Which solution will resolve the issue?</div>
+          <ol class="opts">
+            <li data-k="A">Assign public IP addresses to the tasks.</li>
+            <li data-k="B">Add a NAT gateway to a public subnet and update the private route tables.</li>
+            <li data-k="C">Attach the AmazonS3ReadOnlyAccess policy to the task IAM role.</li>
+            <li data-k="D">Create interface VPC endpoints for com.amazonaws.region.ecr.api and com.amazonaws.region.ecr.dkr, and a gateway VPC endpoint for Amazon S3.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Fargate trong private subnet kéo image ECR qua <b>interface endpoint</b> <code>ecr.api</code> + <code>ecr.dkr</code> (PrivateLink) và <b>S3 gateway endpoint</b> (layer image lưu trên S3) – lưu lượng không ra Internet. <b>A sai</b>: public IP trong private subnet không có IGW thì vô dụng, và trái yêu cầu không ra Internet. <b>B sai</b>: NAT gateway cho phép ra Internet – vi phạm yêu cầu. <b>C sai</b>: quyền kéo image thuộc <b>task execution role</b>, và vấn đề ở đây là đường mạng, không phải quyền.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy các Amazon ECS task trên AWS Fargate trong private subnet không có route ra Internet. Các task không khởi động được với lỗi "CannotPullContainerError" khi kéo image từ Amazon ECR. Công ty không được phép cho bất kỳ lưu lượng nào ra Internet. Giải pháp nào sẽ khắc phục sự cố?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gán địa chỉ public IP cho các task.</span><span class="why">Sai: public IP vô dụng khi subnet không có route tới Internet gateway, và việc ra Internet lại vi phạm yêu cầu.</span></li>
+              <li data-k="B"><span class="tv">Thêm một NAT gateway vào public subnet và cập nhật route table của private subnet.</span><span class="why">Sai: NAT gateway cho phép lưu lượng đi ra Internet – vi phạm yêu cầu không ra Internet.</span></li>
+              <li data-k="C"><span class="tv">Gắn policy AmazonS3ReadOnlyAccess vào task IAM role.</span><span class="why">Sai: vấn đề là không có đường mạng tới ECR chứ không phải thiếu quyền; hơn nữa quyền kéo image thuộc task execution role chứ không phải task IAM role.</span></li>
+              <li data-k="D"><span class="tv">Tạo interface VPC endpoint cho com.amazonaws.region.ecr.api và com.amazonaws.region.ecr.dkr, và một gateway VPC endpoint cho Amazon S3.</span><span class="why">Đúng: hai interface endpoint ECR (PrivateLink) cùng S3 gateway endpoint (nơi lưu các layer image) cho phép kéo image hoàn toàn nội bộ, không ra Internet.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company processes video-encoding jobs with containers on Amazon ECS. The jobs are stateless, can be retried if interrupted, and can run at any time. The company wants to minimize compute costs while avoiding the management of EC2 instances. A minimum of two tasks must always run on capacity that will not be interrupted. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Use the Fargate launch type for all tasks and purchase EC2 Reserved Instances.</li>
+            <li data-k="B">Use a capacity provider strategy with FARGATE (base of 2) and FARGATE_SPOT with a higher weight.</li>
+            <li data-k="C">Use an Auto Scaling group capacity provider with Spot Instances only.</li>
+            <li data-k="D">Use AWS Lambda functions with a 15-minute timeout.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Capacity provider strategy</b>: <b>base = 2</b> trên <b>FARGATE</b> đảm bảo luôn có 2 task không bị gián đoạn; phần còn lại phân bổ theo <b>weight</b> sang <b>FARGATE_SPOT</b> (giá giảm, chịu được gián đoạn với cảnh báo 2 phút). Không quản lý EC2. <b>A sai</b>: Reserved Instances không áp dụng cho Fargate (Fargate dùng Compute Savings Plans) và không tối ưu bằng Spot. <b>C sai</b>: phải quản lý EC2, và không có capacity không gián đoạn. <b>D sai</b>: encode video có thể vượt 15 phút; đề nói chạy container trên ECS.</div>
+          <div class="trans">
+            <div class="tq">Một công ty xử lý các job mã hóa video (video-encoding) bằng container trên Amazon ECS. Các job là stateless, có thể chạy lại nếu bị gián đoạn, và có thể chạy vào bất kỳ lúc nào. Công ty muốn giảm thiểu chi phí compute đồng thời tránh phải quản lý EC2 instance. Phải luôn có tối thiểu hai task chạy trên capacity không bị gián đoạn. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng Fargate launch type cho mọi task và mua EC2 Reserved Instances.</span><span class="why">Sai: Reserved Instances không áp dụng cho Fargate (Fargate được giảm giá qua Compute Savings Plans) và chạy toàn bộ trên Fargate thường đắt hơn dùng Fargate Spot.</span></li>
+              <li data-k="B"><span class="tv">Dùng một capacity provider strategy với FARGATE (base bằng 2) và FARGATE_SPOT với weight cao hơn.</span><span class="why">Đúng: base = 2 trên FARGATE bảo đảm luôn có 2 task không bị gián đoạn; phần còn lại dồn sang FARGATE_SPOT giá rẻ, phù hợp job chạy lại được, và không phải quản lý EC2.</span></li>
+              <li data-k="C"><span class="tv">Dùng một Auto Scaling group capacity provider chỉ với Spot Instances.</span><span class="why">Sai: vẫn phải quản lý EC2 instance, và chỉ dùng Spot thì không có capacity nào được bảo đảm không gián đoạn.</span></li>
+              <li data-k="D"><span class="tv">Dùng các AWS Lambda function với timeout 15 phút.</span><span class="why">Sai: job encode video có thể chạy quá giới hạn 15 phút của Lambda, và đề yêu cầu chạy container trên ECS.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A company's ECS task definition references a database password stored in AWS Secrets Manager and sends container logs to Amazon CloudWatch Logs. The tasks run on AWS Fargate and pull images from a private Amazon ECR repository. Tasks are failing to start. Which TWO permissions must be granted to the task execution role? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">ecr:GetAuthorizationToken, ecr:BatchGetImage, and ecr:GetDownloadUrlForLayer, plus logs:CreateLogStream and logs:PutLogEvents (for example, through the AmazonECSTaskExecutionRolePolicy managed policy).</li>
+            <li data-k="B">ecs:RunTask on the cluster.</li>
+            <li data-k="C">secretsmanager:GetSecretValue on the secret (and kms:Decrypt if the secret uses a customer managed key).</li>
+            <li data-k="D">s3:PutObject on the application data bucket.</li>
+            <li data-k="E">sts:AssumeRole for the EC2 instance profile.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> <b>Task execution role</b> cho agent: <b>kéo image ECR</b> và <b>ghi CloudWatch Logs</b> (đều có trong <code>AmazonECSTaskExecutionRolePolicy</code>) (A), và <b>lấy secret</b> được tham chiếu trong task definition (C). <b>B sai</b>: <code>ecs:RunTask</code> là quyền của người/dịch vụ khởi chạy task, không phải của execution role. <b>D sai</b>: quyền ứng dụng ghi S3 thuộc <b>task IAM role</b>. <b>E sai</b>: Fargate không có EC2 instance profile.</div>
+          <div class="trans">
+            <div class="tq">Task definition ECS của một công ty tham chiếu tới mật khẩu database lưu trong AWS Secrets Manager và gửi log container tới Amazon CloudWatch Logs. Các task chạy trên AWS Fargate và kéo image từ một Amazon ECR repository private. Các task đang không khởi động được. Phải cấp HAI quyền nào cho task execution role? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">ecr:GetAuthorizationToken, ecr:BatchGetImage và ecr:GetDownloadUrlForLayer, cộng với logs:CreateLogStream và logs:PutLogEvents (ví dụ thông qua managed policy AmazonECSTaskExecutionRolePolicy).</span><span class="why">Đúng: execution role cần quyền kéo image từ ECR private và ghi log vào CloudWatch Logs – đúng nội dung của AmazonECSTaskExecutionRolePolicy.</span></li>
+              <li data-k="B"><span class="tv">ecs:RunTask trên cluster.</span><span class="why">Sai: ecs:RunTask là quyền của người dùng/dịch vụ khởi chạy task, không phải quyền execution role cần để task khởi động.</span></li>
+              <li data-k="C"><span class="tv">secretsmanager:GetSecretValue trên secret (và kms:Decrypt nếu secret dùng customer managed key).</span><span class="why">Đúng: secret được tham chiếu trong task definition do agent lấy khi khởi động task, nên execution role phải có quyền đọc secret (và giải mã KMS nếu cần).</span></li>
+              <li data-k="D"><span class="tv">s3:PutObject trên bucket dữ liệu ứng dụng.</span><span class="why">Sai: quyền để ứng dụng ghi S3 thuộc task IAM role, và không liên quan tới việc task không khởi động được.</span></li>
+              <li data-k="E"><span class="tv">sts:AssumeRole cho EC2 instance profile.</span><span class="why">Sai: Fargate không có EC2 instance profile; quyền này không giúp kéo image, ghi log hay lấy secret.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">An Amazon ECS service on AWS Fargate consumes messages from an Amazon SQS queue. During business hours the queue backlog grows quickly, and at night it is often empty. The company wants the number of tasks to track the amount of pending work and to scale to zero when there are no messages. What should a solutions architect configure?</div>
+          <ol class="opts">
+            <li data-k="A">An EC2 Auto Scaling group with a target tracking policy on CPU utilization.</li>
+            <li data-k="B">A scheduled scaling action that sets the desired count to 10 during business hours.</li>
+            <li data-k="C">ECS Service Auto Scaling with a target tracking policy on a custom backlog-per-task metric, with a minimum capacity of 0.</li>
+            <li data-k="D">Increase the SQS visibility timeout and set the desired count to the maximum.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Service Auto Scaling</b> (Application Auto Scaling) hỗ trợ scale theo <b>SQS backlog per task</b> (message tồn / số task) bằng target tracking; đặt <b>minimum capacity = 0</b> để scale về 0. <b>A sai</b>: Fargate không có EC2 ASG; CPU không phản ánh lượng việc tồn. <b>B sai</b>: theo lịch không bám tải thực, không về 0 khi trống trong giờ làm. <b>D sai</b>: luôn chạy tối đa – lãng phí chi phí.</div>
+          <div class="trans">
+            <div class="tq">Một Amazon ECS service trên AWS Fargate tiêu thụ message từ một Amazon SQS queue. Trong giờ làm việc, lượng message tồn (backlog) tăng nhanh, còn ban đêm queue thường trống. Công ty muốn số lượng task bám theo lượng công việc đang chờ và scale về 0 khi không còn message. Solutions architect nên cấu hình gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một EC2 Auto Scaling group với target tracking policy theo CPU utilization.</span><span class="why">Sai: Fargate không dùng EC2 Auto Scaling group, và CPU không phản ánh lượng message đang tồn trong queue.</span></li>
+              <li data-k="B"><span class="tv">Một scheduled scaling action đặt desired count bằng 10 trong giờ làm việc.</span><span class="why">Sai: scale theo lịch không bám theo tải thực tế và không về 0 khi queue trống.</span></li>
+              <li data-k="C"><span class="tv">ECS Service Auto Scaling với target tracking policy theo một custom metric backlog-per-task (số message tồn trên mỗi task), với minimum capacity bằng 0.</span><span class="why">Đúng: target tracking theo backlog per task làm số task tỉ lệ với lượng việc chờ, và minimum capacity = 0 cho phép scale về 0 khi không có message.</span></li>
+              <li data-k="D"><span class="tv">Tăng visibility timeout của SQS và đặt desired count ở mức tối đa.</span><span class="why">Sai: luôn chạy số task tối đa gây lãng phí chi phí, không bám tải và không bao giờ về 0.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs dozens of microservices on Kubernetes in its on-premises data center by using Helm charts and kubectl. The company wants to migrate to AWS with minimal changes to its deployment tooling and does not want to manage the Kubernetes control plane. The worker nodes must support a DaemonSet-based logging agent and GPU workloads. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon ECS with AWS Fargate.</li>
+            <li data-k="B">Amazon EKS with managed node groups.</li>
+            <li data-k="C">Amazon EKS with AWS Fargate profiles for all Pods.</li>
+            <li data-k="D">Kubernetes installed manually on Amazon EC2 instances.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>EKS</b> là Kubernetes certified-conformant ⇒ dùng lại Helm/kubectl; AWS quản lý control plane. <b>Managed node groups</b> hỗ trợ <b>DaemonSet</b> và <b>GPU</b>, đồng thời EKS tự lo provisioning, cập nhật, drain node. <b>A sai</b>: ECS không phải Kubernetes – phải viết lại thành task definition. <b>C sai</b>: Fargate trên EKS <b>không hỗ trợ DaemonSet và GPU</b>. <b>D sai</b>: phải tự vận hành control plane.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy hàng chục microservice trên Kubernetes trong data center on-premises bằng Helm chart và kubectl. Công ty muốn di chuyển lên AWS với thay đổi tối thiểu đối với công cụ triển khai và không muốn quản lý Kubernetes control plane. Các worker node phải hỗ trợ một logging agent chạy dạng DaemonSet và các workload GPU. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon ECS với AWS Fargate.</span><span class="why">Sai: ECS không phải Kubernetes nên không dùng lại được Helm/kubectl; phải viết lại thành task definition.</span></li>
+              <li data-k="B"><span class="tv">Amazon EKS với managed node groups.</span><span class="why">Đúng: EKS là Kubernetes chuẩn nên dùng lại Helm/kubectl, AWS quản lý control plane, và managed node groups hỗ trợ cả DaemonSet lẫn GPU.</span></li>
+              <li data-k="C"><span class="tv">Amazon EKS với AWS Fargate profile cho mọi Pod.</span><span class="why">Sai: Pod chạy trên Fargate không hỗ trợ DaemonSet và GPU.</span></li>
+              <li data-k="D"><span class="tv">Kubernetes cài thủ công trên các Amazon EC2 instance.</span><span class="why">Sai: phải tự vận hành Kubernetes control plane – trái yêu cầu.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company stores container images in Amazon ECR in us-east-1. It is building a disaster recovery environment in eu-west-1 that runs Amazon ECS. The DR environment must be able to start tasks even if us-east-1 is unavailable, and new images must be available in eu-west-1 automatically after each push. What is the MOST operationally efficient solution?</div>
+          <ol class="opts">
+            <li data-k="A">Have the CI pipeline run docker pull and docker push to a second repository in eu-west-1 after every build.</li>
+            <li data-k="B">Configure the DR task definitions to pull images from the us-east-1 repository.</li>
+            <li data-k="C">Export the images to an S3 bucket and enable S3 Cross-Region Replication.</li>
+            <li data-k="D">Configure ECR private registry cross-Region replication from us-east-1 to eu-west-1.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>ECR cross-Region replication</b> được cấu hình ở mức registry, tự sao chép mỗi image mới được push (đa số dưới 30 phút) – không cần code. Task ở eu-west-1 pull cục bộ, không phụ thuộc us-east-1. <b>A sai</b>: làm được nhưng phải tự bảo trì script. <b>B sai</b>: us-east-1 sập thì không kéo được image. <b>C sai</b>: ECS không chạy image từ file trong S3; phức tạp không cần thiết.</div>
+          <div class="trans">
+            <div class="tq">Một công ty lưu container image trong Amazon ECR ở us-east-1. Công ty đang xây dựng môi trường disaster recovery (DR) ở eu-west-1 chạy Amazon ECS. Môi trường DR phải khởi động được task ngay cả khi us-east-1 không khả dụng, và image mới phải tự động có mặt ở eu-west-1 sau mỗi lần push. Giải pháp nào MOST operationally efficient (hiệu quả vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cho CI pipeline chạy docker pull và docker push tới repository thứ hai ở eu-west-1 sau mỗi lần build.</span><span class="why">Sai: làm được nhưng phải tự viết và bảo trì script trong pipeline – kém hiệu quả vận hành hơn tính năng có sẵn.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình task definition của môi trường DR kéo image từ repository ở us-east-1.</span><span class="why">Sai: khi us-east-1 sập thì không kéo được image, môi trường DR không khởi động được task.</span></li>
+              <li data-k="C"><span class="tv">Export image ra một S3 bucket và bật S3 Cross-Region Replication.</span><span class="why">Sai: ECS không chạy image từ file trên S3; cách này phức tạp và không phục vụ được việc kéo image.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình ECR private registry cross-Region replication từ us-east-1 sang eu-west-1.</span><span class="why">Đúng: replication cấu hình một lần ở mức registry, tự sao chép mỗi image mới sang eu-west-1 để task DR kéo cục bộ, không phụ thuộc us-east-1 và không cần code.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A security team requires that all container images in Amazon ECR be checked for vulnerabilities in both operating system packages and programming language libraries, that findings be re-evaluated automatically when new CVEs are published, and that old untagged images be removed to control storage costs. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Enable basic scanning with scan on push on every repository.</li>
+            <li data-k="B">Enable Amazon ECR enhanced scanning with Amazon Inspector and continuous scanning.</li>
+            <li data-k="C">Enable tag immutability on all repositories.</li>
+            <li data-k="D">Configure an S3 Lifecycle rule on the bucket that stores ECR layers.</li>
+            <li data-k="E">Configure an ECR lifecycle policy that expires untagged images older than a specified number of days.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> <b>Enhanced scanning</b> (Amazon Inspector) quét cả <b>OS và package ngôn ngữ lập trình</b>, chế độ <b>continuous</b> tự cập nhật kết quả khi có lỗ hổng mới (B). <b>ECR lifecycle policy</b> với <code>tagStatus: untagged</code> + <code>sinceImagePushed</code> tự expire image cũ (E). <b>A sai</b>: basic scanning chỉ quét OS, không continuous. <b>C sai</b>: tag immutability chống ghi đè tag, không liên quan quét/dọn dẹp. <b>D sai</b>: bucket lưu layer do AWS quản lý, bạn không cấu hình được.</div>
+          <div class="trans">
+            <div class="tq">Một đội bảo mật yêu cầu mọi container image trong Amazon ECR phải được kiểm tra lỗ hổng ở cả package hệ điều hành lẫn thư viện ngôn ngữ lập trình, kết quả phải được tự động đánh giá lại khi có CVE mới được công bố, và các image cũ không gắn tag (untagged) phải được xóa để kiểm soát chi phí lưu trữ. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật basic scanning với scan on push trên mọi repository.</span><span class="why">Sai: basic scanning chỉ quét package hệ điều hành và chỉ quét lúc push, không quét liên tục khi có CVE mới.</span></li>
+              <li data-k="B"><span class="tv">Bật Amazon ECR enhanced scanning với Amazon Inspector và continuous scanning.</span><span class="why">Đúng: enhanced scanning (Inspector) quét cả OS lẫn package ngôn ngữ lập trình, và chế độ continuous tự đánh giá lại khi có CVE mới.</span></li>
+              <li data-k="C"><span class="tv">Bật tag immutability trên mọi repository.</span><span class="why">Sai: tag immutability chỉ chống ghi đè tag, không liên quan tới quét lỗ hổng hay dọn image cũ.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình S3 Lifecycle rule trên bucket lưu các layer của ECR.</span><span class="why">Sai: bucket lưu layer do AWS quản lý, khách hàng không thấy và không cấu hình được.</span></li>
+              <li data-k="E"><span class="tv">Cấu hình ECR lifecycle policy làm hết hạn (expire) các image untagged cũ hơn một số ngày nhất định.</span><span class="why">Đúng: ECR lifecycle policy với tagStatus untagged và sinceImagePushed tự động xóa image cũ, giảm chi phí lưu trữ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A development team wants to deploy a containerized web API directly from an image in Amazon ECR. The team has no infrastructure expertise and wants automatic deployments when a new image is pushed, built-in load balancing, TLS, and automatic scaling, without configuring clusters, task definitions, load balancers, or VPC networking. The company is an existing user of all AWS services. Which service BEST meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">AWS App Runner.</li>
+            <li data-k="B">Amazon ECS on Amazon EC2.</li>
+            <li data-k="C">Amazon EKS with managed node groups.</li>
+            <li data-k="D">AWS Lambda with a container image and an Application Load Balancer.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>App Runner</b> chạy thẳng từ source code hoặc image ECR thành web app, <b>tự deploy</b> khi có image mới, kèm load balancing, TLS, auto scaling – không cần cấu hình cluster/LB/mạng. (Lưu ý: App Runner không còn mở cho khách hàng mới; khách mới AWS khuyên dùng ECS Express Mode – đề nói rõ công ty là khách hàng hiện hữu.) <b>B sai</b>: phải quản lý cluster, EC2, task definition, ALB. <b>C sai</b>: EKS đòi kiến thức Kubernetes và quản lý node group. <b>D sai</b>: phải tự cấu hình ALB, target group và Lambda có giới hạn 15 phút – không phải lựa chọn “không cần hạ tầng” cho một web API container chạy liên tục.</div>
+          <div class="trans">
+            <div class="tq">Một đội phát triển muốn triển khai một web API container hóa trực tiếp từ image trong Amazon ECR. Đội không có chuyên môn về hạ tầng và muốn tự động triển khai khi có image mới được push, có sẵn load balancing, TLS và tự động scale, mà không phải cấu hình cluster, task definition, load balancer hay mạng VPC. Công ty là khách hàng hiện hữu của mọi dịch vụ AWS. Dịch vụ nào BEST (đáp ứng tốt nhất) các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">AWS App Runner.</span><span class="why">Đúng: App Runner chạy thẳng image ECR thành web app, tự deploy khi có image mới, kèm sẵn load balancing, TLS và auto scaling mà không cần cấu hình cluster, LB hay mạng.</span></li>
+              <li data-k="B"><span class="tv">Amazon ECS trên Amazon EC2.</span><span class="why">Sai: phải quản lý cluster, EC2 instance, task definition và ALB – trái yêu cầu không cấu hình hạ tầng.</span></li>
+              <li data-k="C"><span class="tv">Amazon EKS với managed node groups.</span><span class="why">Sai: EKS đòi hỏi kiến thức Kubernetes và quản lý node group, quá phức tạp với đội không có chuyên môn hạ tầng.</span></li>
+              <li data-k="D"><span class="tv">AWS Lambda với container image và một Application Load Balancer.</span><span class="why">Sai: phải tự cấu hình ALB và target group, Lambda có giới hạn 15 phút, không phải lựa chọn "không cần hạ tầng" cho web API container chạy liên tục.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definitions.html" target="_blank" rel="noopener">Amazon ECS task definitions</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs_services.html" target="_blank" rel="noopener">Amazon ECS services</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/capacity-launch-type-comparison.html" target="_blank" rel="noopener">Amazon ECS launch types and capacity providers</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-tasks-services.html" target="_blank" rel="noopener">Amazon ECS task definition differences for Fargate</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html" target="_blank" rel="noopener">Amazon ECS task IAM role</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_execution_IAM_role.html" target="_blank" rel="noopener">Amazon ECS task execution IAM role</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-auto-scaling.html" target="_blank" rel="noopener">Automatically scale your Amazon ECS service</a></li>
+        <li><a href="https://docs.aws.amazon.com/eks/latest/userguide/eks-architecture.html" target="_blank" rel="noopener">Amazon EKS architecture</a></li>
+        <li><a href="https://docs.aws.amazon.com/eks/latest/userguide/eks-compute.html" target="_blank" rel="noopener">Manage compute resources by using nodes (EKS)</a></li>
+        <li><a href="https://docs.aws.amazon.com/eks/latest/userguide/managed-node-groups.html" target="_blank" rel="noopener">Simplify node lifecycle with managed node groups</a></li>
+        <li><a href="https://docs.aws.amazon.com/eks/latest/userguide/fargate.html" target="_blank" rel="noopener">Simplify compute management with AWS Fargate (EKS)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonECR/latest/userguide/Registries.html" target="_blank" rel="noopener">Amazon ECR private registry</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonECR/latest/userguide/registry_auth.html" target="_blank" rel="noopener">Private registry authentication in Amazon ECR</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-scanning.html" target="_blank" rel="noopener">Scan images for software vulnerabilities in Amazon ECR</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonECR/latest/userguide/replication.html" target="_blank" rel="noopener">Private image replication in Amazon ECR</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonECR/latest/userguide/LifecyclePolicies.html" target="_blank" rel="noopener">Automate the cleanup of images by using lifecycle policies in Amazon ECR</a></li>
+        <li><a href="https://docs.aws.amazon.com/apprunner/latest/dg/what-is-apprunner.html" target="_blank" rel="noopener">What is AWS App Runner?</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

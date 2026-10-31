@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 7 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Cognito.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="7" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Phân biệt ba “thế giới định danh” mà đề SAA-C03 hay trộn lẫn: <span class="t" data-vi="Người dùng là nhân sự nội bộ">workforce</span> vào AWS account (IAM Identity Center), <span class="t" data-vi="Người dùng cuối / khách hàng của ứng dụng">customer / app users</span> (Amazon Cognito) và <b>Windows/AD workloads</b> (AWS Directory Service).</li>
+          <li>Hiểu sâu <span class="t" data-vi="Kho người dùng">user pool</span>: user directory + OIDC IdP, ba loại token (ID, access, refresh), MFA, federation với Google/Facebook/SAML, Lambda triggers, feature plans Lite / Essentials / Plus.</li>
+          <li>Biết cách user pool tích hợp với <b>Amazon API Gateway</b>, <b>Application Load Balancer</b>, <b>AWS AppSync</b> và kịch bản <span class="t" data-vi="Ủy quyền máy với máy">machine-to-machine (M2M)</span>.</li>
+          <li>Hiểu <span class="t" data-vi="Kho định danh">identity pool</span>: đổi token lấy <b>temporary AWS credentials</b>, authenticated vs guest, role-based và attribute-based access control.</li>
+          <li>Chọn đúng loại thư mục của <b>AWS Directory Service</b>: <b>AWS Managed Microsoft AD</b> (Standard/Enterprise, trust, multi-Region), <b>AD Connector</b> (proxy về AD on-premises) và <b>Simple AD</b> (Samba 4).</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Nối tiếp Bài 4 – 6</span>
+        <p>Bài 4–5 đã dạy IAM, STS và các API <code>AssumeRoleWithSAML</code> / <code>AssumeRoleWithWebIdentity</code>; Bài 6 đã dạy <b>IAM Identity Center</b> cho nhân sự truy cập nhiều AWS account. Bài này lấp nốt hai mảnh còn lại của Domain 1: <b>đăng nhập cho người dùng của ứng dụng</b> (Amazon Cognito) và <b>Microsoft Active Directory trên AWS</b> (AWS Directory Service). Ta sẽ không nhắc lại chi tiết STS – chỉ cần nhớ: <i>identity pool là “người gọi” STS thay cho ứng dụng của bạn</i>.</p></div>
+
+      <!-- ===================== PHẦN 1: BỨC TRANH TỔNG THỂ ===================== -->
+      <h2 id="big-picture"><img src="../assets/icons/cat/Security-Identity-Compliance.svg" alt="">Bức tranh tổng thể: ai đăng nhập, vào đâu?</h2>
+      <p class="lead">Câu hỏi về định danh trong đề thi gần như luôn bắt đầu bằng việc xác định <b>ai</b> là người dùng và họ cần <b>truy cập cái gì</b>. Chọn sai “thế giới” là chọn sai đáp án, dù dịch vụ đó vẫn “làm được”.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">
+          <div><h4>Amazon Cognito</h4><span class="vi">Định danh cho người dùng ứng dụng (CIAM)</span><p>Nền tảng định danh cho <b>web &amp; mobile app</b>: user directory, authentication server, và dịch vụ cấp OAuth 2.0 access token + AWS credentials. Scale tới hàng triệu khách hàng, hỗ trợ social login.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Single-Sign-On.svg" alt="">
+          <div><h4>AWS IAM Identity Center</h4><span class="vi">SSO cho nhân sự (Bài 6)</span><p>Nhân viên đăng nhập một lần, truy cập <b>nhiều AWS account</b> trong Organizations qua permission set. Identity source có thể là AD (qua Directory Service) hoặc external IdP.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Directory-Service.svg" alt="">
+          <div><h4>AWS Directory Service</h4><span class="vi">Microsoft Active Directory trên AWS</span><p>Nhiều lựa chọn thư mục cho ứng dụng <b>AD-aware / LDAP-aware</b>: domain join EC2 Windows, RDS for SQL Server, FSx for Windows, WorkSpaces, SharePoint…</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">
+          <div><h4>AWS IAM</h4><span class="vi">Quyền trên AWS API (Bài 4–5)</span><p>Mọi con đường trên cuối cùng đều quy về <b>IAM role + policy</b> khi cần gọi AWS API. Không tạo IAM user cho khách hàng của ứng dụng.</p></div></div>
+      </div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Ai đăng nhập?</th><th>Vào đâu?</th><th>Dịch vụ nên chọn</th></tr></thead>
+        <tbody>
+          <tr><td>Khách hàng của mobile/web app (hàng nghìn → hàng triệu), có thể dùng Google, Facebook, Apple</td><td>Ứng dụng của bạn, API của bạn</td><td><b>Cognito user pool</b></td></tr>
+          <tr><td>Người dùng ứng dụng (đã đăng nhập hoặc khách vãng lai)</td><td>Trực tiếp Amazon S3, DynamoDB… từ thiết bị</td><td><b>Cognito identity pool</b> (thường kết hợp user pool)</td></tr>
+          <tr><td>Nhân viên công ty</td><td>AWS Management Console / CLI của nhiều account</td><td><b>IAM Identity Center</b> (Bài 6)</td></tr>
+          <tr><td>Nhân viên công ty (đã có AD on-premises)</td><td>WorkSpaces, QuickSight, EC2 Windows… dùng chính tài khoản AD</td><td><b>AD Connector</b> hoặc <b>AWS Managed Microsoft AD + trust</b></td></tr>
+          <tr><td>Ứng dụng Windows cần domain thật (SharePoint, SQL Server, .NET, Group Policy)</td><td>Active Directory chạy trên AWS</td><td><b>AWS Managed Microsoft AD</b></td></tr>
+          <tr><td>Ứng dụng/thiết bị không có người dùng (IoT, microservice)</td><td>API của bạn</td><td><b>Cognito user pool – M2M</b> (<code>client_credentials</code>)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Hãy hình dung một <b>trung tâm thương mại</b>. <b>Cognito user pool</b> là quầy làm <b>thẻ thành viên</b> cho khách mua sắm (đăng ký, đăng nhập, quên mật khẩu, có thể “đăng nhập bằng thẻ ngân hàng” – social login). <b>Cognito identity pool</b> là máy đổi thẻ thành viên lấy <b>vé gửi xe có hạn giờ</b> để khách vào bãi xe (tài nguyên AWS) – khách vãng lai cũng được vé hạn chế. <b>Directory Service</b> lại là <b>phòng nhân sự</b> của ban quản lý: sổ nhân viên Active Directory, thẻ ra vào văn phòng, chính sách mật khẩu. Hai hệ thống phục vụ hai nhóm người khác nhau.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – nhận diện nhanh</span>
+        <ul>
+          <li>“<i>Mobile app / web app users, sign-up and sign-in, social identity providers, millions of users</i>” ⇒ <b>Amazon Cognito user pool</b>.</li>
+          <li>“<i>Users of the app must upload directly to Amazon S3 / write to DynamoDB with temporary credentials</i>”, “<i>guest (unauthenticated) access</i>” ⇒ <b>Cognito identity pool</b>.</li>
+          <li>“<i>Employees, multiple AWS accounts, SSO to console</i>” ⇒ <b>IAM Identity Center</b>, <b>không phải</b> Cognito.</li>
+          <li>“<i>Microsoft Active Directory, domain join, Group Policy, Kerberos, LDAP</i>” ⇒ <b>AWS Directory Service</b>. Tài liệu Directory Service cũng ghi rõ: phát triển <b>SaaS app</b> cần thư mục scale lớn với social identity ⇒ dùng <b>Amazon Cognito</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: USER POOLS ===================== -->
+      <h2 id="user-pools"><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">Cognito user pools – “Who is this user?” (authentication)</h2>
+      <p class="lead">Một <span class="t" data-vi="Kho người dùng">user pool</span> là một <b>user directory</b> dựa trên chuẩn <span class="t" data-vi="Chuẩn định danh OpenID Connect">OpenID Connect (OIDC)</span>, dùng để xác thực người dùng và cấp <span class="t" data-vi="Token web JSON">JSON web tokens (JWTs)</span> cho ứng dụng hoặc API của bạn. Hầu hết ứng dụng cần sign-up/sign-in đều bắt đầu ở đây.</p>
+
+      <p>Theo tài liệu, user pool có thể đóng <b>hai vai cùng lúc</b>:</p>
+      <ul>
+        <li><b>Standalone IdP / OIDC identity provider</b> cho ứng dụng: tự lưu <span class="t" data-vi="Người dùng cục bộ">local users</span> (người dùng tự đăng ký hoặc do admin tạo trực tiếp trong user pool) – user pool là nguồn “chính chủ” (authoritative) cho các user này.</li>
+        <li><b>Service provider (SP) / relying party</b> trung gian tới IdP bên thứ ba: social (<b>Amazon, Google, Apple, Facebook</b>) hoặc workforce (<b>SAML 2.0, OIDC</b> – vd Okta, AD FS). User pool nhận token/assertion của IdP, gom attributes vào <b>một bộ JWT chuẩn</b> của riêng bạn. Nhờ vậy ứng dụng chỉ cần hiểu một định dạng token. <span class="t" data-vi="Người dùng liên kết">Federated users</span> cũng có profile trong user pool.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>3 token</b><span>ID token · access token · refresh token</span></div>
+        <div class="stat"><b>30 ngày</b><span>refresh token mặc định; chỉnh được 60 phút → 10 năm</span></div>
+        <div class="stat"><b>5 giây</b><span>Lambda trigger phải trả lời (không đổi được)</span></div>
+        <div class="stat"><b>Essentials</b><span>feature plan mặc định của user pool mới</span></div>
+      </div>
+
+      <h3>Tính năng chính của user pool (theo trang “What is Amazon Cognito?”)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tính năng</th><th>Mô tả</th></tr></thead>
+        <tbody>
+          <tr><td><b>OIDC identity provider</b></td><td>Cấp <b>ID token</b> để xác thực người dùng.</td></tr>
+          <tr><td><b>Authorization server</b></td><td>Cấp <b>access token</b> để ủy quyền gọi API (OAuth 2.0 scopes).</td></tr>
+          <tr><td><b>SAML 2.0 service provider</b></td><td>Chuyển SAML assertion thành ID + access token.</td></tr>
+          <tr><td><b>OIDC / social provider relying party</b></td><td>Chuyển token của OIDC IdP hoặc Apple, Facebook, Amazon, Google thành ID + access token của bạn.</td></tr>
+          <tr><td><b>Authentication frontend (managed login)</b></td><td>Trang đăng ký/đăng nhập do AWS host sẵn (bản cũ gọi là <i>classic hosted UI</i>).</td></tr>
+          <tr><td><b>API cho UI tự xây</b></td><td>Tạo, quản lý, xác thực user bằng AWS SDK (<code>SignUp</code>, <code>InitiateAuth</code>…)¹.</td></tr>
+          <tr><td><b>Multi-factor authentication</b></td><td>SMS, TOTP (authenticator app), email OTP hoặc thiết bị của user làm yếu tố thứ hai¹.</td></tr>
+          <tr><td><b>Security monitoring &amp; response</b></td><td>Chống hoạt động độc hại và mật khẩu không an toàn (threat protection)¹.</td></tr>
+          <tr><td><b>Custom authentication flows</b></td><td>Tự xây cơ chế xác thực nhiều bước hoặc thêm bước vào flow có sẵn².</td></tr>
+          <tr><td><b>Groups</b></td><td>Nhóm user; mang claim <code>cognito:groups</code> và có thể gắn IAM role khi chuyển token sang identity pool.</td></tr>
+          <tr><td><b>Customize tokens / attributes</b></td><td>Thêm, sửa, ẩn claim trong token; thêm custom attribute.</td></tr>
+          <tr><td><b>AWS WAF web ACLs</b></td><td>Giám sát và lọc request tới authentication front end bằng AWS WAF.</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted">¹ Không áp dụng cho federated users. ² Không áp dụng cho federated users và người dùng managed login.</p>
+
+      <h3>Ba loại token của user pool</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Token</th><th>Chứa gì / dùng để làm gì</th><th>Thời hạn</th></tr></thead>
+        <tbody>
+          <tr><td><b>ID token</b></td><td>Claim về <b>danh tính</b>: username, family name, email… Ứng dụng dùng để biết “ai đang đăng nhập” và dựng profile. Có <code>cognito:groups</code>.</td><td>Mặc định 1 giờ (cấu hình 5 phút – 1 ngày)*</td></tr>
+          <tr><td><b>Access token</b></td><td>Claim như <code>scope</code> để gọi API bên thứ ba, API self-service của Cognito và <code>userInfo</code> endpoint. Có <code>cognito:groups</code>.</td><td>Mặc định 1 giờ (cấu hình 5 phút – 1 ngày)*</td></tr>
+          <tr><td><b>Refresh token</b></td><td>Lấy ID + access token mới; thu hồi được. <b>Được mã hóa, opaque</b> – chỉ user pool đọc được.</td><td>Mặc định <b>30 ngày</b>, chỉnh từ <b>60 phút đến 10 năm</b></td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted">* Thời hạn ID/access token là kiến thức phổ biến (trang token caching chỉ nói “phút, giờ hoặc ngày”); tài liệu khuyến nghị dùng token khoảng <b>75% thời gian sống</b> rồi mới lấy token mới, và cache token (client: bộ nhớ; server: cache mã hóa).</p>
+
+      <ul>
+        <li>ID và access token là chuỗi <b>base64url</b> – giải mã được thành JSON; hãy <b>verify chữ ký JWT</b> trước khi tin (AWS có thư viện <i>aws-jwt-verify</i>).</li>
+        <li><b>Refresh token rotation</b> (best practice): mỗi lần refresh trả về refresh token mới, token cũ bị vô hiệu (grace period tối đa <b>60 giây</b>). Rotation <b>không kéo dài</b> thời hạn gốc: đặt 30 ngày thì phiên vẫn hết hạn 30 ngày sau lần đăng nhập đầu.</li>
+        <li><b>Thu hồi</b>: revoke một refresh token (đăng xuất một phiên) hoặc <code>GlobalSignOut</code> / <code>AdminUserGlobalSignOut</code> (đăng xuất mọi thiết bị).</li>
+        <li><b>Pre token generation</b> Lambda trigger cho phép thêm/sửa/ẩn claim. Tùy biến <b>access token</b> cần feature plan khác Lite (event version 2).</li>
+      </ul>
+
+      <h3>Feature plans: Lite, Essentials, Plus</h3>
+      <p>Mỗi user pool chọn một <span class="t" data-vi="Gói tính năng">feature plan</span>; chi phí tính theo <span class="t" data-vi="Người dùng hoạt động hằng tháng">monthly active users (MAUs)</span> và tính năng dùng. Plan áp cho cả user pool (không tách theo app client); các user pool trong cùng account có thể chọn plan khác nhau, đổi plan bất cứ lúc nào.</p>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">Lite</h4>
+          <ul>
+            <li>Chi phí thấp, cho user pool ít MAU, chỉ cần xác thực cơ bản.</li>
+            <li>Sign-up/sign-in, groups, social/SAML/OIDC federation, M2M, MFA bằng SMS/TOTP, Lambda triggers, user import, <b>classic hosted UI</b>.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">Essentials (mặc định)</h4>
+          <ul>
+            <li>Mọi tính năng xác thực mới nhất: <b>managed login</b> + visual editor.</li>
+            <li><b>Passwordless</b> (OTP email/SMS), <b>passkey</b> (FIDO2), <b>email MFA</b>, choice-based sign-in, tùy biến access token.</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/svc/AWS-WAF.svg" alt="">Plus</h4>
+          <ul>
+            <li>Essentials + <b>threat protection</b> (trước đây gọi là <i>advanced security features</i>).</li>
+            <li>Phát hiện <b>mật khẩu bị lộ</b> (compromised credentials), đăng nhập bất thường (vị trí lạ…) – <b>adaptive authentication</b>; log và export hoạt động người dùng + risk score.</li>
+          </ul></div>
+      </div>
+
+      <h3>Tùy biến flow bằng Lambda triggers</h3>
+      <p>Cognito gọi Lambda <b>đồng bộ</b> (trừ custom sender) ở nhiều điểm trong vòng đời người dùng; hàm phải trả lời trong <b>5 giây</b> (không đổi được). Hàm trả lỗi ⇒ bước đó (sign-up, sign-in, phát token…) thất bại – đây là cách chặn có chủ đích.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhóm</th><th>Trigger</th><th>Dùng để</th></tr></thead>
+        <tbody>
+          <tr><td>Sign-up</td><td><b>Pre sign-up</b></td><td>Kiểm tra tùy chỉnh, chấp nhận/từ chối đăng ký (vd chỉ cho email công ty), auto-confirm.</td></tr>
+          <tr><td>Sign-up</td><td><b>Post confirmation</b></td><td>Gửi lời chào, ghi log, tạo bản ghi profile trong DynamoDB.</td></tr>
+          <tr><td>Sign-up</td><td><b>Migrate user</b></td><td>Tra user trong thư mục cũ lúc sign-in/quên mật khẩu và chuyển dần sang user pool (<i>just-in-time migration</i>).</td></tr>
+          <tr><td>Authentication</td><td><b>Pre / Post authentication</b></td><td>Chấp nhận/từ chối đăng nhập; ghi sự kiện cho analytics.</td></tr>
+          <tr><td>Authentication</td><td><b>Define / Create / Verify auth challenge</b></td><td>Tự xây <b>custom authentication flow</b> (CAPTCHA, câu hỏi bí mật…).</td></tr>
+          <tr><td>Token</td><td><b>Pre token generation</b></td><td>Thêm/sửa/ẩn claim trong ID và access token.</td></tr>
+          <tr><td>Federation</td><td><b>Inbound federation</b></td><td>Biến đổi attribute của federated user trước khi tạo/cập nhật.</td></tr>
+          <tr><td>Message</td><td><b>Custom message / Custom sender</b></td><td>Tùy biến/bản địa hóa email-SMS; gửi qua nhà cung cấp bên thứ ba.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp với user pool</span>
+        <ul>
+          <li><b>User pool token không phải AWS credentials.</b> Muốn app gọi trực tiếp S3/DynamoDB bằng SigV4 ⇒ phải đổi token qua <b>identity pool</b>. Ngược lại, chỉ gọi API Gateway/ALB của bạn thì user pool là đủ.</li>
+          <li><b>Không tạo IAM user cho khách hàng</b> và <b>không nhúng access key vào mobile app</b> – đó luôn là đáp án sai.</li>
+          <li>MFA, threat protection, custom auth flow <b>không áp dụng cho federated users</b> – họ được IdP gốc (Google, Okta…) xác thực.</li>
+          <li>Có hàng triệu user cũ trong hệ thống khác nhưng không muốn bắt reset mật khẩu ⇒ <b>Migrate user Lambda trigger</b> (chứ không phải export/import CSV – import CSV không mang theo mật khẩu).</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – user pool</span>
+        <ul>
+          <li>“<i>Add sign-up/sign-in, MFA, password reset to a mobile app with LEAST development effort</i>” ⇒ <b>user pool + managed login</b>.</li>
+          <li>“<i>Let users sign in with Google/Facebook/Apple or a corporate SAML IdP and give the app one consistent token format</i>” ⇒ <b>user pool federation</b>.</li>
+          <li>“<i>Detect sign-ins with compromised credentials, block risky sign-ins (adaptive authentication)</i>” ⇒ <b>Plus plan / threat protection</b>.</li>
+          <li>“<i>Custom validation during sign-up (only company domain)</i>” ⇒ <b>Pre sign-up Lambda trigger</b>. “<i>Add custom claims to tokens</i>” ⇒ <b>Pre token generation</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: TÍCH HỢP USER POOL ===================== -->
+      <h2 id="integrations"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">Dùng token của user pool: API Gateway, ALB, AppSync và M2M</h2>
+      <p class="lead">Sau khi đăng nhập, ứng dụng nhận token từ user pool. Tài liệu <i>Common Amazon Cognito scenarios</i> liệt kê các cách dùng token này để bảo vệ <span class="t" data-vi="Tài nguyên phía máy chủ">back-end resources</span> mà <b>không cần</b> identity pool.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Mobile-client.svg" alt="">Mobile / web app<small>người dùng đăng nhập</small></div>
+          <span class="arrow">① sign-in</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">Cognito user pool<small>trả ID + access + refresh token (JWT)</small></div>
+          <span class="arrow">② gọi API kèm token<br>(header Authorization)</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-API-Gateway.svg" alt="">Amazon API Gateway<small>Cognito user pool authorizer<br>xác minh JWT, kiểm tra scope</small></div>
+          <span class="arrow">③ hợp lệ</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">AWS Lambda / back end<small>nhận claim (sub, groups)</small></div>
+        </div>
+        <figcaption><b>Hình 1.</b> Kịch bản “Access resources with API Gateway and Lambda with a user pool”: API Gateway tự xác minh token từ user pool rồi mới chuyển request tới Lambda hoặc API của bạn. Request thiếu/sai token bị từ chối ngay tại API Gateway (401) – back end không phải tự viết code kiểm tra. Có thể dùng <b>groups</b> trong token để phân quyền.</figcaption>
+      </figure>
+
+      <h3>Application Load Balancer xác thực người dùng thay ứng dụng</h3>
+      <p><b>Application Load Balancer</b> có thể <b>offload</b> việc xác thực: listener rule có action <code>authenticate-cognito</code> (user pool) hoặc <code>authenticate-oidc</code> (IdP tương thích OIDC bất kỳ). Những điểm tài liệu ELB nêu rõ:</p>
+      <ul>
+        <li>Hai action này <b>chỉ hỗ trợ trên HTTPS listener</b>.</li>
+        <li>App client của user pool phải có <b>client secret</b>, dùng <b>authorization code grant</b>; scope phải trả về ID token (vd <code>openid</code>).</li>
+        <li>ALB gửi <b>session cookie</b> <code>AWSELB</code> cho client; <code>SessionTimeout</code> mặc định <b>7 ngày</b> (có thể ngắn tới 1 giây). Client phải hoàn tất đăng nhập trong <b>15 phút</b>, nếu không nhận HTTP 401.</li>
+        <li>ALB chuyển claim tới target qua header <code>x-amzn-oidc-data</code> (JWT có chữ ký ES256 – target nên verify và kiểm tra <code>signer</code> là ARN của ALB), cùng <code>x-amzn-oidc-accesstoken</code>, <code>x-amzn-oidc-identity</code>.</li>
+        <li><code>OnUnauthenticatedRequest</code>: <b>authenticate</b> (mặc định – chuyển hướng tới IdP), <b>allow</b> (cho qua, không có claim – trang công khai + trang cá nhân hóa), <b>deny</b> (trả 401 – hợp với SPA gọi AJAX).</li>
+        <li>Nếu đặt <b>CloudFront</b> trước ALB: forward toàn bộ header, query string và cookie để không cache phản hồi đã xác thực.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Networking-Content-Delivery.svg" alt="">AWS Cloud – Region</span>
+          <div class="row center">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng<small>trình duyệt</small></div>
+            <span class="arrow">HTTPS :443</span>
+            <div class="grp vpc"><span class="lbl">VPC</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Application Load Balancer<small>rule 1: authenticate-cognito<br>rule 2: forward</small></div>
+                <span class="arrow">x-amzn-oidc-data</span>
+                <div class="grp priv"><span class="lbl">Private subnets</span>
+                  <div class="row center">
+                    <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Target group<small>EC2 / ECS – chỉ nhận traffic từ SG của ALB</small></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="row center">
+            <div class="node"><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">Cognito user pool<small>managed login, federation Google/SAML</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> ALB tích hợp Cognito: chưa có cookie ⇒ ALB chuyển hướng người dùng tới trang đăng nhập của user pool → nhận authorization code → đổi lấy token tại token endpoint → lấy user claims → đặt cookie <code>AWSELB</code> → chuyển request tới target kèm header claim. Các request sau chỉ cần cookie còn hạn. Ứng dụng phía sau <b>không cần viết code đăng nhập</b>.</figcaption>
+      </figure>
+
+      <h3>AppSync và machine-to-machine (M2M)</h3>
+      <ul>
+        <li><b>AWS AppSync</b> (GraphQL): chế độ <code>AMAZON_COGNITO_USER_POOLS</code> dùng token user pool; hoặc chế độ <code>AWS_IAM</code> dùng credentials từ <b>identity pool</b>.</li>
+        <li><b>M2M</b>: ứng dụng, dịch vụ, thiết bị IoT tự xác thực bằng <b>app client có client secret</b> và grant <code>client_credentials</code>. Cognito chỉ cấp <b>access token</b> (không có ID token, không có refresh token). Access token mang <b>custom scopes</b> do <span class="t" data-vi="Máy chủ tài nguyên">resource server</span> định nghĩa. Lưu lượng M2M lớn ⇒ cache token (API Gateway cache, ElastiCache, DynamoDB) để tránh chạm quota request của token endpoint.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – bảo vệ API/web</span>
+        <ul>
+          <li>“<i>REST API in API Gateway must allow only signed-in users of the mobile app</i>” ⇒ <b>Cognito user pool authorizer</b> trên API Gateway.</li>
+          <li>“<i>Add authentication to an existing web app behind an ALB without changing application code</i>” ⇒ <b>ALB authenticate-cognito / authenticate-oidc</b> (nhớ: HTTPS listener).</li>
+          <li>“<i>IoT devices / microservices call an API without a human user</i>” ⇒ user pool <b>M2M – client credentials grant</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: IDENTITY POOLS ===================== -->
+      <h2 id="identity-pools"><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-STS.svg" alt="">Cognito identity pools – “What AWS resources may this user reach?” (authorization)</h2>
+      <p class="lead">Một <span class="t" data-vi="Kho định danh">identity pool</span> là tập hợp các định danh duy nhất (<b>identity ID</b>) gán cho người dùng hoặc khách, được ủy quyền nhận <span class="t" data-vi="Thông tin xác thực AWS tạm thời">temporary AWS credentials</span>. Identity pool đổi một token đáng tin cậy (từ user pool, social provider, SAML hoặc OIDC provider) lấy credentials <b>tạm thời, quyền tối thiểu</b> từ AWS STS để app gọi trực tiếp Amazon S3, Amazon DynamoDB… thay cho người dùng.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 360" width="780" role="img" aria-label="Luồng user pool và identity pool dùng chung để truy cập S3 và DynamoDB">
+          <defs><marker id="ah7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <!-- App -->
+          <rect x="20" y="130" width="130" height="100" rx="8" fill="none" stroke="#7D8998" stroke-width="2"/>
+          <image href="../assets/icons/res/Mobile-client.svg" x="63" y="142" width="44" height="44"/>
+          <text x="85" y="204" font-size="13" font-weight="700" text-anchor="middle">Mobile app</text>
+          <text x="85" y="221" font-size="10.5" text-anchor="middle" class="muted">không chứa access key</text>
+          <!-- User pool -->
+          <rect x="240" y="20" width="190" height="80" rx="8" fill="none" stroke="#DD344C" stroke-width="2.5"/>
+          <image href="../assets/icons/svc/Amazon-Cognito.svg" x="252" y="38" width="44" height="44"/>
+          <text x="365" y="52" font-size="13.5" font-weight="700" text-anchor="middle">User pool</text>
+          <text x="365" y="70" font-size="11" text-anchor="middle">hoặc Google / Facebook</text>
+          <text x="365" y="86" font-size="11" text-anchor="middle">/ SAML / OIDC IdP</text>
+          <!-- Identity pool -->
+          <rect x="240" y="140" width="190" height="80" rx="8" fill="none" stroke="#DD344C" stroke-width="2.5"/>
+          <image href="../assets/icons/svc/Amazon-Cognito.svg" x="252" y="158" width="44" height="44"/>
+          <text x="365" y="174" font-size="13.5" font-weight="700" text-anchor="middle">Identity pool</text>
+          <text x="365" y="192" font-size="11" text-anchor="middle">chọn IAM role</text>
+          <text x="365" y="208" font-size="11" text-anchor="middle">(rules / groups / ABAC tags)</text>
+          <!-- STS -->
+          <rect x="240" y="260" width="190" height="80" rx="8" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <image href="../assets/icons/res/AWS-Identity-Access-Management_AWS-STS.svg" x="252" y="278" width="44" height="44"/>
+          <text x="365" y="296" font-size="13.5" font-weight="700" text-anchor="middle">AWS STS</text>
+          <text x="365" y="314" font-size="11" text-anchor="middle">AssumeRoleWithWebIdentity</text>
+          <!-- Resources -->
+          <rect x="560" y="70" width="200" height="80" rx="8" fill="none" stroke="#7AA116" stroke-width="2.5"/>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" x="572" y="88" width="44" height="44"/>
+          <text x="690" y="106" font-size="13" font-weight="700" text-anchor="middle">Amazon S3</text>
+          <text x="690" y="124" font-size="10.5" text-anchor="middle">prefix riêng của user</text>
+          <rect x="560" y="200" width="200" height="80" rx="8" fill="none" stroke="#7AA116" stroke-width="2.5"/>
+          <image href="../assets/icons/svc/Amazon-DynamoDB.svg" x="572" y="218" width="44" height="44"/>
+          <text x="690" y="236" font-size="13" font-weight="700" text-anchor="middle">DynamoDB</text>
+          <text x="690" y="254" font-size="10.5" text-anchor="middle">item theo partition key</text>
+          <!-- arrows -->
+          <path class="line-o" d="M150 150 L238 70" marker-end="url(#ah7)"/>
+          <text x="160" y="96" font-size="11.5" font-weight="700">① sign-in → JWT</text>
+          <path class="line-o" d="M150 182 L238 182" marker-end="url(#ah7)"/>
+          <text x="160" y="174" font-size="11.5" font-weight="700">② đưa token</text>
+          <path class="line-o" d="M365 220 L365 258" marker-end="url(#ah7)"/>
+          <text x="372" y="244" font-size="11.5" font-weight="700">③</text>
+          <path class="line-o" d="M240 300 L150 220" marker-end="url(#ah7)"/>
+          <text x="110" y="290" font-size="11.5" font-weight="700">④ temporary credentials</text>
+          <path class="line-o" d="M150 160 C 300 120, 450 110, 558 110" marker-end="url(#ah7)"/>
+          <path class="line-o" d="M150 205 C 300 240, 450 240, 558 240" marker-end="url(#ah7)"/>
+          <text x="470" y="180" font-size="11.5" font-weight="700" text-anchor="middle">⑤ gọi AWS API (SigV4)</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> User pool và identity pool <b>dùng chung</b> (kịch bản “Access AWS services with a user pool and an identity pool”): ① người dùng đăng nhập user pool, nhận OAuth 2.0 token; ② app đưa token cho identity pool; ③ identity pool chọn IAM role và lấy credentials từ STS; ④ app nhận <b>temporary AWS credentials</b>; ⑤ app ký request bằng credentials đó để gọi S3/DynamoDB trực tiếp. Hai thành phần độc lập: identity pool có thể nhận token trực tiếp từ Google/SAML mà không cần user pool.</figcaption>
+      </figure>
+
+      <h3>Authenticated vs unauthenticated (guest) identities</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/User.svg" alt="">Authenticated identities</h4>
+          <ul>
+            <li>Người dùng đã được xác thực bởi một provider được hỗ trợ: <b>Cognito user pool, Login with Amazon, Sign in with Apple, Facebook, Google, SAML, OIDC</b>, hoặc <b>developer provider</b> (back-end xác thực của riêng bạn – <i>developer-authenticated identities</i>).</li>
+            <li>Nhận credentials của <b>authenticated role</b> (hoặc role chọn theo rule).</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/res/Users.svg" alt="">Unauthenticated (guest) identities</h4>
+          <ul>
+            <li>Khách <b>chưa đăng nhập</b> vẫn nhận identity ID và credentials <b>giới hạn</b> – không cần token.</li>
+            <li>Phải <b>bật Guest access</b> và gán <b>unauthenticated role</b> có quyền rất hẹp (vd chỉ đọc catalog sản phẩm, ghi log analytics).</li>
+          </ul></div>
+      </div>
+
+      <h3>Hai cách ánh xạ người dùng sang quyền IAM</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cơ chế</th><th>Cách hoạt động</th><th>Ví dụ trong tài liệu</th></tr></thead>
+        <tbody>
+          <tr><td><b>Role-based access control</b></td><td>Cognito chọn IAM role để xin credentials: <b>default role</b>; <b>role theo rule</b> (so khớp claim của user – mỗi provider tối đa <b>25 rule</b>, áp theo thứ tự); hoặc <b>role theo group</b> trong user pool (<code>cognito:preferred_role</code>). Không khớp rule ⇒ chọn từ chối hoặc dùng authenticated role.</td><td>User chứng minh thuộc phòng marketing ⇒ nhận role có policy dành cho marketing.</td></tr>
+          <tr><td><b>Attribute-based access control (ABAC)</b><br><span class="muted">Attributes for access control</span></td><td>Identity pool đọc attribute trong claim và ánh xạ thành <b>principal tags</b> của phiên STS. Policy dùng điều kiện <code>aws:PrincipalTag</code>. Mặc định map <code>sub</code> và <code>aud</code>, hoặc tự định nghĩa mapping.</td><td>STS gắn tag <code>Department: marketing</code>; bucket S3 chỉ cho đọc khi <code>aws:PrincipalTag/Department = marketing</code>.</td></tr>
+        </tbody>
+      </table></div>
+
+      <p>Mẫu kinh điển trong đề: mỗi người dùng chỉ được truy cập <b>thư mục riêng</b> trong bucket. Dùng policy variable identity ID của Cognito trong policy của authenticated role (mẫu phổ biến):</p>
+      <pre><span class="c">// Authenticated role – mỗi user chỉ đọc/ghi prefix của chính mình</span>
+{
+  <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+  <span class="k">"Action"</span>: [<span class="s">"s3:GetObject"</span>, <span class="s">"s3:PutObject"</span>],
+  <span class="k">"Resource"</span>: <span class="s">"arn:aws:s3:::my-app-bucket/private/${cognito-identity.amazonaws.com:sub}/*"</span>
+}
+
+<span class="c">// Trust policy của role: chỉ identity pool cụ thể, chỉ user đã xác thực mới assume được</span>
+{
+  <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+  <span class="k">"Principal"</span>: { <span class="k">"Federated"</span>: <span class="s">"cognito-identity.amazonaws.com"</span> },
+  <span class="k">"Action"</span>: <span class="s">"sts:AssumeRoleWithWebIdentity"</span>,
+  <span class="k">"Condition"</span>: {
+    <span class="k">"StringEquals"</span>: { <span class="k">"cognito-identity.amazonaws.com:aud"</span>: <span class="s">"us-east-1:example-identity-pool-id"</span> },
+    <span class="k">"ForAnyValue:StringLike"</span>: { <span class="k">"cognito-identity.amazonaws.com:amr"</span>: <span class="s">"authenticated"</span> }
+  }
+}</pre>
+      <p class="muted">Tài liệu yêu cầu trust policy của role chứa <code>cognito-identity.amazonaws.com</code> và chỉ cho Cognito assume role khi request đến từ người dùng đã xác thực của <b>đúng identity pool</b>. Cú pháp điều kiện cụ thể ở trên là mẫu phổ biến từ trang “Role trust and permissions”.</p>
+
+      <ul>
+        <li><b>Enhanced flow</b> (mặc định) vs <b>basic (classic) flow</b>: basic flow cho phép bỏ qua lựa chọn role của identity pool và tự gọi <code>AssumeRoleWithWebIdentity</code>; phải chủ động bật.</li>
+        <li>Xóa identity khỏi pool ⇒ lần sau user nhận <b>identity ID mới</b>. Đổi application ID của IdP đã liên kết ⇒ user cũ <b>không xác thực được nữa</b>. Xóa identity pool <b>không hoàn tác được</b>.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – identity pool</span>
+        <ul>
+          <li>“<i>Mobile app users must upload photos directly to S3; each user can access only their own objects</i>” ⇒ <b>identity pool</b> + IAM policy với <code>${cognito-identity.amazonaws.com:sub}</code> (hoặc ABAC principal tags).</li>
+          <li>“<i>Allow users to browse the app without signing in, with limited access to AWS resources</i>” ⇒ <b>unauthenticated (guest) identities</b>.</li>
+          <li>“<i>Different permissions for admin vs regular users</i>” ⇒ user pool <b>groups</b> gắn IAM role, identity pool chọn role theo token/rule.</li>
+          <li>Thấy “<i>embed IAM access keys in the app</i>”, “<i>create an IAM user per customer</i>” ⇒ loại ngay.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: SO SÁNH USER POOL VS IDENTITY POOL ===================== -->
+      <h2 id="compare-pools"><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">So sánh user pool và identity pool</h2>
+      <p class="lead">Đề thi rất thích gài hai thành phần này. Quy tắc nhớ của tài liệu AWS: <span class="t" data-vi="Xác thực – bạn là ai">authentication</span> ⇒ <b>user pool</b>; <span class="t" data-vi="Ủy quyền – bạn được truy cập gì">authorization</span> tới tài nguyên AWS ⇒ <b>identity pool</b>. Không thành phần nào bắt buộc cần thành phần kia.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tính năng</th><th>User pools</th><th>Identity pools</th></tr></thead>
+        <tbody>
+          <tr><td>OIDC identity provider – cấp ID token</td><td class="yes">✓</td><td class="no">–</td></tr>
+          <tr><td>User directory – lưu user profile</td><td class="yes">✓</td><td class="no">–</td></tr>
+          <tr><td>Cấp access token (OAuth scopes) cho API của bạn</td><td class="yes">✓</td><td class="no">–</td></tr>
+          <tr><td>Managed login, MFA, threat protection, custom auth flow, groups, tùy biến token, AWS WAF</td><td class="yes">✓</td><td class="no">–</td></tr>
+          <tr><td>Biến claim SAML / OIDC / social thành OIDC token của riêng bạn</td><td class="yes">✓</td><td class="no">–</td></tr>
+          <tr><td><b>IAM web identity authorization</b> – đổi token lấy temporary AWS credentials</td><td class="no">–</td><td class="yes">✓</td></tr>
+          <tr><td>Credentials broker cho SAML / OIDC / social / user pool / custom developer provider</td><td class="no">–</td><td class="yes">✓</td></tr>
+          <tr><td><b>Unauthenticated (guest) access</b></td><td class="no">–</td><td class="yes">✓</td></tr>
+          <tr><td>Role-based và attribute-based access control trên tài nguyên AWS</td><td class="no">–</td><td class="yes">✓</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">Chỉ cần user pool</h4>
+          <ul>
+            <li>App gọi <b>API của bạn</b> (API Gateway, ALB, AppSync, back end tự viết) – các dịch vụ này hiểu JWT.</li>
+            <li>Cần quản lý đăng ký/đăng nhập, MFA, social login.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-STS.svg" alt="">Chỉ cần identity pool</h4>
+          <ul>
+            <li>Đã có IdP (Google, SAML…) và chỉ cần cấp AWS credentials.</li>
+            <li>Chỉ cần guest access tới tài nguyên AWS.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Mobile-client.svg" alt="">Dùng cả hai</h4>
+          <ul>
+            <li>App vừa đăng nhập người dùng <b>vừa</b> cần truy cập trực tiếp S3/DynamoDB/IoT/Kinesis… (Hình 3).</li>
+          </ul></div>
+      </div>
+
+      <div class="callout warn"><span class="ttl">Bẫy: Cognito ≠ IAM Identity Center</span>
+        <p>Cả hai đều “SSO” và đều nối được với SAML IdP, nhưng <b>Cognito</b> phục vụ <b>người dùng của ứng dụng</b> (customer identity – CIAM), còn <b>IAM Identity Center</b> phục vụ <b>nhân sự truy cập AWS account và ứng dụng doanh nghiệp</b>. Đề hỏi “<i>employees access the AWS Management Console of 50 accounts</i>” mà chọn Cognito là sai; đề hỏi “<i>2 million customers sign in to our mobile app</i>” mà chọn Identity Center cũng sai.</p></div>
+
+      <!-- ===================== PHẦN 6: DIRECTORY SERVICE - MANAGED AD ===================== -->
+      <h2 id="managed-ad"><img src="../assets/icons/res/AWS-Directory-Service_AWS-Managed-Microsoft-AD.svg" alt="">AWS Directory Service &amp; AWS Managed Microsoft AD</h2>
+      <p class="lead"><b>AWS Directory Service</b> cung cấp nhiều cách dùng <span class="t" data-vi="Dịch vụ thư mục của Microsoft">Microsoft Active Directory (AD)</span> với các dịch vụ AWS khác. Thư mục lưu thông tin về user, group, thiết bị; admin dùng chúng để quản lý quyền truy cập. Directory Service phục vụ khách hàng muốn đưa ứng dụng <b>Microsoft AD-aware</b> hoặc <span class="t" data-vi="Giao thức truy cập thư mục hạng nhẹ">LDAP</span>-aware lên cloud.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Directory-Service_AWS-Managed-Microsoft-AD.svg" alt="">
+          <div><h4>AWS Managed Microsoft AD</h4><span class="vi">AD thật do AWS vận hành</span><p>Microsoft AD thật (Windows Server 2019) chạy trong VPC của bạn. Standard / Enterprise / Hybrid Edition.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Directory-Service_AD-Connector.svg" alt="">
+          <div><h4>AD Connector</h4><span class="vi">Cổng proxy về AD on-premises</span><p>Chuyển tiếp yêu cầu xác thực về domain controller on-premises, <b>không cache</b> thông tin trên cloud.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Directory-Service_Simple-AD.svg" alt="">
+          <div><h4>Simple AD</h4><span class="vi">Thư mục tương thích AD (Samba 4)</span><p>Thư mục độc lập, chi phí thấp, tính năng AD cơ bản. <b>Không còn mở cho khách hàng mới.</b></p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Cognito.svg" alt="">
+          <div><h4>Amazon Cognito</h4><span class="vi">Lựa chọn cho SaaS</span><p>Tài liệu Directory Service khuyên: phát triển SaaS app scale lớn, cần social identity ⇒ dùng Cognito.</p></div></div>
+      </div>
+
+      <h3>AWS Managed Microsoft AD là gì?</h3>
+      <p>Tên đầy đủ <b>AWS Directory Service for Microsoft Active Directory</b>: Microsoft AD thật được AWS quản lý, chạy trên <b>Windows Server 2019</b>. Dịch vụ tạo một <b>cặp domain controller có tính sẵn sàng cao</b> trong VPC của bạn, <b>ở hai Availability Zone khác nhau</b>; AWS tự lo giám sát host, phục hồi, replicate dữ liệu, <b>snapshot hằng ngày</b> và cập nhật phần mềm. Bạn vẫn quản lý user, group, <span class="t" data-vi="Chính sách nhóm">Group Policy</span> bằng công cụ AD quen thuộc từ một máy Windows đã join domain. Có thể <b>thêm domain controller</b> để scale và phân tải.</p>
+
+      <div class="stats">
+        <div class="stat"><b>2 DC</b><span>domain controller tối thiểu, ở 2 AZ khác nhau</span></div>
+        <div class="stat"><b>~30.000</b><span>directory objects – Standard Edition (tới ~5.000 nhân viên)</span></div>
+        <div class="stat"><b>~500.000</b><span>directory objects – Enterprise Edition</span></div>
+        <div class="stat"><b>HIPAA / PCI DSS</b><span>được phê duyệt khi bật compliance cho directory</span></div>
+      </div>
+
+      <h3>Làm được gì?</h3>
+      <ul>
+        <li>Chạy workload <b>directory-aware</b>: Microsoft <b>SharePoint</b>, <b>SQL Server Always On Availability Groups</b>, ứng dụng .NET.</li>
+        <li>Hỗ trợ dịch vụ AWS: <b>Amazon WorkSpaces</b>, WorkDocs, <b>Amazon QuickSight (Quick)</b>, Amazon Chime, Amazon Connect, <b>Amazon RDS for SQL Server</b> (và RDS for Oracle/PostgreSQL), <b>Amazon FSx for Windows File Server</b>, <b>AWS IAM Identity Center</b>.</li>
+        <li><b>Join EC2 instance</b> vào domain ⇒ người dùng có trải nghiệm Windows SSO giống on-premises. Vì AD là LDAP directory ⇒ dùng được cho <b>Linux SSH authentication</b> và ứng dụng LDAP.</li>
+        <li><b>Schema extension</b>, <b>fine-grained password policy</b>, <b>secure LDAP (LDAPS)</b> qua SSL/TLS, <b>MFA</b> (qua RADIUS) khi truy cập ứng dụng AWS từ Internet.</li>
+        <li>Đăng nhập <b>AWS Management Console</b> bằng tài khoản AD; kết hợp IAM Identity Center để lấy short-term credentials cho CLI/SDK; thêm Microsoft Entra Connect (+ AD FS) để đăng nhập Office 365.</li>
+      </ul>
+
+      <h3>Trust relationship với AD on-premises</h3>
+      <p>Managed Microsoft AD hỗ trợ <span class="t" data-vi="Quan hệ tin cậy">trust relationship</span> loại <b>external</b> và <b>forest</b>, theo cả ba hướng: <b>one-way incoming</b>, <b>one-way outgoing</b> và <b>two-way</b> – với AD self-managed (on-premises hoặc trên EC2) hoặc giữa nhiều Managed Microsoft AD với nhau. Mô hình AWS mô tả là <span class="t" data-vi="Rừng tài nguyên">resource forest</span>: định danh người dùng <b>ở lại AD hiện có</b>, còn forest trên AWS quản lý tài nguyên AWS – giữ cô lập vận hành mà vẫn SSO liền mạch.</p>
+      <ul>
+        <li><b>Two-way trust bắt buộc</b> cho các AWS Enterprise Apps: Amazon Chime, Amazon Connect, QuickSight, <b>IAM Identity Center</b>, WorkDocs, WorkMail, <b>WorkSpaces</b> và <b>AWS Management Console</b> (Managed AD phải query được user/group ở AD của bạn). Có thể bật <b>selective authentication</b> để chỉ service account của ứng dụng AWS được query.</li>
+        <li><b>Amazon EC2, Amazon RDS, Amazon FSx</b> hoạt động với <b>one-way hoặc two-way</b> trust.</li>
+        <li>Điều kiện: <b>kết nối mạng</b> giữa on-premises và VPC (Site-to-Site VPN hoặc Direct Connect), mở đúng port AD trên firewall và security group, bật Kerberos pre-authentication, cấu hình <b>DNS conditional forwarder</b> hai phía; NetBIOS/domain name hai bên phải khác nhau.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">Corporate data center</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Nhân viên<small>tài khoản corp.example.com</small></div>
+              <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">Self-managed AD<small>domain controllers on-premises<br>(user forest)</small></div>
+            </div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Directory-Service.svg" alt="">AWS Cloud – Region</span>
+            <div class="grp vpc"><span class="lbl">VPC</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">AZ a</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Directory-Service_AWS-Managed-Microsoft-AD.svg" alt="">DC 1</div></div>
+                </div>
+                <div class="grp az"><span class="lbl">AZ b</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Directory-Service_AWS-Managed-Microsoft-AD.svg" alt="">DC 2</div></div>
+                </div>
+              </div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 Windows<small>domain join</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS for SQL Server<small>Windows Authentication</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-FSx-for-Windows-File-Server.svg" alt="">FSx for Windows</div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-WorkSpaces.svg" alt="">WorkSpaces<small>cần two-way trust</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">on-premises AD</div>
+          <span class="arrow">forest trust (two-way)<br>qua Site-to-Site VPN / Direct Connect</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Directory-Service_AWS-Managed-Microsoft-AD.svg" alt="">AWS Managed Microsoft AD<small>resource forest aws.example.com</small></div>
+        </div>
+        <figcaption><b>Hình 4.</b> AWS Managed Microsoft AD triển khai <b>hai domain controller ở hai AZ</b> trong VPC. Tạo <b>forest trust</b> với AD on-premises để nhân viên dùng tài khoản hiện có truy cập EC2, RDS for SQL Server, FSx, WorkSpaces trên AWS mà <b>không đồng bộ user</b>. Nếu mạng tới on-premises bị gián đoạn, các workload trên AWS vẫn xác thực được với tài khoản nằm trong Managed AD.</figcaption>
+      </figure>
+
+      <h3>Ba edition và các tính năng mở rộng</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Edition</th><th>Dành cho</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><b>Standard</b></td><td>Doanh nghiệp vừa và nhỏ, tới khoảng <b>5.000 nhân viên</b></td><td>Đủ lưu trữ khoảng <b>30.000</b> directory objects (user, group, computer). Con số là xấp xỉ.</td></tr>
+          <tr><td><b>Enterprise</b></td><td>Tổ chức lớn</td><td>Tới khoảng <b>500.000</b> directory objects. <b>Chỉ Enterprise</b> mới hỗ trợ <b>multi-Region replication</b>.</td></tr>
+          <tr><td><b>Hybrid Edition</b></td><td>Mở rộng AD self-managed hiện có lên AWS</td><td>Kết nối AD của bạn với Directory Service, <b>không đồng bộ định danh</b>, lập trust, dùng credentials hiện có.</td></tr>
+        </tbody>
+      </table></div>
+
+      <ul>
+        <li><b>Multi-Region replication</b> (Enterprise): tự replicate toàn bộ dữ liệu thư mục (user, group, GPO, trust, OU, schema) sang Region khác bằng cơ chế replicate AD gốc; mỗi Region mới có <b>2 domain controller</b>, giữ nguyên <code>directory_id</code>, mỗi Region là một AD site. Ứng dụng dùng thư mục <b>local</b> trong Region (hiệu năng) và có <b>khả năng phục hồi đa Region</b>. Trust là tính năng <i>global</i> – cấu hình ở Primary Region.</li>
+        <li><b>Directory sharing</b>: Managed Microsoft AD có thể <b>chia sẻ cho AWS account khác</b> (cùng hoặc khác organization) để domain join EC2 từ nhiều account – điều mà AD Connector <b>không</b> làm được.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Managed Microsoft AD</span>
+        <ul>
+          <li>“<i>Migrate SharePoint / .NET / SQL Server apps that need Active Directory to AWS, fully managed, highly available</i>” ⇒ <b>AWS Managed Microsoft AD</b> (không tự dựng DC trên EC2 – overhead cao).</li>
+          <li>“<i>Amazon RDS for SQL Server / FSx for Windows must use Windows Authentication</i>” ⇒ <b>Managed Microsoft AD</b> (AD Connector và Simple AD không tương thích RDS SQL Server).</li>
+          <li>“<i>Users in on-premises AD must access AWS resources; keep identities on-premises; AWS workloads must keep working if the link is down</i>” ⇒ <b>Managed Microsoft AD + forest trust</b>.</li>
+          <li>“<i>AD-aware applications in multiple Regions with low latency</i>” ⇒ <b>Enterprise Edition + multi-Region replication</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: AD CONNECTOR & SIMPLE AD ===================== -->
+      <h2 id="adc-simplead"><img src="../assets/icons/res/AWS-Directory-Service_AD-Connector.svg" alt="">AD Connector và Simple AD</h2>
+
+      <h3>AD Connector – directory gateway về AD on-premises</h3>
+      <p class="lead"><b>AD Connector</b> là một <span class="t" data-vi="Cổng thư mục / máy chủ ủy nhiệm">directory gateway (proxy)</span> chuyển hướng yêu cầu thư mục về Microsoft AD on-premises <b>mà không cache bất kỳ thông tin nào trên cloud</b>. Bạn chỉ cần thêm <b>một service account</b> vào AD; không cần đồng bộ thư mục, không cần dựng hạ tầng federation.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Nhân viên<small>đăng nhập WorkSpaces / Console</small></div>
+          <span class="arrow">sign-in</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-WorkSpaces.svg" alt="">Ứng dụng AWS<small>WorkSpaces, QuickSight, WorkMail,<br>Console, EC2 seamless domain join</small></div>
+          <span class="arrow">yêu cầu xác thực</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Directory-Service_AD-Connector.svg" alt="">AD Connector<small>trong VPC · không lưu dữ liệu<br>(+ RADIUS MFA tùy chọn)</small></div>
+          <span class="arrow">VPN / Direct Connect</span>
+          <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">On-premises AD<small>domain controllers<br>xác thực thật sự ở đây</small></div>
+        </div>
+        <figcaption><b>Hình 5.</b> AD Connector chỉ <b>chuyển tiếp</b> yêu cầu đăng nhập về domain controller on-premises. User/group/mật khẩu vẫn quản lý bằng công cụ AD như cũ, nên chính sách bảo mật (hết hạn mật khẩu, lịch sử mật khẩu, khóa tài khoản) áp dụng thống nhất ở on-premises lẫn AWS. Vì không có bản sao trên cloud, mất kết nối mạng tới on-premises ⇒ không xác thực được.</figcaption>
+      </figure>
+
+      <ul>
+        <li><b>Hai kích thước</b>: <b>small</b> (tổ chức nhỏ, ít operations/giây) và <b>large</b> (vừa – cao). <b>Không giới hạn</b> số user hay connection; muốn tăng hiệu năng thì dàn tải qua nhiều AD Connector.</li>
+        <li>Dùng được với WorkSpaces, WorkDocs, QuickSight, Chime, Amazon Connect, WorkMail; join EC2 Windows vào domain on-premises bằng <b>seamless domain join</b>; đăng nhập <b>AWS Management Console</b> bằng tài khoản AD (qua IAM role).</li>
+        <li><b>MFA</b>: tích hợp hạ tầng MFA dựa trên <b>RADIUS</b> hiện có.</li>
+        <li><b>Giới hạn</b>: <b>không hỗ trợ transitive trust</b>; quan hệ <b>1-1</b> với domain (mỗi domain/child domain cần một AD Connector riêng); <b>không chia sẻ được</b> cho account khác; <b>không multi-VPC aware</b> (WorkSpaces phải nằm cùng VPC với AD Connector); <b>không tương thích RDS SQL Server</b>.</li>
+      </ul>
+
+      <h3>Simple AD – thư mục tương thích AD giá rẻ</h3>
+      <p><b>Simple AD</b> là thư mục độc lập do AWS quản lý, chạy trên <b>Samba 4 Active Directory Compatible Server</b>. AWS lo giám sát, snapshot hằng ngày (point-in-time recovery) và phục hồi.</p>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Directory-Service_Simple-AD.svg" alt="">Có</h4>
+          <ul>
+            <li>Hai kích thước: <b>Small</b> – tới <b>500 user</b> (~2.000 objects); <b>Large</b> – tới <b>5.000 user</b> (~20.000 objects).</li>
+            <li>User account, group membership, <b>Group Policy</b>, join EC2 Linux/Windows vào domain, <b>Kerberos-based SSO</b>, LDAP cho ứng dụng Linux.</li>
+            <li>Dùng với WorkSpaces, WorkDocs, QuickSight, WorkMail; đăng nhập Console qua IAM role.</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/AWS-Directory-Service_Simple-AD.svg" alt="">Không có</h4>
+          <ul>
+            <li><b>MFA</b>, <b>trust relationship</b> với domain khác, schema extension, LDAPS, PowerShell AD cmdlets, AD recycle bin, gMSA, FSMO role transfer, DNS dynamic update.</li>
+            <li><b>Không</b> hỗ trợ RDS for SQL Server/Oracle, Amazon FSx, <b>IAM Identity Center</b>, Chime, WorkSpaces Applications.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp với Directory Service</span>
+        <ul>
+          <li><b>Simple AD không phải Microsoft AD thật</b> – không trust, không MFA. Đề yêu cầu “<i>trust with on-premises AD</i>” hoặc “<i>MFA</i>” ⇒ không chọn Simple AD.</li>
+          <li><b>AD Connector không lưu user trên AWS</b> – không dùng được làm thư mục độc lập, và phụ thuộc hoàn toàn vào kết nối mạng tới on-premises.</li>
+          <li>Simple AD <b>không còn mở cho khách hàng mới</b> (tài liệu hiện tại); đề cũ vẫn có thể nhắc như phương án “low-cost, small”.</li>
+          <li>Cần dùng chung directory cho <b>nhiều AWS account</b> ⇒ <b>Managed Microsoft AD + directory sharing</b>, không phải AD Connector.</li>
+        </ul></div>
+
+      <h3>Bảng chọn nhanh</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>AWS Managed Microsoft AD</th><th>AD Connector</th><th>Simple AD</th></tr></thead>
+        <tbody>
+          <tr><td>Bản chất</td><td>Microsoft AD thật (Windows Server 2019)</td><td>Proxy về AD on-premises</td><td>Samba 4, tương thích AD</td></tr>
+          <tr><td>User lưu ở đâu</td><td>Trên AWS (và/hoặc AD on-prem qua trust)</td><td><b>Chỉ on-premises</b></td><td>Trên AWS</td></tr>
+          <tr><td>Quy mô</td><td>Standard ~30k objects · Enterprise ~500k objects</td><td>Small / Large, không giới hạn user</td><td>Small 500 user · Large 5.000 user</td></tr>
+          <tr><td>Trust với AD khác</td><td class="yes">Có (external/forest, 1 chiều/2 chiều)</td><td class="no">Không (không transitive trust)</td><td class="no">Không</td></tr>
+          <tr><td>MFA</td><td class="yes">Có (RADIUS)</td><td class="yes">Có (RADIUS on-prem)</td><td class="no">Không</td></tr>
+          <tr><td>RDS for SQL Server, FSx for Windows</td><td class="yes">Có</td><td class="no">Không tương thích RDS SQL Server</td><td class="no">Không</td></tr>
+          <tr><td>IAM Identity Center làm identity source</td><td class="yes">Có</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Chia sẻ cho account khác / multi-Region</td><td class="yes">Có / Có (Enterprise)</td><td class="no">Không</td><td class="no">Không</td></tr>
+          <tr><td>Khi nào chọn</td><td>Cần tính năng AD thật, workload Windows, LDAP cho Linux, AD độc lập trên AWS</td><td>Chỉ cần user on-premises đăng nhập ứng dụng AWS bằng tài khoản AD hiện có</td><td>Thư mục nhỏ, chi phí thấp, tính năng AD cơ bản</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – chọn loại directory</span>
+        <ul>
+          <li>“<i>Use existing on-premises AD credentials for Amazon WorkSpaces / QuickSight / Console; do not store or sync directory data in the cloud</i>” ⇒ <b>AD Connector</b>.</li>
+          <li>“<i>Need actual Microsoft AD features, schema extensions, trusts, SQL Server</i>” ⇒ <b>AWS Managed Microsoft AD</b>.</li>
+          <li>“<i>Small, low-cost directory with basic AD compatibility, Samba-compatible apps</i>” ⇒ <b>Simple AD</b>.</li>
+          <li>“<i>Employees sign in to many AWS accounts with AD credentials</i>” ⇒ <b>IAM Identity Center</b> với identity source là AD (qua <b>AD Connector</b> hoặc <b>Managed Microsoft AD</b>) – nối lại Bài 6.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải nhớ</span>
+        <ul>
+          <li><b>Cognito = định danh cho người dùng ứng dụng</b>; IAM Identity Center = nhân sự vào AWS account; Directory Service = Microsoft AD trên AWS.</li>
+          <li><b>User pool</b> = user directory + OIDC IdP + authorization server: sign-up/sign-in, managed login, MFA, social/SAML/OIDC federation, groups, Lambda triggers (trả lời trong 5 giây), M2M. Phát <b>ID, access, refresh token</b> (refresh mặc định 30 ngày, 60 phút – 10 năm).</li>
+          <li>Feature plans: <b>Lite</b> (cơ bản) · <b>Essentials</b> (mặc định, passwordless, passkey, email MFA) · <b>Plus</b> (threat protection, compromised credentials, adaptive auth).</li>
+          <li>Token user pool dùng trực tiếp cho <b>API Gateway authorizer</b>, <b>ALB authenticate-cognito</b> (chỉ HTTPS listener), <b>AppSync</b>.</li>
+          <li><b>Identity pool</b> = đổi token lấy <b>temporary AWS credentials</b> qua STS; hỗ trợ <b>guest</b>; phân quyền bằng role (default / rule / group) hoặc <b>ABAC principal tags</b>; mẫu <code>${cognito-identity.amazonaws.com:sub}</code> cho prefix S3 riêng từng user.</li>
+          <li><b>Managed Microsoft AD</b>: AD thật, 2 DC ở 2 AZ, Standard (~30k objects) / Enterprise (~500k, multi-Region), trust external/forest 1–2 chiều, two-way trust cho WorkSpaces/Identity Center/Console, hỗ trợ RDS SQL Server & FSx, chia sẻ được cho account khác.</li>
+          <li><b>AD Connector</b>: proxy, không cache, cần VPN/DX, RADIUS MFA, 1-1 với domain, không chia sẻ, không multi-VPC, không RDS SQL Server.</li>
+          <li><b>Simple AD</b>: Samba 4, 500 / 5.000 user, không trust, không MFA; không mở cho khách mới.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="glossary">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Amazon Cognito</dt><dd><b>Nền tảng định danh cho web &amp; mobile app</b> – user directory, authentication server, cấp OAuth 2.0 token và AWS credentials.</dd></div>
+        <div><dt>CIAM (Customer identity and access management)</dt><dd><b>Quản lý định danh khách hàng</b> – đối lập với workforce identity.</dd></div>
+        <div><dt>User pool</dt><dd><b>Kho người dùng</b> – user directory + OIDC IdP của Cognito (authentication).</dd></div>
+        <div><dt>Identity pool</dt><dd><b>Kho định danh</b> – đổi token lấy temporary AWS credentials (authorization).</dd></div>
+        <div><dt>Local user / Federated user</dt><dd><b>Người dùng cục bộ / người dùng liên kết</b> – tạo trực tiếp trong user pool / đăng nhập qua IdP bên ngoài.</dd></div>
+        <div><dt>ID token / Access token / Refresh token</dt><dd><b>Token định danh / token truy cập / token làm mới</b> của user pool.</dd></div>
+        <div><dt>Refresh token rotation</dt><dd><b>Xoay vòng refresh token</b> – mỗi lần refresh cấp token mới, vô hiệu token cũ.</dd></div>
+        <div><dt>Managed login (classic hosted UI)</dt><dd><b>Trang đăng nhập do AWS host</b> cho user pool.</dd></div>
+        <div><dt>App client</dt><dd><b>Ứng dụng khách của user pool</b> – cấu hình riêng cho từng app (client secret, grant, thời hạn token).</dd></div>
+        <div><dt>Feature plan (Lite / Essentials / Plus)</dt><dd><b>Gói tính năng</b> của user pool, tính theo MAU.</dd></div>
+        <div><dt>Monthly active users (MAU)</dt><dd><b>Người dùng hoạt động hằng tháng</b> – cơ sở tính phí Cognito.</dd></div>
+        <div><dt>Threat protection (advanced security features)</dt><dd><b>Bảo vệ trước mối đe dọa</b> – phát hiện mật khẩu bị lộ, đăng nhập rủi ro (Plus).</dd></div>
+        <div><dt>Adaptive authentication</dt><dd><b>Xác thực thích ứng</b> – yêu cầu thêm MFA/chặn theo mức rủi ro.</dd></div>
+        <div><dt>Passwordless / Passkey</dt><dd><b>Đăng nhập không mật khẩu / khóa truy cập FIDO2</b>.</dd></div>
+        <div><dt>Lambda trigger (Cognito)</dt><dd><b>Hàm Lambda kích hoạt theo sự kiện</b> của user pool – pre sign-up, migrate user, pre token generation…</dd></div>
+        <div><dt>Custom authentication flow</dt><dd><b>Luồng xác thực tùy chỉnh</b> – define/create/verify auth challenge.</dd></div>
+        <div><dt>Machine-to-machine (M2M) / client credentials grant</dt><dd><b>Ủy quyền máy với máy</b> – chỉ cấp access token cho ứng dụng không có người dùng.</dd></div>
+        <div><dt>Resource server / Custom scope</dt><dd><b>Máy chủ tài nguyên / phạm vi tùy chỉnh</b> trong access token.</dd></div>
+        <div><dt>Cognito user pool authorizer</dt><dd><b>Bộ ủy quyền API Gateway dùng user pool</b> – xác minh JWT.</dd></div>
+        <div><dt>authenticate-cognito / authenticate-oidc</dt><dd><b>Action xác thực của ALB</b> – chỉ trên HTTPS listener.</dd></div>
+        <div><dt>Authenticated / Unauthenticated (guest) identity</dt><dd><b>Định danh đã xác thực / khách vãng lai</b> trong identity pool.</dd></div>
+        <div><dt>Developer-authenticated identities</dt><dd><b>Định danh do back-end của nhà phát triển xác thực</b>.</dd></div>
+        <div><dt>Role-based access control (identity pool)</dt><dd><b>Kiểm soát truy cập theo role</b> – default, rule (≤25/provider), preferred_role theo group.</dd></div>
+        <div><dt>Attributes for access control / Principal tag</dt><dd><b>Thuộc tính dùng cho kiểm soát truy cập / tag của principal</b> – ABAC trong identity pool.</dd></div>
+        <div><dt>Basic (classic) flow / Enhanced flow</dt><dd><b>Luồng cơ bản / luồng nâng cao</b> của identity pool.</dd></div>
+        <div><dt>AWS Directory Service</dt><dd><b>Dịch vụ thư mục</b> – Microsoft AD trên AWS.</dd></div>
+        <div><dt>Active Directory (AD) / Domain controller (DC)</dt><dd><b>Dịch vụ thư mục của Microsoft / máy chủ điều khiển miền</b>.</dd></div>
+        <div><dt>LDAP / LDAPS</dt><dd><b>Giao thức truy cập thư mục hạng nhẹ</b> / bản mã hóa SSL-TLS.</dd></div>
+        <div><dt>AWS Managed Microsoft AD</dt><dd><b>AD thật do AWS vận hành</b> – Standard, Enterprise, Hybrid Edition.</dd></div>
+        <div><dt>Trust relationship (external / forest; one-way / two-way)</dt><dd><b>Quan hệ tin cậy</b> giữa các domain/forest AD.</dd></div>
+        <div><dt>Resource forest</dt><dd><b>Rừng tài nguyên</b> – forest trên AWS quản lý tài nguyên, định danh ở forest khác.</dd></div>
+        <div><dt>Selective authentication</dt><dd><b>Xác thực có chọn lọc</b> – chỉ tài khoản được phép mới đi qua trust.</dd></div>
+        <div><dt>Multi-Region replication</dt><dd><b>Sao chép đa Region</b> thư mục – chỉ Enterprise Edition.</dd></div>
+        <div><dt>Directory sharing</dt><dd><b>Chia sẻ thư mục</b> Managed AD cho AWS account khác.</dd></div>
+        <div><dt>Group Policy (GPO)</dt><dd><b>Chính sách nhóm</b> của Windows AD.</dd></div>
+        <div><dt>Domain join / Seamless domain join</dt><dd><b>Gia nhập miền / gia nhập miền tự động</b> cho EC2.</dd></div>
+        <div><dt>AD Connector</dt><dd><b>Cổng proxy thư mục</b> – chuyển tiếp xác thực về AD on-premises, không cache.</dd></div>
+        <div><dt>RADIUS</dt><dd><b>Giao thức xác thực từ xa</b> – dùng để tích hợp MFA cho Directory Service.</dd></div>
+        <div><dt>Simple AD</dt><dd><b>Thư mục tương thích AD chạy Samba 4</b> – nhỏ, rẻ, không trust/MFA.</dd></div>
+      </dl>
+
+      <!-- ===================== CÂU HỎI ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company is building a mobile app that will have millions of users. Users must be able to sign up, sign in, reset their passwords, and optionally sign in with their Google or Facebook accounts. The company wants the LEAST development and operational effort. Which solution should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Create an IAM user for each customer and enable MFA.</li>
+            <li data-k="B">Use AWS IAM Identity Center with an external identity provider for each social network.</li>
+            <li data-k="C">Use an Amazon Cognito user pool with managed login and configure Google and Facebook as social identity providers.</li>
+            <li data-k="D">Deploy AWS Managed Microsoft AD and create a user account for each customer.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> User pool là user directory cho ứng dụng: sign-up/sign-in, quên mật khẩu, MFA, managed login có sẵn, và federation với Google/Facebook – scale tới hàng triệu người dùng. <b>A sai</b>: IAM user dành cho định danh quản trị AWS, không cho khách hàng; có quota và không có sign-up. <b>B sai</b>: Identity Center phục vụ <b>workforce</b> truy cập AWS account/ứng dụng doanh nghiệp, không phải CIAM. <b>D sai</b>: Managed AD dành cho workload Windows/AD, giới hạn số object và không hỗ trợ social login; tài liệu nói SaaS scale lớn ⇒ Cognito.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang xây dựng một ứng dụng di động sẽ có hàng triệu người dùng. Người dùng phải có thể đăng ký (sign up), đăng nhập (sign in), đặt lại mật khẩu, và tùy chọn đăng nhập bằng tài khoản Google hoặc Facebook. Công ty muốn LEAST development and operational effort (ít công sức phát triển và vận hành nhất). Solutions architect nên đề xuất giải pháp nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một IAM user cho mỗi khách hàng và bật MFA.</span><span class="why">Sai: IAM user dành cho định danh quản trị AWS, không dành cho khách hàng của ứng dụng; có quota giới hạn và không có chức năng tự đăng ký.</span></li>
+              <li data-k="B"><span class="tv">Dùng AWS IAM Identity Center với một external identity provider cho mỗi mạng xã hội.</span><span class="why">Sai: IAM Identity Center phục vụ workforce (nhân viên) truy cập AWS account/ứng dụng doanh nghiệp, không phải quản lý định danh khách hàng (CIAM).</span></li>
+              <li data-k="C"><span class="tv">Dùng một Amazon Cognito user pool với managed login và cấu hình Google và Facebook làm social identity provider.</span><span class="why">Đúng: user pool có sẵn sign-up/sign-in, quên mật khẩu, managed login và federation với Google/Facebook, scale tới hàng triệu người dùng mà không phải tự xây.</span></li>
+              <li data-k="D"><span class="tv">Triển khai AWS Managed Microsoft AD và tạo một user account cho mỗi khách hàng.</span><span class="why">Sai: Managed AD dành cho workload Windows/AD, giới hạn số object và không hỗ trợ social login.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A photo-sharing mobile app authenticates users with an Amazon Cognito user pool. The app must upload images directly to an Amazon S3 bucket, and each user must be able to access only the objects under a prefix that matches their own identity. The company does not want to embed long-term credentials in the app. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Configure an Amazon Cognito identity pool that trusts the user pool. Attach an IAM policy to the authenticated role that allows access to the prefix that uses the ${cognito-identity.amazonaws.com:sub} policy variable.</li>
+            <li data-k="B">Create an IAM user for the app and store its access keys in the app code. Use a bucket policy to restrict each prefix.</li>
+            <li data-k="C">Send the user pool ID token in the Authorization header of each S3 PUT request.</li>
+            <li data-k="D">Configure an S3 bucket policy that allows public writes and use object tags to identify the owner.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Identity pool đổi token user pool lấy <b>temporary AWS credentials</b> qua STS; policy variable identity ID giới hạn mỗi user vào prefix riêng (hoặc dùng ABAC principal tags). <b>B sai</b>: nhúng access key dài hạn vào app là anti-pattern – lộ key là lộ toàn bộ. <b>C sai</b>: S3 không hiểu JWT của user pool; request S3 phải ký SigV4 bằng AWS credentials. <b>D sai</b>: public write là lỗ hổng bảo mật nghiêm trọng.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng di động chia sẻ ảnh xác thực người dùng bằng một Amazon Cognito user pool. Ứng dụng phải tải ảnh trực tiếp lên một Amazon S3 bucket, và mỗi người dùng chỉ được truy cập các object nằm dưới prefix khớp với định danh của chính họ. Công ty không muốn nhúng thông tin xác thực dài hạn (long-term credentials) vào ứng dụng. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình một Amazon Cognito identity pool tin cậy user pool. Gắn một IAM policy vào authenticated role cho phép truy cập prefix có dùng policy variable ${cognito-identity.amazonaws.com:sub}.</span><span class="why">Đúng: identity pool đổi token của user pool lấy temporary AWS credentials qua STS, và policy variable identity ID giới hạn mỗi user chỉ vào prefix của riêng mình.</span></li>
+              <li data-k="B"><span class="tv">Tạo một IAM user cho ứng dụng và lưu access key của nó trong code ứng dụng. Dùng bucket policy để giới hạn từng prefix.</span><span class="why">Sai: nhúng access key dài hạn vào app là anti-pattern bị đề cấm; lộ key là lộ quyền của mọi user, và một IAM user chung không phân biệt được từng người dùng.</span></li>
+              <li data-k="C"><span class="tv">Gửi ID token của user pool trong header Authorization của mỗi request S3 PUT.</span><span class="why">Sai: S3 không hiểu JWT của user pool; request tới S3 phải được ký SigV4 bằng AWS credentials.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình một S3 bucket policy cho phép ghi công khai (public write) và dùng object tag để xác định chủ sở hữu.</span><span class="why">Sai: cho phép public write là lỗ hổng bảo mật nghiêm trọng và không giới hạn được mỗi user vào prefix riêng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company has a REST API in Amazon API Gateway that invokes AWS Lambda functions. The API must be accessible only to users who have signed in to the company's web application, which uses an Amazon Cognito user pool. Which solution meets this requirement with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Write code in each Lambda function to call the Cognito API and validate the user's password on every request.</li>
+            <li data-k="B">Use an Amazon Cognito identity pool to issue IAM credentials and require IAM authorization with a resource policy that lists every user's ARN.</li>
+            <li data-k="C">Put the API behind a Network Load Balancer and configure an authenticate-cognito action.</li>
+            <li data-k="D">Configure an Amazon Cognito user pool authorizer on the API Gateway methods and have the client send the user pool token with each request.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> API Gateway xác minh token từ user pool (Cognito authorizer) trước khi gọi Lambda – không cần viết code xác thực. <b>A sai</b>: tự kiểm tra mật khẩu mỗi request vừa kém an toàn vừa tốn công. <b>B sai</b>: identity pool + IAM auth làm được nhưng liệt kê ARN từng user là phi thực tế và phức tạp hơn nhiều. <b>C sai</b>: action <code>authenticate-cognito</code> chỉ có trên <b>Application</b> Load Balancer (HTTPS listener), không có trên NLB.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có một REST API trong Amazon API Gateway gọi các AWS Lambda function. API chỉ được phép truy cập bởi những người dùng đã đăng nhập vào ứng dụng web của công ty, vốn dùng một Amazon Cognito user pool. Giải pháp nào đáp ứng yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Viết code trong mỗi Lambda function để gọi Cognito API và xác thực mật khẩu của người dùng ở mỗi request.</span><span class="why">Sai: tự kiểm tra mật khẩu ở mỗi request vừa kém an toàn vừa tốn công viết và bảo trì code.</span></li>
+              <li data-k="B"><span class="tv">Dùng một Amazon Cognito identity pool để cấp IAM credentials và yêu cầu IAM authorization với một resource policy liệt kê ARN của từng người dùng.</span><span class="why">Sai: về lý thuyết làm được nhưng liệt kê ARN từng user là phi thực tế và phức tạp hơn nhiều so với Cognito authorizer.</span></li>
+              <li data-k="C"><span class="tv">Đặt API phía sau một Network Load Balancer và cấu hình action authenticate-cognito.</span><span class="why">Sai: action authenticate-cognito chỉ có trên Application Load Balancer (HTTPS listener), không có trên NLB.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình một Amazon Cognito user pool authorizer trên các method của API Gateway và yêu cầu client gửi token của user pool kèm mỗi request.</span><span class="why">Đúng: API Gateway tự xác minh token của user pool trước khi gọi Lambda, không cần viết code xác thực – overhead thấp nhất.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs a legacy web application on Amazon EC2 instances behind an Application Load Balancer. The company wants to require users to authenticate with the company's Amazon Cognito user pool before they reach the application. The development team cannot change the application code. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Add an HTTP listener rule on the ALB with an authenticate-cognito action.</li>
+            <li data-k="B">Add an HTTPS listener on the ALB and create a rule with an authenticate-cognito action followed by a forward action to the target group.</li>
+            <li data-k="C">Place Amazon CloudFront in front of the ALB and enable signed cookies for all users.</li>
+            <li data-k="D">Configure the EC2 security group to allow inbound traffic only from the Cognito service IP ranges.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> ALB offload xác thực bằng action <code>authenticate-cognito</code>, sau đó <code>forward</code> tới target và truyền claim qua header <code>x-amzn-oidc-*</code> – ứng dụng không cần sửa code. <b>A sai</b>: tài liệu ghi rõ action xác thực <b>chỉ hỗ trợ HTTPS listener</b>. <b>C sai</b>: signed cookies của CloudFront dùng cho nội dung riêng tư, không đăng nhập user qua user pool. <b>D sai</b>: người dùng không đi qua Cognito để vào EC2; security group không thực hiện xác thực người dùng.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng web cũ (legacy) trên các Amazon EC2 instance phía sau một Application Load Balancer. Công ty muốn bắt buộc người dùng xác thực bằng Amazon Cognito user pool của công ty trước khi tới được ứng dụng. Đội phát triển không thể thay đổi code ứng dụng. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một listener rule HTTP trên ALB với action authenticate-cognito.</span><span class="why">Sai: action xác thực của ALB chỉ được hỗ trợ trên HTTPS listener, không dùng được với HTTP listener.</span></li>
+              <li data-k="B"><span class="tv">Thêm một HTTPS listener trên ALB và tạo một rule với action authenticate-cognito, theo sau là action forward tới target group.</span><span class="why">Đúng: ALB đảm nhận xác thực với user pool rồi forward tới target, truyền claim qua header x-amzn-oidc-* – ứng dụng không cần sửa code.</span></li>
+              <li data-k="C"><span class="tv">Đặt Amazon CloudFront trước ALB và bật signed cookies cho tất cả người dùng.</span><span class="why">Sai: signed cookies của CloudFront dùng để bảo vệ nội dung riêng tư, không thực hiện đăng nhập người dùng qua Cognito user pool.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình security group của EC2 chỉ cho phép lưu lượng inbound từ các dải IP của dịch vụ Cognito.</span><span class="why">Sai: lưu lượng người dùng không đi qua Cognito để tới EC2, và security group không có khả năng xác thực người dùng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">Which TWO statements about Amazon Cognito user pools and identity pools are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">An identity pool can issue limited AWS credentials to guest users who have not signed in.</li>
+            <li data-k="B">A user pool issues temporary AWS credentials that can be used directly with the AWS CLI.</li>
+            <li data-k="C">An identity pool must always be integrated with a user pool.</li>
+            <li data-k="D">A user pool can act as an OIDC identity provider and issue JSON web tokens to an app or API without an identity pool.</li>
+            <li data-k="E">Multi-factor authentication in a user pool applies to users who sign in through Facebook federation.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> Identity pool hỗ trợ <b>unauthenticated (guest) identities</b>; user pool là OIDC IdP độc lập, cấp JWT trực tiếp cho app/API. <b>B sai</b>: AWS credentials do <b>identity pool</b> (qua STS) cấp, user pool chỉ cấp JWT. <b>C sai</b>: tài liệu nói rõ hai thành phần độc lập – identity pool nhận claim trực tiếp từ SAML/OIDC/social IdP. <b>E sai</b>: MFA của user pool <b>không áp dụng cho federated users</b>.</div>
+          <div class="trans">
+            <div class="tq">HAI phát biểu nào về Amazon Cognito user pool và identity pool là đúng? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Identity pool có thể cấp AWS credentials giới hạn cho người dùng khách (guest) chưa đăng nhập.</span><span class="why">Đúng: identity pool hỗ trợ unauthenticated (guest) identities, gán cho chúng một IAM role quyền hạn chế.</span></li>
+              <li data-k="B"><span class="tv">User pool cấp temporary AWS credentials có thể dùng trực tiếp với AWS CLI.</span><span class="why">Sai: user pool chỉ cấp JWT; AWS credentials tạm thời do identity pool cấp (qua STS).</span></li>
+              <li data-k="C"><span class="tv">Identity pool luôn phải được tích hợp với một user pool.</span><span class="why">Sai: hai thành phần độc lập – identity pool có thể nhận claim trực tiếp từ SAML, OIDC hoặc social IdP mà không cần user pool.</span></li>
+              <li data-k="D"><span class="tv">User pool có thể đóng vai trò OIDC identity provider và cấp JSON web token cho ứng dụng hoặc API mà không cần identity pool.</span><span class="why">Đúng: user pool là OIDC IdP độc lập, cấp JWT trực tiếp để ứng dụng/API (vd API Gateway authorizer) xác minh.</span></li>
+              <li data-k="E"><span class="tv">Multi-factor authentication trong user pool áp dụng cho người dùng đăng nhập qua federation với Facebook.</span><span class="why">Sai: MFA của user pool không áp dụng cho federated users; việc xác thực do IdP bên ngoài (Facebook) đảm nhận.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company wants to give employees access to Amazon WorkSpaces by using their existing on-premises Microsoft Active Directory credentials. The company's security policy states that no directory information, including user names and password hashes, can be stored or synchronized in the cloud. The data center is connected to AWS through AWS Direct Connect. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Deploy Simple AD and configure a trust relationship with the on-premises domain.</li>
+            <li data-k="B">Deploy AWS Managed Microsoft AD and replicate all users from the on-premises domain.</li>
+            <li data-k="C">Deploy AD Connector in the VPC where WorkSpaces will be provisioned and point it to the on-premises domain controllers.</li>
+            <li data-k="D">Create an Amazon Cognito user pool and import the users from a CSV export of Active Directory.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> AD Connector là directory gateway chuyển tiếp yêu cầu về AD on-premises <b>mà không cache thông tin trên cloud</b>, tương thích WorkSpaces (phải ở cùng VPC vì AD Connector không multi-VPC aware). <b>A sai</b>: Simple AD <b>không hỗ trợ trust</b>. <b>B sai</b>: replicate user lên AWS vi phạm chính sách không lưu dữ liệu thư mục trên cloud. <b>D sai</b>: Cognito không dùng cho WorkSpaces và import CSV là lưu dữ liệu lên cloud.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn cho nhân viên truy cập Amazon WorkSpaces bằng thông tin đăng nhập Microsoft Active Directory on-premises hiện có của họ. Chính sách bảo mật của công ty quy định không có thông tin thư mục nào, kể cả tên người dùng và password hash, được lưu trữ hoặc đồng bộ lên cloud. Trung tâm dữ liệu được kết nối với AWS qua AWS Direct Connect. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Triển khai Simple AD và cấu hình trust relationship với domain on-premises.</span><span class="why">Sai: Simple AD không hỗ trợ trust relationship, và nó tự lưu dữ liệu thư mục trên AWS.</span></li>
+              <li data-k="B"><span class="tv">Triển khai AWS Managed Microsoft AD và replicate tất cả user từ domain on-premises.</span><span class="why">Sai: replicate user lên AWS là lưu dữ liệu thư mục trên cloud, vi phạm chính sách bảo mật.</span></li>
+              <li data-k="C"><span class="tv">Triển khai AD Connector trong VPC nơi WorkSpaces sẽ được cấp phát và trỏ nó tới các domain controller on-premises.</span><span class="why">Đúng: AD Connector là gateway chuyển tiếp yêu cầu xác thực về AD on-premises mà không cache thông tin thư mục trên cloud, và tương thích WorkSpaces.</span></li>
+              <li data-k="D"><span class="tv">Tạo một Amazon Cognito user pool và import user từ file CSV xuất ra từ Active Directory.</span><span class="why">Sai: Cognito không dùng để đăng nhập WorkSpaces, và import CSV chính là lưu dữ liệu thư mục lên cloud.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company is migrating a Microsoft SharePoint farm and several .NET applications that use Windows Authentication with Amazon RDS for SQL Server to AWS. The applications require a highly available, fully managed Active Directory in AWS. Users in the on-premises Active Directory must be able to access these applications with their existing credentials. Which solution should the solutions architect choose?</div>
+          <ol class="opts">
+            <li data-k="A">AD Connector pointing to the on-premises domain controllers.</li>
+            <li data-k="B">AWS Managed Microsoft AD with a forest trust to the on-premises Active Directory.</li>
+            <li data-k="C">Simple AD in two Availability Zones.</li>
+            <li data-k="D">Self-managed domain controllers on Amazon EC2 instances in a single Availability Zone.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Managed Microsoft AD là AD thật, 2 domain controller ở 2 AZ, hỗ trợ SharePoint, .NET và <b>RDS for SQL Server</b>; <b>forest trust</b> cho user on-premises dùng credentials hiện có (mô hình resource forest). <b>A sai</b>: AD Connector <b>không tương thích RDS SQL Server</b> và không phải AD chạy trên AWS. <b>C sai</b>: Simple AD không tương thích RDS SQL Server, không hỗ trợ trust. <b>D sai</b>: tự quản DC trên EC2 là overhead cao và một AZ không highly available.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang di chuyển lên AWS một Microsoft SharePoint farm và một số ứng dụng .NET dùng Windows Authentication với Amazon RDS for SQL Server. Các ứng dụng yêu cầu một Active Directory highly available (sẵn sàng cao), được quản lý hoàn toàn (fully managed) trên AWS. Người dùng trong Active Directory on-premises phải truy cập được các ứng dụng này bằng thông tin đăng nhập hiện có. Solutions architect nên chọn giải pháp nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">AD Connector trỏ tới các domain controller on-premises.</span><span class="why">Sai: AD Connector chỉ là proxy, không phải AD chạy trên AWS, và không tương thích với RDS for SQL Server.</span></li>
+              <li data-k="B"><span class="tv">AWS Managed Microsoft AD với forest trust tới Active Directory on-premises.</span><span class="why">Đúng: Managed Microsoft AD là AD thật, fully managed với 2 domain controller ở 2 AZ, hỗ trợ SharePoint, .NET và RDS for SQL Server; forest trust cho user on-premises dùng credentials hiện có.</span></li>
+              <li data-k="C"><span class="tv">Simple AD ở hai Availability Zone.</span><span class="why">Sai: Simple AD không tương thích RDS for SQL Server và không hỗ trợ trust với AD on-premises.</span></li>
+              <li data-k="D"><span class="tv">Các domain controller tự quản lý trên Amazon EC2 instance trong một Availability Zone duy nhất.</span><span class="why">Sai: tự quản DC trên EC2 không phải fully managed (overhead cao), và chỉ một AZ thì không highly available.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company's mobile app uses an Amazon Cognito user pool. The security team wants the app to automatically detect sign-in attempts that use credentials found in public breaches and to require additional verification for risky sign-ins. Which configuration should the solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Switch the user pool to the Lite feature plan and enable SMS MFA.</li>
+            <li data-k="B">Add a post authentication Lambda trigger that writes sign-in events to Amazon CloudWatch Logs.</li>
+            <li data-k="C">Place AWS WAF in front of the app's API Gateway API and block all IP addresses outside the home country.</li>
+            <li data-k="D">Switch the user pool to the Plus feature plan and configure threat protection (compromised credentials and adaptive authentication).</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Plus</b> plan bổ sung threat protection: kiểm tra mật khẩu bị lộ, phát hiện đăng nhập rủi ro (vị trí bất thường…) và phản ứng theo mức rủi ro, kèm log risk score. <b>A sai</b>: Lite chỉ có tính năng cơ bản, không có threat protection. <b>B sai</b>: chỉ ghi log, không phát hiện credentials bị lộ hay yêu cầu xác minh thêm. <b>C sai</b>: chặn theo địa lý không phát hiện được mật khẩu bị lộ, và chặn cả người dùng hợp lệ đi nước ngoài.</div>
+          <div class="trans">
+            <div class="tq">Ứng dụng di động của một công ty dùng một Amazon Cognito user pool. Đội bảo mật muốn ứng dụng tự động phát hiện các lần đăng nhập dùng thông tin xác thực đã bị lộ trong các vụ rò rỉ công khai, và yêu cầu xác minh bổ sung đối với các lần đăng nhập rủi ro. Solutions architect nên đề xuất cấu hình nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển user pool sang feature plan Lite và bật SMS MFA.</span><span class="why">Sai: Lite chỉ có tính năng cơ bản, không có threat protection để phát hiện credentials bị lộ hay đăng nhập rủi ro.</span></li>
+              <li data-k="B"><span class="tv">Thêm một post authentication Lambda trigger ghi các sự kiện đăng nhập vào Amazon CloudWatch Logs.</span><span class="why">Sai: chỉ ghi log sau khi đăng nhập, không phát hiện credentials bị lộ và không yêu cầu xác minh thêm.</span></li>
+              <li data-k="C"><span class="tv">Đặt AWS WAF trước API Gateway API của ứng dụng và chặn mọi địa chỉ IP bên ngoài quốc gia sở tại.</span><span class="why">Sai: chặn theo địa lý không phát hiện được mật khẩu bị lộ và còn chặn nhầm người dùng hợp lệ đang ở nước ngoài.</span></li>
+              <li data-k="D"><span class="tv">Chuyển user pool sang feature plan Plus và cấu hình threat protection (compromised credentials và adaptive authentication).</span><span class="why">Đúng: Plus plan có threat protection – kiểm tra compromised credentials và adaptive authentication yêu cầu xác minh thêm theo mức rủi ro của lần đăng nhập.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company has 2 million users in a legacy user database. The company is moving authentication to an Amazon Cognito user pool. The company wants users to keep their current passwords and does not want to force a password reset. Users should be migrated gradually as they sign in. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Configure a migrate user Lambda trigger that validates credentials against the legacy database and creates the user in the user pool at sign-in.</li>
+            <li data-k="B">Export the users to a CSV file and run a user pool import job.</li>
+            <li data-k="C">Create an identity pool with a developer provider that points to the legacy database.</li>
+            <li data-k="D">Configure a pre token generation Lambda trigger to copy password hashes into the ID token.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Migrate user</b> trigger tra user ở thư mục cũ khi đăng nhập (hoặc quên mật khẩu) và tạo user trong user pool – <i>just-in-time migration</i>, user giữ nguyên mật khẩu. <b>B sai</b>: import CSV không mang theo mật khẩu ⇒ user phải đặt lại mật khẩu. <b>C sai</b>: identity pool chỉ cấp AWS credentials, không chuyển user vào user pool. <b>D sai</b>: pre token generation chỉ chỉnh claim token; đưa password hash vào token là sai và nguy hiểm.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 2 triệu người dùng trong một cơ sở dữ liệu người dùng cũ (legacy). Công ty đang chuyển việc xác thực sang một Amazon Cognito user pool. Công ty muốn người dùng giữ mật khẩu hiện tại và không muốn buộc đặt lại mật khẩu. Người dùng nên được di chuyển dần dần khi họ đăng nhập. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình một migrate user Lambda trigger xác thực thông tin đăng nhập với cơ sở dữ liệu cũ và tạo user trong user pool khi đăng nhập.</span><span class="why">Đúng: migrate user trigger thực hiện just-in-time migration – kiểm tra user ở hệ thống cũ khi đăng nhập rồi tạo trong user pool, người dùng giữ nguyên mật khẩu.</span></li>
+              <li data-k="B"><span class="tv">Xuất người dùng ra file CSV và chạy một user pool import job.</span><span class="why">Sai: import CSV không mang theo mật khẩu nên người dùng buộc phải đặt lại mật khẩu, và không phải di chuyển dần khi đăng nhập.</span></li>
+              <li data-k="C"><span class="tv">Tạo một identity pool với developer provider trỏ tới cơ sở dữ liệu cũ.</span><span class="why">Sai: identity pool chỉ cấp AWS credentials, không chuyển user vào user pool.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình một pre token generation Lambda trigger để sao chép password hash vào ID token.</span><span class="why">Sai: pre token generation chỉ dùng để chỉnh claim trong token; đưa password hash vào token là sai và nguy hiểm.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C,E">
+          <div class="qh">A company uses AWS Managed Microsoft AD (Enterprise Edition) in us-east-1. Which TWO capabilities can the company use with this directory? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Configure the directory as an AD Connector to proxy requests to Simple AD.</li>
+            <li data-k="B">Use the directory as the identity provider for millions of customers who sign in with Facebook.</li>
+            <li data-k="C">Replicate the directory to additional AWS Regions so that AD-aware applications use local domain controllers.</li>
+            <li data-k="D">Store the directory data without any domain controllers in the VPC.</li>
+            <li data-k="E">Share the directory with other AWS accounts so that EC2 instances in those accounts can join the domain.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C, E.</b> <b>Multi-Region replication</b> chỉ có ở Enterprise Edition, tạo 2 DC ở mỗi Region mới, giữ nguyên directory ID; Managed AD hỗ trợ <b>directory sharing</b> cho account khác. <b>A sai</b>: AD Connector là loại directory riêng, proxy về AD (on-premises), không phải chức năng của Managed AD. <b>B sai</b>: social login cho hàng triệu khách hàng ⇒ Cognito. <b>D sai</b>: Managed AD luôn chạy ít nhất 2 domain controller trong VPC của bạn.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng AWS Managed Microsoft AD (Enterprise Edition) ở us-east-1. Công ty có thể dùng HAI khả năng nào với directory này? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình directory làm AD Connector để chuyển tiếp (proxy) yêu cầu tới Simple AD.</span><span class="why">Sai: AD Connector là một loại directory riêng, dùng để proxy về AD (thường là on-premises), không phải chức năng của Managed Microsoft AD.</span></li>
+              <li data-k="B"><span class="tv">Dùng directory làm identity provider cho hàng triệu khách hàng đăng nhập bằng Facebook.</span><span class="why">Sai: social login cho hàng triệu khách hàng là trường hợp dùng Amazon Cognito, không phải Managed AD.</span></li>
+              <li data-k="C"><span class="tv">Replicate directory sang các AWS Region khác để các ứng dụng AD-aware dùng domain controller cục bộ.</span><span class="why">Đúng: multi-Region replication có ở Enterprise Edition, tạo domain controller ở Region mới và giữ nguyên directory ID.</span></li>
+              <li data-k="D"><span class="tv">Lưu dữ liệu directory mà không cần domain controller nào trong VPC.</span><span class="why">Sai: Managed Microsoft AD luôn chạy ít nhất 2 domain controller trong VPC của bạn.</span></li>
+              <li data-k="E"><span class="tv">Chia sẻ directory với các AWS account khác để EC2 instance trong các account đó có thể join domain.</span><span class="why">Đúng: Managed Microsoft AD hỗ trợ directory sharing, cho phép EC2 instance ở account khác join domain liền mạch.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-scenarios.html" target="_blank" rel="noopener">Common Amazon Cognito scenarios</a></li>
+        <li><a href="https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-tokens-with-identity-providers.html" target="_blank" rel="noopener">Understanding user pool JSON web tokens (JWTs)</a></li>
+        <li><a href="https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-the-refresh-token.html" target="_blank" rel="noopener">Refresh tokens</a></li>
+        <li><a href="https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-tokens-caching-tokens.html" target="_blank" rel="noopener">Managing user pool token expiration and caching</a></li>
+        <li><a href="https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-sign-in-feature-plans.html" target="_blank" rel="noopener">User pool feature plans</a></li>
+        <li><a href="https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-working-with-lambda-triggers.html" target="_blank" rel="noopener">Customizing user pool workflows with Lambda triggers</a></li>
+        <li><a href="https://docs.aws.amazon.com/cognito/latest/developerguide/identity-pools.html" target="_blank" rel="noopener">Identity pools console overview</a></li>
+        <li><a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/listener-authenticate-users.html" target="_blank" rel="noopener">Authenticate users using an Application Load Balancer</a></li>
+        <li><a href="https://docs.aws.amazon.com/directoryservice/latest/admin-guide/directory_microsoft_ad.html" target="_blank" rel="noopener">AWS Managed Microsoft AD</a></li>
+        <li><a href="https://docs.aws.amazon.com/directoryservice/latest/admin-guide/ms_ad_setup_trust.html" target="_blank" rel="noopener">Creating a trust relationship (AWS Managed Microsoft AD)</a></li>
+        <li><a href="https://docs.aws.amazon.com/directoryservice/latest/admin-guide/ms_ad_configure_multi_region_replication.html" target="_blank" rel="noopener">Configure Multi-Region replication for AWS Managed Microsoft AD</a></li>
+        <li><a href="https://docs.aws.amazon.com/directoryservice/latest/admin-guide/directory_ad_connector.html" target="_blank" rel="noopener">AD Connector</a></li>
+        <li><a href="https://docs.aws.amazon.com/directoryservice/latest/admin-guide/directory_simple_ad.html" target="_blank" rel="noopener">Simple AD</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

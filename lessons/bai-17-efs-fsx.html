@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 17 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Elastic-File-System.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="17" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu khi nào cần <span class="t" data-vi="Lưu trữ tệp dùng chung">shared file storage</span> thay vì EBS hay S3, và chọn đúng 1 trong 5 dịch vụ: <b>Amazon EFS, FSx for Windows File Server, FSx for Lustre, FSx for NetApp ONTAP, FSx for OpenZFS</b>.</li>
+          <li>Nắm kiến trúc <b>Amazon EFS</b>: NFSv4, <span class="t" data-vi="Điểm gắn kết">mount target</span> mỗi AZ, Regional vs One Zone, truy cập từ on-premises, Lambda, ECS/EKS/Fargate.</li>
+          <li>Phân biệt <b>performance mode</b> (General Purpose / Max I/O) và <b>throughput mode</b> (Elastic / Provisioned / Bursting) của EFS cùng các con số quan trọng.</li>
+          <li>Tối ưu chi phí EFS với <b>storage classes</b> (Standard / Infrequent Access / Archive) và <b>lifecycle management</b>.</li>
+          <li>Chọn được loại FSx theo từ khóa đề: <i>SMB + Active Directory</i>, <i>HPC + S3</i>, <i>multi-protocol / NetApp</i>, <i>migrate ZFS / NFS hiệu năng cao</i>; biết Single-AZ vs Multi-AZ, Scratch vs Persistent.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 3 – Storage</span>
+        <p><b>Bài 11</b> đã dạy block storage (EBS, instance store, Multi-Attach giới hạn trong 1 AZ). <b>Bài 14–16</b> đã dạy object storage (S3). <b>Bài 7</b> đã dạy AWS Managed Microsoft AD, AD Connector và trust – kiến thức cần cho FSx for Windows. Bài này hoàn thiện mảnh còn lại: <b>file storage</b> – hệ thống tệp phân cấp (thư mục, quyền POSIX/Windows ACL, khóa tệp) mà nhiều máy chủ cùng mount đồng thời. <b>Bài 18</b> sẽ dạy Storage Gateway (kể cả Amazon FSx File Gateway) và DataSync để đưa dữ liệu từ on-premises lên các file system này.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Storage.svg" alt="">Tổng quan: họ dịch vụ file storage của AWS</h2>
+      <p class="lead">Nhiều ứng dụng “đời cũ” và cả ứng dụng hiện đại cần một <span class="t" data-vi="Hệ thống tệp">file system</span> dùng chung: web server cùng đọc thư mục nội dung, home directory của người dùng, ứng dụng Windows đọc ổ mạng <code>\\server\share</code>, cluster HPC đọc hàng trăm TB dữ liệu huấn luyện. AWS cung cấp <b>một dịch vụ native</b> (Amazon EFS) và <b>bốn dịch vụ FSx</b> chạy các file system thương mại/mã nguồn mở phổ biến dưới dạng <span class="t" data-vi="Dịch vụ được quản lý">fully managed</span> – AWS lo phần cứng, vá phần mềm, phát hiện lỗi, sao lưu.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Elastic-File-System.svg" alt="">
+          <div><h4>Amazon EFS</h4><span class="vi">Hệ thống tệp đàn hồi</span><p>Serverless, tự co giãn tới petabyte, NFSv4.0/4.1 cho <b>Linux</b> (và macOS). Không cần khai báo dung lượng. Regional (≥ 3 AZ) hoặc One Zone.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-FSx-for-Windows-File-Server.svg" alt="">
+          <div><h4>FSx for Windows File Server</h4><span class="vi">Máy chủ tệp Windows được quản lý</span><p>Windows Server native, giao thức <b>SMB</b>, tích hợp <b>Microsoft Active Directory</b>, Windows ACL, DFS, shadow copies, data deduplication.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-FSx-for-Lustre.svg" alt="">
+          <div><h4>FSx for Lustre</h4><span class="vi">Hệ thống tệp song song hiệu năng cao</span><p>HPC, machine learning, xử lý video, mô hình tài chính: sub-ms, tới nhiều TBps, hàng triệu IOPS; <b>liên kết trực tiếp với S3</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-FSx.svg" alt="">
+          <div><h4>FSx for NetApp ONTAP</h4><span class="vi">Lưu trữ NetApp ONTAP được quản lý</span><p><b>Đa giao thức</b> NFS, SMB, iSCSI, NVMe/TCP; Linux/Windows/macOS; tự động tiering sang capacity pool; SnapMirror, FlexClone, dedup/nén.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-FSx.svg" alt="">
+          <div><h4>FSx for OpenZFS</h4><span class="vi">Hệ thống tệp OpenZFS được quản lý</span><p>NFS v3/v4.0/v4.1/v4.2; tới <b>2 triệu IOPS</b>, độ trễ vài trăm micro giây; snapshot tức thời, clone; chuyển từ ZFS/Linux file server on-premises.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Backup.svg" alt="">
+          <div><h4>Dịch vụ đi kèm</h4><span class="vi">Sao lưu &amp; di chuyển</span><p><b>AWS Backup</b> sao lưu tập trung EFS/FSx (Bài 19); <b>AWS DataSync</b> di chuyển dữ liệu NFS/SMB lên EFS/FSx (Bài 18).</p></div></div>
+      </div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Câu hỏi</th><th>Block (EBS – Bài 11)</th><th>File (EFS / FSx – bài này)</th><th>Object (S3 – Bài 14)</th></tr></thead>
+        <tbody>
+          <tr><td>Truy cập đồng thời</td><td>1 instance (Multi-Attach: tối đa 16 instance, cùng AZ, io1/io2)</td><td class="yes">Hàng nghìn client, nhiều AZ, on-premises</td><td>Không giới hạn, qua HTTP API</td></tr>
+          <tr><td>Giao diện</td><td>Ổ đĩa thô, tự format</td><td>Mount như ổ đĩa mạng (NFS / SMB / Lustre client)</td><td>REST API (GET/PUT), không mount natively</td></tr>
+          <tr><td>Ngữ nghĩa file system</td><td>Do OS quyết định</td><td class="yes">Thư mục, quyền POSIX / Windows ACL, file locking</td><td class="no">Không có thư mục thật, không sửa một phần object</td></tr>
+          <tr><td>Từ khóa trong đề</td><td><i>boot volume, database, lowest latency</i></td><td><i>shared file system, mounted by many instances, home directories, POSIX, SMB share</i></td><td><i>static content, data lake, unlimited, archive</i></td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 860 360" width="860" role="img" aria-label="Cây quyết định chọn dịch vụ file storage">
+          <defs><marker id="ah17a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="300" y="12" width="260" height="46" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="430" y="32" font-size="13" text-anchor="middle" font-weight="700">Cần shared file storage</text>
+          <text x="430" y="49" font-size="11" text-anchor="middle" class="muted">Đề nói gì về giao thức / workload?</text>
+          <!-- branches -->
+          <path class="line-o" d="M430 58 L100 120" marker-end="url(#ah17a)"/>
+          <path class="line-o" d="M430 58 L270 120" marker-end="url(#ah17a)"/>
+          <path class="line-o" d="M430 58 L430 120" marker-end="url(#ah17a)"/>
+          <path class="line-o" d="M430 58 L595 120" marker-end="url(#ah17a)"/>
+          <path class="line-o" d="M430 58 L760 120" marker-end="url(#ah17a)"/>
+          <text x="100" y="140" font-size="11.5" text-anchor="middle" font-weight="700">Linux, NFS,</text>
+          <text x="100" y="155" font-size="11.5" text-anchor="middle" font-weight="700">serverless, elastic</text>
+          <text x="270" y="140" font-size="11.5" text-anchor="middle" font-weight="700">Windows, SMB,</text>
+          <text x="270" y="155" font-size="11.5" text-anchor="middle" font-weight="700">Active Directory</text>
+          <text x="430" y="140" font-size="11.5" text-anchor="middle" font-weight="700">HPC / ML,</text>
+          <text x="430" y="155" font-size="11.5" text-anchor="middle" font-weight="700">xử lý dữ liệu S3</text>
+          <text x="595" y="140" font-size="11.5" text-anchor="middle" font-weight="700">NFS + SMB + iSCSI,</text>
+          <text x="595" y="155" font-size="11.5" text-anchor="middle" font-weight="700">đang dùng NetApp</text>
+          <text x="760" y="140" font-size="11.5" text-anchor="middle" font-weight="700">Đang dùng ZFS /</text>
+          <text x="760" y="155" font-size="11.5" text-anchor="middle" font-weight="700">NFS độ trễ µs</text>
+          <image href="../assets/icons/svc/Amazon-Elastic-File-System.svg" x="72" y="176" width="56" height="56"/>
+          <image href="../assets/icons/svc/Amazon-FSx-for-Windows-File-Server.svg" x="242" y="176" width="56" height="56"/>
+          <image href="../assets/icons/svc/Amazon-FSx-for-Lustre.svg" x="402" y="176" width="56" height="56"/>
+          <image href="../assets/icons/svc/Amazon-FSx.svg" x="567" y="176" width="56" height="56"/>
+          <image href="../assets/icons/svc/Amazon-FSx.svg" x="732" y="176" width="56" height="56"/>
+          <text x="100" y="252" font-size="12.5" text-anchor="middle" font-weight="700">Amazon EFS</text>
+          <text x="270" y="252" font-size="12.5" text-anchor="middle" font-weight="700">FSx for Windows</text>
+          <text x="430" y="252" font-size="12.5" text-anchor="middle" font-weight="700">FSx for Lustre</text>
+          <text x="595" y="252" font-size="12.5" text-anchor="middle" font-weight="700">FSx for ONTAP</text>
+          <text x="760" y="252" font-size="12.5" text-anchor="middle" font-weight="700">FSx for OpenZFS</text>
+          <text x="100" y="272" font-size="10.5" text-anchor="middle" class="muted">không cần provision</text>
+          <text x="100" y="287" font-size="10.5" text-anchor="middle" class="muted">EC2/ECS/EKS/Lambda</text>
+          <text x="270" y="272" font-size="10.5" text-anchor="middle" class="muted">Windows ACL, DFS</text>
+          <text x="270" y="287" font-size="10.5" text-anchor="middle" class="muted">SQL Server, home dirs</text>
+          <text x="430" y="272" font-size="10.5" text-anchor="middle" class="muted">Scratch / Persistent</text>
+          <text x="430" y="287" font-size="10.5" text-anchor="middle" class="muted">lazy load từ S3</text>
+          <text x="595" y="272" font-size="10.5" text-anchor="middle" class="muted">Linux+Windows+macOS</text>
+          <text x="595" y="287" font-size="10.5" text-anchor="middle" class="muted">SnapMirror, tiering</text>
+          <text x="760" y="272" font-size="10.5" text-anchor="middle" class="muted">snapshot, clone</text>
+          <text x="760" y="287" font-size="10.5" text-anchor="middle" class="muted">2 triệu IOPS</text>
+          <rect x="20" y="312" width="820" height="36" rx="6" fill="none" stroke="#147EBA" stroke-width="1.5" stroke-dasharray="6 4"/>
+          <text x="430" y="335" font-size="11.5" text-anchor="middle">Tất cả: fully managed, mã hóa at rest bằng AWS KMS, truy cập từ on-premises qua Direct Connect / Site-to-Site VPN, không mở ra Internet công cộng</text>
+        </svg>
+        <figcaption><b>Hình 1.</b> Cây quyết định chọn dịch vụ file storage theo từ khóa trong đề. Phần lớn câu hỏi SAA-C03 về file storage có thể giải chỉ bằng cách nhận diện <b>giao thức</b> (NFS / SMB / Lustre / đa giao thức) và <b>hệ điều hành client</b> (Linux / Windows / cả hai).</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – tủ hồ sơ của công ty</span>
+        <p>EBS là ngăn kéo riêng gắn vào bàn của <b>một</b> nhân viên. S3 là kho lưu trữ khổng lồ ngoài ngoại ô – gửi/nhận cả thùng hồ sơ qua bưu điện (API), không “mở ngăn” trực tiếp được. File storage là <b>phòng hồ sơ chung</b> ai trong công ty cũng bước vào, mở tủ, sửa một tờ giấy, khóa tủ khi đang dùng. EFS là phòng hồ sơ tự nở thêm tủ khi cần; FSx for Windows là phòng hồ sơ chỉ cho người có thẻ nhân viên Active Directory; FSx for Lustre là phòng hồ sơ có băng chuyền siêu tốc nối thẳng với kho S3.</p></div>
+
+      <!-- ===================== PHẦN 2: EFS KIẾN TRÚC ===================== -->
+      <h2 id="efs-kien-truc"><img src="../assets/icons/svc/Amazon-Elastic-File-System.svg" alt="">Amazon EFS: kiến trúc, mount target và truy cập</h2>
+      <p class="lead"><span class="t" data-vi="Hệ thống tệp đàn hồi Amazon">Amazon Elastic File System (EFS)</span> cung cấp file storage <b>serverless, đàn hồi hoàn toàn</b>: không phải provision hay quản lý dung lượng và hiệu năng; file system tự lớn lên và thu nhỏ lại khi bạn thêm/xóa file, tới quy mô <b>petabyte</b> mà không gián đoạn ứng dụng. EFS dùng giao thức <span class="t" data-vi="Hệ thống tệp mạng">Network File System</span> <b>version 4 (NFSv4.1 và NFSv4.0)</b>.</p>
+
+      <div class="stats">
+        <div class="stat"><b>NFSv4.0 / 4.1</b><span>giao thức; không hỗ trợ NFSv2/v3</span></div>
+        <div class="stat"><b>Linux</b><span>EC2 Windows <b>không</b> được hỗ trợ</span></div>
+        <div class="stat"><b>11 số 9</b><span>độ bền thiết kế (Regional &amp; One Zone)</span></div>
+        <div class="stat"><b>99,99% / 99,9%</b><span>SLA khả dụng Regional / One Zone (lớp Standard)</span></div>
+        <div class="stat"><b>47,9 TiB</b><span>kích thước tối đa một file</span></div>
+        <div class="stat"><b>25.000</b><span>kết nối tối đa mỗi file system</span></div>
+      </div>
+
+      <h3>Ai mount được EFS?</h3>
+      <ul>
+        <li><b>Compute AWS</b>: Amazon EC2, Amazon ECS, Amazon EKS, <b>AWS Lambda</b>, <b>AWS Fargate</b> – EFS là lựa chọn mặc định khi container/hàm serverless cần storage <b>bền và dùng chung</b>.</li>
+        <li><b>Client khuyến nghị</b>: Linux NFSv4.1 thế hệ mới (Amazon Linux, Amazon Linux 2, Red Hat, Ubuntu, macOS Big Sur) cùng <b>EFS mount helper</b> (<code>amazon-efs-utils</code>).</li>
+        <li><b>On-premises</b>: server Linux (khuyến nghị kernel ≥ 4.0) mount qua <b>AWS Direct Connect</b> hoặc <b>Site-to-Site VPN</b>. Khuyên mount bằng <b>IP của mount target</b> thay vì DNS name. <b>Không phí thêm</b> cho truy cập từ on-premises (chỉ trả phí Direct Connect/VPN). Use case: migrate dữ liệu lên EFS, <span class="t" data-vi="Bùng nổ lên đám mây">cloud bursting</span>, backup dữ liệu on-premises.</li>
+        <li><b>VPC/account khác</b>: client có thể kết nối tới mount target ở account hoặc VPC khác (VPC peering, Transit Gateway).</li>
+        <li><b>Không hỗ trợ Windows</b>: tài liệu ghi rõ “Using Amazon EFS with Microsoft Windows–based Amazon EC2 instances is not supported” ⇒ Windows cần FSx for Windows (hoặc FSx for ONTAP).</li>
+      </ul>
+
+      <h3>Mount target – “cửa vào” của EFS trong VPC</h3>
+      <p>Để truy cập EFS trong VPC, bạn tạo <span class="t" data-vi="Điểm gắn kết">mount target</span>. Mỗi mount target cung cấp một <b>địa chỉ IP</b> cho endpoint NFSv4. Bạn mount bằng <b>DNS name</b> của file system; DNS này phân giải ra IP của mount target <b>trong cùng AZ</b> với EC2 instance.</p>
+      <ul>
+        <li>Tối đa <b>1 mount target mỗi AZ</b> cho một file system. Nếu AZ có nhiều subnet, chọn một subnet; mọi instance trong AZ dùng chung mount target đó.</li>
+        <li>Một file system chỉ có mount target trong <b>1 VPC tại một thời điểm</b>; tối đa 1.400 mount target mỗi VPC; mỗi mount target gắn tối đa <b>5 security group</b>.</li>
+        <li>Security group của mount target phải cho phép <b>inbound TCP 2049 (NFS)</b> từ security group của client (hoặc CIDR on-premises).</li>
+        <li>Mount target được thiết kế highly available; IP và DNS của mount target trong mỗi AZ là <b>tĩnh</b>.</li>
+        <li>Khuyến nghị truy cập mount target <b>cùng AZ</b> để tốt cho hiệu năng và <b>chi phí</b>: với One Zone, instance ở AZ khác sẽ trả phí truyền dữ liệu giữa AZ.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">Corporate data center</span>
+            <div class="row center"><div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">Linux server<small>mount bằng IP mount target</small></div></div>
+            <div class="row center"><div class="node"><img src="../assets/icons/svc/AWS-Direct-Connect.svg" alt="">Direct Connect / VPN</div></div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+            <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+              <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+                <div class="row">
+                  <div class="grp az"><span class="lbl">AZ A</span>
+                    <div class="grp priv"><span class="lbl">Private subnet</span>
+                      <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">EC2 web</div></div>
+                      <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">Mount target<small>ENI + IP, SG: TCP 2049</small></div></div></div>
+                  </div>
+                  <div class="grp az"><span class="lbl">AZ B</span>
+                    <div class="grp priv"><span class="lbl">Private subnet</span>
+                      <div class="row center"><div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda (VPC)</div></div>
+                      <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">Mount target</div></div></div>
+                  </div>
+                  <div class="grp az"><span class="lbl">AZ C</span>
+                    <div class="grp priv"><span class="lbl">Private subnet</span>
+                      <div class="row center"><div class="node"><img src="../assets/icons/svc/AWS-Fargate.svg" alt="">ECS / Fargate task</div></div>
+                      <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">Mount target</div></div></div>
+                  </div>
+                </div>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Elastic-File-System_Standard.svg" alt="">EFS Regional file system<small>dữ liệu lưu dư thừa trên ≥ 3 AZ</small></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> EFS Regional: một mount target mỗi AZ, mọi client (EC2, Lambda trong VPC, ECS/Fargate) mount cùng một file system qua DNS name – DNS trả về IP mount target cùng AZ. Server Linux on-premises mount qua Direct Connect/VPN bằng IP mount target. Nếu một AZ hỏng, client ở AZ còn lại vẫn đọc/ghi bình thường vì dữ liệu được lưu dư thừa trên nhiều AZ.</figcaption>
+      </figure>
+
+      <h3>Regional vs One Zone</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Regional (khuyến nghị)</th><th>One Zone</th></tr></thead>
+        <tbody>
+          <tr><td>Nơi lưu dữ liệu</td><td>Dư thừa trên nhiều AZ cách xa nhau (≥ 3 AZ)</td><td>1 AZ duy nhất</td></tr>
+          <tr><td>Độ bền thiết kế</td><td>99,999999999% (11 số 9)</td><td>99,999999999% – nhưng <b>có thể mất dữ liệu nếu AZ bị phá hủy</b> (cháy, ngập nước…)</td></tr>
+          <tr><td>SLA khả dụng (Standard)</td><td>99,99%</td><td>99,9%</td></tr>
+          <tr><td>Mount target</td><td>1 mỗi AZ</td><td>Chỉ 1 mount target (AZ của file system); AZ khác truy cập được nhưng chịu phí cross-AZ</td></tr>
+          <tr><td>Performance mode</td><td>General Purpose hoặc Max I/O</td><td>Luôn General Purpose</td></tr>
+          <tr><td>Bảo vệ thêm</td><td>Replication sang Region khác (tùy chọn)</td><td><b>Tự động backup bằng AWS Backup</b>; backup được nhân bản sang 3 AZ, restore được sang AZ/Region khác</td></tr>
+          <tr><td>Dùng khi</td><td>Production cần độ bền và khả dụng cao nhất</td><td>Dev/test, dữ liệu tái tạo được, workload đã có bản sao ở nơi khác – <b>rẻ hơn</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Ngữ nghĩa dữ liệu</h3>
+      <ul>
+        <li>EFS cung cấp <b>close-to-open consistency</b> như NFS. Với Regional, write được lưu bền trên nhiều AZ khi ứng dụng ghi đồng bộ (<code>O_DIRECT</code>, <code>fsync</code>) hoặc khi <b>đóng file</b>. Ứng dụng truy cập đồng bộ, ghi không-append có <b>read-after-write consistency</b>.</li>
+        <li><b>File locking</b> NFSv4 (kể cả byte-range lock), nhưng chỉ là <b>advisory lock</b>; tối đa 512 lock trên một file.</li>
+        <li>Quyền truy cập file theo <b>POSIX permissions</b> (UID/GID); NFS hỗ trợ tối đa 16 group ID mỗi user.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – nhận diện EFS</span>
+        <ul>
+          <li>“<i>Shared file system</i>”, “<i>mounted concurrently by multiple EC2 instances across multiple AZs</i>”, “<i>Linux</i>”, “<i>POSIX-compliant</i>”, “<i>grows and shrinks automatically</i>” ⇒ <b>Amazon EFS</b>.</li>
+          <li>“<i>Auto Scaling group of web servers must share the same content / uploaded files</i>” ⇒ EFS (không phải EBS – EBS gắn với 1 AZ; không phải S3 nếu ứng dụng cần đường dẫn file).</li>
+          <li>“<i>Lambda functions / Fargate tasks need persistent shared storage</i>” ⇒ EFS (Lambda chỉ có <code>/tmp</code> tạm thời).</li>
+          <li>“<i>Cost-effective, data can be re-created, single AZ is acceptable</i>” ⇒ <b>EFS One Zone</b> (+ lifecycle sang IA).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – EFS</span>
+        <ul>
+          <li>Đề có <b>Windows</b> instance cần file share ⇒ <b>không chọn EFS</b> (không hỗ trợ Windows). Chọn FSx for Windows File Server.</li>
+          <li>Mount bị “timed out” ⇒ thường do security group của mount target chưa mở <b>TCP 2049</b> từ client, hoặc AZ của client chưa có mount target.</li>
+          <li>EFS không phải “ổ đĩa local”: mỗi thao tác đi qua mạng – workload cần độ trễ micro giây cho DB nên dùng EBS io2 / instance store (Bài 11).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: EFS PERFORMANCE ===================== -->
+      <h2 id="efs-hieu-nang"><img src="../assets/icons/res/Amazon-Elastic-File-System_File-System.svg" alt="">EFS performance mode &amp; throughput mode</h2>
+      <p class="lead">Hiệu năng file system được đo bằng ba chiều: <span class="t" data-vi="Độ trễ">latency</span>, <span class="t" data-vi="Thông lượng">throughput</span> và <span class="t" data-vi="Số thao tác I/O mỗi giây">IOPS</span>. Với EFS, ba yếu tố cấu hình quyết định hiệu năng: <b>file system type</b> (Regional / One Zone), <b>performance mode</b> (General Purpose / Max I/O) và <b>throughput mode</b> (Elastic / Provisioned / Bursting). AWS khuyến nghị dùng mặc định: <b>General Purpose + Elastic</b>.</p>
+
+      <h3>Performance mode</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-Elastic-File-System_Standard.svg" alt="">General Purpose (mặc định)</h4>
+          <ul><li><b>Độ trễ mỗi thao tác thấp nhất</b>.</li><li>Lý tưởng cho ứng dụng nhạy độ trễ: web serving, CMS, home directory, file serving chung.</li><li>One Zone <b>luôn</b> dùng General Purpose.</li><li>Tới 250.000 thao tác file/giây; theo dõi metric <code>PercentIOLimit</code>.</li><li>AWS: “luôn dùng General Purpose để có hiệu năng nhanh hơn”.</li></ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/Amazon-Elastic-File-System_File-System.svg" alt="">Max I/O (thế hệ trước)</h4>
+          <ul><li>Thiết kế cho workload <b>song song cực lớn</b> chịu được độ trễ cao hơn.</li><li><b>Độ trễ mỗi thao tác cao hơn</b> General Purpose.</li><li><b>Không hỗ trợ</b> One Zone và <b>không dùng được với Elastic throughput</b>.</li><li>Đề cũ hay chọn Max I/O cho “big data, thousands of instances”; tài liệu hiện nay khuyên General Purpose + Elastic.</li></ul></div>
+      </div>
+
+      <h3>Throughput mode</h3>
+      <p>IOPS <b>không tính phí riêng</b> – được gộp vào throughput: mỗi request NFS được tính là <b>4 KB</b> throughput hoặc kích thước thực, lấy giá trị lớn hơn. Throughput đọc được “giảm giá” (đọc được tính bằng 1/3 so với ghi), nên đọc đạt cao hơn ghi. Tổng đọc + ghi tối đa 100% giới hạn (vd dùng 33% giới hạn đọc ⇒ còn tối đa 67% giới hạn ghi).</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Throughput mode</th><th>Cách hoạt động</th><th>Tính phí</th><th>Dùng khi</th></tr></thead>
+        <tbody>
+          <tr><td><b>Elastic</b> (khuyến nghị, mặc định)</td><td>Tự động tăng/giảm throughput theo workload; không cần chỉ định; không tích/tiêu burst credit.</td><td>Trả theo lượng <b>dữ liệu và metadata đọc/ghi</b>.</td><td>Workload <b>spiky / khó dự đoán</b>, tỷ lệ trung bình/đỉnh ≤ 5%.</td></tr>
+          <tr><td><b>Provisioned</b></td><td>Bạn chỉ định mức throughput, <b>độc lập với dung lượng</b> lưu trữ và burst credit.</td><td>Trả cho phần throughput provision <b>vượt</b> baseline có sẵn từ dung lượng Standard.</td><td>Biết rõ yêu cầu hiệu năng, tỷ lệ trung bình/đỉnh ≥ 5%; <b>cần throughput cao nhưng dữ liệu nhỏ</b>.</td></tr>
+          <tr><td><b>Bursting</b></td><td>Throughput tỷ lệ với dung lượng ở lớp Standard: baseline <b>50 KiBps/GiB</b> (50 MiBps/TiB), burst <b>100 MiBps/TiB</b> (tối thiểu 100 MiBps) khi còn credit.</td><td>Chỉ trả phí lưu trữ.</td><td>Throughput nên tăng theo dung lượng. Nếu dùng &gt; 80% throughput cho phép hoặc cạn credit ⇒ chuyển Elastic/Provisioned.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cấu hình (General Purpose)</th><th>Độ trễ đọc / ghi</th><th>IOPS đọc / ghi tối đa</th><th>Throughput đọc / ghi mỗi file system</th><th>Mỗi client</th></tr></thead>
+        <tbody>
+          <tr><td>Regional + Elastic</td><td>~1 ms / ~2,7 ms</td><td>900.000–2.500.000 / 500.000</td><td>20–60 GiBps / 1–5 GiBps</td><td>1.500 MiBps (efs-utils ≥ 2.0)</td></tr>
+          <tr><td>Regional + Provisioned</td><td>~1 ms / ~2,7 ms</td><td>55.000 / 25.000</td><td>3–10 GiBps / 1–3,33 GiBps</td><td>500 MiBps</td></tr>
+          <tr><td>Regional + Bursting</td><td>~1 ms / ~2,7 ms</td><td>35.000 / 7.000</td><td>3–5 GiBps / 1–3 GiBps</td><td>500 MiBps</td></tr>
+          <tr><td>One Zone (mọi mode)</td><td>~1 ms / ~1,6 ms</td><td>35.000 / 7.000</td><td>3 GiBps / 1 GiBps</td><td>500 MiBps</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted">Giới hạn throughput tối đa phụ thuộc Region (vd Elastic: 60 GiBps đọc / 5 GiBps ghi ở các Region lớn, 20 / 1 GiBps ở Region khác). Mặc định Elastic: 250.000 IOPS đọc dữ liệu truy cập thường xuyên, 90.000 IOPS đọc dữ liệu ít truy cập, 50.000 IOPS ghi – xin tăng được tới 10 lần.</p>
+
+      <h3>Ví dụ Bursting: vì sao file system nhỏ bị “nghẹt”?</h3>
+      <ol class="steps">
+        <li><b>100 GiB</b> trong lớp Standard ⇒ baseline <b>5 MiBps</b> (ghi; đọc tới 15 MiBps nhờ tỷ lệ 1/3).</li>
+        <li>Nghỉ 24 giờ tích được 5 MiB × 86.400 s = <b>432.000 MiB credit</b>.</li>
+        <li>Credit đủ burst ở <b>100 MiBps trong 72 phút</b> mỗi ngày. Hết credit ⇒ rơi về baseline (tối thiểu 1 MiBps).</li>
+        <li>File system &gt; 1 TiB luôn burst được tới 50% thời gian nếu 50% còn lại nhàn rỗi; credit tối đa 2,1 TiB (hoặc 2,1 TiB mỗi TiB) ⇒ burst liên tục tới 12 giờ.</li>
+        <li>Cách “cũ” để tăng throughput là chép file rác cho to dung lượng – <b>đừng chọn</b>; đáp án đúng là chuyển sang <b>Elastic</b> (spiky) hoặc <b>Provisioned</b> (ổn định, biết trước).</li>
+      </ol>
+
+      <div class="callout note"><span class="ttl">Hạn chế khi đổi throughput mode</span>
+        <p>Đổi mode được bất kỳ lúc nào, nhưng sau khi chuyển <b>sang Provisioned</b> hoặc thay đổi mức Provisioned thì trong <b>24 giờ</b> không được: chuyển từ Provisioned về Elastic/Bursting, hoặc <b>giảm</b> mức Provisioned. Nếu file system có lifecycle policy chuyển dữ liệu sang Archive thì <b>không đổi được sang Bursting/Provisioned</b> (Archive yêu cầu Elastic).</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Throughput</span>
+        <ul>
+          <li>“<i>EFS file system is small but the application needs high throughput; BurstCreditBalance keeps dropping to zero</i>” ⇒ <b>Elastic throughput</b> (nếu spiky) hoặc <b>Provisioned throughput</b> (nếu nhu cầu ổn định, biết trước).</li>
+          <li>“<i>Unpredictable, spiky workload, pay only for what you use</i>” ⇒ <b>Elastic</b>.</li>
+          <li>“<i>Latency-sensitive web serving / CMS</i>” ⇒ <b>General Purpose</b> performance mode.</li>
+          <li>Metric cần nhớ: <code>PercentIOLimit</code> (General Purpose gần chạm trần IOPS), <code>BurstCreditBalance</code> (Bursting), <code>MeteredIOBytes</code> (Elastic – đặt cảnh báo chi phí).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: EFS STORAGE CLASSES ===================== -->
+      <h2 id="efs-storage-class"><img src="../assets/icons/res/Amazon-Elastic-File-System_Standard-Infrequent-Access.svg" alt="">EFS storage classes &amp; lifecycle management</h2>
+      <p class="lead">Dữ liệu mới luôn ghi vào lớp <b>EFS Standard</b> (SSD). <span class="t" data-vi="Quản lý vòng đời">Lifecycle management</span> tự động chuyển file ít dùng xuống <span class="t" data-vi="Lớp truy cập không thường xuyên">EFS Infrequent Access (IA)</span> và <span class="t" data-vi="Lớp lưu trữ dài hạn">EFS Archive</span> – vẫn <b>cùng một file system, cùng đường dẫn</b>, ứng dụng không phải sửa gì. Đây là cách giảm chi phí EFS mạnh nhất.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Storage class</th><th>Thiết kế cho</th><th>Độ trễ byte đầu khi đọc</th><th>SLA khả dụng</th><th>Phí tối thiểu mỗi file</th><th>Thời gian lưu tối thiểu</th></tr></thead>
+        <tbody>
+          <tr><td><b>EFS Standard</b></td><td>Dữ liệu đang hoạt động, cần độ trễ sub-ms</td><td>Sub-millisecond</td><td>99,99% (Regional) / 99,9% (One Zone)</td><td>Không áp dụng</td><td>Không áp dụng</td></tr>
+          <tr><td><b>EFS Infrequent Access</b></td><td>Dữ liệu truy cập <b>vài lần mỗi quý</b></td><td>Hàng chục ms</td><td>99,99% (Regional) / 99,9% (One Zone)</td><td>128 KiB</td><td>Không áp dụng</td></tr>
+          <tr><td><b>EFS Archive</b></td><td>Dữ liệu truy cập <b>vài lần mỗi năm hoặc ít hơn</b></td><td>Hàng chục ms</td><td>99,9% (chỉ Regional)</td><td>128 KiB</td><td><b>90 ngày</b></td></tr>
+        </tbody>
+      </table></div>
+      <p>Cả ba lớp đều có độ bền thiết kế 11 số 9. Ngoài phí lưu trữ theo từng lớp, bạn trả <b>phí truy cập dữ liệu</b> khi đọc file ở IA/Archive và khi lifecycle chuyển dữ liệu giữa các lớp. Sao lưu bằng AWS Backup <b>không</b> tính phí truy cập dữ liệu.</p>
+
+      <h3>Ba lifecycle policy</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Policy</th><th>Ý nghĩa</th><th>Mặc định</th></tr></thead>
+        <tbody>
+          <tr><td><b>Transition into IA</b></td><td>Khi nào chuyển file chưa được truy cập ở Standard xuống IA</td><td><b>30 ngày</b> không truy cập</td></tr>
+          <tr><td><b>Transition into Archive</b></td><td>Khi nào chuyển file từ Standard hoặc IA xuống Archive</td><td><b>90 ngày</b> không truy cập</td></tr>
+          <tr><td><b>Transition into Standard</b></td><td>Có đưa file về Standard khi được truy cập lại hay không</td><td><b>Không</b> (file ở lại IA/Archive). Chọn <b>On first access</b> cho ứng dụng nhạy độ trễ, nhiều file nhỏ.</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Client.svg" alt="">Ứng dụng ghi file<small>luôn ghi vào Standard</small></div>
+          <span class="arrow">write</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Elastic-File-System_Standard.svg" alt="">EFS Standard<small>SSD, sub-ms</small></div>
+          <span class="arrow">30 ngày không truy cập</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Elastic-File-System_Standard-Infrequent-Access.svg" alt="">EFS IA<small>vài lần / quý</small></div>
+          <span class="arrow">90 ngày không truy cập</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service-Glacier.svg" alt="">EFS Archive<small>vài lần / năm, ≥ 90 ngày</small></div>
+          <span class="arrow dashed">On first access (tùy chọn)</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Elastic-File-System_Standard.svg" alt="">Về lại Standard</div>
+        </div>
+        <figcaption><b>Hình 3.</b> Lifecycle management của EFS. Bộ đếm “last accessed” là timer nội bộ (không phải thuộc tính POSIX <code>atime</code>), reset mỗi khi file ở Standard được truy cập. Metadata (tên file, owner, cấu trúc thư mục) <b>luôn ở Standard</b>; liệt kê thư mục không tính là truy cập file. Mọi thao tác ghi vào file đang ở IA/Archive được ghi vào Standard trước, sau 24 giờ mới đủ điều kiện chuyển lại.</figcaption>
+      </figure>
+
+      <ul>
+        <li>Lifecycle policy áp dụng cho <b>toàn bộ file system</b> (không theo thư mục như S3 prefix).</li>
+        <li>Lifecycle chạy với ưu tiên thấp hơn workload; chuyển hàng triệu file nhỏ lâu hơn ít file lớn cùng tổng dung lượng.</li>
+        <li>Lớp Archive chỉ hỗ trợ file system dùng <b>Elastic throughput</b>.</li>
+        <li>File system One Zone cũng tiering sang IA (One Zone-IA) với khả dụng 99,9%; lớp Archive chỉ có ở Regional.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Chi phí EFS</span>
+        <ul>
+          <li>“<i>Most files are rarely accessed after 30 days, reduce EFS cost without changing the application</i>” ⇒ bật <b>lifecycle management</b> chuyển sang <b>EFS IA</b> (và Archive cho dữ liệu cực lạnh).</li>
+          <li>“<i>Files must come back to low latency when accessed again</i>” ⇒ thêm policy <b>Transition into Standard: On first access</b>.</li>
+          <li>Đừng nhầm với S3 Lifecycle (Bài 15): EFS lifecycle <b>dựa trên lần truy cập cuối</b>, không dựa trên tuổi object; không có hành động “expiration” xóa file.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: EFS SECURITY & DATA PROTECTION ===================== -->
+      <h2 id="efs-bao-mat"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">EFS: bảo mật, access point, backup &amp; replication</h2>
+      <p class="lead">Truy cập của NFS client vào EFS được kiểm soát bằng <b>cả</b> IAM policy <b>và</b> chính sách mạng (security group), cộng thêm quyền POSIX ở cấp file. Dữ liệu được bảo vệ bằng mã hóa, AWS Backup và replication liên Region.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">
+          <div><h4>Network: security group</h4><span class="vi">Lớp mạng</span><p>Mount target chỉ nhận NFS (TCP 2049) từ nguồn được phép. EFS chỉ truy cập được trong VPC / qua kết nối riêng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">
+          <div><h4>IAM authorization for NFS clients</h4><span class="vi">Phân quyền NFS bằng IAM</span><p>Dùng IAM (identity policy + <b>file system policy</b> – resource-based, tối đa 20.000 ký tự) để cho phép mount, ghi, truy cập root (<code>elasticfilesystem:ClientMount / ClientWrite / ClientRootAccess</code>).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Elastic-File-System_File-System.svg" alt="">
+          <div><h4>EFS Access Points</h4><span class="vi">Điểm truy cập EFS</span><p>Điểm vào riêng cho từng ứng dụng: ép <b>POSIX user/group</b> và <b>thư mục gốc</b> riêng. Tối đa 10.000 access point/file system (tăng được).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">
+          <div><h4>Encryption</h4><span class="vi">Mã hóa</span><p><b>At rest</b>: bật <b>khi tạo</b> file system, mã hóa cả dữ liệu và metadata bằng KMS. <b>In transit</b>: bật khi <b>mount</b> (TLS qua mount helper).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Backup.svg" alt="">
+          <div><h4>AWS Backup</h4><span class="vi">Sao lưu tập trung</span><p>Backup tăng dần, EFS ưu tiên thao tác file system hơn backup. One Zone được tự động backup. Học sâu ở Bài 19.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Elastic-File-System_File-System.svg" alt="">
+          <div><h4>EFS Replication</h4><span class="vi">Sao chép file system</span><p>Tự động, liên tục sao chép dữ liệu + metadata sang file system đích ở <b>Region bạn chọn</b>; RPO và RTO <b>tính bằng phút</b>.</p></div></div>
+      </div>
+
+      <h3>EFS Access Points – mẫu hay gặp với container và Lambda</h3>
+      <p><span class="t" data-vi="Điểm truy cập EFS">EFS access point</span> là điểm vào theo ứng dụng của một file system. Mọi request NFS qua access point được gán một <b>POSIX identity</b> cố định (UID/GID do access point quy định, bất kể client tự xưng là ai) và bị giới hạn trong một <b>root directory</b> riêng (tự tạo thư mục với owner/permission định sẵn nếu chưa có). Kết hợp với IAM policy điều kiện theo ARN access point, bạn cho mỗi ứng dụng/tenant chỉ thấy “thư mục của mình” trên cùng một file system. Lambda và ECS/EKS (EFS CSI driver) thường mount EFS qua access point.</p>
+      <p class="muted">Chi tiết cơ chế ép POSIX identity / root directory, action IAM <code>ClientMount/ClientWrite/ClientRootAccess</code> và tùy chọn mount TLS là kiến thức phổ biến về EFS; các trang tài liệu đã đọc nêu hạn mức 10.000 access point và 20.000 ký tự cho file system policy.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Bảo mật &amp; DR cho EFS</span>
+        <ul>
+          <li>“<i>Existing unencrypted EFS file system must be encrypted at rest</i>” ⇒ tạo <b>file system mới có encryption</b> rồi chép dữ liệu sang (vd bằng <b>AWS DataSync</b>) – encryption at rest chỉ chọn được lúc tạo.</li>
+          <li>“<i>Encrypt data in transit between EC2 and EFS</i>” ⇒ mount bằng EFS mount helper với tùy chọn <b>TLS</b>.</li>
+          <li>“<i>Multiple applications share one EFS, each must only access its own directory with a specific POSIX user</i>” ⇒ <b>EFS access points</b> + IAM authorization.</li>
+          <li>“<i>Disaster recovery to another Region with RPO of minutes for a file system</i>” ⇒ <b>EFS Replication</b>. “<i>Centralized, scheduled backups with retention</i>” ⇒ <b>AWS Backup</b>.</li>
+          <li>“<i>Migrate a large on-premises NFS dataset to EFS</i>” ⇒ <b>AWS DataSync</b> (trang quota EFS khuyến nghị DataSync cho dataset lớn).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: FSX FOR WINDOWS ===================== -->
+      <h2 id="fsx-windows"><img src="../assets/icons/svc/Amazon-FSx-for-Windows-File-Server.svg" alt="">Amazon FSx for Windows File Server</h2>
+      <p class="lead"><span class="t" data-vi="Máy chủ tệp Windows được quản lý">Amazon FSx for Windows File Server</span> cung cấp Windows file server <b>fully managed</b>, chạy trên file system Windows native, hỗ trợ giao thức chuẩn <span class="t" data-vi="Giao thức chia sẻ tệp của Windows">Server Message Block (SMB)</span>. Code, ứng dụng và công cụ của developer/admin Windows tiếp tục chạy <b>không cần thay đổi</b> – lý tưởng để <span class="t" data-vi="Chuyển nguyên trạng">lift and shift</span> ứng dụng doanh nghiệp lên AWS.</p>
+
+      <div class="stats">
+        <div class="stat"><b>SMB 2.0 – 3.1.1</b><span>Windows Server 2008 / Windows 7 trở lên, và Linux</span></div>
+        <div class="stat"><b>&lt; 30 giây</b><span>failover Multi-AZ sang standby</span></div>
+        <div class="stat"><b>~30 phút</b><span>downtime khi Single-AZ phục hồi lỗi / bảo trì</span></div>
+        <div class="stat"><b>12 GBps · 400.000 IOPS</b><span>tối đa (một số Region lớn); 2 GBps · 80.000 IOPS ở mọi Region</span></div>
+        <div class="stat"><b>Sub-ms</b><span>độ trễ với SSD; single-digit ms với HDD</span></div>
+        <div class="stat"><b>Hằng ngày</b><span>backup tự động (VSS), bật mặc định</span></div>
+      </div>
+
+      <h3>Thành phần và tính năng chính</h3>
+      <ul>
+        <li><b>File system</b> = một hoặc nhiều Windows file server + storage volume. Khi tạo, bạn chỉ định <b>storage capacity</b> (GiB), <b>SSD IOPS</b> và <b>throughput capacity</b> (MBps) – cả ba thay đổi được sau này (tăng dung lượng, đổi HDD → SSD, tăng/giảm throughput).</li>
+        <li><b>File share</b>: thư mục chia sẻ qua SMB; có sẵn share mặc định <code>\share</code>, tạo thêm bằng công cụ Shared Folders. Truy cập qua <b>DNS name</b> của file system hoặc <b>DNS alias</b> (giữ nguyên tên <code>\\fileserver</code> cũ khi migrate).</li>
+        <li><b>Active Directory</b>: file system bắt buộc <b>join vào Microsoft AD</b> khi tạo – <b>AWS Managed Microsoft AD</b> hoặc <b>self-managed AD</b> on-premises (Bài 7). User xác thực bằng AD, quyền cấp file/folder bằng <b>Windows ACL</b>.</li>
+        <li><b>Tính năng Windows native</b>: <span class="t" data-vi="Không gian tên DFS">DFS Namespaces</span> (gom nhiều file system dưới một namespace chung), DFS Replication (Single-AZ 1), <span class="t" data-vi="Bản sao bóng">Shadow Copies</span> (người dùng tự khôi phục phiên bản trước của file), <span class="t" data-vi="Khử trùng lặp dữ liệu">Data Deduplication</span>, user quotas, continuously available (CA) shares cho SQL Server.</li>
+        <li><b>SMB Multichannel</b>: một client có thể đạt nhiều GBps và hàng trăm nghìn IOPS.</li>
+        <li><b>Client</b>: EC2, Amazon WorkSpaces, AppStream 2.0, VMware Cloud on AWS; on-premises qua <b>Direct Connect</b> hoặc <b>Site-to-Site VPN</b>; VPC/account/Region khác qua <b>VPC peering</b> hoặc <b>Transit Gateway</b>.</li>
+        <li><b>Không truy cập từ Internet công cộng</b>: nếu Elastic IP bị gắn vào ENI của file system, FSx tự động gỡ ra.</li>
+      </ul>
+
+      <h3>SSD vs HDD</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Disk.svg" alt="">SSD</h4>
+          <ul><li>Workload hiệu năng cao nhất, nhạy độ trễ: <b>database</b> (SQL Server), media processing, data analytics.</li><li>Mặc định 3.000 IOPS và 750 MBps disk throughput mỗi TiB; provision thêm tới 500 IOPS/GiB, 400.000 IOPS mỗi file system.</li><li>Hỗ trợ mọi deployment type.</li></ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Multiple-Volumes.svg" alt="">HDD</h4>
+          <ul><li>Chi phí thấp cho <b>home directories</b>, share phòng ban, CMS.</li><li>12 MBps baseline, 80 MBps burst mỗi TiB (burst bucket); dữ liệu nóng được phục vụ từ in-memory cache của file server.</li><li>Chỉ có ở <b>Single-AZ 2</b> và <b>Multi-AZ</b>.</li></ul></div>
+      </div>
+
+      <h3>Single-AZ vs Multi-AZ</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Single-AZ (1 và 2)</th><th>Multi-AZ</th></tr></thead>
+        <tbody>
+          <tr><td>Kiến trúc</td><td>1 Windows file server + storage volume trong 1 AZ; dữ liệu nhân bản trong AZ để chống hỏng linh kiện</td><td>Cụm HA (Windows Server Failover Clustering) trải trên <b>2 AZ</b>: preferred file server + standby file server, storage riêng mỗi AZ</td></tr>
+          <tr><td>Sao chép dữ liệu</td><td>Trong AZ</td><td><b>Đồng bộ</b> trong mỗi AZ và giữa 2 AZ</td></tr>
+          <tr><td>Khi hỏng / bảo trì</td><td>Tự thay linh kiện, ~30 phút downtime; hiếm khi không phục hồi được ⇒ restore từ backup gần nhất</td><td><b>Tự động failover</b> trong &lt; 30 giây khi AZ outage, preferred server không khả dụng, hoặc bảo trì; tự failback khi preferred AZ phục hồi</td></tr>
+          <tr><td>Subnet / ENI / IP</td><td>1 subnet, 1 ENI (Single-AZ 2: 2 IP)</td><td>2 subnet ở 2 AZ khác nhau, 2 ENI, 4 IP</td></tr>
+          <tr><td>Client</td><td colspan="2">DNS name không đổi khi failover ⇒ client Windows tự kết nối lại. <b>Client Linux không hỗ trợ failover DNS tự động</b> – chỉ tiếp tục khi file system failback về preferred subnet.</td></tr>
+          <tr><td>Khuyến nghị AWS</td><td>Test/dev; production đã có replication ở tầng ứng dụng; chịu được mất khả dụng và RPO nới lỏng</td><td class="yes"><b>Hầu hết production workload</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp onprem"><span class="lbl"><img src="../assets/icons/res/Office-building.svg" alt="">On-premises</span>
+            <div class="row center"><div class="node"><img src="../assets/icons/res/Users.svg" alt="">Windows users<small>\\corp.example.com\share</small></div></div>
+            <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Directory-Service_AWS-Managed-Microsoft-AD.svg" alt="">Self-managed AD<small>(hoặc trust tới Managed AD)</small></div></div>
+            <div class="row center"><div class="node"><img src="../assets/icons/svc/AWS-Site-to-Site-VPN.svg" alt="">Site-to-Site VPN / Direct Connect</div></div>
+          </div>
+          <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">AZ A – preferred subnet</span>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-FSx-for-Windows-File-Server.svg" alt="">Preferred file server<small>active – phục vụ mọi read/write</small></div></div>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 Windows / SQL Server</div></div></div>
+                </div>
+                <div class="grp az"><span class="lbl">AZ B – standby subnet</span>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-FSx-for-Windows-File-Server.svg" alt="">Standby file server<small>nhận bản sao đồng bộ</small></div></div>
+                    <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-WorkSpaces.svg" alt="">WorkSpaces</div></div></div>
+                </div>
+              </div>
+              <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Directory-Service_AWS-Managed-Microsoft-AD.svg" alt="">AWS Managed Microsoft AD<small>xác thực user, Windows ACL</small></div></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> FSx for Windows File Server Multi-AZ. Dữ liệu được sao chép <b>đồng bộ</b> giữa preferred và standby file server; khi AZ A gặp sự cố hoặc bảo trì, standby được nâng lên active trong &lt; 30 giây, DNS name giữ nguyên nên ứng dụng Windows tự tiếp tục. File system join vào AD (Managed Microsoft AD hoặc AD on-premises) để xác thực; user on-premises map ổ mạng qua VPN/Direct Connect.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – FSx for Windows</span>
+        <ul>
+          <li>“<i>Windows-based applications</i>”, “<i>SMB protocol</i>”, “<i>NTFS / Windows ACLs</i>”, “<i>Active Directory integration</i>”, “<i>DFS Namespaces</i>”, “<i>home directories for Windows users</i>” ⇒ <b>FSx for Windows File Server</b>.</li>
+          <li>“<i>Highly available across AZs</i>” ⇒ <b>Multi-AZ</b> deployment. “<i>Lowest cost, test environment</i>” ⇒ Single-AZ, HDD nếu không cần hiệu năng.</li>
+          <li>“<i>Users want to restore previous versions of their own files</i>” ⇒ bật <b>Shadow Copies</b>. “<i>Lots of duplicate files, reduce storage</i>” ⇒ <b>Data Deduplication</b>.</li>
+          <li>“<i>Microsoft SQL Server HA on EC2 with shared storage</i>” ⇒ FSx for Windows Multi-AZ với <b>continuously available (CA) shares</b>.</li>
+          <li>“<i>On-premises users need low-latency access to FSx for Windows shares</i>” ⇒ <b>Amazon FSx File Gateway</b> (cache cục bộ – Bài 18).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – FSx for Windows</span>
+        <ul>
+          <li>Chọn EFS cho Windows ⇒ <b>sai</b>. Chọn S3 cho “SMB share” ⇒ sai (S3 File Gateway cung cấp SMB nhưng lưu thành object S3, không có tính năng Windows file server đầy đủ).</li>
+          <li>FSx for Windows <b>cần Active Directory</b>; câu hỏi có “<i>no Active Directory, Linux clients only, NFS</i>” ⇒ nghĩ tới EFS / OpenZFS.</li>
+          <li>Single-AZ không có standby – “<i>must survive an AZ failure</i>” ⇒ Multi-AZ.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: FSX FOR LUSTRE ===================== -->
+      <h2 id="fsx-lustre"><img src="../assets/icons/svc/Amazon-FSx-for-Lustre.svg" alt="">Amazon FSx for Lustre</h2>
+      <p class="lead"><span class="t" data-vi="Hệ thống tệp song song Lustre">Lustre</span> là file system song song được thiết kế cho những máy tính nhanh nhất thế giới. <b>FSx for Lustre</b> đưa nó thành dịch vụ fully managed cho workload “tốc độ là tất cả”: <b>machine learning, HPC (high performance computing), xử lý video, mô hình tài chính, EDA</b>. Độ trễ <b>sub-millisecond</b>, throughput tới <b>nhiều TBps</b>, hàng <b>triệu IOPS</b>. FSx for Lustre <b>POSIX-compliant</b>, chạy với ứng dụng Linux có sẵn không cần sửa, có read-after-write consistency và file locking.</p>
+
+      <h3>Deployment type: Scratch vs Persistent</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Scratch (1, 2)</th><th>Persistent 1</th><th>Persistent 2 (mới nhất)</th></tr></thead>
+        <tbody>
+          <tr><td>Mục đích</td><td>Lưu trữ <b>tạm</b>, xử lý ngắn hạn, tối ưu chi phí</td><td>Lưu trữ dài hạn</td><td>Dài hạn + IOPS/throughput <b>cao nhất</b></td></tr>
+          <tr><td>Replication</td><td class="no">Không – file server hỏng không được thay, dữ liệu trên server đó lỗi I/O ngay</td><td colspan="2" class="yes">Có – SSD/HDD nhân bản <b>trong cùng AZ</b> (Intelligent-Tiering: nhiều AZ); file server hỏng được thay trong vài phút, client tự retry</td></tr>
+          <tr><td>Throughput / TiB</td><td>200 MBps/TiB baseline, burst tới <b>6 lần</b></td><td>SSD: 50, 100, 200 MBps/TiB; HDD: 12 hoặc 40 MBps/TiB</td><td>SSD: 125, 250, 500, 1000 MBps/TiB; Intelligent-Tiering theo bội số 4.000 MBps</td></tr>
+          <tr><td>Storage class</td><td>SSD</td><td>SSD, HDD (SSD read cache tùy chọn = 20% dung lượng HDD)</td><td>SSD, Intelligent-Tiering</td></tr>
+          <tr><td>Mã hóa in transit</td><td colspan="3">Tự động khi truy cập từ EC2 hỗ trợ (Persistent: luôn; Scratch: ở một số Region). At rest: luôn mã hóa bằng KMS.</td></tr>
+          <tr><td>Dùng khi</td><td>Job HPC/ML vài giờ–vài ngày, dữ liệu gốc nằm ở S3</td><td colspan="2">Workload chạy lâu dài hoặc liên tục, nhạy với gián đoạn khả dụng</td></tr>
+        </tbody>
+      </table></div>
+      <p>Ví dụ độ khả dụng/bền của Scratch trong tài liệu: file system 1,2 TiB (2 file server) ≈ 99,9%/ngày, 99,4%/tuần; 50,4 TiB (22 server) chỉ ≈ 99,1%/ngày, 93,9%/tuần – càng lớn càng nhiều server, xác suất lỗi càng cao.</p>
+
+      <h3>Ba storage class</h3>
+      <ul>
+        <li><b>SSD</b> – provisioned, sub-ms trên toàn bộ dataset; cho thao tác file nhỏ, ngẫu nhiên.</li>
+        <li><b>Intelligent-Tiering</b> – đàn hồi (trả theo dữ liệu lưu, không chỉ định size), tự tiering: Frequent Access → <b>30 ngày</b> không truy cập ⇒ Infrequent Access → <b>90 ngày</b> ⇒ Archive Instant Access; truy cập lại thì về Frequent. Không phí retrieval/transition. SSD read cache tùy chọn. AWS khuyến nghị cho <b>hầu hết workload</b> không cần độ trễ thấp đồng đều. <i>Lưu ý: chưa hỗ trợ liên kết S3 data repository.</i></li>
+        <li><b>HDD</b> – single-digit ms nhất quán, tới hàng chục GBps; workload tuần tự, file lớn.</li>
+      </ul>
+
+      <h3>Tích hợp Amazon S3 – điểm thi quan trọng nhất</h3>
+      <p>Liên kết file system với S3 bucket bằng <span class="t" data-vi="Liên kết kho dữ liệu">data repository association (DRA)</span>: FSx for Lustre <b>trình bày object S3 thành file</b>. Metadata (danh sách file) được import khi tạo liên kết; nội dung file được nạp từ S3 khi được truy cập lần đầu (<span class="t" data-vi="Nạp lười – nạp khi cần">lazy loading</span>). Kết quả xử lý được ghi ngược về S3.</p>
+      <ul>
+        <li><b>Automatic import</b>: tự import metadata khi object được tạo/sửa/xóa trong S3 – <b>chỉ cùng Region</b>. Dùng song song được với import data repository task.</li>
+        <li><b>Automatic export</b>: tự export file và metadata về S3 khi file thay đổi – hỗ trợ <b>cross-Region</b>. <b>Không</b> dùng đồng thời với export data repository task.</li>
+        <li>Cả hai hỗ trợ <b>cross-account</b>. DRA/automatic export không có trên Scratch 1 (và Lustre 2.10).</li>
+        <li><b>Data repository tasks</b>: import, export, release (giải phóng file đã export để tiết kiệm dung lượng).</li>
+        <li>File system đã liên kết S3 <b>không hỗ trợ backup</b> FSx – S3 đóng vai trò kho dữ liệu bền. Đừng xóa bucket trước khi gỡ liên kết.</li>
+        <li><b>Cloud bursting</b> từ on-premises: copy dữ liệu qua Direct Connect/VPN, chạy compute trên AWS.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 860 300" width="860" role="img" aria-label="FSx for Lustre liên kết với S3 cho cluster HPC">
+          <defs><marker id="ah17b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="20" y="40" width="190" height="200" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="115" y="62" font-size="13" text-anchor="middle" font-weight="700">Amazon S3 (data lake)</text>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" x="83" y="80" width="64" height="64"/>
+          <text x="115" y="166" font-size="11" text-anchor="middle">s3://genomics-raw/</text>
+          <text x="115" y="184" font-size="10.5" text-anchor="middle" class="muted">kho bền, rẻ, lâu dài</text>
+          <text x="115" y="200" font-size="10.5" text-anchor="middle" class="muted">automatic import: cùng Region</text>
+          <text x="115" y="216" font-size="10.5" text-anchor="middle" class="muted">automatic export: cross-Region OK</text>
+          <rect x="320" y="40" width="210" height="200" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="425" y="62" font-size="13" text-anchor="middle" font-weight="700">FSx for Lustre</text>
+          <image href="../assets/icons/svc/Amazon-FSx-for-Lustre.svg" x="393" y="80" width="64" height="64"/>
+          <text x="425" y="166" font-size="11" text-anchor="middle">/fsx/genomics-raw/</text>
+          <text x="425" y="184" font-size="10.5" text-anchor="middle" class="muted">Scratch hoặc Persistent</text>
+          <text x="425" y="200" font-size="10.5" text-anchor="middle" class="muted">sub-ms, TBps, triệu IOPS</text>
+          <text x="425" y="216" font-size="10.5" text-anchor="middle" class="muted">1 AZ (SSD/HDD)</text>
+          <path class="line-o" d="M212 110 L318 110" marker-end="url(#ah17b)"/>
+          <text x="265" y="100" font-size="10.5" text-anchor="middle">lazy load</text>
+          <path class="line-o" d="M318 170 L212 170" marker-end="url(#ah17b)"/>
+          <text x="265" y="160" font-size="10.5" text-anchor="middle">export kết quả</text>
+          <rect x="640" y="20" width="200" height="240" rx="8" fill="none" stroke="#ED7100" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="740" y="42" font-size="13" text-anchor="middle" font-weight="700">Compute cluster</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instances.svg" x="660" y="56" width="40" height="40"/>
+          <text x="760" y="82" font-size="11">EC2 (Lustre client)</text>
+          <image href="../assets/icons/svc/AWS-Batch.svg" x="660" y="106" width="40" height="40"/>
+          <text x="760" y="132" font-size="11">AWS Batch</text>
+          <image href="../assets/icons/svc/AWS-ParallelCluster.svg" x="660" y="156" width="40" height="40"/>
+          <text x="760" y="182" font-size="11">ParallelCluster</text>
+          <image href="../assets/icons/svc/Amazon-SageMaker.svg" x="660" y="206" width="40" height="40"/>
+          <text x="760" y="232" font-size="11">SageMaker AI</text>
+          <path class="line-o" d="M532 140 L638 140" marker-end="url(#ah17b)"/>
+          <path class="line-o" d="M638 140 L532 140" marker-end="url(#ah17b)"/>
+          <text x="585" y="130" font-size="10.5" text-anchor="middle">POSIX I/O</text>
+          <text x="430" y="285" font-size="11.5" text-anchor="middle">Cũng mount được từ ECS (container trên EC2) và EKS (FSx for Lustre CSI driver). Client: Amazon Linux 2023/2, RHEL, CentOS, Ubuntu, SUSE.</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Mẫu kiến trúc HPC/ML kinh điển: dữ liệu gốc nằm trên S3, FSx for Lustre liên kết bucket qua data repository association, nạp dữ liệu khi cần và trình bày dưới dạng file POSIX cho cluster EC2 / AWS Batch / ParallelCluster / SageMaker; kết quả được export ngược về S3. Với SageMaker, FSx for Lustre bỏ được bước tải dữ liệu ban đầu từ S3 và giảm chi phí request S3 khi train lặp lại trên cùng dataset.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – FSx for Lustre</span>
+        <ul>
+          <li>“<i>High performance computing</i>”, “<i>machine learning training</i>”, “<i>sub-millisecond latency, hundreds of GBps</i>”, “<i>parallel file system</i>”, “<i>Linux cluster</i>” ⇒ <b>FSx for Lustre</b>.</li>
+          <li>“<i>Process data stored in S3 with a high-performance file system, write results back to S3</i>” ⇒ FSx for Lustre <b>linked to S3</b> (data repository association).</li>
+          <li>“<i>Short-term processing, data can be regenerated from S3, lowest cost</i>” ⇒ <b>Scratch</b>. “<i>Long-running, must tolerate file server failure</i>” ⇒ <b>Persistent</b>.</li>
+          <li>“<i>Speed up SageMaker training jobs that read the same S3 dataset repeatedly</i>” ⇒ FSx for Lustre làm input data source.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: FSX FOR NETAPP ONTAP ===================== -->
+      <h2 id="fsx-ontap"><img src="../assets/icons/svc/Amazon-FSx.svg" alt="">Amazon FSx for NetApp ONTAP</h2>
+      <p class="lead"><span class="t" data-vi="Lưu trữ NetApp ONTAP được quản lý">Amazon FSx for NetApp ONTAP</span> là file storage fully managed xây trên file system <b>NetApp ONTAP</b> – kết hợp tính năng, hiệu năng, API quen thuộc của NetApp với sự linh hoạt của dịch vụ AWS. Điểm khác biệt lớn nhất: <b>đa giao thức</b> và truy cập được từ <b>Linux, Windows và macOS</b>, trên AWS hoặc on-premises. Đây là lựa chọn lý tưởng để <b>migrate, backup hoặc burst</b> ứng dụng từ NetApp on-premises lên AWS <b>không sửa code, không đổi cách quản lý dữ liệu</b>.</p>
+
+      <div class="stats">
+        <div class="stat"><b>NFS · SMB · iSCSI · NVMe/TCP</b><span>file + block trên cùng file system</span></div>
+        <div class="stat"><b>Petabyte</b><span>một namespace; capacity pool đàn hồi</span></div>
+        <div class="stat"><b>Hàng chục GBps</b><span>throughput mỗi file system</span></div>
+        <div class="stat"><b>Tới 65%</b><span>tiết kiệm dung lượng (nén + dedup, file share chung)</span></div>
+        <div class="stat"><b>3 IOPS/GB</b><span>SSD IOPS kèm theo; provision thêm tính phí</span></div>
+        <div class="stat"><b>Multi-AZ / Single-AZ</b><span>2 tùy chọn triển khai</span></div>
+      </div>
+
+      <h3>Hai storage tier và tiering policy</h3>
+      <p>File system có <b>SSD tier</b> (provision, hiệu năng cao, cho phần dữ liệu <b>đang hoạt động</b>) và <span class="t" data-vi="Tầng lưu trữ đàn hồi giá rẻ">capacity pool tier</span> (đàn hồi hoàn toàn tới petabyte, tối ưu chi phí cho dữ liệu ít truy cập). Volume được <b>thin provisioned</b>; mỗi volume chọn một <b>tiering policy</b>:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiering policy</th><th>Hành vi</th><th>Cooling period</th></tr></thead>
+        <tbody>
+          <tr><td><b>Auto</b> (mặc định khi tạo bằng console)</td><td>Chuyển mọi dữ liệu lạnh (user data + snapshot) xuống capacity pool; đọc ngẫu nhiên ⇒ dữ liệu “nóng” lại, về SSD; đọc tuần tự (vd quét antivirus) giữ ở capacity pool</td><td>Mặc định 31 ngày (2–183)</td></tr>
+          <tr><td><b>Snapshot Only</b> (mặc định khi tạo bằng CLI/API)</td><td>Chỉ chuyển dữ liệu snapshot</td><td>Mặc định 2 ngày (2–183)</td></tr>
+          <tr><td><b>All</b></td><td>Đánh dấu mọi dữ liệu là lạnh, lưu ở capacity pool (ghi vẫn qua SSD trước); đọc không đưa về SSD</td><td>—</td></tr>
+          <tr><td><b>None</b></td><td>Giữ mọi dữ liệu ở SSD</td><td>—</td></tr>
+        </tbody>
+      </table></div>
+      <p>Metadata file <b>luôn ở SSD</b>. AWS khuyến nghị SSD tier không vượt <b>80%</b> sử dụng; ở 90% dữ liệu đọc từ capacity pool không còn được cache lên SSD; ở 98% mọi hoạt động tiering dừng.</p>
+
+      <h3>Tính năng NetApp “mang theo” lên AWS</h3>
+      <ul>
+        <li><b>Snapshot</b> (thư mục <code>.snapshot</code>, người dùng tự khôi phục file), <b>FlexClone</b> (clone volume tức thì, chỉ tốn dung lượng phần thay đổi – tạo môi trường dev/test từ dữ liệu production).</li>
+        <li><b>SnapMirror</b>: replication theo lịch giữa các file system ONTAP – từ NetApp on-premises lên AWS hoặc <b>cross-Region DR</b>. <b>FlexCache</b>: cache on-premises.</li>
+        <li><b>Storage efficiency</b>: compression, compaction, deduplication theo volume (không bật mặc định); tiết kiệm được giữ nguyên khi xuống capacity pool và trong backup.</li>
+        <li><b>Bảo mật</b>: mã hóa at rest bằng KMS; in transit bằng SMB Kerberos, IPsec, mã hóa Nitro; <b>antivirus scanning</b> on-demand; xác thực bằng <b>Microsoft AD</b>; file access auditing; <b>NetApp SnapLock</b> WORM (Compliance / Enterprise).</li>
+        <li>Quản lý bằng console/CLI/SDK của AWS <b>hoặc</b> NetApp ONTAP CLI, REST API, NetApp Console. Backup tự động hằng ngày.</li>
+        <li>Volume có thể gắn <b>S3 Access Point</b> để thao tác dữ liệu bằng S3 API (đã nhắc ở Bài 16).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – FSx for ONTAP</span>
+        <ul>
+          <li>“<i>On-premises NetApp ONTAP / NAS appliance</i>”, “<i>SnapMirror</i>”, “<i>migrate without changing applications</i>” ⇒ <b>FSx for NetApp ONTAP</b>.</li>
+          <li>“<i>Same dataset must be accessed by Linux (NFS) and Windows (SMB) clients</i>” hoặc “<i>needs iSCSI block storage and file shares</i>” ⇒ FSx for ONTAP (multi-protocol).</li>
+          <li>“<i>Automatically move infrequently accessed data to lower-cost storage while keeping SSD performance for active data</i>” trên file system đa giao thức ⇒ ONTAP capacity pool + tiering policy <b>Auto</b>.</li>
+          <li>“<i>Create instant writable copies of production data for testing</i>” ⇒ <b>FlexClone</b> (ONTAP) hoặc clone (OpenZFS).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: FSX FOR OPENZFS ===================== -->
+      <h2 id="fsx-openzfs"><img src="../assets/icons/svc/Amazon-FSx.svg" alt="">Amazon FSx for OpenZFS</h2>
+      <p class="lead"><span class="t" data-vi="Hệ thống tệp OpenZFS được quản lý">Amazon FSx for OpenZFS</span> là file storage fully managed xây trên file system mã nguồn mở <b>OpenZFS</b>, giúp chuyển dữ liệu từ <b>ZFS hoặc các Linux file server</b> on-premises lên AWS mà không sửa code hay đổi cách quản lý dữ liệu. Truy cập từ Linux, Windows và macOS (instance và container, trên AWS hoặc on-premises) qua <b>NFS v3, v4.0, v4.1, v4.2</b>.</p>
+
+      <div class="stats">
+        <div class="stat"><b>2 triệu IOPS</b><span>tối đa, độ trễ vài trăm micro giây</span></div>
+        <div class="stat"><b>21 GBps</b><span>throughput từ in-memory / NVMe cache</span></div>
+        <div class="stat"><b>400.000 IOPS · 10 GBps</b><span>khi đọc/ghi từ disk (21 GBps khi nén)</span></div>
+        <div class="stat"><b>60 giây</b><span>failover Multi-AZ (HA) / Single-AZ (HA)</span></div>
+        <div class="stat"><b>30 phút</b><span>tự phục hồi Single-AZ (non-HA)</span></div>
+        <div class="stat"><b>NFS v3 – v4.2</b><span>EFS chỉ có v4.0/4.1</span></div>
+      </div>
+
+      <ul>
+        <li><b>Tính năng OpenZFS</b>: nén dữ liệu, <b>snapshot point-in-time gần như tức thì</b> (lưu cục bộ), <b>data cloning</b>, nhiều volume mỗi file system, thin provisioning, user/group quota.</li>
+        <li><b>3 deployment type</b>: <b>Multi-AZ (HA)</b> – bản sao dữ liệu riêng ở mỗi AZ, failover giữa AZ; <b>Single-AZ (HA)</b> – primary + standby trong cùng AZ; <b>Single-AZ (non-HA)</b> – tự phục hồi trong AZ.</li>
+        <li><b>2 storage class</b>: <b>Intelligent-Tiering</b> (đàn hồi, trả theo dữ liệu lưu, SSD read cache tùy chọn) và <b>SSD</b> (provision dung lượng, độ trễ thấp trên toàn dataset).</li>
+        <li><b>Bảo vệ dữ liệu</b>: backup fully managed lưu trên S3, copy cross-Region; mã hóa at rest bằng KMS, in transit tự động với EC2 hỗ trợ; quyền cấp file theo <b>Unix permissions</b>; S3 Access Points gắn vào volume.</li>
+        <li><b>Không có</b> SMB / Windows ACL / tích hợp AD như FSx for Windows; không có tiering đa giao thức như ONTAP.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – FSx for OpenZFS</span>
+        <ul>
+          <li>“<i>Migrate on-premises ZFS file servers</i>”, “<i>NFSv3 clients</i>”, “<i>hundreds of microseconds latency, up to millions of IOPS for Linux NFS workloads</i>” ⇒ <b>FSx for OpenZFS</b>.</li>
+          <li>Cần NFS nhưng <b>không cần</b> serverless/elastic, đòi độ trễ thấp hơn và snapshot/clone tức thì ⇒ OpenZFS; cần “<i>no capacity planning, scales automatically, Lambda/Fargate</i>” ⇒ EFS.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 10: SO SÁNH ===================== -->
+      <h2 id="so-sanh"><img src="../assets/icons/svc/Amazon-FSx.svg" alt="">So sánh tổng hợp và cách chọn dịch vụ</h2>
+      <p class="lead">Bảng dưới đây gom các điểm khác biệt hay được đề thi khai thác. Khi đọc câu hỏi, hãy gạch chân: <b>hệ điều hành client</b>, <b>giao thức</b>, <b>yêu cầu hiệu năng</b>, <b>yêu cầu HA (AZ)</b>, và <b>hệ thống đang dùng on-premises</b>.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>EFS</th><th>FSx for Windows</th><th>FSx for Lustre</th><th>FSx for ONTAP</th><th>FSx for OpenZFS</th></tr></thead>
+        <tbody>
+          <tr><td>Giao thức</td><td>NFS v4.0/4.1</td><td>SMB 2.0–3.1.1</td><td>Lustre client (POSIX)</td><td>NFS, SMB, iSCSI, NVMe/TCP</td><td>NFS v3–v4.2</td></tr>
+          <tr><td>Client OS</td><td>Linux, macOS (<b>không Windows</b>)</td><td>Windows (+ Linux qua SMB)</td><td>Linux</td><td>Linux, Windows, macOS</td><td>Linux, Windows, macOS</td></tr>
+          <tr><td>Dung lượng</td><td class="yes">Tự co giãn, không provision</td><td>Provision (tăng được)</td><td>Provision (SSD/HDD) hoặc đàn hồi (Intelligent-Tiering)</td><td>SSD provision + capacity pool đàn hồi</td><td>Provision (SSD) hoặc đàn hồi (Intelligent-Tiering)</td></tr>
+          <tr><td>Độ trễ điển hình</td><td>~1 ms đọc (Standard)</td><td>Sub-ms (SSD)</td><td>Sub-ms</td><td>Sub-ms (SSD)</td><td>Vài trăm µs</td></tr>
+          <tr><td>HA nhiều AZ</td><td>Regional (≥ 3 AZ)</td><td>Multi-AZ (2 AZ)</td><td class="no">1 AZ (SSD/HDD)</td><td>Multi-AZ</td><td>Multi-AZ (HA)</td></tr>
+          <tr><td>Tiết kiệm chi phí</td><td>IA / Archive + lifecycle</td><td>HDD, Data Deduplication</td><td>Scratch, HDD, Intelligent-Tiering</td><td>Capacity pool, nén + dedup</td><td>Nén, Intelligent-Tiering</td></tr>
+          <tr><td>Xác thực / quyền</td><td>IAM + POSIX + access points</td><td>Active Directory + Windows ACL</td><td>POSIX</td><td>AD, Unix/NTFS</td><td>Unix permissions</td></tr>
+          <tr><td>Tích hợp đặc trưng</td><td>Lambda, Fargate, ECS, EKS</td><td>DFS, Shadow Copies, SQL Server</td><td><b>S3</b>, SageMaker, Batch, ParallelCluster</td><td>SnapMirror, FlexClone, SnapLock</td><td>Snapshot, clone</td></tr>
+          <tr><td>Từ khóa đề</td><td><i>shared, Linux, elastic, serverless</i></td><td><i>Windows, SMB, AD, NTFS</i></td><td><i>HPC, ML, S3, parallel</i></td><td><i>NetApp, multi-protocol, iSCSI</i></td><td><i>ZFS, NFSv3, µs latency</i></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – loại trừ nhanh</span>
+        <ul>
+          <li>Thấy <b>Windows/SMB/AD</b> ⇒ chỉ còn FSx for Windows (hoặc ONTAP nếu kèm NFS/iSCSI/NetApp).</li>
+          <li>Thấy <b>S3 + HPC</b> ⇒ FSx for Lustre. Thấy <b>Lambda/Fargate</b> cần file dùng chung ⇒ EFS.</li>
+          <li>“<i>LEAST operational overhead</i>” + Linux + “<i>unknown/growing size</i>” ⇒ EFS (không cần provision dung lượng hay throughput).</li>
+          <li>Câu hỏi về <b>di chuyển dữ liệu</b> lên các file system này (DataSync, Storage Gateway) ⇒ xem Bài 18.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>EFS</b>: serverless, đàn hồi tới PB, NFSv4.0/4.1, chỉ <b>Linux</b> (không Windows); mount qua <b>mount target</b> (1/AZ, SG mở TCP 2049); dùng được từ EC2, ECS, EKS, Lambda, Fargate và on-premises (Direct Connect/VPN).</li>
+          <li><b>Regional</b> (≥ 3 AZ, 99,99%) vs <b>One Zone</b> (1 AZ, 99,9%, rẻ hơn, tự backup); cả hai 11 số 9 độ bền thiết kế.</li>
+          <li>Performance mode: <b>General Purpose</b> (mặc định, khuyến nghị) vs Max I/O (thế hệ trước, độ trễ cao, không dùng với Elastic/One Zone).</li>
+          <li>Throughput mode: <b>Elastic</b> (spiky, trả theo I/O), <b>Provisioned</b> (biết trước, độc lập dung lượng), <b>Bursting</b> (50 KiBps/GiB baseline, burst 100 MiBps/TiB theo credit).</li>
+          <li>Storage class: Standard → <b>IA</b> (mặc định 30 ngày) → <b>Archive</b> (mặc định 90 ngày, tối thiểu 90 ngày, cần Elastic); IA/Archive tính tối thiểu 128 KiB/file; “On first access” đưa về Standard.</li>
+          <li>EFS security: SG + IAM authorization + file system policy + <b>access points</b> (POSIX identity, root directory); encryption at rest chọn lúc tạo, in transit bằng TLS khi mount; <b>Replication</b> sang Region khác RPO/RTO phút.</li>
+          <li><b>FSx for Windows</b>: SMB, <b>Active Directory bắt buộc</b>, Windows ACL, DFS, Shadow Copies, Dedup; <b>Multi-AZ</b> failover &lt; 30 giây (khuyến nghị cho production); SSD hoặc HDD.</li>
+          <li><b>FSx for Lustre</b>: HPC/ML, sub-ms, TBps; <b>Scratch</b> (tạm, không replication, burst 6×) vs <b>Persistent</b> (replication trong AZ); liên kết <b>S3</b> qua data repository association (lazy load, auto import/export).</li>
+          <li><b>FSx for ONTAP</b>: NFS + SMB + iSCSI + NVMe/TCP, Linux/Windows/macOS; SSD tier + capacity pool (tiering Auto/Snapshot Only/All/None); SnapMirror, FlexClone, dedup/nén tới 65%.</li>
+          <li><b>FSx for OpenZFS</b>: NFS v3–v4.2, tới 2 triệu IOPS, độ trễ vài trăm µs, snapshot/clone tức thì; migrate ZFS/Linux file server.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>File storage / Shared file system</dt><dd><b>Lưu trữ tệp / Hệ thống tệp dùng chung</b> – lưu dữ liệu dạng thư mục–tệp, nhiều client mount đồng thời.</dd></div>
+        <div><dt>NFS (Network File System)</dt><dd><b>Hệ thống tệp mạng</b> – giao thức chia sẻ file chuẩn của Linux/Unix; EFS dùng NFSv4.0/4.1.</dd></div>
+        <div><dt>SMB (Server Message Block)</dt><dd><b>Giao thức chia sẻ tệp của Windows</b> – FSx for Windows hỗ trợ SMB 2.0–3.1.1.</dd></div>
+        <div><dt>POSIX permissions</dt><dd><b>Quyền POSIX</b> – quyền owner/group/other theo UID/GID của Linux.</dd></div>
+        <div><dt>Mount target</dt><dd><b>Điểm gắn kết</b> – ENI có IP trong subnet để client mount EFS; tối đa 1 mỗi AZ.</dd></div>
+        <div><dt>Regional / One Zone file system</dt><dd><b>Hệ thống tệp đa vùng / một vùng sẵn sàng</b> – lưu dữ liệu trên ≥ 3 AZ hoặc 1 AZ.</dd></div>
+        <div><dt>Performance mode (General Purpose / Max I/O)</dt><dd><b>Chế độ hiệu năng</b> – độ trễ thấp nhất (mặc định) / song song cao, độ trễ cao hơn (thế hệ trước).</dd></div>
+        <div><dt>Throughput mode (Elastic / Provisioned / Bursting)</dt><dd><b>Chế độ thông lượng</b> – tự co giãn / cấp phát trước / theo dung lượng và burst credit.</dd></div>
+        <div><dt>Burst credits</dt><dd><b>Tín dụng bùng nổ</b> – tích lũy khi dùng dưới baseline, tiêu khi vượt baseline.</dd></div>
+        <div><dt>EFS Infrequent Access (IA) / EFS Archive</dt><dd><b>Lớp truy cập không thường xuyên / Lớp lưu trữ dài hạn</b> – rẻ hơn Standard, độ trễ hàng chục ms, tối thiểu 128 KiB/file.</dd></div>
+        <div><dt>Lifecycle management (EFS)</dt><dd><b>Quản lý vòng đời</b> – tự chuyển file giữa Standard/IA/Archive theo thời gian kể từ lần truy cập cuối.</dd></div>
+        <div><dt>EFS Access Point</dt><dd><b>Điểm truy cập EFS</b> – điểm vào theo ứng dụng, ép POSIX user/group và thư mục gốc.</dd></div>
+        <div><dt>File system policy</dt><dd><b>Chính sách hệ thống tệp</b> – resource-based IAM policy gắn vào EFS.</dd></div>
+        <div><dt>EFS Replication</dt><dd><b>Sao chép hệ thống tệp EFS</b> – liên tục sang Region khác, RPO/RTO tính bằng phút.</dd></div>
+        <div><dt>Cloud bursting</dt><dd><b>Bùng nổ lên đám mây</b> – đẩy phần tải tính toán từ on-premises lên AWS khi cần.</dd></div>
+        <div><dt>Multi-AZ / Single-AZ deployment (FSx)</dt><dd><b>Triển khai đa AZ / một AZ</b> – có hoặc không có file server standby ở AZ khác.</dd></div>
+        <div><dt>Preferred / Standby file server</dt><dd><b>Máy chủ tệp ưu tiên / dự phòng</b> – cặp server trong FSx for Windows Multi-AZ.</dd></div>
+        <div><dt>DFS Namespaces</dt><dd><b>Không gian tên DFS</b> – gom nhiều file share dưới một đường dẫn chung.</dd></div>
+        <div><dt>Shadow Copies</dt><dd><b>Bản sao bóng</b> – snapshot Windows cho phép user khôi phục phiên bản trước của file.</dd></div>
+        <div><dt>Data Deduplication</dt><dd><b>Khử trùng lặp dữ liệu</b> – lưu một lần các khối dữ liệu trùng để giảm dung lượng.</dd></div>
+        <div><dt>Continuously available (CA) share</dt><dd><b>Share khả dụng liên tục</b> – SMB share cho SQL Server HA.</dd></div>
+        <div><dt>Lustre / Parallel file system</dt><dd><b>Hệ thống tệp song song</b> – dữ liệu phân tán trên nhiều storage server, phục vụ HPC.</dd></div>
+        <div><dt>Scratch / Persistent file system</dt><dd><b>Hệ thống tệp tạm / bền</b> – không nhân bản dữ liệu / nhân bản và tự thay server hỏng.</dd></div>
+        <div><dt>Data repository association (DRA)</dt><dd><b>Liên kết kho dữ liệu</b> – nối thư mục FSx for Lustre với S3 bucket/prefix.</dd></div>
+        <div><dt>Lazy loading</dt><dd><b>Nạp lười</b> – nội dung file được nạp từ S3 khi truy cập lần đầu.</dd></div>
+        <div><dt>Capacity pool tier</dt><dd><b>Tầng lưu trữ đàn hồi giá rẻ</b> – tier của FSx for ONTAP cho dữ liệu lạnh.</dd></div>
+        <div><dt>Tiering policy / Cooling period</dt><dd><b>Chính sách phân tầng / Thời gian nguội</b> – quyết định khi nào dữ liệu ONTAP xuống capacity pool.</dd></div>
+        <div><dt>SnapMirror / FlexClone / SnapLock</dt><dd><b>Sao chép NetApp / Bản sao volume tức thì / Khóa WORM của NetApp</b>.</dd></div>
+        <div><dt>iSCSI / NVMe over TCP</dt><dd><b>Giao thức block storage qua mạng IP</b> – FSx for ONTAP cung cấp LUN/namespace cho server.</dd></div>
+        <div><dt>Thin provisioning</dt><dd><b>Cấp phát mỏng</b> – chỉ tiêu dung lượng thật khi dữ liệu được ghi.</dd></div>
+      </dl>
+
+      <!-- ===================== CÂU HỎI LUYỆN TẬP ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a content management system on Linux EC2 instances in an Auto Scaling group across three Availability Zones. All instances must read and write the same set of uploaded files, and the storage must grow automatically as content is added. Which storage solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">An Amazon EBS Provisioned IOPS volume with Multi-Attach enabled.</li>
+            <li data-k="B">Amazon FSx for Windows File Server in a Multi-AZ deployment.</li>
+            <li data-k="C">An Amazon EFS Regional file system with a mount target in each Availability Zone.</li>
+            <li data-k="D">An instance store volume on each instance synchronized with rsync.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> EFS Regional là file system NFS dùng chung cho Linux, lưu dư thừa trên nhiều AZ, <b>tự co giãn</b> không cần provision; mỗi AZ có một mount target. <b>A sai</b>: EBS Multi-Attach chỉ trong <b>một AZ</b> và cần clustered file system (Bài 11). <b>B sai</b>: FSx for Windows dùng SMB + AD, cần provision dung lượng – không phù hợp Linux CMS và nhiều vận hành hơn. <b>D sai</b>: instance store mất dữ liệu khi stop, tự đồng bộ tốn vận hành.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy hệ thống quản lý nội dung (CMS) trên các Linux EC2 instance trong một Auto Scaling group trải trên ba Availability Zone. Mọi instance phải đọc và ghi cùng một tập file được tải lên, và dung lượng lưu trữ phải tự động tăng khi có thêm nội dung. Giải pháp lưu trữ nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một Amazon EBS Provisioned IOPS volume có bật Multi-Attach.</span><span class="why">Sai: EBS Multi-Attach chỉ hoạt động trong một AZ, cần clustered file system và phải provision dung lượng – không dùng chung được cho 3 AZ.</span></li>
+              <li data-k="B"><span class="tv">Amazon FSx for Windows File Server với triển khai Multi-AZ.</span><span class="why">Sai: FSx for Windows dùng SMB và Active Directory, phải provision dung lượng – không phù hợp CMS chạy Linux và tốn vận hành hơn.</span></li>
+              <li data-k="C"><span class="tv">Một Amazon EFS Regional file system với một mount target ở mỗi Availability Zone.</span><span class="why">Đúng: EFS là NFS dùng chung cho nhiều Linux instance ở nhiều AZ, lưu dư thừa đa AZ và tự co giãn dung lượng, không cần provision.</span></li>
+              <li data-k="D"><span class="tv">Một instance store volume trên mỗi instance, đồng bộ bằng rsync.</span><span class="why">Sai: instance store mất dữ liệu khi instance stop/terminate, và tự đồng bộ bằng rsync tốn nhiều công vận hành, dễ lệch dữ liệu.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company is migrating a .NET application and its Windows file shares to AWS. Users authenticate with the company's on-premises Microsoft Active Directory, and file permissions are managed with NTFS ACLs. The file shares must remain available if an Availability Zone fails. Which solution should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon FSx for Windows File Server with a Multi-AZ deployment joined to the self-managed Active Directory.</li>
+            <li data-k="B">Amazon EFS with a Regional file system and EFS access points for each department.</li>
+            <li data-k="C">Amazon FSx for Lustre with a persistent deployment type linked to Amazon S3.</li>
+            <li data-k="D">Amazon FSx for Windows File Server with a Single-AZ 2 deployment and daily backups.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> FSx for Windows cung cấp SMB native, Windows ACL, join được vào <b>self-managed AD</b> on-premises; <b>Multi-AZ</b> có standby ở AZ thứ hai, failover tự động &lt; 30 giây. <b>B sai</b>: EFS không hỗ trợ Windows, không có NTFS ACL/AD. <b>C sai</b>: Lustre dành cho HPC Linux, chỉ 1 AZ. <b>D sai</b>: Single-AZ không chịu được mất AZ – chỉ restore từ backup.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang di chuyển một ứng dụng .NET và các Windows file share của nó lên AWS. Người dùng xác thực bằng Microsoft Active Directory on-premises của công ty, và quyền trên file được quản lý bằng NTFS ACL. Các file share phải tiếp tục khả dụng nếu một Availability Zone gặp sự cố. Solutions architect nên đề xuất giải pháp nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon FSx for Windows File Server với triển khai Multi-AZ, join vào Active Directory tự quản lý (self-managed).</span><span class="why">Đúng: FSx for Windows hỗ trợ SMB, NTFS ACL và join được AD on-premises; Multi-AZ có standby ở AZ khác, tự failover khi mất AZ.</span></li>
+              <li data-k="B"><span class="tv">Amazon EFS với Regional file system và EFS access point cho từng phòng ban.</span><span class="why">Sai: EFS là NFS cho Linux, không hỗ trợ Windows client, NTFS ACL hay xác thực Active Directory.</span></li>
+              <li data-k="C"><span class="tv">Amazon FSx for Lustre với kiểu triển khai persistent liên kết với Amazon S3.</span><span class="why">Sai: Lustre dành cho HPC trên Linux, chỉ nằm trong một AZ và không hỗ trợ SMB/AD.</span></li>
+              <li data-k="D"><span class="tv">Amazon FSx for Windows File Server với triển khai Single-AZ 2 và backup hằng ngày.</span><span class="why">Sai: Single-AZ không chịu được sự cố AZ; khi mất AZ chỉ có thể restore từ backup, gây gián đoạn và mất dữ liệu sau lần backup cuối.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A genomics company stores petabytes of raw sequencing data in Amazon S3. Researchers run short-lived HPC jobs on hundreds of EC2 instances that need sub-millisecond latency and hundreds of GB/s of throughput to the data. After each job, results must be written back to S3. The data on the file system can be regenerated from S3. Which solution is MOST cost-effective?</div>
+          <ol class="opts">
+            <li data-k="A">Copy the data to an Amazon EFS file system using Max I/O performance mode.</li>
+            <li data-k="B">Use Amazon FSx for NetApp ONTAP with the capacity pool tier.</li>
+            <li data-k="C">Mount the S3 bucket on each instance and read objects directly with byte-range fetches.</li>
+            <li data-k="D">Create an Amazon FSx for Lustre scratch file system linked to the S3 bucket with a data repository association, and export results back to S3.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> FSx for Lustre là file system song song cho HPC, sub-ms, TBps; liên kết S3 qua DRA để trình bày object thành file (lazy load) và export kết quả về S3. <b>Scratch</b> rẻ nhất cho xử lý ngắn hạn khi dữ liệu tái tạo được. <b>A sai</b>: EFS Max I/O độ trễ cao hơn, phải copy dữ liệu, không đạt hiệu năng HPC. <b>B sai</b>: ONTAP hướng enterprise NAS đa giao thức, không tích hợp S3 kiểu này. <b>C sai</b>: S3 không có ngữ nghĩa POSIX, không đạt sub-ms.</div>
+          <div class="trans">
+            <div class="tq">Một công ty genomics lưu hàng petabyte dữ liệu giải trình tự thô trong Amazon S3. Các nhà nghiên cứu chạy các job HPC ngắn hạn trên hàng trăm EC2 instance, cần độ trễ dưới một mili giây và throughput hàng trăm GB/s tới dữ liệu. Sau mỗi job, kết quả phải được ghi trở lại S3. Dữ liệu trên file system có thể tái tạo lại từ S3. Giải pháp nào MOST cost-effective (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Sao chép dữ liệu vào một Amazon EFS file system dùng performance mode Max I/O.</span><span class="why">Sai: EFS Max I/O có độ trễ cao hơn, không đạt hiệu năng HPC hàng trăm GB/s, lại phải copy và trả phí lưu trữ hàng petabyte.</span></li>
+              <li data-k="B"><span class="tv">Dùng Amazon FSx for NetApp ONTAP với tầng capacity pool.</span><span class="why">Sai: ONTAP hướng tới NAS doanh nghiệp đa giao thức; capacity pool là tầng rẻ nhưng chậm, không tích hợp S3 theo kiểu lazy load cho HPC.</span></li>
+              <li data-k="C"><span class="tv">Mount S3 bucket trên mỗi instance và đọc object trực tiếp bằng byte-range fetch.</span><span class="why">Sai: S3 là object storage, không có ngữ nghĩa POSIX và không đạt độ trễ dưới mili giây như file system song song.</span></li>
+              <li data-k="D"><span class="tv">Tạo một Amazon FSx for Lustre scratch file system liên kết với S3 bucket qua data repository association, và export kết quả trở lại S3.</span><span class="why">Đúng: Lustre là file system song song cho HPC (sub-ms, throughput rất cao), liên kết S3 để lazy load và export kết quả; scratch rẻ nhất cho job ngắn hạn khi dữ liệu tái tạo được.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">An application stores 20 GB of data on an Amazon EFS file system that uses Bursting throughput. During business hours the application frequently becomes slow, and the BurstCreditBalance metric drops to zero. The workload's throughput needs are well understood and consistent. What should the solutions architect do to resolve the issue in the MOST cost-effective way?</div>
+          <ol class="opts">
+            <li data-k="A">Change the performance mode to Max I/O.</li>
+            <li data-k="B">Switch the file system to Provisioned throughput mode with the required throughput.</li>
+            <li data-k="C">Add large dummy files to the file system to increase the baseline throughput.</li>
+            <li data-k="D">Create additional mount targets in the same Availability Zone.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Với Bursting, baseline tỷ lệ dung lượng (50 KiBps/GiB) ⇒ 20 GB chỉ có ~1 MiBps baseline, cạn credit là nghẽn. Nhu cầu <b>ổn định, biết trước</b> ⇒ <b>Provisioned throughput</b> (độc lập dung lượng). Nếu workload spiky thì Elastic. <b>A sai</b>: Max I/O không tăng throughput, còn tăng độ trễ; không đổi performance mode của file system đã tạo được. <b>C sai</b>: tốn phí lưu trữ, cách làm cũ không tối ưu. <b>D sai</b>: chỉ được 1 mount target mỗi AZ và không ảnh hưởng throughput.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng lưu 20 GB dữ liệu trên một Amazon EFS file system dùng Bursting throughput. Trong giờ làm việc, ứng dụng thường xuyên bị chậm và metric BurstCreditBalance giảm về 0. Nhu cầu throughput của workload đã được nắm rõ và ổn định. Solutions architect nên làm gì để khắc phục vấn đề theo cách MOST cost-effective (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đổi performance mode sang Max I/O.</span><span class="why">Sai: Max I/O không tăng throughput mà còn tăng độ trễ; hơn nữa performance mode không đổi được sau khi tạo file system.</span></li>
+              <li data-k="B"><span class="tv">Chuyển file system sang Provisioned throughput mode với mức throughput cần thiết.</span><span class="why">Đúng: với Bursting, 20 GB chỉ có baseline ~1 MiBps nên cạn credit; nhu cầu ổn định, biết trước thì Provisioned throughput (độc lập dung lượng) là lựa chọn phù hợp và tiết kiệm.</span></li>
+              <li data-k="C"><span class="tv">Thêm các file giả dung lượng lớn vào file system để tăng baseline throughput.</span><span class="why">Sai: phải trả phí lưu trữ cho dữ liệu vô ích; đây là mẹo cũ, kém hiệu quả về chi phí so với Provisioned throughput.</span></li>
+              <li data-k="D"><span class="tv">Tạo thêm mount target trong cùng Availability Zone.</span><span class="why">Sai: mỗi AZ chỉ được một mount target, và số mount target không ảnh hưởng đến throughput của file system.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A company uses an Amazon EFS Regional file system for an analytics application. Analysis shows that 80% of the files are not accessed after 30 days, but when an old file is accessed it is usually read several times within a few hours with low latency expected. Which TWO actions will reduce storage costs while meeting the access requirements? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Configure a lifecycle policy to transition files to EFS Infrequent Access after 30 days without access.</li>
+            <li data-k="B">Convert the file system to Amazon S3 Glacier Deep Archive.</li>
+            <li data-k="C">Configure the Transition into Standard lifecycle policy to move files back to EFS Standard on first access.</li>
+            <li data-k="D">Change the file system to Max I/O performance mode.</li>
+            <li data-k="E">Create an S3 Lifecycle rule on the EFS file system's mount target.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> Lifecycle management chuyển file không truy cập 30 ngày xuống <b>EFS IA</b> (rẻ hơn, cùng file system, không sửa ứng dụng). Khi file cũ được đọc lại nhiều lần, policy <b>Transition into Standard: On first access</b> đưa nó về Standard (sub-ms) – tránh phí truy cập IA và độ trễ hàng chục ms lặp lại. <b>B sai</b>: EFS không “chuyển” sang Glacier; Deep Archive cần restore hàng giờ. <b>D sai</b>: không liên quan chi phí. <b>E sai</b>: S3 Lifecycle không áp dụng cho EFS.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng Amazon EFS Regional file system cho một ứng dụng phân tích. Phân tích cho thấy 80% file không được truy cập sau 30 ngày, nhưng khi một file cũ được truy cập thì nó thường được đọc nhiều lần trong vài giờ và yêu cầu độ trễ thấp. HAI hành động nào sẽ giảm chi phí lưu trữ mà vẫn đáp ứng yêu cầu truy cập? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình lifecycle policy để chuyển file sang EFS Infrequent Access sau 30 ngày không được truy cập.</span><span class="why">Đúng: 80% file nguội sau 30 ngày được chuyển xuống EFS IA rẻ hơn, vẫn trong cùng file system nên không phải sửa ứng dụng.</span></li>
+              <li data-k="B"><span class="tv">Chuyển đổi file system sang Amazon S3 Glacier Deep Archive.</span><span class="why">Sai: EFS không thể "chuyển" thành Glacier; Deep Archive cần restore hàng giờ, vi phạm yêu cầu độ trễ thấp.</span></li>
+              <li data-k="C"><span class="tv">Cấu hình lifecycle policy Transition into Standard để chuyển file trở lại EFS Standard ở lần truy cập đầu tiên.</span><span class="why">Đúng: file cũ được đọc lại nhiều lần sẽ về Standard ngay lần đầu truy cập, tránh phí truy cập IA lặp lại và giữ độ trễ thấp.</span></li>
+              <li data-k="D"><span class="tv">Đổi file system sang performance mode Max I/O.</span><span class="why">Sai: performance mode liên quan đến hiệu năng, không giảm chi phí lưu trữ (và không đổi được sau khi tạo).</span></li>
+              <li data-k="E"><span class="tv">Tạo một S3 Lifecycle rule trên mount target của EFS file system.</span><span class="why">Sai: S3 Lifecycle chỉ áp dụng cho S3 bucket, không áp dụng được cho EFS hay mount target.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company is moving several applications from an on-premises NetApp storage array to AWS. Some Linux servers access the data over NFS, Windows servers access the same volumes over SMB, and a database server uses iSCSI LUNs. The company also wants to continue using SnapMirror to replicate data for disaster recovery. Which AWS service meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon EFS with EFS Replication.</li>
+            <li data-k="B">Amazon FSx for Windows File Server with DFS Replication.</li>
+            <li data-k="C">Amazon FSx for OpenZFS with Multi-AZ deployment.</li>
+            <li data-k="D">Amazon FSx for NetApp ONTAP.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> FSx for ONTAP hỗ trợ <b>đa giao thức NFS, SMB, iSCSI</b> (và NVMe/TCP) cho Linux, Windows, macOS, cùng tính năng NetApp như <b>SnapMirror</b>, FlexClone – migrate không đổi ứng dụng và quy trình. <b>A sai</b>: EFS chỉ NFS, không Windows, không iSCSI. <b>B sai</b>: FSx for Windows chỉ SMB, không iSCSI/SnapMirror. <b>C sai</b>: OpenZFS chỉ NFS.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang chuyển nhiều ứng dụng từ một hệ thống lưu trữ NetApp on-premises lên AWS. Một số Linux server truy cập dữ liệu qua NFS, các Windows server truy cập cùng các volume qua SMB, và một database server dùng iSCSI LUN. Công ty cũng muốn tiếp tục dùng SnapMirror để sao chép dữ liệu cho disaster recovery. Dịch vụ AWS nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon EFS với EFS Replication.</span><span class="why">Sai: EFS chỉ hỗ trợ NFS, không có SMB cho Windows, không có iSCSI và không hỗ trợ SnapMirror.</span></li>
+              <li data-k="B"><span class="tv">Amazon FSx for Windows File Server với DFS Replication.</span><span class="why">Sai: FSx for Windows chỉ dùng SMB, không cung cấp NFS/iSCSI và không có SnapMirror.</span></li>
+              <li data-k="C"><span class="tv">Amazon FSx for OpenZFS với triển khai Multi-AZ.</span><span class="why">Sai: OpenZFS chỉ hỗ trợ NFS, không có SMB, iSCSI hay SnapMirror.</span></li>
+              <li data-k="D"><span class="tv">Amazon FSx for NetApp ONTAP.</span><span class="why">Đúng: ONTAP hỗ trợ đồng thời NFS, SMB, iSCSI trên cùng volume và giữ các tính năng NetApp như SnapMirror – migrate không đổi ứng dụng và quy trình DR.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs several containerized microservices on AWS Fargate and AWS Lambda functions that need to share a persistent file system. Each microservice must be restricted to its own directory and must access files as a specific POSIX user, regardless of the user identity in the container. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Use the ephemeral storage of each Fargate task and the /tmp directory of each Lambda function.</li>
+            <li data-k="B">Create an Amazon EFS file system and an EFS access point for each microservice with an enforced POSIX user and root directory, and use IAM authorization.</li>
+            <li data-k="C">Create an Amazon FSx for Lustre file system and configure Windows ACLs for each directory.</li>
+            <li data-k="D">Create an S3 bucket with an S3 access point for each microservice and mount it as a file system.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> EFS mount được từ <b>Fargate và Lambda</b>; <b>EFS access point</b> ép POSIX UID/GID và giới hạn root directory cho từng ứng dụng, kết hợp IAM authorization để kiểm soát ai mount qua access point nào. <b>A sai</b>: ephemeral storage và <code>/tmp</code> không bền, không chia sẻ. <b>C sai</b>: Lustre không hỗ trợ Lambda/Fargate kiểu này và không có Windows ACL. <b>D sai</b>: S3 access point là cho S3 API, S3 không phải POSIX file system.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy nhiều microservice dạng container trên AWS Fargate và các AWS Lambda function cần dùng chung một file system bền vững. Mỗi microservice phải bị giới hạn trong thư mục riêng và phải truy cập file dưới danh nghĩa một POSIX user cụ thể, bất kể danh tính user trong container là gì. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng ephemeral storage của mỗi Fargate task và thư mục /tmp của mỗi Lambda function.</span><span class="why">Sai: ephemeral storage và /tmp là tạm thời, mất khi task/function kết thúc và không chia sẻ được giữa các dịch vụ.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Amazon EFS file system và một EFS access point cho mỗi microservice với POSIX user và root directory được ép buộc, đồng thời dùng IAM authorization.</span><span class="why">Đúng: EFS mount được từ cả Fargate và Lambda; access point ép UID/GID và giới hạn root directory cho từng ứng dụng, IAM authorization kiểm soát ai dùng access point nào.</span></li>
+              <li data-k="C"><span class="tv">Tạo một Amazon FSx for Lustre file system và cấu hình Windows ACL cho từng thư mục.</span><span class="why">Sai: Lustre không được Lambda/Fargate hỗ trợ theo cách này và không có Windows ACL.</span></li>
+              <li data-k="D"><span class="tv">Tạo một S3 bucket với S3 access point cho mỗi microservice và mount nó như một file system.</span><span class="why">Sai: S3 access point dùng cho S3 API; S3 là object storage, không phải POSIX file system nên không ép được POSIX user.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company has an Amazon EFS file system that was created without encryption. A new compliance requirement states that all data at rest in the file system must be encrypted with an AWS KMS key. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Enable encryption at rest on the existing file system from the Amazon EFS console.</li>
+            <li data-k="B">Remount the file system on all clients by using the TLS mount option.</li>
+            <li data-k="C">Create a new EFS file system with encryption at rest enabled and migrate the data by using AWS DataSync.</li>
+            <li data-k="D">Enable S3 default encryption with SSE-KMS on the file system's backup vault.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Tài liệu EFS: encryption at rest bật <b>khi tạo</b> file system (mã hóa cả dữ liệu và metadata). File system đã tạo không mã hóa ⇒ tạo file system mới có mã hóa và chép dữ liệu (DataSync là dịch vụ chuyển dữ liệu được quản lý). <b>A sai</b>: không bật được sau khi tạo. <b>B sai</b>: TLS là <b>in transit</b>, không phải at rest. <b>D sai</b>: mã hóa backup không mã hóa dữ liệu trong file system.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có một Amazon EFS file system được tạo mà không bật mã hóa. Một yêu cầu tuân thủ mới quy định mọi dữ liệu at rest trong file system phải được mã hóa bằng một AWS KMS key. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật encryption at rest cho file system hiện có từ Amazon EFS console.</span><span class="why">Sai: encryption at rest của EFS chỉ bật được lúc tạo file system, không thể bật cho file system đã tồn tại.</span></li>
+              <li data-k="B"><span class="tv">Mount lại file system trên mọi client với tùy chọn mount TLS.</span><span class="why">Sai: TLS mã hóa dữ liệu in transit (khi truyền), không mã hóa dữ liệu at rest như yêu cầu.</span></li>
+              <li data-k="C"><span class="tv">Tạo một EFS file system mới có bật encryption at rest và di chuyển dữ liệu bằng AWS DataSync.</span><span class="why">Đúng: vì không bật mã hóa được sau khi tạo, cách duy nhất là tạo file system mới có mã hóa KMS và chép dữ liệu sang bằng DataSync (dịch vụ chuyển dữ liệu managed).</span></li>
+              <li data-k="D"><span class="tv">Bật S3 default encryption với SSE-KMS trên backup vault của file system.</span><span class="why">Sai: backup vault không phải S3 bucket, và mã hóa bản backup không mã hóa dữ liệu đang nằm trong file system.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A solutions architect is choosing between Amazon FSx for Windows File Server deployment types for a production file share used by hundreds of Windows users. The share must remain available during planned maintenance and Availability Zone outages. Which TWO statements about the Multi-AZ deployment type are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Data is replicated asynchronously to the standby file server, so a few minutes of data can be lost.</li>
+            <li data-k="B">The file system fails over automatically to a standby file server in another Availability Zone, typically in less than 30 seconds.</li>
+            <li data-k="C">The file system requires only one subnet, and Amazon FSx automatically chooses a second Availability Zone.</li>
+            <li data-k="D">Linux clients automatically reconnect to the standby file server during failover by using DNS.</li>
+            <li data-k="E">The file system's DNS name remains the same during failover, so Windows applications resume without manual intervention.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Multi-AZ tự động failover khi AZ outage, preferred server không khả dụng hoặc bảo trì, thường <b>&lt; 30 giây</b>; DNS name không đổi nên ứng dụng Windows tự tiếp tục. <b>A sai</b>: dữ liệu được sao chép <b>đồng bộ</b> giữa 2 AZ. <b>C sai</b>: Multi-AZ cần <b>2 subnet</b> ở 2 AZ khác nhau do bạn chỉ định. <b>D sai</b>: tài liệu nêu client Linux <b>không</b> hỗ trợ failover DNS tự động.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect đang lựa chọn giữa các kiểu triển khai Amazon FSx for Windows File Server cho một file share production được hàng trăm người dùng Windows sử dụng. File share phải tiếp tục khả dụng trong thời gian bảo trì theo kế hoạch và khi Availability Zone gặp sự cố. HAI phát biểu nào về kiểu triển khai Multi-AZ là đúng? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dữ liệu được sao chép bất đồng bộ sang file server standby, nên có thể mất vài phút dữ liệu.</span><span class="why">Sai: Multi-AZ sao chép dữ liệu đồng bộ giữa hai AZ, nên không mất dữ liệu khi failover.</span></li>
+              <li data-k="B"><span class="tv">File system tự động failover sang file server standby ở Availability Zone khác, thường trong vòng dưới 30 giây.</span><span class="why">Đúng: khi AZ sự cố, preferred server không khả dụng hoặc đang bảo trì, Multi-AZ tự failover sang standby, thường &lt; 30 giây.</span></li>
+              <li data-k="C"><span class="tv">File system chỉ cần một subnet, và Amazon FSx tự động chọn Availability Zone thứ hai.</span><span class="why">Sai: Multi-AZ yêu cầu bạn chỉ định hai subnet ở hai AZ khác nhau (preferred và standby).</span></li>
+              <li data-k="D"><span class="tv">Các client Linux tự động kết nối lại file server standby khi failover thông qua DNS.</span><span class="why">Sai: tài liệu nêu rõ client Linux không hỗ trợ failover tự động dựa trên DNS.</span></li>
+              <li data-k="E"><span class="tv">DNS name của file system giữ nguyên khi failover, nên các ứng dụng Windows tiếp tục hoạt động mà không cần can thiệp thủ công.</span><span class="why">Đúng: DNS name không đổi, tự trỏ sang server đang hoạt động, nên client Windows tự kết nối lại sau failover.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company is migrating Linux-based file servers that run ZFS on premises. The applications use NFSv3, rely on instant point-in-time snapshots and clones, and require latencies of a few hundred microseconds. The company wants a fully managed AWS service and does not want to change application code. Which service should the company use?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon FSx for OpenZFS.</li>
+            <li data-k="B">Amazon EFS with General Purpose performance mode.</li>
+            <li data-k="C">Amazon FSx for Lustre with a persistent deployment type.</li>
+            <li data-k="D">Amazon FSx for Windows File Server with Shadow Copies.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> FSx for OpenZFS được thiết kế để chuyển dữ liệu từ <b>ZFS / Linux file server</b> on-premises, hỗ trợ <b>NFS v3–v4.2</b>, snapshot gần như tức thì, clone, độ trễ vài trăm micro giây, tới 2 triệu IOPS. <b>B sai</b>: EFS <b>không hỗ trợ NFSv3</b> (chỉ v4.0/4.1) và không có snapshot/clone ZFS. <b>C sai</b>: Lustre dùng Lustre client, hướng HPC. <b>D sai</b>: FSx for Windows dùng SMB.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang di chuyển các file server Linux chạy ZFS on-premises. Các ứng dụng dùng NFSv3, dựa vào snapshot point-in-time tức thì và clone, và yêu cầu độ trễ vài trăm micro giây. Công ty muốn một dịch vụ AWS được quản lý hoàn toàn và không muốn thay đổi mã ứng dụng. Công ty nên dùng dịch vụ nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon FSx for OpenZFS.</span><span class="why">Đúng: FSx for OpenZFS được thiết kế để chuyển ZFS/Linux file server lên AWS, hỗ trợ NFS v3–v4.2, snapshot tức thì, clone và độ trễ vài trăm micro giây.</span></li>
+              <li data-k="B"><span class="tv">Amazon EFS với performance mode General Purpose.</span><span class="why">Sai: EFS chỉ hỗ trợ NFSv4.0/4.1 (không có NFSv3) và không có snapshot/clone kiểu ZFS.</span></li>
+              <li data-k="C"><span class="tv">Amazon FSx for Lustre với kiểu triển khai persistent.</span><span class="why">Sai: Lustre cần Lustre client (không phải NFS) và hướng tới HPC, không thay thế trực tiếp ZFS server.</span></li>
+              <li data-k="D"><span class="tv">Amazon FSx for Windows File Server với Shadow Copies.</span><span class="why">Sai: FSx for Windows dùng giao thức SMB cho Windows, không phù hợp ứng dụng Linux dùng NFSv3.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/efs/latest/ug/how-it-works.html" target="_blank" rel="noopener">How Amazon EFS works</a></li>
+        <li><a href="https://docs.aws.amazon.com/efs/latest/ug/features.html" target="_blank" rel="noopener">Features of Amazon EFS (file system types, storage classes, replication)</a></li>
+        <li><a href="https://docs.aws.amazon.com/efs/latest/ug/performance.html" target="_blank" rel="noopener">Amazon EFS performance specifications</a></li>
+        <li><a href="https://docs.aws.amazon.com/efs/latest/ug/lifecycle-management-efs.html" target="_blank" rel="noopener">Managing EFS storage lifecycle</a></li>
+        <li><a href="https://docs.aws.amazon.com/efs/latest/ug/limits.html" target="_blank" rel="noopener">Amazon EFS quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/fsx/latest/WindowsGuide/high-availability-multiAZ.html" target="_blank" rel="noopener">FSx for Windows: Single-AZ and Multi-AZ file systems</a></li>
+        <li><a href="https://docs.aws.amazon.com/fsx/latest/WindowsGuide/performance.html" target="_blank" rel="noopener">FSx for Windows File Server performance</a></li>
+        <li><a href="https://docs.aws.amazon.com/fsx/latest/LustreGuide/using-fsx-lustre.html" target="_blank" rel="noopener">FSx for Lustre deployment and storage class options</a></li>
+        <li><a href="https://docs.aws.amazon.com/fsx/latest/LustreGuide/overview-dra-data-repo.html" target="_blank" rel="noopener">FSx for Lustre: overview of data repositories</a></li>
+        <li><a href="https://docs.aws.amazon.com/fsx/latest/ONTAPGuide/managing-storage-capacity.html" target="_blank" rel="noopener">FSx for ONTAP: managing storage capacity</a></li>
+        <li><a href="https://docs.aws.amazon.com/fsx/latest/ONTAPGuide/volume-storage-capacity.html" target="_blank" rel="noopener">FSx for ONTAP: volume storage capacity &amp; tiering policies</a></li>
+        <li><a href="https://docs.aws.amazon.com/fsx/latest/OpenZFSGuide/what-is-fsx.html" target="_blank" rel="noopener">What is Amazon FSx for OpenZFS?</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

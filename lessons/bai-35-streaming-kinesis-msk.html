@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 35 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="35" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <b>streaming data</b> khác gì với message queue, và vị trí của <b>Kinesis Data Streams</b>, <b>Amazon Data Firehose</b>, <b>Amazon MSK</b> trong một pipeline dữ liệu thời gian thực.</li>
+          <li>Nắm chắc cấu trúc của Kinesis Data Streams: <b>shard</b>, <b>data record</b>, <b>partition key</b>, <b>sequence number</b>, <b>retention period</b> (24 giờ → 365 ngày) và giới hạn thông lượng mỗi shard (1 MB/s ghi, 2 MB/s đọc).</li>
+          <li>Chọn đúng <b>capacity mode</b>: <b>provisioned</b> (tính số shard, resharding) hay <b>on-demand</b> (Standard / Advantage); xử lý <b>hot shard</b> và lỗi <code>ProvisionedThroughputExceededException</code>.</li>
+          <li>Phân biệt consumer <b>shared throughput</b> và <b>enhanced fan-out</b>; biết KCL, Lambda, Firehose, Managed Service for Apache Flink đọc stream thế nào.</li>
+          <li>Thiết kế <b>Amazon Data Firehose</b>: nguồn, đích (S3, Redshift, OpenSearch, Splunk, HTTP endpoint, Iceberg…), <b>buffer size / buffer interval</b>, Lambda transform, chuyển định dạng Parquet/ORC, dynamic partitioning.</li>
+          <li>Biết khi nào chọn <b>Amazon MSK</b> (Provisioned Standard/Express, Serverless, MSK Connect, tiered storage) thay vì Kinesis.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 7 – Data &amp; Analytics</span>
+        <p>Bài này mở đầu Module 7 bằng mảng <b>dữ liệu luồng (streaming)</b>. Kiến thức nền đã học: <b>S3</b> (Bài 14–16), <b>DynamoDB &amp; DynamoDB Streams</b> (Bài 28), <b>SQS / SNS</b> (Bài 30 – đã so sánh sơ bộ với Kinesis), <b>EventBridge</b> (Bài 31), <b>Lambda event source mapping</b> (Bài 32), <b>API Gateway service integration</b> (Bài 33). Ở đây chỉ nhắc lại khi cần. Các đích phân tích phía sau – <b>Athena, Glue Data Catalog, Redshift, OpenSearch, QuickSight</b> – học kỹ ở <b>Bài 36</b>; <b>KMS</b> ở Bài 38; <b>CloudWatch</b> ở Bài 40.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Analytics.svg" alt="">Streaming data trên AWS: bức tranh tổng thể</h2>
+      <p class="lead"><span class="t" data-vi="Dữ liệu luồng – dữ liệu sinh ra liên tục, cần xử lý ngay khi tới">Streaming data</span> là dữ liệu được sinh ra <b>liên tục</b> từ hàng nghìn nguồn: log hạ tầng và ứng dụng, <span class="t" data-vi="Dòng nhấp chuột của người dùng trên web">clickstream</span>, mạng xã hội, giá chứng khoán, cảm biến IoT, telemetry game… Mỗi bản ghi nhỏ (vài KB) nhưng lưu lượng rất lớn và phải xử lý <b>trong vài giây</b> thay vì chờ gom thành lô (batch) theo giờ/ngày.</p>
+
+      <p>Một pipeline streaming luôn có ba vai trò: <b>producer</b> (nguồn ghi dữ liệu) → <b>stream storage</b> (lớp lưu tạm có thứ tự, chịu tải) → <b>consumer</b> (xử lý, phân tích, ghi xuống kho dữ liệu). AWS cung cấp các dịch vụ sau – đề SAA-C03 hay đặt chúng cạnh nhau để bạn chọn:</p>
+
+      <h3>Dịch vụ trong bài</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" alt="">
+          <div><h4>Amazon Kinesis Data Streams</h4><span class="vi">Luồng dữ liệu thời gian thực</span><p>Thu thập &amp; lưu stream theo <b>shard</b>, độ trễ put-to-get thường <b>&lt; 1 giây</b>, giữ dữ liệu 24 giờ → 365 ngày, nhiều consumer đọc độc lập và <b>đọc lại (replay)</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">
+          <div><h4>Amazon Data Firehose</h4><span class="vi">Chuyển dữ liệu luồng tới đích (trước đây là Kinesis Data Firehose)</span><p>Fully managed, <b>không viết code consumer</b>: gom buffer rồi đẩy vào S3, Redshift, OpenSearch, Splunk, Iceberg, HTTP endpoint… có thể transform bằng Lambda, đổi sang Parquet/ORC.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Managed-Streaming-for-Apache-Kafka.svg" alt="">
+          <div><h4>Amazon MSK</h4><span class="vi">Apache Kafka được quản lý</span><p>Chạy <b>Apache Kafka mã nguồn mở</b> – ứng dụng, công cụ, plugin Kafka có sẵn dùng được <b>không phải sửa code</b>. Có Provisioned (Standard / Express broker) và Serverless.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Analytics.svg" alt="">
+          <div><h4>Amazon Managed Service for Apache Flink</h4><span class="vi">Xử lý stream bằng Apache Flink (trước đây là Kinesis Data Analytics)</span><p>Chạy ứng dụng Flink (Java, Scala, Python, SQL) để lọc, tổng hợp theo cửa sổ thời gian, phát hiện bất thường trên KDS/MSK. <i>(chi tiết: kiến thức phổ biến)</i></p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Kinesis-Video-Streams.svg" alt="">
+          <div><h4>Amazon Kinesis Video Streams</h4><span class="vi">Luồng video</span><p>Thu nhận video/âm thanh từ camera, thiết bị để phân tích (ví dụ với Amazon Rekognition Video), phát lại. Đề chỉ cần nhận diện từ khóa “<i>video streams from cameras</i>”. <i>(kiến thức phổ biến)</i></p></div></div>
+      </div>
+
+      <h3>Streaming khác message queue (SQS) thế nào?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Amazon SQS (Bài 30)</th><th>Kinesis Data Streams</th><th>Amazon Data Firehose</th><th>Amazon MSK</th></tr></thead>
+        <tbody>
+          <tr><td>Mô hình</td><td>Hàng đợi: consumer nhận rồi <b>xóa</b> message</td><td>Log có thứ tự theo shard; consumer chỉ <b>đọc</b>, dữ liệu vẫn còn tới hết retention</td><td>Ống dẫn (delivery): nhận → buffer → giao tới đích</td><td>Log có thứ tự theo <b>partition</b> của topic (Kafka)</td></tr>
+          <tr><td>Nhiều consumer cùng đọc</td><td>Không (một message chỉ do một consumer xử lý; fan-out cần SNS)</td><td>Có – nhiều ứng dụng đọc <b>độc lập, đồng thời</b></td><td>Không – một Firehose stream giao tới <b>một</b> đích</td><td>Có – nhiều consumer group</td></tr>
+          <tr><td>Replay dữ liệu cũ</td><td>Không</td><td><b>Có</b> (trong retention 24 giờ – 365 ngày)</td><td>Không</td><td>Có (theo retention của topic)</td></tr>
+          <tr><td>Thứ tự</td><td>Chỉ FIFO queue (theo message group)</td><td>Theo <b>partition key</b> trong một shard</td><td>Không cam kết thứ tự xử lý cho ứng dụng</td><td>Theo partition</td></tr>
+          <tr><td>Quản lý capacity</td><td>Tự động</td><td>Provisioned (shard) hoặc on-demand</td><td>Tự động hoàn toàn</td><td>Provisioned (broker) hoặc Serverless</td></tr>
+          <tr><td>Độ trễ điển hình</td><td>Mili-giây</td><td><b>&lt; 1 giây</b> (put-to-get)</td><td>Gần thời gian thực – theo buffer (mặc định 300 giây với S3; có zero buffering cho một số đích)</td><td>Mili-giây</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – băng chuyền, xe tải và đường ray</span>
+        <p><b>SQS</b> giống <b>khay thư</b>: ai lấy lá thư thì lá thư biến mất khỏi khay. <b>Kinesis Data Streams</b> giống <b>băng ghi hình camera an ninh</b>: mọi thứ được ghi theo thứ tự thời gian; bảo vệ, kế toán, kiểm toán đều có thể <b>tua lại</b> xem đoạn mình cần, băng chỉ bị ghi đè khi hết thời gian lưu. <b>Firehose</b> giống <b>xe tải gom hàng</b>: chờ đầy thùng (buffer size) hoặc đến giờ chạy (buffer interval) thì chở cả chuyến tới kho (S3, Redshift…). <b>MSK</b> là cùng hệ thống camera ấy nhưng dùng “chuẩn Kafka” mà nhiều tòa nhà khác đã quen dùng.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Real-time</i>”, “<i>clickstream</i>”, “<i>multiple applications consume the same data</i>”, “<i>replay / reprocess data</i>”, “<i>ordering per device/user</i>” ⇒ <b>Kinesis Data Streams</b>.</li>
+          <li>“<i>Load streaming data into S3 / Redshift / OpenSearch / Splunk</i>”, “<i>near real-time</i>”, “<i>no code / least operational overhead</i>”, “<i>convert to Parquet</i>” ⇒ <b>Amazon Data Firehose</b>.</li>
+          <li>“<i>Existing Apache Kafka</i>”, “<i>migrate Kafka on-premises</i>”, “<i>Kafka APIs / topics / Kafka Connect</i>” ⇒ <b>Amazon MSK</b>.</li>
+          <li>“<i>Decouple, process each message once, delete after processing</i>” ⇒ vẫn là <b>SQS</b>, không phải Kinesis.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: KINESIS DATA STREAMS ===================== -->
+      <h2 id="kds"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" alt="">Kinesis Data Streams: shard, partition key, sequence number, retention</h2>
+      <p class="lead"><b>Amazon Kinesis Data Streams (KDS)</b> dùng để <b>thu thập và xử lý các luồng data record lớn theo thời gian thực</b>. Ứng dụng đọc stream gọi là <span class="t" data-vi="Ứng dụng xử lý luồng Kinesis">Kinesis Data Streams application</span> – thường dùng Kinesis Client Library và chạy trên EC2. Kết quả xử lý có thể đưa lên dashboard, sinh cảnh báo, đổi giá/quảng cáo động, hoặc đẩy sang dịch vụ AWS khác.</p>
+
+      <h3>Thuật ngữ cốt lõi (theo tài liệu)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khái niệm</th><th>Định nghĩa</th><th>Ghi nhớ cho kỳ thi</th></tr></thead>
+        <tbody>
+          <tr><td><b>Data stream</b></td><td>Tập hợp các <b>shard</b>; mỗi shard là một chuỗi data record.</td><td>Capacity của stream = tổng capacity các shard.</td></tr>
+          <tr><td><span class="t" data-vi="Phân mảnh – đơn vị capacity cố định của stream">Shard</span></td><td>Chuỗi data record được định danh duy nhất trong stream; cung cấp một <b>đơn vị capacity cố định</b>.</td><td><b>Ghi</b>: tới <b>1 MB/s</b> hoặc <b>1.000 record/s</b> (tính cả partition key). <b>Đọc</b>: tới <b>2 MB/s</b>, <b>5 giao dịch đọc/s</b> (GetRecords).</td></tr>
+          <tr><td><span class="t" data-vi="Bản ghi dữ liệu">Data record</span></td><td>Đơn vị dữ liệu lưu trong stream = <b>sequence number</b> + <b>partition key</b> + <b>data blob</b> (chuỗi byte bất biến).</td><td>Kinesis <b>không đọc, không diễn giải, không sửa</b> blob. Tài liệu khái niệm ghi blob tới <b>1 MB</b>; trang quotas hiện ghi payload tới <b>10 MiB</b> (record 1–10 MiB được xử lý bằng burst capacity).</td></tr>
+          <tr><td><span class="t" data-vi="Khóa phân vùng – quyết định record vào shard nào">Partition key</span></td><td>Chuỗi Unicode tối đa <b>256 ký tự</b>; Kinesis băm <b>MD5</b> ra số 128-bit rồi so với <b>hash key range</b> của từng shard để chọn shard.</td><td>Bắt buộc khi ghi. Cùng partition key ⇒ cùng shard ⇒ <b>giữ thứ tự</b>. Key ít giá trị/lệch ⇒ <b>hot shard</b>.</td></tr>
+          <tr><td><span class="t" data-vi="Số thứ tự do Kinesis gán">Sequence number</span></td><td>Do Kinesis gán sau <code>PutRecord</code>/<code>PutRecords</code>; duy nhất theo partition key trong shard, tăng dần theo thời gian.</td><td>Không dùng làm “index” để tách tập dữ liệu – muốn tách thì dùng partition key hoặc stream riêng.</td></tr>
+          <tr><td><span class="t" data-vi="Thời gian lưu giữ">Retention period</span></td><td>Thời gian record còn đọc được sau khi ghi.</td><td>Mặc định <b>24 giờ</b>, tăng tới <b>8.760 giờ (365 ngày)</b> bằng <code>IncreaseStreamRetentionPeriod</code>; tối thiểu 24 giờ. Trên 24 giờ <b>tính thêm phí</b>.</td></tr>
+          <tr><td>Producer / Consumer</td><td>Producer ghi record (vd web server gửi log). Consumer lấy record và xử lý (Kinesis Data Streams application).</td><td>Một stream có <b>nhiều ứng dụng</b> đọc độc lập, đồng thời; output của ứng dụng này có thể là input của stream khác.</td></tr>
+          <tr><td>Kinesis Client Library (KCL)</td><td>Thư viện biên dịch vào ứng dụng để đọc stream <b>chịu lỗi</b>; đảm bảo mỗi shard có một record processor.</td><td>KCL dùng <b>bảng DynamoDB</b> để lưu metadata (lease, checkpoint) – tạo <b>3 bảng</b> cho mỗi ứng dụng; tên ứng dụng là tên bảng điều khiển và namespace metric CloudWatch.</td></tr>
+          <tr><td>Server-side encryption</td><td>Tự mã hóa dữ liệu khi producer ghi vào, dùng <b>AWS KMS</b>.</td><td>Producer/consumer phải có quyền dùng KMS key; phát sinh phí KMS.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>1 MB/s · 1.000 rec/s</b><span>thông lượng <b>ghi</b> tối đa mỗi shard</span></div>
+        <div class="stat"><b>2 MB/s · 5 TPS</b><span>thông lượng <b>đọc</b> mỗi shard (dùng chung giữa các consumer thường)</span></div>
+        <div class="stat"><b>24 giờ → 365 ngày</b><span>retention mặc định → tối đa (8.760 giờ)</span></div>
+        <div class="stat"><b>&lt; 1 giây</b><span>độ trễ put-to-get điển hình</span></div>
+        <div class="stat"><b>256 ký tự</b><span>độ dài tối đa của partition key (băm MD5)</span></div>
+        <div class="stat"><b>500 record</b><span>tối đa mỗi lệnh <code>PutRecords</code></span></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Analytics.svg" alt="">AWS Cloud – pipeline clickstream với Kinesis Data Streams</span>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">Producers</span>
+              <div class="node"><img src="../assets/icons/res/Mobile-client.svg" alt="">App di động<small>PutRecords · key = userId</small></div>
+              <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Web server<small>Kinesis Agent / SDK / KPL</small></div>
+              <div class="node"><img src="../assets/icons/svc/AWS-IoT-Core.svg" alt="">AWS IoT Core<small>rule action</small></div>
+            </div>
+            <span class="arrow">MD5(partition key)</span>
+            <div class="grp region"><span class="lbl"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" alt="">Data stream “clicks” – 3 shard</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" alt="">Shard 1<small>hash range 0 … ⅓ · seq 1,2,3…</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" alt="">Shard 2<small>hash range ⅓ … ⅔</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" alt="">Shard 3<small>hash range ⅔ … 2¹²⁸</small></div>
+            </div>
+            <span class="arrow">đọc độc lập</span>
+            <div class="grp plain"><span class="lbl">Consumers</span>
+              <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda<small>tổng hợp → DynamoDB</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Analytics.svg" alt="">Managed Service for Apache Flink<small>phát hiện bất thường</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">Data Firehose<small>lưu trữ → S3</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Producer ghi record kèm <b>partition key</b> (ví dụ <code>userId</code>); Kinesis băm MD5 key để chọn shard theo <b>hash key range</b>, nên mọi click của cùng một user rơi vào cùng shard và được đọc <b>đúng thứ tự</b>. Ba ứng dụng consumer đọc <b>cùng dữ liệu, độc lập</b>: một ứng dụng tính tổng chạy (running aggregate) vào DynamoDB, một ứng dụng phát hiện bất thường, Firehose nén và lưu trữ vào S3 – đúng ví dụ “archiving and processing concurrently” của tài liệu.</figcaption>
+      </figure>
+
+      <h3>Các kịch bản sử dụng điển hình (theo tài liệu)</h3>
+      <ul>
+        <li><b>Thu nhận log và data feed nhanh</b>: producer đẩy log hệ thống/ứng dụng thẳng vào stream, sẵn sàng xử lý trong vài giây; log <b>không bị mất</b> nếu front end hoặc application server hỏng; không cần gom batch trên server trước khi gửi.</li>
+        <li><b>Metric và báo cáo thời gian thực</b>: tính toán metric từ log ngay khi dữ liệu chảy vào thay vì chờ batch.</li>
+        <li><b>Phân tích thời gian thực</b>: xử lý clickstream website, phân tích mức độ tương tác bằng nhiều ứng dụng chạy song song.</li>
+        <li><b>Xử lý stream phức tạp</b>: dựng <b>DAG</b> (Directed Acyclic Graph) gồm nhiều ứng dụng và stream – output của ứng dụng này ghi vào stream khác cho bước sau.</li>
+      </ul>
+
+      <h3>Độ bền và tính sẵn sàng</h3>
+      <ul>
+        <li>Tài liệu: dữ liệu ghi vào Kinesis data stream được đảm bảo <b>durability và elasticity</b>; cả hai capacity mode đều có <b>high durability và availability</b>. Kinesis đồng bộ dữ liệu qua <b>3 Availability Zone</b> trong Region <i>(kiến thức phổ biến)</i>.</li>
+        <li>Bảo mật: <b>server-side encryption</b> với KMS (AWS managed key <code>aws/kinesis</code> hoặc customer managed key), <b>TLS</b> khi truyền, <b>IAM policy</b> và <b>resource-based policy</b> cho stream (hỗ trợ truy cập cross-account), <b>interface VPC endpoint</b> (PrivateLink) để producer/consumer trong VPC không cần đi Internet. <i>(AWS managed key aws/kinesis: kiến thức phổ biến)</i></li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Records for the same customer/device must be processed in order</i>” ⇒ dùng <b>customerId / deviceId làm partition key</b>. Thứ tự chỉ được đảm bảo <b>trong một shard</b>, không phải trên toàn stream.</li>
+          <li>“<i>Retain streaming data for 7 days / 1 year so it can be reprocessed</i>” ⇒ <b>tăng retention period</b> của KDS (tối đa 365 ngày). SQS chỉ tối đa 14 ngày và không replay được.</li>
+          <li>“<i>Data must not be lost if the application server fails</i>” ⇒ producer ghi thẳng vào <b>Kinesis Data Streams</b> (dữ liệu được lưu bền trên nhiều AZ) thay vì giữ trên đĩa server.</li>
+          <li>“<i>Encrypt the stream at rest</i>” ⇒ bật <b>server-side encryption với AWS KMS</b>; “<i>keep traffic private within the VPC</i>” ⇒ <b>interface VPC endpoint</b> cho Kinesis.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Kinesis Data Streams <b>không tự giao dữ liệu tới S3/Redshift</b> theo kiểu “cấu hình là xong” như Firehose – cần consumer (Firehose, Lambda, KCL app…). (Gần đây KDS có thêm tính năng <b>data delivery</b> tới S3 / streaming table Apache Iceberg cho stream on-demand, nhưng đáp án chuẩn của đề vẫn là <b>KDS → Firehose → S3</b>.)</li>
+          <li>Kinesis không xóa record khi đã đọc; record chỉ hết hạn theo retention. Consumer phải tự <b>checkpoint</b> vị trí đã đọc (KCL làm việc này bằng DynamoDB).</li>
+          <li>Consumer (Lambda/KCL) xử lý <b>at-least-once</b> ⇒ có thể trùng lặp; code consumer nên <b>idempotent</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: CAPACITY MODE ===================== -->
+      <h2 id="capacity"><img src="../assets/icons/svc/Amazon-Kinesis.svg" alt="">Provisioned vs on-demand: tính shard, resharding, hot shard</h2>
+      <p class="lead"><span class="t" data-vi="Chế độ năng lực – cách quản lý và tính phí capacity của stream">Capacity mode</span> quyết định <b>ai quản lý capacity</b> và <b>bạn trả tiền thế nào</b>. KDS có ba lựa chọn: <b>On-demand Standard</b>, <b>On-demand Advantage</b> và <b>Provisioned</b>. Mọi tính năng (retention, mã hóa, metric, enhanced fan-out…) đều hỗ trợ ở cả on-demand lẫn provisioned; ghi bằng <code>PutRecord</code>/<code>PutRecords</code>, đọc bằng <code>GetRecords</code> hoặc enhanced fan-out <code>SubscribeToShard</code> ở mọi mode.</p>
+
+      <div class="compare">
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" alt="">Provisioned</h4>
+          <ul>
+            <li>Bạn <b>chỉ định số shard</b>; capacity stream = tổng capacity shard.</li>
+            <li>Tính phí theo <b>shard-giờ</b> (cộng PUT payload unit).</li>
+            <li>Scale thủ công: console hoặc <code>UpdateShardCount</code>, hoặc split/merge từng shard – có thể làm khi producer/consumer đang chạy.</li>
+            <li>Hợp với <b>lưu lượng dự đoán được</b>, cần <b>kiểm soát chi tiết</b> cách phân bổ dữ liệu giữa shard (tách riêng hot shard).</li>
+            <li>Không có giới hạn số stream; quota mặc định <b>20.000 shard/account</b> ở us-east-1, us-west-2, eu-west-1 (Region khác 1.000 hoặc 6.000), tăng được.</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/svc/Amazon-Kinesis.svg" alt="">On-demand Standard</h4>
+          <ul>
+            <li><b>Không cần capacity planning</b>; Kinesis tự quản shard, scale tới hàng GB/phút.</li>
+            <li>Trả tiền theo <b>GB ghi và đọc</b> (cộng phí cố định mỗi stream).</li>
+            <li>Stream mới: <b>4 MB/s ghi, 8 MB/s đọc</b>; tự đáp ứng tới <b>gấp đôi đỉnh ghi của 30 ngày trước</b>. Tăng quá gấp đôi đỉnh cũ trong <b>15 phút</b> ⇒ có thể bị throttle, phải retry.</li>
+            <li>Tối đa <b>10 GB/s ghi / 20 GB/s đọc</b> ở us-east-1, us-west-2, eu-west-1 (Region khác 200 MB/s / 400 MB/s, xin tăng được). Mặc định tối đa <b>50 stream on-demand</b>/account.</li>
+            <li>Hợp với lưu lượng <b>khó dự đoán, biến động mạnh</b>.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-Kinesis.svg" alt="">On-demand Advantage</h4>
+          <ul>
+            <li><b>Thiết lập cấp account</b> (theo Region) cho mọi stream on-demand.</li>
+            <li><b>Warm throughput</b>: chủ động “làm nóng” capacity ghi trước sự kiện (vd 200 MB/s) – không thêm phí.</li>
+            <li>Không còn phí cố định mỗi stream; phí ingest/retrieval/extended retention <b>thấp hơn ít nhất 60%</b>; enhanced fan-out không phụ phí, tới <b>50 consumer</b>/stream.</li>
+            <li>Cam kết tối thiểu <b>25 MiB/s ingest + 25 MiB/s retrieval</b>; bật rồi phải chờ ≥ 24 giờ mới tắt được.</li>
+          </ul></div>
+      </div>
+
+      <h3>Tính số shard cho provisioned mode</h3>
+      <p>Tài liệu đưa ra công thức dựa trên kích thước record trung bình (làm tròn lên KB), số record/giây và số consumer:</p>
+      <ul>
+        <li><code>incoming_write_bandwidth_in_KB = average_data_size_in_KB × records_per_second</code></li>
+        <li><code>outgoing_read_bandwidth_in_KB = incoming_write_bandwidth_in_KB × number_of_consumers</code></li>
+        <li><code>number_of_shards = ceiling( max( incoming_write_KiB / 1024, outgoing_read_KiB / 2048 ) )</code></li>
+      </ul>
+      <div class="callout note"><span class="ttl">Ví dụ tính nhanh</span>
+        <p>5.000 thiết bị, mỗi thiết bị gửi 1 record 2 KB mỗi giây, có 3 consumer dùng chung throughput. Ghi = 2 × 5.000 = 10.000 KB/s ⇒ 10.000/1024 ≈ 9,8. Đọc = 10.000 × 3 = 30.000 KB/s ⇒ 30.000/2048 ≈ 14,6. Số shard = ceiling(max(9,8; 14,6)) = <b>15 shard</b>. Đồng thời kiểm tra giới hạn record: 5.000 rec/s ÷ 1.000 = 5 shard – không vượt. Nếu chuyển 3 consumer sang <b>enhanced fan-out</b> (mỗi consumer 2 MB/s riêng) thì phía đọc không còn là nút thắt ⇒ chỉ cần <b>10 shard</b>.</p></div>
+
+      <h3>Resharding: shard split và shard merge</h3>
+      <ul>
+        <li><span class="t" data-vi="Chia lại shard">Resharding</span> điều chỉnh số shard theo tốc độ dữ liệu. Hai thao tác: <b>shard split</b> (chia 1 shard thành 2 – tăng capacity và chi phí) và <b>shard merge</b> (gộp 2 shard thành 1 – giảm capacity và chi phí).</li>
+        <li>Luôn <b>theo cặp (pairwise)</b>: không chia thành hơn 2 hay gộp hơn 2 shard trong một thao tác. Shard bị tác động là <b>parent shard</b>, shard tạo ra là <b>child shard</b>.</li>
+        <li>Cách đơn giản hơn: gọi <code>UpdateShardCount</code> (chỉ provisioned) để đặt số shard mục tiêu. <code>SplitShard</code>/<code>MergeShards</code>/<code>UpdateShardCount</code> chỉ áp dụng cho provisioned.</li>
+        <li>Resharding thường do một <b>ứng dụng quản trị riêng</b> thực hiện dựa trên metric CloudWatch – ứng dụng này cần quyền IAM rộng hơn producer/consumer.</li>
+        <li>Sau resharding, consumer nên đọc hết <b>parent shard trước rồi mới đọc child shard</b> để giữ thứ tự theo partition key – KCL tự lo việc này. <i>(kiến thức phổ biến)</i></li>
+        <li>Đổi qua lại giữa on-demand và provisioned: tối đa <b>2 lần trong 24 giờ</b> mỗi stream, <b>không gián đoạn</b> ứng dụng (stream ở trạng thái <i>Updating</i>, giữ nguyên số shard lúc chuyển).</li>
+      </ul>
+
+      <h3>Hot shard và lỗi throughput</h3>
+      <ul>
+        <li><span class="t" data-vi="Shard nóng – nhận nhiều lưu lượng hơn các shard khác">Hot shard</span> xảy ra khi partition key phân bổ <b>lệch</b> (vd dùng <code>country</code> mà 80% lưu lượng từ một nước): shard đó vượt 1 MB/s hoặc 1.000 rec/s ⇒ <code>ProvisionedThroughputExceededException</code>, dù tổng stream còn dư.</li>
+        <li>Cách xử lý: chọn partition key có <b>độ phân tán cao</b> (userId, deviceId, hoặc key ngẫu nhiên nếu không cần thứ tự); ở provisioned mode, <b>split hot shard</b> theo đúng hash key range; producer <b>retry với exponential backoff</b>.</li>
+        <li>On-demand: khi lưu lượng một shard vượt <b>500 KB/s</b>, Kinesis <b>tự split trong 15 phút</b>; nhưng <b>không cô lập</b> được một partition key quá nóng – <b>một partition key không thể vượt 1 MB/s và 1.000 rec/s</b> của một shard. Key rất lệch ⇒ tài liệu khuyên dùng <b>provisioned</b> để split chi tiết.</li>
+        <li>Phía đọc: <code>GetRecords</code> trả tối đa <b>10 MB / 10.000 record</b> mỗi lần; nếu một lần trả 10 MB, các lần gọi trong <b>5 giây</b> sau sẽ bị lỗi. Shard iterator hết hạn sau <b>5 phút</b>.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Unpredictable / spiky traffic</i>”, “<i>do not want to manage shards / capacity planning</i>” ⇒ <b>on-demand mode</b>. “<i>Predictable traffic, optimize cost</i>” ⇒ <b>provisioned</b> với số shard tính sẵn.</li>
+          <li>“<i>ProvisionedThroughputExceededException</i>” + “<i>one shard receives most of the traffic</i>” ⇒ đổi <b>partition key phân tán hơn</b> / split hot shard; chỉ tăng tổng shard mà không đổi key thì <b>không giải quyết được</b>.</li>
+          <li>“<i>Producers are throttled, traffic grew evenly</i>” ⇒ <b>tăng số shard</b> (UpdateShardCount) hoặc chuyển <b>on-demand</b>; producer dùng <b>retry + backoff</b> và gom batch (<code>PutRecords</code>, KPL).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: PRODUCER & CONSUMER ===================== -->
+      <h2 id="consumers"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Producer và consumer: KPL, KCL, Lambda, enhanced fan-out</h2>
+      <p class="lead">Ghi vào KDS rất đơn giản (gọi API), nhưng <b>đọc</b> mới là chỗ đề hay hỏi: nhiều ứng dụng cùng đọc một stream thì throughput chia thế nào, độ trễ bao nhiêu, và dùng dịch vụ nào để khỏi phải tự viết consumer.</p>
+
+      <h3>Các cách ghi dữ liệu (producer)</h3>
+      <ul>
+        <li><b>AWS SDK</b> – <code>PutRecord</code> (từng record) hoặc <code>PutRecords</code> (tới <b>500 record</b>/lệnh). Mỗi record trong <code>PutRecords</code> có thể thành công/thất bại riêng ⇒ phải kiểm tra <code>FailedRecordCount</code> và retry phần lỗi. <i>(FailedRecordCount: kiến thức phổ biến)</i></li>
+        <li><span class="t" data-vi="Thư viện producer của Kinesis">Kinesis Producer Library (KPL)</span> – thư viện hiệu năng cao: tự <b>batch</b>, <b>aggregation</b> (gộp nhiều bản ghi nhỏ vào một Kinesis record), retry tự động; đổi lại thêm một chút độ trễ (<code>RecordMaxBufferedTime</code>). <i>(kiến thức phổ biến)</i></li>
+        <li><b>Kinesis Agent</b> – ứng dụng Java cài trên server Linux, theo dõi file log và gửi liên tục vào KDS hoặc Firehose. <i>(kiến thức phổ biến)</i></li>
+        <li>Tích hợp dịch vụ: <b>AWS IoT Core</b> rule, <b>CloudWatch Logs subscription filter</b>, <b>EventBridge</b> target, <b>API Gateway</b> service integration (Bài 33), <b>DynamoDB</b> “Kinesis Data Streams for DynamoDB” (Bài 28). Lưu ý: <b>Amazon Data Firehose</b> đứng ở phía <b>consumer</b> của KDS, không ghi vào KDS.</li>
+      </ul>
+
+      <h3>Shared throughput vs enhanced fan-out</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Đặc điểm</th><th>Shared throughput consumer (mặc định)</th><th><span class="t" data-vi="Phân phối mở rộng – mỗi consumer có throughput đọc riêng">Enhanced fan-out</span> consumer</th></tr></thead>
+        <tbody>
+          <tr><td>Throughput đọc</td><td>Cố định <b>2 MB/s mỗi shard</b>, <b>chia chung</b> cho mọi consumer đọc shard đó</td><td><b>2 MB/s mỗi shard cho từng consumer</b>, độc lập với consumer khác</td></tr>
+          <tr><td>Độ trễ lan truyền</td><td>Trung bình <b>~200 ms</b> với 1 consumer; lên <b>~1.000 ms</b> với 5 consumer</td><td>Thường <b>~70 ms</b> dù 1 hay 5 consumer</td></tr>
+          <tr><td>Mô hình</td><td><b>Pull</b> qua HTTP bằng <code>GetRecords</code> (5 lần/giây/shard)</td><td>Kinesis <b>push</b> qua <b>HTTP/2</b> bằng <code>SubscribeToShard</code></td></tr>
+          <tr><td>Số consumer</td><td>Bị giới hạn bởi 2 MB/s và 5 TPS dùng chung</td><td>Tối đa <b>20</b> consumer đăng ký/stream (<b>50</b> với On-demand Advantage)</td></tr>
+          <tr><td>Chi phí</td><td>Không thêm</td><td>Phí <b>data retrieval</b> + phí <b>consumer-shard hour</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 320" width="760" role="img" aria-label="Shared throughput và enhanced fan-out">
+          <defs><marker id="a35" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#ED7100"/></marker>
+          <marker id="b35" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#8C4FFF"/></marker></defs>
+          <text x="20" y="24" font-size="13" font-weight="700">(a) Shared throughput – GetRecords (pull)</text>
+          <rect x="20" y="40" width="170" height="110" rx="8" fill="#8C4FFF" fill-opacity="0.10" stroke="#8C4FFF"/>
+          <image href="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" x="35" y="60" width="40" height="40"/>
+          <text x="82" y="78" font-size="12" font-weight="700">Shard 1</text>
+          <text x="82" y="96" font-size="10" class="muted">2 MB/s đọc · 5 TPS</text>
+          <text x="35" y="130" font-size="10" class="muted">chia cho mọi consumer</text>
+          <path d="M190 70 H300" stroke="#ED7100" stroke-width="2" marker-end="url(#a35)"/>
+          <path d="M190 95 H300" stroke="#ED7100" stroke-width="2" marker-end="url(#a35)"/>
+          <path d="M190 120 H300" stroke="#ED7100" stroke-width="2" marker-end="url(#a35)"/>
+          <text x="205" y="62" font-size="10" class="muted">~0,67 MB/s mỗi app</text>
+          <image href="../assets/icons/svc/AWS-Lambda.svg" x="305" y="55" width="26" height="26"/>
+          <text x="336" y="73" font-size="11">App A</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="305" y="83" width="26" height="26"/>
+          <text x="336" y="101" font-size="11">App B (KCL)</text>
+          <image href="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" x="305" y="111" width="26" height="26"/>
+          <text x="336" y="129" font-size="11">App C</text>
+          <text x="20" y="175" font-size="11">Độ trễ ~200 ms (1 app) → ~1.000 ms (5 app)</text>
+
+          <text x="420" y="24" font-size="13" font-weight="700">(b) Enhanced fan-out – SubscribeToShard (push)</text>
+          <rect x="420" y="40" width="170" height="110" rx="8" fill="#8C4FFF" fill-opacity="0.10" stroke="#8C4FFF"/>
+          <image href="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" x="435" y="60" width="40" height="40"/>
+          <text x="482" y="78" font-size="12" font-weight="700">Shard 1</text>
+          <text x="482" y="96" font-size="10" class="muted">mỗi “ống” 2 MB/s</text>
+          <text x="435" y="130" font-size="10" class="muted">HTTP/2 · không cần poll</text>
+          <path d="M590 70 H680" stroke="#8C4FFF" stroke-width="3.5" marker-end="url(#b35)"/>
+          <path d="M590 95 H680" stroke="#8C4FFF" stroke-width="3.5" marker-end="url(#b35)"/>
+          <path d="M590 120 H680" stroke="#8C4FFF" stroke-width="3.5" marker-end="url(#b35)"/>
+          <text x="600" y="62" font-size="10" class="muted">2 MB/s riêng</text>
+          <image href="../assets/icons/svc/AWS-Lambda.svg" x="685" y="55" width="26" height="26"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="685" y="83" width="26" height="26"/>
+          <image href="../assets/icons/svc/Amazon-Kinesis-Data-Analytics.svg" x="685" y="111" width="26" height="26"/>
+          <text x="420" y="175" font-size="11">Độ trễ ~70 ms dù 1 hay 5 app · tối đa 20 consumer</text>
+
+          <rect x="20" y="200" width="720" height="100" rx="8" fill="#7AA116" fill-opacity="0.08" stroke="#7AA116"/>
+          <image href="../assets/icons/svc/Amazon-DynamoDB.svg" x="40" y="222" width="36" height="36"/>
+          <text x="90" y="232" font-size="12" font-weight="700">KCL lưu lease &amp; checkpoint trong DynamoDB</text>
+          <text x="90" y="252" font-size="11">Mỗi shard có đúng 1 record processor; worker hỏng ⇒ worker khác nhận lease và đọc tiếp từ checkpoint.</text>
+          <text x="90" y="272" font-size="11">KCL 2.x trở lên tự đăng ký consumer enhanced fan-out cho mọi shard của stream.</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> (a) Consumer mặc định <b>chia chung 2 MB/s mỗi shard</b> và 5 lần đọc/giây – thêm ứng dụng thì mỗi ứng dụng chậm hơn, độ trễ tăng. (b) <b>Enhanced fan-out</b>: mỗi consumer đăng ký có “ống” <b>2 MB/s riêng mỗi shard</b>, Kinesis đẩy dữ liệu qua HTTP/2, độ trễ ~70 ms. Phía dưới: KCL dùng bảng DynamoDB để phân lease shard cho các worker và lưu checkpoint.</figcaption>
+      </figure>
+
+      <h3>Các lựa chọn consumer</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Consumer</th><th>Đặc điểm</th><th>Khi nào chọn</th></tr></thead>
+        <tbody>
+          <tr><td><b>AWS Lambda</b> (event source mapping – Bài 32)</td><td>Lambda poll <b>mỗi shard</b> (standard iterator ~1 lần/giây) hoặc dùng enhanced fan-out; gọi function <b>đồng bộ</b> với batch record của <b>một shard</b>; xử lý theo thứ tự trong shard, lỗi thì <b>dừng shard đó</b> tới khi xử lý được hoặc record hết hạn. <b>Parallelization factor 1–10</b>: nhiều batch song song mỗi shard mà vẫn giữ thứ tự theo partition key. Batching window tới 5 phút, payload tối đa 6 MB.</td><td>Xử lý nhẹ, serverless, ít vận hành nhất.</td></tr>
+          <tr><td><b>Amazon Data Firehose</b></td><td>Đọc KDS làm nguồn rồi giao tới S3/Redshift/OpenSearch/Splunk… không viết code.</td><td>Lưu trữ / nạp vào kho dữ liệu.</td></tr>
+          <tr><td><b>Managed Service for Apache Flink</b></td><td>Ứng dụng Flink có trạng thái: aggregate theo cửa sổ thời gian, join stream, phát hiện bất thường; ghi kết quả ra stream/đích khác.</td><td>Phân tích phức tạp thời gian thực (SQL/Java/Python).</td></tr>
+          <tr><td><b>KCL app</b> trên EC2 / ECS / EKS</td><td>Tự viết logic, KCL lo cân bằng shard, checkpoint (DynamoDB), failover giữa worker.</td><td>Cần kiểm soát hoàn toàn, xử lý lâu hơn 15 phút, thư viện đặc thù.</td></tr>
+          <tr><td>Tích hợp khác</td><td>Amazon EMR (Spark), AWS Glue streaming ETL, Amazon Redshift (streaming ingestion), EventBridge Pipes; bên thứ ba: Apache Flink, Spark, Databricks, Confluent…</td><td>Pipeline analytics lớn (Bài 36).</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Multiple consumer applications read the same stream and experience increased latency / ReadProvisionedThroughputExceeded</i>” ⇒ bật <b>enhanced fan-out</b> cho từng consumer.</li>
+          <li>“<i>Lambda processing of a Kinesis stream falls behind (IteratorAge is increasing)</i>” ⇒ <b>tăng parallelization factor</b> và/hoặc <b>thêm shard</b>; tăng batch size; dùng enhanced fan-out.</li>
+          <li>“<i>Real-time analytics with SQL / sliding windows / anomaly detection on the stream</i>” ⇒ <b>Amazon Managed Service for Apache Flink</b>.</li>
+          <li>“<i>Custom consumer must checkpoint and survive worker failure</i>” ⇒ <b>KCL</b> (lease table trong DynamoDB).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Một record lỗi khiến Lambda <b>chặn cả shard</b> (retry tới khi record hết hạn). Hãy cấu hình <b>maximum retry attempts</b>, <b>maximum record age</b>, <b>bisect batch on function error</b> và <b>on-failure destination</b> (SQS/SNS/S3) – đã giới thiệu ở Bài 32. <i>(bisect batch: kiến thức phổ biến)</i></li>
+          <li>Thêm consumer thứ 3, 4, 5 dùng <code>GetRecords</code> trên cùng stream ⇒ throughput đọc mỗi consumer giảm và độ trễ tăng – không phải lỗi “thiếu shard ghi”.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: FIREHOSE ===================== -->
+      <h2 id="firehose"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">Amazon Data Firehose: nguồn, đích, buffering, transform</h2>
+      <p class="lead"><b>Amazon Data Firehose</b> (tên cũ <i>Kinesis Data Firehose</i>) là dịch vụ <b>fully managed</b> giao streaming data thời gian thực tới đích. Theo tài liệu: <i>“you don't need to write applications or manage resources”</i> – bạn cấu hình producer gửi dữ liệu vào Firehose, Firehose <b>tự động giao</b> tới đích đã chọn, và có thể <b>transform</b> dữ liệu trước khi giao. Firehose tự scale, không có shard để quản lý.</p>
+
+      <h3>Khái niệm chính</h3>
+      <ul>
+        <li><span class="t" data-vi="Luồng Firehose (tên cũ: delivery stream)">Firehose stream</span>: thực thể cơ bản – tạo stream rồi gửi dữ liệu vào. (API vẫn dùng tên <code>CreateDeliveryStream</code>.)</li>
+        <li><b>Record</b>: dữ liệu producer gửi vào, tối đa <b>1.000 KiB</b> (trước base64).</li>
+        <li><b>Data producer</b>: ví dụ web server gửi log; hoặc cấu hình Firehose <b>tự đọc từ một Kinesis data stream có sẵn</b>.</li>
+        <li><span class="t" data-vi="Kích thước bộ đệm / Khoảng thời gian bộ đệm">Buffer size / buffer interval</span>: Firehose gom dữ liệu tới một <b>kích thước (MB)</b> hoặc trong một <b>khoảng thời gian (giây)</b> rồi mới giao – <b>điều kiện nào đạt trước thì giao trước</b>.</li>
+      </ul>
+
+      <h3>Nguồn dữ liệu (source)</h3>
+      <ul>
+        <li><b>Direct PUT</b>: ứng dụng gọi <code>PutRecord</code> / <code>PutRecordBatch</code> (tối đa <b>500 record hoặc 4 MiB</b> mỗi lệnh, không đổi được) qua AWS SDK, <b>Kinesis Agent</b>; hoặc dịch vụ AWS gửi thẳng: <b>CloudWatch Logs</b> (subscription filter), <b>CloudWatch Events / EventBridge</b>, <b>AWS IoT</b>, cùng nhiều dịch vụ khác như SNS, VPC Flow Logs, AWS WAF log <i>(SNS/WAF: kiến thức phổ biến)</i>. Lưu ý: CloudWatch Logs, CloudWatch Events, AWS IoT chỉ gửi được tới Firehose stream <b>cùng Region</b>.</li>
+        <li><b>Kinesis Data Streams</b> làm nguồn – Firehose đóng vai consumer của KDS.</li>
+        <li><b>Amazon MSK</b> làm nguồn – đọc topic Kafka (tối đa 10 MB/s đọc mỗi partition, record tối đa 10 MB; 6 MB nếu bật Lambda).</li>
+      </ul>
+
+      <h3>Đích (destination) và luồng dữ liệu</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Đích</th><th>Cách giao (theo tài liệu)</th><th>Buffer size MB (mặc định)</th><th>Buffer interval giây (mặc định)</th></tr></thead>
+        <tbody>
+          <tr><td><b>Amazon S3</b></td><td>Giao vào bucket; nếu bật transform có thể <b>backup dữ liệu gốc</b> sang bucket S3 khác.</td><td>1–128 (5)</td><td>0–900 (300)</td></tr>
+          <tr><td><b>Amazon Redshift</b></td><td>Giao vào <b>S3 trước</b>, rồi Firehose chạy lệnh <b>COPY</b> nạp từ S3 vào cluster Redshift.</td><td>1–128 (5)</td><td>0–900 (300)</td></tr>
+          <tr><td><b>Amazon OpenSearch Service / OpenSearch Serverless</b></td><td>Giao vào cluster/collection, đồng thời có thể backup sang S3.</td><td>1–100 (5)</td><td>0–900 (300)</td></tr>
+          <tr><td><b>Splunk</b></td><td>Giao tới Splunk, có thể backup sang S3 đồng thời.</td><td>1–5 (5)</td><td>0–60 (60)</td></tr>
+          <tr><td><b>Apache Iceberg Tables</b></td><td>Ghi vào bảng Iceberg (trên S3 / S3 Tables).</td><td>1–128 (5)</td><td>0–900 (300)</td></tr>
+          <tr><td><b>HTTP endpoint</b> &amp; bên thứ ba</td><td>Endpoint tùy biến hoặc Datadog, Dynatrace, LogicMonitor, MongoDB, New Relic, Coralogix, Elastic, Sumo Logic…</td><td>1–64 (5) với HTTP endpoint</td><td>0–900 (60)</td></tr>
+          <tr><td><b>Snowflake</b></td><td>Giao vào bảng Snowflake.</td><td>1–128 (1)</td><td>0–900 (0)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>5 MB / 300 s</b><span>buffer mặc định khi đích là S3 (cái nào đạt trước thì giao)</span></div>
+        <div class="stat"><b>1.000 KiB</b><span>kích thước tối đa một record gửi vào Firehose</span></div>
+        <div class="stat"><b>500 rec · 4 MiB</b><span>giới hạn mỗi lệnh PutRecordBatch</span></div>
+        <div class="stat"><b>24 giờ</b><span>Firehose giữ dữ liệu nếu đích không sẵn sàng (nguồn Direct PUT)</span></div>
+        <div class="stat"><b>5 phút</b><span>thời gian chạy tối đa của Lambda transform</span></div>
+        <div class="stat"><b>500</b><span>active partition mặc định khi bật dynamic partitioning</span></div>
+      </div>
+
+      <h3>Buffering – đánh đổi độ trễ và kích thước file</h3>
+      <ul>
+        <li>Dùng buffering hints để giao <b>file có kích thước tối ưu</b> vào S3 (ít file nhỏ ⇒ truy vấn Athena nhanh và rẻ hơn) hoặc để khớp tốc độ của đích. Đặt một trong hai giá trị thì <b>phải đặt cả giá trị kia</b>.</li>
+        <li><b>Zero buffering</b> (interval = 0): Firehose giao trong <b>vài giây</b> – chỉ cho các đích ứng dụng, <b>không</b> cho S3 backup và <b>không</b> dùng với dynamic partitioning. Interval &lt; 60 giây với S3 ⇒ Firehose dùng multipart upload, chi phí S3 PUT tăng.</li>
+        <li>Nếu giao chậm hơn tốc độ ghi, Firehose <b>tự tăng buffer size</b> để đuổi kịp.</li>
+        <li>Đích không sẵn sàng: Firehose <b>retry</b> (Redshift/OpenSearch có retry duration 0–7.200 giây) và giữ dữ liệu tới <b>24 giờ</b> (nguồn Direct PUT); nếu nguồn là KDS thì dữ liệu còn theo retention của KDS. Dữ liệu giao thất bại được ghi vào <b>S3 error output prefix</b>.</li>
+      </ul>
+
+      <h3>Xử lý dữ liệu trên đường đi</h3>
+      <ul>
+        <li><b>Lambda data transformation</b>: Firehose buffer dữ liệu (0,2–3 MB, mặc định 1 MB; interval mặc định 60 giây) rồi gọi Lambda <b>đồng bộ</b> với từng batch; Lambda trả dữ liệu đã transform về Firehose. Giới hạn payload đồng bộ <b>6 MB</b> cả request lẫn response; Lambda tối đa <b>5 phút</b>. Dùng để làm sạch, lọc, đổi CSV/log thô sang JSON, che dữ liệu nhạy cảm…</li>
+        <li><span class="t" data-vi="Chuyển đổi định dạng bản ghi">Record format conversion</span>: chuyển <b>JSON → Apache Parquet hoặc Apache ORC</b> (định dạng <b>cột</b>, tiết kiệm dung lượng, truy vấn nhanh hơn) trước khi lưu vào <b>S3</b>. Cần 3 thành phần: <b>deserializer</b> (OpenX JSON SerDe hoặc Apache Hive JSON SerDe), <b>schema</b> trong <b>AWS Glue Data Catalog</b>, <b>serializer</b> (Parquet SerDe / ORC SerDe). Dữ liệu không phải JSON (CSV…) ⇒ dùng Lambda đổi sang JSON trước.</li>
+        <li><span class="t" data-vi="Phân vùng động">Dynamic partitioning</span>: phân vùng liên tục theo <b>khóa trong dữ liệu</b> (vd <code>customer_id</code>, <code>transaction_id</code>) và giao vào các <b>S3 prefix</b> tương ứng ⇒ Athena, EMR, Redshift Spectrum, QuickSight quét ít dữ liệu hơn, rẻ hơn. Mặc định 500 active partition/stream, tối đa 1 GB/s mỗi active partition.</li>
+        <li><b>Nén &amp; mã hóa</b> khi ghi S3: GZIP, Snappy, Zip, Hadoop-Compatible Snappy (Redshift chỉ GZIP); mã hóa <b>SSE-KMS</b> bằng <code>aws/s3</code> hoặc customer managed key.</li>
+        <li><b>Backup</b> vào S3: với S3/Redshift là “bật/tắt backup dữ liệu nguồn”; với đích khác là backup <b>tất cả</b> hoặc <b>chỉ dữ liệu lỗi</b>. Backup chỉ hỗ trợ khi nguồn là <b>Direct PUT</b> hoặc <b>Kinesis Data Streams</b>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Analytics.svg" alt="">AWS Cloud – log ứng dụng vào data lake bằng Firehose</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">CloudWatch Logs<small>subscription filter</small></div>
+            <span class="arrow">Direct PUT</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">Firehose stream<small>buffer 128 MB / 300 s</small></div>
+            <span class="arrow dashed">gọi đồng bộ</span>
+            <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda transform<small>lọc · che PII · → JSON</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/AWS-Glue_Data-Catalog.svg" alt="">Glue Data Catalog<small>schema cho conversion</small></div>
+            <span class="arrow dashed">schema</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">Format conversion<small>JSON → Parquet</small></div>
+            <span class="arrow">dynamic partitioning</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">S3 data lake<small>s3://logs/customer_id=42/…</small></div>
+            <span class="arrow">SQL</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">Amazon Athena<small>Bài 36</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">Firehose stream #2<small>đích Redshift</small></div>
+            <span class="arrow">1 · ghi</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 trung gian<small>file đã buffer</small></div>
+            <span class="arrow">2 · COPY</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Redshift.svg" alt="">Amazon Redshift<small>data warehouse</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Firehose nhận log từ CloudWatch Logs, gọi <b>Lambda</b> làm sạch, <b>chuyển JSON sang Parquet</b> theo schema trong Glue Data Catalog, <b>dynamic partitioning</b> theo <code>customer_id</code> rồi ghi vào S3 để Athena truy vấn. Hàng dưới: với đích <b>Redshift</b>, Firehose luôn ghi vào <b>S3 trung gian</b> rồi chạy lệnh <b>COPY</b>. Không có server hay code consumer nào phải vận hành.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Ingest streaming data and store it in S3 / Redshift / OpenSearch with the LEAST operational overhead</i>” ⇒ <b>Firehose</b> (không phải KDS + tự viết consumer trên EC2).</li>
+          <li>“<i>Store data in Parquet / ORC to reduce Athena cost</i>” ⇒ bật <b>record format conversion</b> trong Firehose (schema ở <b>Glue Data Catalog</b>). Dữ liệu CSV ⇒ thêm Lambda transform sang JSON trước.</li>
+          <li>“<i>Partition data in S3 by customer / date as it arrives</i>” ⇒ <b>dynamic partitioning</b>.</li>
+          <li>“<i>Data must be available in S3 within 60 seconds</i>” ⇒ giảm <b>buffer interval</b> (≤ 60 giây); “<i>fewer, larger files</i>” ⇒ tăng buffer size/interval.</li>
+          <li>“<i>Real-time processing + also archive raw data to S3</i>” ⇒ <b>KDS</b> cho xử lý thời gian thực, thêm <b>Firehose</b> đọc cùng stream để lưu S3.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Firehose là <b>near real-time</b> (theo buffer), <b>không lưu trữ để replay</b>, không cho nhiều ứng dụng đọc lại – đề đòi “<i>sub-second latency</i>”, “<i>replay</i>”, “<i>multiple consumers</i>” ⇒ KDS/MSK.</li>
+          <li>Firehose <b>không</b> có đích DynamoDB, RDS hay SQS. Muốn ghi stream vào DynamoDB ⇒ KDS + Lambda.</li>
+          <li>Firehose tính phí ingest theo record <b>làm tròn lên 5 KB</b> ⇒ gửi nhiều record siêu nhỏ tốn hơn gom chúng lại.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: AMAZON MSK ===================== -->
+      <h2 id="msk"><img src="../assets/icons/svc/Amazon-Managed-Streaming-for-Apache-Kafka.svg" alt="">Amazon MSK: Apache Kafka được quản lý</h2>
+      <p class="lead"><b>Amazon Managed Streaming for Apache Kafka (MSK)</b> là dịch vụ fully managed để xây và chạy ứng dụng dùng <b>Apache Kafka</b>. MSK lo các thao tác <b>control plane</b> (tạo, cập nhật, xóa cluster); bạn dùng các thao tác <b>data plane</b> của Kafka (produce/consume). MSK chạy <b>Kafka mã nguồn mở</b> nên ứng dụng, công cụ và plugin của cộng đồng Kafka <b>dùng được mà không phải đổi code</b>.</p>
+
+      <h3>Kiến trúc MSK (theo tài liệu)</h3>
+      <ul>
+        <li><span class="t" data-vi="Nút broker – máy chủ Kafka lưu và phục vụ dữ liệu">Broker node</span>: khi tạo cluster bạn chọn số broker <b>mỗi AZ</b> (tối thiểu <b>1 broker/AZ</b>); mỗi AZ có subnet VPC riêng. Cluster thường trải <b>2 hoặc 3 AZ</b> <i>(kiến thức phổ biến; Express broker bắt buộc 3 AZ)</i>.</li>
+        <li><b>ZooKeeper nodes</b> (MSK tạo sẵn) hoặc <span class="t" data-vi="Bộ điều khiển KRaft – thay ZooKeeper quản lý metadata">KRaft controllers</span> – KRaft thay ZooKeeper quản lý metadata, <b>không tính thêm phí</b>, không phải cấu hình.</li>
+        <li><b>Producer, consumer, topic</b>: dùng API Kafka chuẩn. Dữ liệu tổ chức theo <span class="t" data-vi="Chủ đề Kafka">topic</span> → <span class="t" data-vi="Phân vùng của topic – tương đương shard">partition</span>; partition được <b>replicate</b> giữa các broker ở các AZ khác nhau (replication factor thường = 3). <i>(topic/partition/replication: kiến thức phổ biến)</i></li>
+        <li><b>Tự phục hồi</b>: MSK phát hiện broker lỗi, thay broker mới, <b>tái sử dụng storage</b> của broker cũ khi có thể; client vẫn dùng <b>cùng IP broker</b> như trước.</li>
+      </ul>
+
+      <h3>Các kiểu cluster</h3>
+      <div class="compare">
+        <div style="--accent:#2E73B8"><h4><img src="../assets/icons/svc/Amazon-Managed-Streaming-for-Apache-Kafka.svg" alt="">MSK Provisioned – Standard broker</h4>
+          <ul>
+            <li>Linh hoạt nhất: tự chọn <b>instance type, số broker, dung lượng EBS</b> (1 GiB – <b>16.384 GiB</b>/broker), tăng storage khi cần.</li>
+            <li><b>Tiered storage</b>: tầng lưu trữ giá rẻ, gần như vô hạn – dữ liệu quá retention của tầng chính tự chuyển xuống; giữ lâu hơn <b>không cần thêm broker</b>.</li>
+            <li>90 broker/account; 30 broker/cluster (ZooKeeper) hoặc 60 (KRaft).</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/svc/Amazon-Managed-Streaming-for-Apache-Kafka.svg" alt="">MSK Provisioned – Express broker</h4>
+          <ul>
+            <li>Storage <b>pay-as-you-go, tự scale, không phải provision</b>, gần như không giới hạn.</li>
+            <li>Tới <b>3× throughput/broker</b>, scale <b>nhanh hơn 20×</b>, phục hồi <b>nhanh hơn 90%</b> so với Standard (vd m7g.16xlarge: 500 MBps so với 153,8 MBps).</li>
+            <li>Cấu hình sẵn best practice, <b>không có maintenance window</b>; chỉ chạy <b>3 AZ</b>.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-Managed-Streaming-for-Apache-Kafka.svg" alt="">MSK Serverless</h4>
+          <ul>
+            <li>Chạy Kafka <b>không phải quản lý và scale capacity</b>; tự provision, tự quản partition; tính phí theo <b>throughput</b>.</li>
+            <li><b>Bắt buộc IAM access control</b> – không hỗ trợ Kafka ACL.</li>
+            <li>Quota/cluster: <b>200 MBps</b> ingress, <b>400 MBps</b> egress, 2.400 partition, message tối đa <b>8 MiB</b>, retention không giới hạn.</li>
+          </ul></div>
+      </div>
+
+      <h3>MSK Connect, MSK Replicator và tích hợp</h3>
+      <ul>
+        <li><span class="t" data-vi="Dịch vụ Kafka Connect được quản lý">MSK Connect</span>: chạy <b>Kafka Connect</b> được quản lý – <b>source connector</b> nhập dữ liệu từ hệ thống ngoài vào topic (vd <b>Debezium</b> đọc change log của database – CDC), <b>sink connector</b> xuất từ topic ra S3, OpenSearch… Tự scale worker (1–8 vCPU), tự khởi động lại task lỗi, kết nối riêng qua PrivateLink; dùng được cả với Kafka tự quản có kết nối tới VPC.</li>
+        <li><b>MSK Replicator</b>: sao chép dữ liệu giữa các cluster MSK Provisioned cùng hoặc khác Region (tối đa 1 GB/s ingress mỗi replicator) – dùng cho DR / active-active.</li>
+        <li>Consumer phổ biến: <b>Lambda</b> (event source mapping MSK), <b>Managed Service for Apache Flink</b>, <b>Firehose</b> (MSK làm nguồn, giao vào S3…), <b>AWS Glue Schema Registry</b> để quản lý schema.</li>
+      </ul>
+
+      <h3>Bảo mật MSK</h3>
+      <ul>
+        <li><b>Xác thực &amp; phân quyền API Kafka</b>: <b>IAM access control</b> (vừa xác thực vừa cho phép/từ chối hành động Kafka), hoặc <b>mutual TLS</b> (chứng chỉ client), hoặc <b>SASL/SCRAM</b> với username/password lưu trong <b>AWS Secrets Manager</b>, kết hợp <b>Apache Kafka ACLs</b>.</li>
+        <li>Thao tác control plane (tạo/xóa cluster) phân quyền bằng IAM policy như mọi dịch vụ AWS.</li>
+        <li>Mã hóa <b>at rest</b> bằng <b>AWS KMS</b> và <b>in transit</b> bằng <b>TLS</b>; cluster nằm trong <b>VPC</b> của bạn, kiểm soát bằng security group. <i>(kiến thức phổ biến)</i></li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp region"><span class="lbl">Region – MSK Provisioned cluster trải 3 AZ</span>
+          <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC của khách hàng</span>
+            <div class="row">
+              <div class="grp az"><span class="lbl">AZ a – private subnet</span>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Managed-Streaming-for-Apache-Kafka.svg" alt="">Broker 1<small>leader P0 · follower P1, P2</small></div>
+              </div>
+              <div class="grp az"><span class="lbl">AZ b – private subnet</span>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Managed-Streaming-for-Apache-Kafka.svg" alt="">Broker 2<small>leader P1 · follower P0, P2</small></div>
+              </div>
+              <div class="grp az"><span class="lbl">AZ c – private subnet</span>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Managed-Streaming-for-Apache-Kafka.svg" alt="">Broker 3<small>leader P2 · follower P0, P1</small></div>
+              </div>
+            </div>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Producer (ECS/EC2)<small>Kafka client · IAM auth · TLS</small></div>
+              <span class="arrow">topic “orders”</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Managed-Streaming-for-Apache-Kafka.svg" alt="">MSK Connect<small>sink connector → S3</small></div>
+              <span class="arrow">ESM</span>
+              <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda consumer<small>xử lý đơn hàng</small></div>
+            </div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">AWS KMS<small>mã hóa at rest</small></div>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Amazon S3<small>đích sink connector</small></div>
+            <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">CloudWatch<small>metric broker</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> Cluster MSK Provisioned với <b>1 broker mỗi AZ</b> trong các private subnet của VPC khách hàng. Topic “orders” có 3 partition (P0–P2), mỗi partition có leader ở một broker và bản sao (follower) ở hai AZ còn lại – mất một AZ vẫn đọc/ghi được. Producer dùng <b>IAM access control + TLS</b>; <b>MSK Connect</b> chuyển dữ liệu sang S3, <b>Lambda</b> đọc topic qua event source mapping.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Migrate an on-premises Apache Kafka cluster with minimal code changes</i>” ⇒ <b>Amazon MSK</b> (nếu không muốn quản lý capacity ⇒ <b>MSK Serverless</b>).</li>
+          <li>“<i>Stream database changes (CDC) into Kafka / move data from Kafka to S3 without managing Connect workers</i>” ⇒ <b>MSK Connect</b> (vd Debezium source, S3 sink).</li>
+          <li>“<i>Retain Kafka data for a long time cheaply without adding brokers</i>” ⇒ <b>MSK tiered storage</b>.</li>
+          <li>“<i>Message size larger than 1 MB (up to several MB)</i>” ⇒ Kafka/MSK cho phép cấu hình kích thước message lớn (Serverless tối đa 8 MiB); KDS truyền thống giới hạn 1 MB/record. <i>(so sánh: kiến thức phổ biến)</i></li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>MSK <b>không phải serverless mặc định</b>: MSK Provisioned vẫn phải chọn instance, số broker, storage; Standard broker còn phải theo dõi dung lượng EBS. Đề nhấn mạnh “<i>least operational overhead</i>” mà không đòi Kafka ⇒ ưu tiên <b>Kinesis / Firehose</b>.</li>
+          <li>MSK Serverless <b>chỉ hỗ trợ IAM access control</b>; ứng dụng cần SASL/SCRAM hay Kafka ACL ⇒ dùng MSK Provisioned.</li>
+          <li>Tiered storage chỉ cho <b>Provisioned (Standard broker)</b>, không hỗ trợ <b>compacted topic</b>, không hỗ trợ broker t3.small; retention tối thiểu ở tầng rẻ là <b>3 ngày</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: CHỌN DỊCH VỤ ===================== -->
+      <h2 id="chon-dich-vu"><img src="../assets/icons/svc/Amazon-Kinesis.svg" alt="">Chọn dịch vụ nào? Kinesis Data Streams vs Firehose vs MSK vs SQS</h2>
+      <p class="lead">Đề SAA-C03 hiếm khi hỏi “định nghĩa” mà đưa một tình huống với từ khóa đặc trưng. Bảng dưới gom các tiêu chí quyết định.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu trong đề</th><th>Lựa chọn</th><th>Lý do</th></tr></thead>
+        <tbody>
+          <tr><td>Xử lý thời gian thực (&lt; 1 giây), nhiều ứng dụng độc lập đọc cùng dữ liệu, replay</td><td><b>Kinesis Data Streams</b></td><td>Log bền theo shard, retention tới 365 ngày, enhanced fan-out</td></tr>
+          <tr><td>Nạp stream vào S3 / Redshift / OpenSearch / Splunk, không code, tự scale</td><td><b>Amazon Data Firehose</b></td><td>Fully managed delivery, buffer, transform, Parquet</td></tr>
+          <tr><td>Đã dùng Kafka, cần API/công cụ Kafka, Kafka Connect, message lớn, cấu hình Kafka tùy chỉnh</td><td><b>Amazon MSK</b> (Provisioned / Serverless)</td><td>Kafka mã nguồn mở, không phải sửa code</td></tr>
+          <tr><td>Phân tích SQL / cửa sổ thời gian / phát hiện bất thường trên stream</td><td><b>Managed Service for Apache Flink</b></td><td>Stream processing có trạng thái</td></tr>
+          <tr><td>Hàng đợi tác vụ, mỗi message xử lý một lần rồi xóa, tách rời tầng</td><td><b>Amazon SQS</b> (Bài 30)</td><td>Queue, DLQ, visibility timeout</td></tr>
+          <tr><td>Định tuyến sự kiện theo nội dung tới nhiều target, SaaS event</td><td><b>Amazon EventBridge</b> (Bài 31)</td><td>Rule/pattern, không phải stream thông lượng cao</td></tr>
+          <tr><td>Video từ camera, thiết bị</td><td><b>Kinesis Video Streams</b></td><td>Dữ liệu media có thời gian</td></tr>
+          <tr><td>Thay đổi item DynamoDB cần giữ &gt; 24 giờ / nhiều consumer</td><td><b>Kinesis Data Streams for DynamoDB</b> (Bài 28)</td><td>DynamoDB Streams chỉ 24 giờ</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>So sánh đặc tính kỹ thuật</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Đặc tính</th><th>Kinesis Data Streams</th><th>Amazon Data Firehose</th><th>Amazon MSK</th></tr></thead>
+        <tbody>
+          <tr><td>Đơn vị song song</td><td>Shard</td><td>— (tự động)</td><td>Partition của topic</td></tr>
+          <tr><td>Quản lý capacity</td><td>Provisioned (shard) / on-demand</td><td>Không cần</td><td>Provisioned (broker, storage) / Serverless</td></tr>
+          <tr><td>Retention</td><td>24 giờ (mặc định) – 365 ngày</td><td>Không lưu để đọc lại (giữ tối đa 24 giờ khi đích lỗi)</td><td>Theo cấu hình topic; Serverless không giới hạn; tiered storage cho Provisioned</td></tr>
+          <tr><td>Kích thước record</td><td>Blob 1 MB (tài liệu khái niệm); quota payload tới 10 MiB</td><td>1.000 KiB</td><td>Cấu hình được (Serverless tối đa 8 MiB)</td></tr>
+          <tr><td>Consumer</td><td>KCL, Lambda, Firehose, Flink, EMR, Glue…</td><td>Chính nó là “consumer” giao tới đích</td><td>Kafka client, Lambda, Flink, Firehose, MSK Connect</td></tr>
+          <tr><td>Xác thực</td><td>IAM</td><td>IAM</td><td>IAM, mTLS, SASL/SCRAM (+ Kafka ACL)</td></tr>
+          <tr><td>Mã hóa at rest</td><td>KMS (server-side encryption)</td><td>KMS</td><td>KMS</td></tr>
+          <tr><td>Mức vận hành</td><td>Thấp (on-demand rất thấp)</td><td><b>Thấp nhất</b></td><td>Trung bình (Serverless thấp)</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Analytics.svg" alt="">Kiến trúc tham chiếu – IoT telemetry: vừa cảnh báo tức thời vừa lưu data lake</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/AWS-IoT-Thing_Factory.svg" alt="">Cảm biến nhà máy<small>10.000 thiết bị</small></div>
+            <span class="arrow">MQTT</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-IoT-Core.svg" alt="">AWS IoT Core<small>rule → KDS</small></div>
+            <span class="arrow">key = deviceId</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" alt="">Kinesis Data Streams<small>on-demand · retention 7 ngày</small></div>
+          </div>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">Nhánh thời gian thực (enhanced fan-out)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Analytics.svg" alt="">Apache Flink<small>nhiệt độ TB 1 phút</small></div>
+                <span class="arrow">vượt ngưỡng</span>
+                <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda<small>gửi cảnh báo SNS</small></div>
+              </div>
+            </div>
+            <div class="grp plain"><span class="lbl">Nhánh lưu trữ (near real-time)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">Data Firehose<small>Parquet · partition theo ngày</small></div>
+                <span class="arrow">buffer</span>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">S3 data lake<small>Athena / QuickSight</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> Mẫu kiến trúc rất hay gặp trong đề: <b>KDS</b> làm “xương sống” nhận dữ liệu và giữ thứ tự theo <code>deviceId</code>; <b>nhiều consumer</b> đọc độc lập – nhánh Flink + Lambda cảnh báo trong vài giây, nhánh <b>Firehose</b> chuyển sang Parquet, phân vùng và lưu S3 cho phân tích (Bài 36). Retention 7 ngày cho phép <b>replay</b> khi sửa lỗi logic xử lý.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – cặp đáp án hay gặp</span>
+        <ul>
+          <li>“<i>Ingest → transform → store in S3 → query with SQL</i>” ⇒ <b>Firehose (+ Lambda) → S3 → Athena</b>.</li>
+          <li>“<i>Ingest → real-time dashboard / alert</i>” ⇒ <b>KDS → Flink / Lambda</b> (→ OpenSearch / DynamoDB).</li>
+          <li>“<i>REST API producers send events to a stream without managing servers</i>” ⇒ <b>API Gateway service integration → KDS/Firehose</b> (Bài 33).</li>
+          <li>“<i>Centralize CloudWatch Logs from many accounts into S3 / OpenSearch</i>” ⇒ <b>subscription filter → Firehose</b> (hoặc KDS khi cần xử lý tùy biến).</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải thuộc</span>
+        <ul>
+          <li><b>KDS</b>: stream = tập shard; record = sequence number + partition key + blob; <b>partition key → MD5 → shard</b> ⇒ thứ tự theo key trong shard; put-to-get &lt; 1 giây; nhiều consumer độc lập; <b>retention 24 giờ – 365 ngày</b> (replay).</li>
+          <li><b>Mỗi shard</b>: ghi <b>1 MB/s hoặc 1.000 rec/s</b>; đọc <b>2 MB/s, 5 TPS</b> (chia chung). <b>Enhanced fan-out</b>: 2 MB/s/shard <b>cho từng consumer</b>, push HTTP/2, ~70 ms, tối đa 20 consumer (50 với On-demand Advantage).</li>
+          <li><b>Provisioned</b>: tự tính shard = ceil(max(ghi/1024, đọc/2048)), split/merge theo cặp, <code>UpdateShardCount</code>. <b>On-demand</b>: không capacity planning, trả theo GB, 4 MB/s ghi lúc đầu, đáp ứng 2× đỉnh 30 ngày; đổi mode 2 lần/24 giờ.</li>
+          <li><b>Hot shard</b> ⇒ partition key phân tán hơn / split shard; <code>ProvisionedThroughputExceededException</code> ⇒ retry + backoff, thêm shard.</li>
+          <li><b>Consumer</b>: Lambda (parallelization factor 1–10, xử lý theo thứ tự, lỗi chặn shard), KCL (lease/checkpoint ở DynamoDB), Firehose, Managed Service for Apache Flink.</li>
+          <li><b>Firehose</b>: fully managed, near real-time; nguồn Direct PUT / KDS / MSK; đích S3, Redshift (qua S3 + COPY), OpenSearch, Splunk, Iceberg, Snowflake, HTTP endpoint; buffer S3 mặc định <b>5 MB / 300 giây</b> (1–128 MB, 0–900 s); Lambda transform; <b>JSON → Parquet/ORC</b> cần Glue Data Catalog; dynamic partitioning; không replay.</li>
+          <li><b>MSK</b>: Kafka mã nguồn mở, không sửa code; broker theo AZ, ZooKeeper/KRaft; Provisioned <b>Standard</b> (EBS ≤ 16 TiB, tiered storage) / <b>Express</b> (3× throughput, scale 20× nhanh, storage không cần provision, 3 AZ) / <b>Serverless</b> (IAM bắt buộc, 200/400 MBps); <b>MSK Connect</b> (connector), <b>MSK Replicator</b>.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="glossary">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Streaming data</dt><dd><b>Dữ liệu luồng</b> – sinh liên tục, cần xử lý ngay khi tới.</dd></div>
+        <div><dt>Producer / Consumer</dt><dd><b>Bên ghi / Bên đọc dữ liệu</b> của stream.</dd></div>
+        <div><dt>Amazon Kinesis Data Streams (KDS)</dt><dd><b>Luồng dữ liệu thời gian thực</b> – lưu theo shard, replay được.</dd></div>
+        <div><dt>Data stream</dt><dd><b>Luồng dữ liệu</b> – tập hợp các shard.</dd></div>
+        <div><dt>Shard (Kinesis)</dt><dd><b>Phân mảnh</b> – đơn vị capacity: ghi 1 MB/s · 1.000 rec/s, đọc 2 MB/s.</dd></div>
+        <div><dt>Data record / Data blob</dt><dd><b>Bản ghi / Khối dữ liệu</b> – sequence number + partition key + blob bất biến.</dd></div>
+        <div><dt>Partition key</dt><dd><b>Khóa phân vùng</b> – băm MD5 để chọn shard; giữ thứ tự theo key.</dd></div>
+        <div><dt>Sequence number</dt><dd><b>Số thứ tự</b> – Kinesis gán, tăng dần trong shard.</dd></div>
+        <div><dt>Retention period</dt><dd><b>Thời gian lưu giữ</b> – 24 giờ mặc định, tối đa 365 ngày.</dd></div>
+        <div><dt>Capacity mode (provisioned / on-demand)</dt><dd><b>Chế độ năng lực</b> – tự đặt số shard / Kinesis tự quản.</dd></div>
+        <div><dt>On-demand Advantage / Warm throughput</dt><dd><b>Chế độ on-demand cấp account / Thông lượng làm nóng trước</b>.</dd></div>
+        <div><dt>Resharding (shard split / merge)</dt><dd><b>Chia lại shard</b> – chia 1 thành 2 / gộp 2 thành 1, theo cặp.</dd></div>
+        <div><dt>Parent shard / Child shard</dt><dd><b>Shard cha / Shard con</b> – trước / sau resharding.</dd></div>
+        <div><dt>Hot shard</dt><dd><b>Shard nóng</b> – nhận lưu lượng vượt giới hạn do key phân bổ lệch.</dd></div>
+        <div><dt>Kinesis Producer Library (KPL)</dt><dd><b>Thư viện producer</b> – batch, aggregation, retry.</dd></div>
+        <div><dt>Kinesis Client Library (KCL)</dt><dd><b>Thư viện consumer</b> – lease &amp; checkpoint trong DynamoDB.</dd></div>
+        <div><dt>Kinesis Agent</dt><dd><b>Tác tử gửi log</b> – theo dõi file, gửi vào KDS/Firehose.</dd></div>
+        <div><dt>Shared throughput consumer</dt><dd><b>Consumer dùng chung throughput</b> – GetRecords, 2 MB/s/shard chia chung.</dd></div>
+        <div><dt>Enhanced fan-out (EFO)</dt><dd><b>Phân phối mở rộng</b> – 2 MB/s/shard riêng mỗi consumer, push HTTP/2.</dd></div>
+        <div><dt>Shard iterator</dt><dd><b>Con trỏ đọc shard</b> – hết hạn sau 5 phút.</dd></div>
+        <div><dt>Parallelization factor</dt><dd><b>Hệ số song song</b> – 1–10 batch Lambda đồng thời mỗi shard.</dd></div>
+        <div><dt>IteratorAge</dt><dd><b>Độ trễ đọc</b> – tuổi record mới nhất consumer đã đọc; tăng ⇒ consumer chậm.</dd></div>
+        <div><dt>Amazon Data Firehose / Firehose stream</dt><dd><b>Dịch vụ chuyển dữ liệu luồng tới đích / Luồng Firehose</b>.</dd></div>
+        <div><dt>Direct PUT</dt><dd><b>Ghi trực tiếp</b> – nguồn Firehose qua PutRecord/PutRecordBatch.</dd></div>
+        <div><dt>Buffer size / Buffer interval</dt><dd><b>Kích thước / Thời gian bộ đệm</b> – cái nào đạt trước thì giao.</dd></div>
+        <div><dt>Zero buffering</dt><dd><b>Không đệm</b> – giao trong vài giây (đích ứng dụng).</dd></div>
+        <div><dt>Data transformation (Firehose)</dt><dd><b>Biến đổi dữ liệu</b> – Lambda đồng bộ, tối đa 5 phút.</dd></div>
+        <div><dt>Record format conversion</dt><dd><b>Chuyển định dạng bản ghi</b> – JSON → Parquet/ORC, schema ở Glue.</dd></div>
+        <div><dt>Dynamic partitioning</dt><dd><b>Phân vùng động</b> – ghi vào S3 prefix theo khóa trong dữ liệu.</dd></div>
+        <div><dt>Amazon Managed Service for Apache Flink</dt><dd><b>Xử lý stream bằng Flink</b> – tên cũ Kinesis Data Analytics.</dd></div>
+        <div><dt>Amazon Kinesis Video Streams</dt><dd><b>Luồng video</b> – từ camera/thiết bị.</dd></div>
+        <div><dt>Amazon MSK</dt><dd><b>Apache Kafka được quản lý</b>.</dd></div>
+        <div><dt>Broker / Topic / Partition (Kafka)</dt><dd><b>Máy chủ Kafka / Chủ đề / Phân vùng</b>.</dd></div>
+        <div><dt>ZooKeeper / KRaft controller</dt><dd><b>Bộ điều phối metadata</b> của Kafka (KRaft thay ZooKeeper).</dd></div>
+        <div><dt>Standard broker / Express broker</dt><dd><b>Broker tiêu chuẩn / Broker tốc hành</b> – tự provision EBS / storage tự scale, 3× throughput.</dd></div>
+        <div><dt>MSK Serverless</dt><dd><b>MSK không máy chủ</b> – tự scale, chỉ IAM auth.</dd></div>
+        <div><dt>Tiered storage (MSK)</dt><dd><b>Lưu trữ phân tầng</b> – tầng rẻ, gần như vô hạn.</dd></div>
+        <div><dt>MSK Connect / Connector (source, sink)</dt><dd><b>Kafka Connect được quản lý / Bộ kết nối nguồn, đích</b>.</dd></div>
+        <div><dt>MSK Replicator</dt><dd><b>Bộ sao chép MSK</b> – giữa cluster cùng/khác Region.</dd></div>
+        <div><dt>SASL/SCRAM / Mutual TLS</dt><dd><b>Xác thực bằng mật khẩu (Secrets Manager) / bằng chứng chỉ hai chiều</b>.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company collects clickstream events from its website. Three independent applications must process the same events in real time: one updates a leaderboard, one detects fraud, and one archives the raw data. The company also needs the ability to reprocess the last 7 days of events after fixing a bug. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Send the events to an Amazon SQS standard queue and have the three applications poll the queue.</li>
+            <li data-k="B">Send the events to an Amazon Kinesis Data Streams stream with a retention period of 7 days, and have each application consume the stream independently.</li>
+            <li data-k="C">Send the events to an Amazon Data Firehose stream that delivers to three destinations.</li>
+            <li data-k="D">Send the events to an Amazon SNS topic with three email subscriptions.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Kinesis Data Streams</b> cho phép <b>nhiều ứng dụng đọc cùng dữ liệu độc lập, đồng thời</b>; consumer chỉ đọc chứ không xóa record nên tăng <b>retention lên 7 ngày</b> (tối đa 365 ngày) là có thể <b>replay</b>. <b>A sai</b>: SQS – message được một consumer nhận và xóa, ba ứng dụng sẽ “tranh” message thay vì mỗi ứng dụng nhận đủ; không replay. <b>C sai</b>: một Firehose stream chỉ giao tới <b>một</b> đích và không lưu để đọc lại. <b>D sai</b>: SNS fan-out được nhưng không lưu dữ liệu để replay; email không phải ứng dụng xử lý.</div>
+          <div class="trans">
+            <div class="tq">Một công ty thu thập các sự kiện clickstream từ website của mình. Ba ứng dụng độc lập phải xử lý cùng các sự kiện đó theo thời gian thực: một ứng dụng cập nhật bảng xếp hạng (leaderboard), một ứng dụng phát hiện gian lận, và một ứng dụng lưu trữ dữ liệu thô. Công ty cũng cần khả năng xử lý lại (reprocess) các sự kiện của 7 ngày gần nhất sau khi sửa lỗi. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gửi các sự kiện vào một Amazon SQS standard queue và cho ba ứng dụng poll queue đó.</span><span class="why">Sai: mỗi message SQS chỉ được một consumer nhận rồi xóa, nên ba ứng dụng sẽ tranh nhau message thay vì mỗi bên nhận đủ, và không replay được.</span></li>
+              <li data-k="B"><span class="tv">Gửi các sự kiện vào một Amazon Kinesis Data Streams stream với retention period 7 ngày, và cho mỗi ứng dụng tiêu thụ stream một cách độc lập.</span><span class="why">Đúng: Kinesis Data Streams cho nhiều consumer đọc cùng dữ liệu độc lập theo thời gian thực, record không bị xóa khi đọc nên retention 7 ngày cho phép replay.</span></li>
+              <li data-k="C"><span class="tv">Gửi các sự kiện vào một Amazon Data Firehose stream giao tới ba đích.</span><span class="why">Sai: một Firehose stream chỉ giao tới một đích và không lưu dữ liệu để đọc lại.</span></li>
+              <li data-k="D"><span class="tv">Gửi các sự kiện vào một Amazon SNS topic với ba subscription dạng email.</span><span class="why">Sai: SNS fan-out được nhưng không lưu dữ liệu để replay, và email không phải ứng dụng xử lý thời gian thực.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An application writes IoT sensor readings to an Amazon Kinesis data stream in provisioned mode. The partition key is the sensor's country code. Most sensors are located in one country. The producers receive ProvisionedThroughputExceededException errors even though the stream's total incoming data is well below the aggregate capacity of all shards. What should a solutions architect do to resolve this issue?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the retention period of the stream.</li>
+            <li data-k="B">Enable enhanced fan-out for all consumers.</li>
+            <li data-k="C">Switch the producers to use the PutRecord API instead of PutRecords.</li>
+            <li data-k="D">Change the partition key to a high-cardinality value, such as the sensor ID, so that records are distributed evenly across shards.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Partition key <code>country</code> có ít giá trị và lệch ⇒ phần lớn record băm vào <b>một shard</b> (hot shard) vượt <b>1 MB/s hoặc 1.000 record/s</b> dù tổng stream còn dư. Đổi sang key có <b>độ phân tán cao</b> (sensor ID) để dữ liệu trải đều. <b>A sai</b>: retention không ảnh hưởng thông lượng ghi. <b>B sai</b>: enhanced fan-out tăng throughput <b>đọc</b>, lỗi ở đây là <b>ghi</b>. <b>C sai</b>: PutRecord từng record còn kém hiệu quả hơn, không giải quyết shard nóng.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng ghi các số đo cảm biến IoT vào một Amazon Kinesis data stream ở provisioned mode. Partition key là mã quốc gia của cảm biến. Phần lớn cảm biến nằm ở một quốc gia. Các producer nhận lỗi ProvisionedThroughputExceededException dù tổng lượng dữ liệu đi vào stream thấp hơn nhiều so với tổng capacity của tất cả shard. Solutions architect nên làm gì để khắc phục?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng retention period của stream.</span><span class="why">Sai: retention chỉ quyết định dữ liệu được giữ bao lâu, không ảnh hưởng thông lượng ghi vào shard.</span></li>
+              <li data-k="B"><span class="tv">Bật enhanced fan-out cho mọi consumer.</span><span class="why">Sai: enhanced fan-out tăng thông lượng đọc cho consumer, trong khi lỗi ở đây xảy ra ở phía ghi (producer).</span></li>
+              <li data-k="C"><span class="tv">Chuyển producer sang dùng API PutRecord thay cho PutRecords.</span><span class="why">Sai: ghi từng record bằng PutRecord còn kém hiệu quả hơn và vẫn dồn vào cùng một shard nóng.</span></li>
+              <li data-k="D"><span class="tv">Đổi partition key sang một giá trị có độ phân tán cao (high-cardinality), ví dụ sensor ID, để record được phân bổ đều giữa các shard.</span><span class="why">Đúng: key theo quốc gia làm phần lớn record băm vào một hot shard vượt giới hạn 1 MB/s hoặc 1.000 record/s; key phân tán cao như sensor ID trải đều tải ra mọi shard.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company needs to deliver application logs from Amazon CloudWatch Logs to an Amazon S3 bucket in Apache Parquet format so that analysts can query the data with Amazon Athena at the lowest cost. The solution must require the LEAST operational overhead. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create a CloudWatch Logs subscription filter that sends logs to an Amazon Data Firehose stream with record format conversion to Parquet enabled, using a schema in the AWS Glue Data Catalog, and deliver to Amazon S3.</li>
+            <li data-k="B">Create a Kinesis data stream and write a KCL application on Amazon EC2 that converts the records to Parquet and uploads them to S3.</li>
+            <li data-k="C">Export the CloudWatch Logs to S3 every hour, then run an Amazon EMR cluster to convert the files to Parquet.</li>
+            <li data-k="D">Send the logs to an Amazon SQS queue and have an AWS Lambda function write each message to S3 as a Parquet file.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> CloudWatch Logs gửi thẳng tới <b>Firehose</b> qua subscription filter; Firehose có sẵn <b>record format conversion</b> JSON → <b>Parquet</b> dựa trên schema trong <b>Glue Data Catalog</b>, rồi ghi vào S3 – không có server hay code consumer. <b>B sai</b>: phải tự viết và vận hành KCL app trên EC2. <b>C sai</b>: export theo giờ + EMR – nhiều thành phần, không liên tục. <b>D sai</b>: ghi mỗi message thành một file Parquet tạo vô số file nhỏ, tự viết code chuyển đổi.</div>
+          <div class="trans">
+            <div class="tq">Một công ty cần chuyển log ứng dụng từ Amazon CloudWatch Logs vào một Amazon S3 bucket ở định dạng Apache Parquet để analyst truy vấn bằng Amazon Athena với chi phí thấp nhất. Giải pháp phải có LEAST operational overhead (ít công vận hành nhất). Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một CloudWatch Logs subscription filter gửi log tới một Amazon Data Firehose stream có bật record format conversion sang Parquet, dùng schema trong AWS Glue Data Catalog, và giao tới Amazon S3.</span><span class="why">Đúng: subscription filter đẩy log thẳng vào Firehose, Firehose tự chuyển JSON sang Parquet theo schema Glue rồi ghi vào S3 – không có server hay code nào phải vận hành.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Kinesis data stream và viết một ứng dụng KCL trên Amazon EC2 để chuyển record sang Parquet rồi upload lên S3.</span><span class="why">Sai: phải tự viết code và vận hành ứng dụng KCL trên EC2 – nhiều công vận hành.</span></li>
+              <li data-k="C"><span class="tv">Export CloudWatch Logs sang S3 mỗi giờ, rồi chạy một Amazon EMR cluster để chuyển file sang Parquet.</span><span class="why">Sai: kết hợp export theo giờ và EMR có nhiều thành phần phải quản lý, lại không liên tục.</span></li>
+              <li data-k="D"><span class="tv">Gửi log vào một Amazon SQS queue và cho một AWS Lambda function ghi mỗi message vào S3 thành một file Parquet.</span><span class="why">Sai: phải tự viết code chuyển đổi, và mỗi message thành một file tạo ra vô số file nhỏ khiến Athena truy vấn kém hiệu quả.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A media company streams events into an Amazon Kinesis data stream. Five different consumer applications read from the stream by using the GetRecords API. As more consumers were added, the end-to-end latency increased to about 1 second and consumers frequently receive ReadProvisionedThroughputExceeded errors. The company needs each consumer to receive data with approximately 70 ms latency. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the retention period of the data stream to 7 days.</li>
+            <li data-k="B">Replace the stream with an Amazon Data Firehose stream.</li>
+            <li data-k="C">Register each consumer application to use enhanced fan-out with the SubscribeToShard API.</li>
+            <li data-k="D">Merge shards to reduce the number of shards in the stream.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Consumer thường <b>chia chung 2 MB/s và 5 lần đọc/giây mỗi shard</b>; tài liệu nêu độ trễ ~200 ms với 1 consumer, lên ~1.000 ms với 5 consumer. <b>Enhanced fan-out</b> cho mỗi consumer <b>2 MB/s riêng mỗi shard</b>, dữ liệu được <b>push qua HTTP/2</b>, độ trễ điển hình ~70 ms. <b>A sai</b>: retention không ảnh hưởng tốc độ đọc. <b>B sai</b>: Firehose giao theo buffer (near real-time), không phục vụ 5 ứng dụng đọc. <b>D sai</b>: gộp shard giảm capacity, làm tình hình tệ hơn.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền thông đẩy sự kiện vào một Amazon Kinesis data stream. Năm ứng dụng consumer khác nhau đọc stream bằng API GetRecords. Khi thêm nhiều consumer, độ trễ end-to-end tăng lên khoảng 1 giây và consumer thường xuyên gặp lỗi ReadProvisionedThroughputExceeded. Công ty cần mỗi consumer nhận dữ liệu với độ trễ khoảng 70 ms. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng retention period của data stream lên 7 ngày.</span><span class="why">Sai: retention không ảnh hưởng tốc độ đọc hay độ trễ của consumer.</span></li>
+              <li data-k="B"><span class="tv">Thay stream bằng một Amazon Data Firehose stream.</span><span class="why">Sai: Firehose giao dữ liệu theo buffer (near real-time) tới một đích, không phục vụ 5 ứng dụng đọc với độ trễ ~70 ms.</span></li>
+              <li data-k="C"><span class="tv">Đăng ký từng ứng dụng consumer dùng enhanced fan-out với API SubscribeToShard.</span><span class="why">Đúng: enhanced fan-out cấp cho mỗi consumer 2 MB/s riêng trên mỗi shard và push dữ liệu qua HTTP/2, độ trễ điển hình ~70 ms, hết tranh chấp giới hạn đọc dùng chung.</span></li>
+              <li data-k="D"><span class="tv">Gộp (merge) shard để giảm số shard trong stream.</span><span class="why">Sai: gộp shard làm giảm capacity đọc, khiến lỗi throttle và độ trễ tệ hơn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company is designing a new Amazon Kinesis Data Streams workload. The traffic pattern is unpredictable, with sudden spikes during marketing campaigns, and the team does not want to perform capacity planning or manage shards. Which TWO statements about using on-demand capacity mode are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Kinesis Data Streams automatically manages the shards and the company pays per GB of data written to and read from the stream.</li>
+            <li data-k="B">The company must call UpdateShardCount before each campaign to add shards.</li>
+            <li data-k="C">The stream can absorb any increase in traffic instantly, with no possibility of throttling.</li>
+            <li data-k="D">A new on-demand stream starts with 4 MB/s of write capacity and automatically accommodates up to double its peak write throughput observed in the previous 30 days.</li>
+            <li data-k="E">On-demand mode does not support enhanced fan-out consumers or server-side encryption.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> On-demand: Kinesis <b>tự quản shard</b>, tính phí theo <b>GB ghi/đọc</b> (A); stream mới có <b>4 MB/s ghi / 8 MB/s đọc</b> và đáp ứng tới <b>2× đỉnh ghi 30 ngày trước</b> (D). <b>B sai</b>: <code>UpdateShardCount</code> chỉ dùng cho provisioned. <b>C sai</b>: nếu lưu lượng vượt quá gấp đôi đỉnh cũ trong vòng 15 phút vẫn có thể bị throttle, phải retry (On-demand Advantage cho phép đặt warm throughput trước sự kiện). <b>E sai</b>: mọi tính năng (EFO, mã hóa, retention…) đều hỗ trợ ở cả hai mode.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang thiết kế một workload Amazon Kinesis Data Streams mới. Lưu lượng khó dự đoán, có các đợt tăng đột biến trong chiến dịch marketing, và đội không muốn lập kế hoạch capacity hay quản lý shard. HAI phát biểu nào về việc dùng on-demand capacity mode là đúng? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Kinesis Data Streams tự động quản lý shard và công ty trả tiền theo GB dữ liệu ghi vào và đọc từ stream.</span><span class="why">Đúng: ở on-demand mode, Kinesis tự quản lý shard và tính phí theo lượng GB ghi/đọc, không cần lập kế hoạch capacity.</span></li>
+              <li data-k="B"><span class="tv">Công ty phải gọi UpdateShardCount trước mỗi chiến dịch để thêm shard.</span><span class="why">Sai: UpdateShardCount chỉ dùng cho provisioned mode; on-demand tự scale shard.</span></li>
+              <li data-k="C"><span class="tv">Stream có thể hấp thụ tức thì mọi mức tăng lưu lượng, không có khả năng bị throttle.</span><span class="why">Sai: nếu lưu lượng vượt quá gấp đôi đỉnh trước đó trong vòng 15 phút thì vẫn có thể bị throttle và phải retry.</span></li>
+              <li data-k="D"><span class="tv">Một on-demand stream mới bắt đầu với capacity ghi 4 MB/s và tự động đáp ứng tới gấp đôi đỉnh thông lượng ghi quan sát được trong 30 ngày trước đó.</span><span class="why">Đúng: đây đúng là hành vi tài liệu nêu – khởi đầu 4 MB/s ghi (8 MB/s đọc) và đáp ứng tới 2× đỉnh ghi của 30 ngày trước.</span></li>
+              <li data-k="E"><span class="tv">On-demand mode không hỗ trợ consumer enhanced fan-out hay server-side encryption.</span><span class="why">Sai: enhanced fan-out, mã hóa, retention… đều được hỗ trợ ở cả on-demand lẫn provisioned mode.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a self-managed Apache Kafka cluster on premises. Dozens of applications use Kafka client libraries, Kafka Connect, and existing topic configurations. The company wants to migrate to AWS with the fewest application code changes and does not want to provision or scale brokers or storage. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Rewrite the producers to use the Amazon Kinesis Producer Library and the consumers to use the Kinesis Client Library.</li>
+            <li data-k="B">Deploy Apache Kafka on Amazon EC2 instances in an Auto Scaling group.</li>
+            <li data-k="C">Migrate to an Amazon MSK Serverless cluster and configure the clients to use IAM access control.</li>
+            <li data-k="D">Replace Kafka with Amazon SQS FIFO queues.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> MSK chạy <b>Kafka mã nguồn mở</b> nên ứng dụng và công cụ Kafka dùng được <b>không cần sửa code</b>; <b>MSK Serverless</b> tự provision và scale capacity, không phải chọn broker hay storage. Serverless <b>bắt buộc IAM access control</b>, nên client cần cấu hình IAM auth (thay đổi cấu hình, không phải logic). <b>A sai</b>: viết lại toàn bộ sang Kinesis – nhiều thay đổi code nhất. <b>B sai</b>: tự vận hành Kafka trên EC2. <b>D sai</b>: SQS không có API Kafka, không có topic/consumer group, phải viết lại.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một Apache Kafka cluster tự quản lý ở on-premises. Hàng chục ứng dụng dùng thư viện Kafka client, Kafka Connect và cấu hình topic hiện có. Công ty muốn di chuyển lên AWS với ít thay đổi code ứng dụng nhất và không muốn cấp phát hay scale broker hoặc storage. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Viết lại producer dùng Amazon Kinesis Producer Library và consumer dùng Kinesis Client Library.</span><span class="why">Sai: viết lại toàn bộ sang Kinesis là phương án thay đổi code nhiều nhất.</span></li>
+              <li data-k="B"><span class="tv">Triển khai Apache Kafka trên các Amazon EC2 instance trong một Auto Scaling group.</span><span class="why">Sai: vẫn phải tự cấp phát, scale và vận hành broker cùng storage trên EC2.</span></li>
+              <li data-k="C"><span class="tv">Di chuyển sang một Amazon MSK Serverless cluster và cấu hình client dùng IAM access control.</span><span class="why">Đúng: MSK chạy Kafka mã nguồn mở nên ứng dụng dùng được không cần sửa logic; MSK Serverless tự cấp phát và scale capacity, chỉ cần cấu hình client dùng IAM auth (bắt buộc với Serverless).</span></li>
+              <li data-k="D"><span class="tv">Thay Kafka bằng các Amazon SQS FIFO queue.</span><span class="why">Sai: SQS không có API Kafka, không có topic hay consumer group, nên phải viết lại ứng dụng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">An Amazon Data Firehose stream delivers data to Amazon S3 with the default buffering configuration. Business users complain that new data appears in S3 only about every 5 minutes, but they need the data within 1 minute of ingestion. What is the MOST cost-effective change?</div>
+          <ol class="opts">
+            <li data-k="A">Replace Firehose with a Kinesis data stream and an Amazon EC2 consumer application.</li>
+            <li data-k="B">Lower the buffer interval of the S3 destination to 60 seconds or less.</li>
+            <li data-k="C">Increase the buffer size of the S3 destination to 128 MB.</li>
+            <li data-k="D">Enable dynamic partitioning on the Firehose stream.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Buffer mặc định cho đích S3 là <b>5 MB hoặc 300 giây</b>, điều kiện nào tới trước thì giao. Với lưu lượng thấp, buffer 5 MB lâu đầy nên dữ liệu chờ đủ 300 giây. Giảm <b>buffer interval</b> xuống ≤ 60 giây (dải 0–900) để giao nhanh hơn – chỉ là thay đổi cấu hình. <b>A sai</b>: thêm hạ tầng và chi phí vận hành. <b>C sai</b>: tăng buffer size làm giao <b>chậm</b> hơn. <b>D sai</b>: dynamic partitioning chia dữ liệu theo prefix, không giảm độ trễ (và không hỗ trợ zero buffering).</div>
+          <div class="trans">
+            <div class="tq">Một Amazon Data Firehose stream giao dữ liệu tới Amazon S3 với cấu hình buffering mặc định. Người dùng nghiệp vụ phàn nàn rằng dữ liệu mới chỉ xuất hiện trên S3 khoảng 5 phút một lần, nhưng họ cần dữ liệu trong vòng 1 phút kể từ khi được nạp vào. Thay đổi nào MOST cost-effective (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thay Firehose bằng một Kinesis data stream và một ứng dụng consumer trên Amazon EC2.</span><span class="why">Sai: thêm hạ tầng EC2 và code phải vận hành, tốn chi phí hơn hẳn một thay đổi cấu hình.</span></li>
+              <li data-k="B"><span class="tv">Giảm buffer interval của đích S3 xuống 60 giây hoặc ít hơn.</span><span class="why">Đúng: buffer mặc định là 5 MB hoặc 300 giây; với lưu lượng thấp dữ liệu phải chờ đủ 300 giây, nên giảm buffer interval xuống ≤ 60 giây là đủ, chỉ là đổi cấu hình.</span></li>
+              <li data-k="C"><span class="tv">Tăng buffer size của đích S3 lên 128 MB.</span><span class="why">Sai: buffer lớn hơn càng lâu đầy nên dữ liệu được giao còn chậm hơn.</span></li>
+              <li data-k="D"><span class="tv">Bật dynamic partitioning trên Firehose stream.</span><span class="why">Sai: dynamic partitioning chia dữ liệu theo prefix S3, không làm giảm độ trễ giao dữ liệu.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An AWS Lambda function processes records from an Amazon Kinesis data stream with 10 shards. During peak hours, the IteratorAge metric keeps increasing. The function's processing time per batch cannot be reduced, and records with the same partition key must still be processed in order. Which change will MOST effectively increase processing throughput?</div>
+          <ol class="opts">
+            <li data-k="A">Configure an SQS dead-letter queue on the Lambda function.</li>
+            <li data-k="B">Decrease the retention period of the stream.</li>
+            <li data-k="C">Replace the event source mapping with an Amazon SNS subscription.</li>
+            <li data-k="D">Increase the ParallelizationFactor of the event source mapping (up to 10) so that multiple batches from each shard are processed concurrently.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>ParallelizationFactor</b> (1–10) cho phép Lambda xử lý <b>nhiều batch đồng thời từ mỗi shard</b> mà <b>vẫn giữ thứ tự theo partition key</b> – tài liệu khuyên dùng khi <code>IteratorAge</code> cao. (Thêm shard cũng là một cách.) <b>A sai</b>: DLQ/on-failure destination xử lý record lỗi, không tăng throughput. <b>B sai</b>: giảm retention chỉ khiến record chưa xử lý bị mất. <b>C sai</b>: SNS không đọc được từ Kinesis và không giữ thứ tự.</div>
+          <div class="trans">
+            <div class="tq">Một AWS Lambda function xử lý record từ một Amazon Kinesis data stream có 10 shard. Vào giờ cao điểm, metric IteratorAge liên tục tăng. Không thể giảm thời gian xử lý mỗi batch của function, và các record có cùng partition key vẫn phải được xử lý theo đúng thứ tự. Thay đổi nào sẽ tăng thông lượng xử lý MOST effectively (hiệu quả nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình một SQS dead-letter queue cho Lambda function.</span><span class="why">Sai: DLQ chỉ chứa record xử lý lỗi, không giúp xử lý nhanh hơn.</span></li>
+              <li data-k="B"><span class="tv">Giảm retention period của stream.</span><span class="why">Sai: giảm retention chỉ khiến các record chưa kịp xử lý bị mất, không tăng thông lượng.</span></li>
+              <li data-k="C"><span class="tv">Thay event source mapping bằng một Amazon SNS subscription.</span><span class="why">Sai: SNS không đọc được từ Kinesis stream và không bảo đảm thứ tự.</span></li>
+              <li data-k="D"><span class="tv">Tăng ParallelizationFactor của event source mapping (tối đa 10) để nhiều batch từ mỗi shard được xử lý đồng thời.</span><span class="why">Đúng: ParallelizationFactor cho Lambda xử lý song song nhiều batch trên mỗi shard mà vẫn giữ thứ tự theo partition key – cách được khuyến nghị khi IteratorAge cao.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company streams JSON order events through Amazon Data Firehose to Amazon S3. The data analytics team queries the data with Amazon Athena by customer ID and complains about high query costs because every query scans all objects. Which TWO Firehose features should a solutions architect enable to reduce the amount of data scanned? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Zero buffering on the S3 destination.</li>
+            <li data-k="B">Dynamic partitioning using customer_id as a partitioning key, delivering to S3 prefixes per customer.</li>
+            <li data-k="C">Source record backup of all data to a second S3 bucket.</li>
+            <li data-k="D">Server-side encryption with a customer managed AWS KMS key.</li>
+            <li data-k="E">Record format conversion from JSON to Apache Parquet by using a schema in the AWS Glue Data Catalog.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> <b>Dynamic partitioning</b> ghi dữ liệu vào các <b>S3 prefix theo customer_id</b> ⇒ Athena chỉ quét partition cần thiết (B). <b>Parquet</b> là định dạng <b>cột</b> nén tốt, Athena chỉ đọc cột cần ⇒ giảm dữ liệu quét (E). <b>A sai</b>: zero buffering giảm độ trễ (và không áp dụng cho S3 backup), tạo nhiều file nhỏ hơn – không giảm dữ liệu quét. <b>C sai</b>: backup thêm bản sao, tăng chi phí lưu trữ. <b>D sai</b>: mã hóa là bảo mật, không ảnh hưởng lượng dữ liệu quét.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền các sự kiện đơn hàng dạng JSON qua Amazon Data Firehose vào Amazon S3. Đội phân tích dữ liệu truy vấn bằng Amazon Athena theo customer ID và phàn nàn chi phí truy vấn cao vì mọi truy vấn đều quét toàn bộ object. Solutions architect nên bật HAI tính năng Firehose nào để giảm lượng dữ liệu bị quét? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Zero buffering trên đích S3.</span><span class="why">Sai: zero buffering chỉ giảm độ trễ giao dữ liệu và còn tạo nhiều file nhỏ hơn, không giảm lượng dữ liệu Athena quét.</span></li>
+              <li data-k="B"><span class="tv">Dynamic partitioning dùng customer_id làm partitioning key, giao tới các S3 prefix theo từng khách hàng.</span><span class="why">Đúng: dữ liệu được ghi theo prefix customer_id nên Athena chỉ quét partition của khách hàng cần truy vấn.</span></li>
+              <li data-k="C"><span class="tv">Source record backup toàn bộ dữ liệu sang một S3 bucket thứ hai.</span><span class="why">Sai: backup chỉ tạo thêm bản sao, tăng chi phí lưu trữ mà không giảm dữ liệu quét.</span></li>
+              <li data-k="D"><span class="tv">Server-side encryption với một AWS KMS customer managed key.</span><span class="why">Sai: mã hóa phục vụ bảo mật, không ảnh hưởng lượng dữ liệu bị quét.</span></li>
+              <li data-k="E"><span class="tv">Record format conversion từ JSON sang Apache Parquet dùng schema trong AWS Glue Data Catalog.</span><span class="why">Đúng: Parquet là định dạng cột, nén tốt, Athena chỉ đọc các cột cần thiết nên lượng dữ liệu quét giảm mạnh.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company uses Amazon MSK Provisioned with Standard brokers. Compliance rules require the company to keep all messages in its Kafka topics for 1 year so that they can be replayed with existing Kafka consumers. Expanding EBS volumes and adding brokers only for storage is becoming expensive. Which solution meets these requirements MOST cost-effectively?</div>
+          <ol class="opts">
+            <li data-k="A">Enable MSK tiered storage on the cluster and set the topics' retention to 1 year.</li>
+            <li data-k="B">Add more brokers and increase the EBS volume size to the maximum of 16 TiB per broker.</li>
+            <li data-k="C">Use MSK Connect with an S3 sink connector and delete topic data after 24 hours; replay by reading S3 objects with Kafka consumers.</li>
+            <li data-k="D">Migrate the topics to an Amazon SQS queue with a 1-year message retention period.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Tiered storage</b> là tầng lưu trữ <b>giá rẻ, gần như vô hạn</b>; dữ liệu vượt retention của tầng chính tự chuyển xuống, cho phép <b>giữ lâu hơn mà không thêm broker</b> và <b>đọc lại đúng thứ tự bằng Kafka API hiện có</b>. <b>B sai</b>: chính là cách tốn kém đang muốn tránh. <b>C sai</b>: lưu S3 được nhưng Kafka consumer không đọc trực tiếp object S3 như topic – phải viết thêm quy trình đưa lại vào Kafka. <b>D sai</b>: SQS giữ message tối đa <b>14 ngày</b> và không replay.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng Amazon MSK Provisioned với Standard broker. Quy định tuân thủ yêu cầu giữ mọi message trong các Kafka topic trong 1 năm để có thể replay bằng các Kafka consumer hiện có. Việc mở rộng EBS volume và thêm broker chỉ để có dung lượng lưu trữ đang trở nên tốn kém. Giải pháp nào đáp ứng các yêu cầu này MOST cost-effectively (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật MSK tiered storage trên cluster và đặt retention của các topic là 1 năm.</span><span class="why">Đúng: tiered storage là tầng lưu trữ giá rẻ, gần như vô hạn, cho phép giữ dữ liệu lâu mà không thêm broker và vẫn đọc lại bằng Kafka API hiện có.</span></li>
+              <li data-k="B"><span class="tv">Thêm broker và tăng kích thước EBS volume lên mức tối đa 16 TiB mỗi broker.</span><span class="why">Sai: đây chính là cách tốn kém mà công ty đang muốn tránh.</span></li>
+              <li data-k="C"><span class="tv">Dùng MSK Connect với S3 sink connector và xóa dữ liệu topic sau 24 giờ; replay bằng cách cho Kafka consumer đọc các object S3.</span><span class="why">Sai: Kafka consumer không đọc trực tiếp object S3 như một topic, phải xây thêm quy trình nạp lại dữ liệu vào Kafka.</span></li>
+              <li data-k="D"><span class="tv">Chuyển các topic sang một Amazon SQS queue với message retention period 1 năm.</span><span class="why">Sai: SQS chỉ giữ message tối đa 14 ngày và không hỗ trợ replay.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/streams/latest/dev/key-concepts.html" target="_blank" rel="noopener">Amazon Kinesis Data Streams terminology and concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/streams/latest/dev/how-do-i-size-a-stream.html" target="_blank" rel="noopener">Choose the right mode to stream in (on-demand / provisioned)</a></li>
+        <li><a href="https://docs.aws.amazon.com/streams/latest/dev/service-sizes-and-limits.html" target="_blank" rel="noopener">Kinesis Data Streams quotas and limits</a></li>
+        <li><a href="https://docs.aws.amazon.com/streams/latest/dev/kinesis-using-sdk-java-resharding.html" target="_blank" rel="noopener">Reshard a stream</a></li>
+        <li><a href="https://docs.aws.amazon.com/streams/latest/dev/building-consumers.html" target="_blank" rel="noopener">Read data from Amazon Kinesis Data Streams</a></li>
+        <li><a href="https://docs.aws.amazon.com/streams/latest/dev/enhanced-consumers.html" target="_blank" rel="noopener">Develop enhanced fan-out consumers with dedicated throughput</a></li>
+        <li><a href="https://docs.aws.amazon.com/streams/latest/dev/server-side-encryption.html" target="_blank" rel="noopener">Data protection in Amazon Kinesis Data Streams</a></li>
+        <li><a href="https://docs.aws.amazon.com/lambda/latest/dg/with-kinesis.html" target="_blank" rel="noopener">Using Lambda to process records from Amazon Kinesis Data Streams</a></li>
+        <li><a href="https://docs.aws.amazon.com/firehose/latest/dev/basic-write.html" target="_blank" rel="noopener">Send data to a Firehose stream</a></li>
+        <li><a href="https://docs.aws.amazon.com/firehose/latest/dev/create-configure-backup.html" target="_blank" rel="noopener">Configure backup settings and buffering hints (Firehose)</a></li>
+        <li><a href="https://docs.aws.amazon.com/firehose/latest/dev/data-transformation.html" target="_blank" rel="noopener">Transform source data in Amazon Data Firehose</a></li>
+        <li><a href="https://docs.aws.amazon.com/firehose/latest/dev/record-format-conversion.html" target="_blank" rel="noopener">Convert input data format in Amazon Data Firehose</a></li>
+        <li><a href="https://docs.aws.amazon.com/firehose/latest/dev/dynamic-partitioning.html" target="_blank" rel="noopener">Partition streaming data in Amazon Data Firehose</a></li>
+        <li><a href="https://docs.aws.amazon.com/firehose/latest/dev/limits.html" target="_blank" rel="noopener">Amazon Data Firehose quota</a></li>
+        <li><a href="https://docs.aws.amazon.com/msk/latest/developerguide/msk-provisioned.html" target="_blank" rel="noopener">What is MSK Provisioned?</a></li>
+        <li><a href="https://docs.aws.amazon.com/msk/latest/developerguide/msk-broker-types-express.html" target="_blank" rel="noopener">Amazon MSK Express brokers</a></li>
+        <li><a href="https://docs.aws.amazon.com/msk/latest/developerguide/serverless.html" target="_blank" rel="noopener">What is MSK Serverless?</a></li>
+        <li><a href="https://docs.aws.amazon.com/msk/latest/developerguide/msk-tiered-storage.html" target="_blank" rel="noopener">Tiered storage for Standard brokers</a></li>
+        <li><a href="https://docs.aws.amazon.com/msk/latest/developerguide/msk-connect.html" target="_blank" rel="noopener">Understand MSK Connect</a></li>
+        <li><a href="https://docs.aws.amazon.com/msk/latest/developerguide/kafka_apis_iam.html" target="_blank" rel="noopener">Authentication and authorization for Apache Kafka APIs (MSK)</a></li>
+        <li><a href="https://docs.aws.amazon.com/msk/latest/developerguide/limits.html" target="_blank" rel="noopener">Amazon MSK quota</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

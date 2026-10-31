@@ -1,0 +1,991 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 16 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/res/AWS-Identity-Access-Management_Encrypted-Data.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="16" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Viết được <span class="t" data-vi="Chính sách bucket">bucket policy</span> cho các yêu cầu hay thi: ép HTTPS, chỉ cho phép từ VPC endpoint, chỉ trong AWS Organization, cross-account upload; hiểu vì sao AWS khuyên <b>tắt ACL</b> bằng <b>S3 Object Ownership</b>.</li>
+          <li>Nắm 4 thiết lập của <span class="t" data-vi="Chặn truy cập công khai">S3 Block Public Access</span>, các cấp áp dụng (Organization / account / bucket / access point) và cách S3 định nghĩa “public”.</li>
+          <li>Phân biệt <b>SSE-S3, SSE-KMS, DSSE-KMS, SSE-C</b> và client-side encryption; biết <b>S3 Bucket Keys</b> giảm tới 99% chi phí request KMS; thay đổi mới: <b>SSE-C bị tắt mặc định từ 04/2026</b>.</li>
+          <li>Thiết kế lưu trữ <b>WORM</b> với <span class="t" data-vi="Khóa đối tượng">S3 Object Lock</span> (Governance vs Compliance, legal hold, variable retention) và hiểu <b>Glacier Vault Lock</b>.</li>
+          <li>Chia sẻ có thời hạn bằng <span class="t" data-vi="URL ký sẵn">presigned URL</span>; quản lý dataset dùng chung bằng <span class="t" data-vi="Điểm truy cập">S3 Access Points</span>; cấu hình <b>CORS</b> cho ứng dụng web.</li>
+          <li>Biết dịch vụ nào giám sát bảo mật S3: IAM Access Analyzer, Macie, GuardDuty, AWS Config, CloudTrail data events, Trusted Advisor.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 3 – Storage</span>
+        <p><b>Bài 4–5</b> đã dạy cú pháp JSON policy (Effect / Principal / Action / Resource / Condition), logic đánh giá <i>explicit deny ⇒ allow ⇒ implicit deny</i>, cross-account bằng role. <b>Bài 14</b> đã dạy versioning và MFA Delete, <b>Bài 15</b> đã dạy replication (kể cả replicate object mã hóa KMS và Object Lock). Bài này <b>không lặp lại</b> các nội dung đó mà áp dụng chúng vào <b>bảo mật dữ liệu S3</b> – chiếm phần lớn câu hỏi S3 thuộc Domain 1 (Design Secure Architectures).</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Các lớp bảo vệ dữ liệu trong Amazon S3</h2>
+      <p class="lead">Mặc định mọi bucket và object S3 đều <b>private</b> – chỉ chủ sở hữu truy cập được. Bảo mật S3 là việc <b>mở quyền đúng mức</b> (least privilege) và <b>chặn những gì không được phép</b> ở nhiều lớp: ai được truy cập, truy cập từ đâu, dữ liệu được mã hóa thế nào, có được xóa/ghi đè hay không, và ai đang theo dõi.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">
+          <div><h4>Bucket policy &amp; IAM</h4><span class="vi">Chính sách truy cập</span><p>Resource-based policy gắn vào bucket + identity-based policy gắn vào user/role. Điều kiện: HTTPS, VPC endpoint, Organization, IP, mã hóa…</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Shield.svg" alt="">
+          <div><h4>Block Public Access</h4><span class="vi">Chặn truy cập công khai</span><p>4 thiết lập “phanh tay” ghi đè mọi policy/ACL công khai; áp dụng ở Organization, account, bucket, access point.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">
+          <div><h4>Encryption</h4><span class="vi">Mã hóa</span><p>At rest: SSE-S3 (mặc định), SSE-KMS, DSSE-KMS, SSE-C, client-side. In transit: TLS, ép bằng <code>aws:SecureTransport</code>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Storage-Service-Glacier_Vault.svg" alt="">
+          <div><h4>Object Lock / Vault Lock</h4><span class="vi">Khóa WORM</span><p>Ghi một lần, đọc nhiều lần: không ai xóa/ghi đè được version trong thời hạn lưu giữ – SEC 17a-4, FINRA, CFTC.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_Temporary-Security-Credential.svg" alt="">
+          <div><h4>Presigned URL</h4><span class="vi">URL ký sẵn</span><p>Cho phép người không có credential AWS tải/upload một object cụ thể trong thời gian giới hạn.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_General-Access-Points.svg" alt="">
+          <div><h4>Access Points &amp; CORS</h4><span class="vi">Điểm truy cập &amp; chia sẻ tài nguyên khác nguồn gốc</span><p>Mỗi ứng dụng một endpoint có policy riêng, có thể chỉ cho VPC. CORS cho JavaScript ở domain khác gọi S3.</p></div></div>
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 820 300" width="820" role="img" aria-label="Các lớp kiểm tra khi S3 nhận một request">
+          <defs><marker id="ah16a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <text x="20" y="24" font-size="13" font-weight="700">Một request GetObject/PutObject phải vượt qua TẤT CẢ các lớp</text>
+          <image href="../assets/icons/res/Users.svg" x="24" y="96" width="44" height="44"/>
+          <text x="46" y="160" font-size="11.5" text-anchor="middle" font-weight="600">Requester</text>
+          <text x="46" y="176" font-size="10" text-anchor="middle" class="muted">TLS / presigned</text>
+          <!-- layer boxes -->
+          <rect x="100" y="60" width="120" height="120" rx="8" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <image href="../assets/icons/svc/AWS-Shield.svg" x="140" y="70" width="40" height="40"/>
+          <text x="160" y="128" font-size="11.5" text-anchor="middle" font-weight="700">Block Public</text>
+          <text x="160" y="144" font-size="11.5" text-anchor="middle" font-weight="700">Access</text>
+          <text x="160" y="164" font-size="9.5" text-anchor="middle" class="muted">org/account/bucket/AP</text>
+          <rect x="240" y="60" width="120" height="120" rx="8" fill="none" stroke="#E7157B" stroke-width="2"/>
+          <image href="../assets/icons/svc/AWS-Organizations.svg" x="280" y="70" width="40" height="40"/>
+          <text x="300" y="128" font-size="11.5" text-anchor="middle" font-weight="700">SCP / RCP</text>
+          <text x="300" y="144" font-size="10" text-anchor="middle" class="muted">giới hạn tối đa</text>
+          <text x="300" y="164" font-size="9.5" text-anchor="middle" class="muted">(Bài 6)</text>
+          <rect x="380" y="60" width="120" height="120" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" x="420" y="70" width="40" height="40"/>
+          <text x="440" y="128" font-size="11.5" text-anchor="middle" font-weight="700">IAM policy +</text>
+          <text x="440" y="144" font-size="11.5" text-anchor="middle" font-weight="700">bucket / AP policy</text>
+          <text x="440" y="164" font-size="9.5" text-anchor="middle" class="muted">explicit deny thắng</text>
+          <rect x="520" y="60" width="120" height="120" rx="8" fill="none" stroke="#DD344C" stroke-width="2"/>
+          <image href="../assets/icons/svc/AWS-Key-Management-Service.svg" x="560" y="70" width="40" height="40"/>
+          <text x="580" y="128" font-size="11.5" text-anchor="middle" font-weight="700">KMS key policy</text>
+          <text x="580" y="144" font-size="10" text-anchor="middle" class="muted">nếu SSE-KMS</text>
+          <text x="580" y="164" font-size="9.5" text-anchor="middle" class="muted">kms:Decrypt / GenerateDataKey</text>
+          <rect x="660" y="60" width="140" height="120" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Object.svg" x="710" y="70" width="40" height="40"/>
+          <text x="730" y="128" font-size="11.5" text-anchor="middle" font-weight="700">Object</text>
+          <text x="730" y="144" font-size="10" text-anchor="middle" class="muted">Object Lock chặn</text>
+          <text x="730" y="164" font-size="10" text-anchor="middle" class="muted">xóa/ghi đè version</text>
+          <path class="line-o" d="M70 120 L98 120" marker-end="url(#ah16a)"/>
+          <path class="line-o" d="M220 120 L238 120" marker-end="url(#ah16a)"/>
+          <path class="line-o" d="M360 120 L378 120" marker-end="url(#ah16a)"/>
+          <path class="line-o" d="M500 120 L518 120" marker-end="url(#ah16a)"/>
+          <path class="line-o" d="M640 120 L658 120" marker-end="url(#ah16a)"/>
+          <text x="20" y="220" font-size="11.5" font-weight="700">Giám sát song song (không chặn request, mà phát hiện):</text>
+          <image href="../assets/icons/svc/AWS-CloudTrail.svg" x="24" y="234" width="30" height="30"/>
+          <text x="60" y="254" font-size="10.5">CloudTrail data events</text>
+          <image href="../assets/icons/res/AWS-Identity-Access-Management_AWS-IAM-Access-Analyzer.svg" x="200" y="234" width="30" height="30"/>
+          <text x="236" y="254" font-size="10.5">IAM Access Analyzer</text>
+          <image href="../assets/icons/svc/Amazon-Macie.svg" x="370" y="234" width="30" height="30"/>
+          <text x="406" y="254" font-size="10.5">Macie (PII)</text>
+          <image href="../assets/icons/svc/Amazon-GuardDuty.svg" x="490" y="234" width="30" height="30"/>
+          <text x="526" y="254" font-size="10.5">GuardDuty S3 Protection</text>
+          <image href="../assets/icons/svc/AWS-Config.svg" x="680" y="234" width="30" height="30"/>
+          <text x="716" y="254" font-size="10.5">AWS Config rules</text>
+        </svg>
+        <figcaption><b>Hình 1.</b> Mô hình “phòng thủ nhiều lớp” cho S3. Block Public Access chặn trước mọi quyền công khai; SCP/RCP đặt trần quyền cho cả Organization; IAM policy và bucket/access point policy quyết định allow/deny (explicit deny luôn thắng – Bài 4); object mã hóa SSE-KMS còn cần quyền trên <b>KMS key</b>; Object Lock bảo vệ từng version khỏi xóa/ghi đè. Các dịch vụ giám sát chạy song song để phát hiện cấu hình sai và hành vi bất thường.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – két sắt ngân hàng</span>
+        <p>Bucket là phòng két của ngân hàng. <b>Block Public Access</b> là quy định “không bao giờ mở cửa cho khách vãng lai”, dù nhân viên lỡ ghi giấy phép. <b>Bucket policy</b> là danh sách ai được vào, từ cửa nào, giờ nào. <b>Mã hóa</b> là mỗi hộp đều khóa – SSE-KMS giống chìa khóa gửi ở phòng quản lý khóa riêng (KMS) có sổ ghi lại mỗi lần mượn. <b>Object Lock</b> là hộp niêm phong đến ngày hết hạn, kể cả giám đốc (root) cũng không phá được (Compliance mode). <b>Presigned URL</b> là vé vào cửa ghi tên một hộp, hết hạn sau vài giờ. <b>Access Point</b> là cửa riêng cho từng phòng ban với nội quy riêng.</p></div>
+
+      <!-- ===================== PHẦN 2: BUCKET POLICY & OBJECT OWNERSHIP ===================== -->
+      <h2 id="bucket-policy"><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Bucket policy, ACL và S3 Object Ownership</h2>
+      <p class="lead"><span class="t" data-vi="Chính sách bucket">Bucket policy</span> là <b>resource-based policy</b> gắn vào bucket – có phần tử <code>Principal</code>, dùng để cấp quyền cho chính account, account khác, dịch vụ AWS, hoặc (rất hạn chế) công khai. Kết hợp với <b>IAM policy</b> của user/role, đây là cơ chế kiểm soát truy cập chính của S3 hiện nay.</p>
+
+      <h3>Disable ACLs – khuyến nghị số 1 trong “Security best practices”</h3>
+      <p><span class="t" data-vi="Quyền sở hữu object S3">S3 Object Ownership</span> là thiết lập cấp bucket quyết định ai sở hữu object được upload và bật/tắt <span class="t" data-vi="Danh sách kiểm soát truy cập">ACL (access control list)</span>. Mặc định là <b>Bucket owner enforced</b>: <b>mọi ACL bị vô hiệu</b>, bucket owner sở hữu mọi object, và quyền chỉ dựa trên policy (IAM policy, bucket policy, VPC endpoint policy, SCP, RCP).</p>
+      <ul>
+        <li>Phần lớn use case hiện đại <b>không cần ACL</b>; AWS khuyên tắt ACL trừ khi phải kiểm soát quyền <b>từng object riêng lẻ</b>.</li>
+        <li>Sau khi tắt ACL: bucket chỉ nhận <code>PUT</code> <b>không kèm ACL</b> hoặc kèm <code>bucket-owner-full-control</code>; request kèm ACL khác bị lỗi <b>400 <code>AccessControlListNotSupported</code></b>.</li>
+        <li>Lợi ích lớn trong đề: bucket nhận object do <b>nhiều account khác upload</b> mà bucket owner vẫn <b>sở hữu và quản lý</b> được hết (trước đây object do account B upload thuộc về B ⇒ owner bucket A không đọc được).</li>
+        <li>Trước khi tắt ACL trên bucket cũ: rà bucket policy cho đủ mọi quyền cross-account đang cấp qua ACL; reset bucket ACL về mặc định.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cơ chế</th><th>Gắn vào</th><th>Dùng khi</th><th>Ghi chú thi</th></tr></thead>
+        <tbody>
+          <tr><td><b>IAM policy</b> (identity-based)</td><td>User / group / role</td><td>Cấp quyền cho principal <b>trong cùng account</b> truy cập nhiều bucket/dịch vụ</td><td>Không có <code>Principal</code>; không cấp được cho account khác</td></tr>
+          <tr><td><b>Bucket policy</b> (resource-based)</td><td>Bucket</td><td>Cross-account, ép điều kiện (HTTPS, VPCE, Org, mã hóa), cấp cho service principal (CloudFront, log delivery…)</td><td>Tối đa 20 KB; một bucket một policy</td></tr>
+          <tr><td><b>Access point policy</b></td><td>Access point</td><td>Mỗi ứng dụng/nhóm một bộ quyền trên dataset dùng chung</td><td>Hiệu lực khi bucket policy cũng cho phép (hoặc đã ủy quyền)</td></tr>
+          <tr><td><b>ACL</b> (legacy)</td><td>Bucket / object</td><td>Hiếm – kiểm soát từng object, tương thích cũ</td><td class="no">Mặc định tắt; AWS khuyên không dùng</td></tr>
+          <tr><td><b>SCP / RCP</b></td><td>OU / account trong Organization</td><td>Đặt “trần” quyền cho cả tổ chức (vd cấm tắt Block Public Access)</td><td>Không tự cấp quyền (Bài 6)</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted">Giới hạn 20 KB cho bucket policy là kiến thức phổ biến; tài liệu đã đọc nêu rõ 20 KB cho <b>access point policy</b>.</p>
+
+      <h3>Các mẫu bucket policy phải thuộc lòng</h3>
+      <p><b>1) Ép mã hóa khi truyền (HTTPS only)</b> – tài liệu khuyến nghị dùng điều kiện <code>aws:SecureTransport</code> và đặt CloudWatch alarm khi có truy cập HTTP; kiểm tra liên tục bằng AWS Config rule <code>s3-bucket-ssl-requests-only</code>.</p>
+<pre>{
+  <span class="s">"Sid"</span>: "RestrictToTLSRequestsOnly",
+  <span class="s">"Effect"</span>: <span class="k">"Deny"</span>,
+  <span class="s">"Principal"</span>: "*",
+  <span class="s">"Action"</span>: "s3:*",
+  <span class="s">"Resource"</span>: ["arn:aws:s3:::amzn-s3-demo-bucket", "arn:aws:s3:::amzn-s3-demo-bucket/*"],
+  <span class="s">"Condition"</span>: { "Bool": { <span class="k">"aws:SecureTransport": "false"</span> } }
+}</pre>
+
+      <p><b>2) Chỉ cho phép principal trong AWS Organization</b> – dùng <code>aws:PrincipalOrgID</code>. Với Deny, nó chặn mọi principal ngoài tổ chức dù ACL hay policy khác lỡ cấp quyền (defense-in-depth).</p>
+<pre>{
+  <span class="s">"Effect"</span>: <span class="k">"Deny"</span>, <span class="s">"Principal"</span>: "*", <span class="s">"Action"</span>: "s3:*",
+  <span class="s">"Resource"</span>: ["arn:aws:s3:::amzn-s3-demo-bucket", "arn:aws:s3:::amzn-s3-demo-bucket/*"],
+  <span class="s">"Condition"</span>: { "StringNotEquals": { <span class="k">"aws:PrincipalOrgID": "o-aa111bb222"</span> } }
+}</pre>
+
+      <p><b>3) Chỉ cho phép truy cập qua VPC endpoint</b> – điều kiện <code>aws:SourceVpce</code> (một endpoint cụ thể) hoặc <code>aws:SourceVpc</code> (cả VPC). Tài liệu: VPC endpoint giúp lưu lượng <b>không đi qua Internet</b>, và một VPC <b>không có Internet Gateway</b> giúp ngăn data exfiltration. Lưu ý: <code>aws:SourceIp</code> <b>không dùng được</b> với traffic đi qua VPC endpoint (IP là private) – khi đó dùng <code>aws:SourceVpc</code>/<code>aws:SourceVpce</code>.</p>
+<pre>{
+  <span class="s">"Effect"</span>: <span class="k">"Deny"</span>, <span class="s">"Principal"</span>: "*", <span class="s">"Action"</span>: "s3:*",
+  <span class="s">"Resource"</span>: ["arn:aws:s3:::amzn-s3-demo-bucket", "arn:aws:s3:::amzn-s3-demo-bucket/*"],
+  <span class="s">"Condition"</span>: { "StringNotEquals": { <span class="k">"aws:SourceVpce": "vpce-1a2b3c4d"</span> } }
+}</pre>
+
+      <p><b>4) Cross-account upload nhưng bucket owner phải có toàn quyền</b> (bucket còn bật ACL) – điều kiện <code>s3:x-amz-acl = bucket-owner-full-control</code>. Với bucket đã <b>Bucket owner enforced</b> thì không cần nữa vì owner tự động sở hữu mọi object.</p>
+<pre>{
+  <span class="s">"Effect"</span>: "Allow",
+  <span class="s">"Principal"</span>: { "AWS": "arn:aws:iam::111122223333:root" },
+  <span class="s">"Action"</span>: "s3:PutObject",
+  <span class="s">"Resource"</span>: "arn:aws:s3:::amzn-s3-demo-bucket/*",
+  <span class="s">"Condition"</span>: { "StringEquals": { <span class="k">"s3:x-amz-acl": "bucket-owner-full-control"</span> } }
+}</pre>
+
+      <p><b>5) Các điều kiện khác hay gặp</b>:</p>
+      <ul>
+        <li><code>s3:x-amz-server-side-encryption</code> / <code>s3:x-amz-server-side-encryption-aws-kms-key-id</code> – ép loại mã hóa hoặc một KMS key cụ thể (xem phần Mã hóa).</li>
+        <li><code>s3:ExistingObjectTag/&lt;key&gt;</code> – chỉ cho đọc object có tag nhất định (ABAC trên object).</li>
+        <li><code>aws:SourceIp</code> – giới hạn dải IP công khai (văn phòng công ty).</li>
+        <li><code>aws:MultiFactorAuthPresent</code> – yêu cầu credential có MFA cho thao tác nhạy cảm (Bài 4).</li>
+        <li><code>s3:signatureAge</code> – giới hạn tuổi chữ ký của presigned URL (xem phần Presigned URL).</li>
+        <li>Grant cho <b>service principal</b>: vd <code>logging.s3.amazonaws.com</code> ghi server access log; CloudFront <b>Origin Access Control (OAC)</b> đọc object để bucket không cần public (OAI là cách cũ, AWS hướng dẫn migrate sang OAC – chi tiết ở bài CloudFront).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Bucket policy</span>
+        <ul>
+          <li>“<i>Deny any request that is not sent over HTTPS</i>” ⇒ bucket policy <b>Deny</b> + <code>aws:SecureTransport = false</code>.</li>
+          <li>“<i>Only accounts in our organization can access the bucket</i>”, “<i>least operational overhead as accounts are added</i>” ⇒ <code>aws:PrincipalOrgID</code> (không phải liệt kê từng account ID).</li>
+          <li>“<i>Bucket must be accessible only from the VPC / EC2 in private subnets, traffic must not traverse the internet</i>” ⇒ <b>S3 gateway VPC endpoint</b> + bucket policy <code>aws:SourceVpce</code>.</li>
+          <li>“<i>Objects uploaded by partner accounts cannot be read by the bucket owner</i>” ⇒ đặt Object Ownership = <b>Bucket owner enforced</b> (tắt ACL).</li>
+          <li>“<i>Serve private S3 content only through CloudFront</i>” ⇒ <b>OAC</b> + bucket policy cho service principal CloudFront, giữ Block Public Access bật.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – Bucket policy</span>
+        <ul>
+          <li>Policy có <code>"Principal": "*"</code> + <code>Allow</code> không điều kiện ⇒ bucket <b>public</b>. Nếu Block Public Access đang bật (<code>BlockPublicPolicy</code>), lệnh <code>PutBucketPolicy</code> đó sẽ bị từ chối.</li>
+          <li>Deny theo <code>aws:SourceVpce</code> với <code>"Principal": "*"</code> có thể <b>khóa luôn admin</b> đang thao tác từ console/Internet – nên loại trừ role quản trị hoặc thử trên bucket test.</li>
+          <li><code>Resource</code> phải đúng cấp: <code>arn:aws:s3:::bucket</code> cho <code>s3:ListBucket</code>, <code>arn:aws:s3:::bucket/*</code> cho <code>s3:GetObject</code>/<code>PutObject</code>. Viết lẫn là lỗi kinh điển.</li>
+          <li>Cross-account: account B muốn đọc bucket của A cần <b>cả</b> bucket policy của A cho phép <b>và</b> IAM policy trong B cho phép (Bài 5). Nếu object mã hóa SSE-KMS còn cần <b>key policy</b> cho B.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: BLOCK PUBLIC ACCESS ===================== -->
+      <h2 id="block-public-access"><img src="../assets/icons/svc/AWS-Shield.svg" alt="">S3 Block Public Access</h2>
+      <p class="lead"><span class="t" data-vi="Chặn truy cập công khai">S3 Block Public Access (BPA)</span> cung cấp các thiết lập cho <b>access point, bucket, account và AWS Organizations</b> để quản lý tập trung việc truy cập công khai. Mặc định bucket, access point và object mới <b>không cho phép public</b>; nhưng người dùng có thể sửa policy/ACL để mở – BPA <b>ghi đè</b> các policy và quyền đó, bất kể tài nguyên được tạo bằng cách nào.</p>
+
+      <div class="stats">
+        <div class="stat"><b>4</b><span>thiết lập độc lập, kết hợp tùy ý</span></div>
+        <div class="stat"><b>4 cấp</b><span>Organization · account · bucket · access point</span></div>
+        <div class="stat"><b>All / None</b><span>ở cấp Organization – không chọn lẻ từng setting</span></div>
+        <div class="stat"><b>Global</b><span>setting cấp account áp dụng mọi Region (lan truyền dần)</span></div>
+        <div class="stat"><b>S3.8</b><span>control Security Hub: bật đủ 4 setting cho mỗi bucket</span></div>
+        <div class="stat"><b>0</b><span>thiết lập theo từng object – không hỗ trợ</span></div>
+      </div>
+
+      <h3>Bốn thiết lập</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Setting</th><th>Tác động</th><th>Ảnh hưởng tới cái đã có?</th></tr></thead>
+        <tbody>
+          <tr><td><code>BlockPublicAcls</code></td><td><code>PutBucketAcl</code>/<code>PutObjectAcl</code> bị lỗi nếu ACL là public; <code>PutObject</code> kèm ACL public bị lỗi; ở cấp account thì tạo bucket kèm ACL public cũng lỗi.</td><td>Không sửa ACL hiện có – chỉ chặn ACL public <b>mới</b>.</td></tr>
+          <tr><td><code>IgnorePublicAcls</code></td><td>S3 <b>bỏ qua</b> mọi ACL public trên bucket và object trong đó. Vẫn cho <code>PutObject</code> kèm ACL public (khác BlockPublicAcls), chỉ là ACL đó vô tác dụng.</td><td>Vô hiệu ngay ACL public đang có (nhưng không xóa chúng).</td></tr>
+          <tr><td><code>BlockPublicPolicy</code></td><td>Từ chối <code>PutBucketPolicy</code> (và <code>PutAccessPointPolicy</code>) nếu policy cho phép public. Nên bật <b>ở cấp account</b> – vì người có quyền sửa bucket policy có thể tự tắt BPA cấp bucket.</td><td>Không ảnh hưởng policy hiện có.</td></tr>
+          <tr><td><code>RestrictPublicBuckets</code></td><td>Bucket/access point có policy public ⇒ chỉ <b>AWS service principal</b> và <b>user được ủy quyền trong account owner</b> truy cập được; chặn <b>mọi cross-account</b> (kể cả account được nêu đích danh).</td><td>Có – chặn ngay truy cập public/cross-account từ policy public hiện có.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Thứ tự ưu tiên giữa các cấp</h3>
+      <ul>
+        <li>S3 áp dụng <b>tổ hợp chặt chẽ nhất</b> giữa access point, bucket, account (và Organization). Ví dụ trong tài liệu: Organization bật BPA nhưng một bucket tắt BPA ⇒ bucket <b>vẫn được bảo vệ</b>. Ngược lại Organization tắt nhưng bucket bật ⇒ bucket vẫn được bảo vệ bởi setting cấp bucket.</li>
+        <li><b>Organization-level BPA</b> (qua AWS Organizations S3 policy): gắn ở root hoặc OU, account thành viên <b>tự kế thừa</b> (cả account mới), ghi đè setting cấp account; thay thế việc phải duy trì SCP phức tạp để cấm tắt BPA. Theo dõi bằng CloudTrail.</li>
+        <li>Setting cấp bucket áp dụng cho mọi access point của bucket. Setting của access point <b>chỉ đặt được lúc tạo</b>, không sửa sau.</li>
+        <li>Gỡ một setting BPA ⇒ bucket/object có policy/ACL public sẽ <b>public trở lại</b> (BPA không sửa policy/ACL gốc).</li>
+        <li>BPA chỉ chặn quyền public đến từ policy/ACL <b>gắn trực tiếp vào tài nguyên S3</b>. AWS nhắc kiểm tra thêm identity-based policy của role và resource-based policy của tài nguyên liên quan (vd KMS key).</li>
+      </ul>
+
+      <h3>S3 hiểu “public” là gì?</h3>
+      <ul>
+        <li><b>ACL public</b>: cấp bất kỳ quyền nào cho nhóm <code>AllUsers</code> hoặc <code>AuthenticatedUsers</code> (“Any authenticated AWS user” – tức <b>mọi</b> account AWS, không phải chỉ account của bạn).</li>
+        <li><b>Bucket policy</b>: S3 giả định policy là <b>public</b>, rồi xét xem nó có đủ điều kiện non-public không. Non-public khi chỉ cấp cho <b>giá trị cố định</b> (không wildcard, không policy variable) của: principal cụ thể, <code>aws:SourceIp</code> (CIDR), <code>aws:SourceArn</code>, <code>aws:SourceVpc</code>, <code>aws:SourceVpce</code>, <code>aws:SourceOwner</code>, <code>aws:SourceAccount</code>, <code>aws:userid</code>, <code>s3:DataAccessPointArn</code>, <code>s3:DataAccessPointAccount</code>, hoặc <code>aws:PrincipalOrgID</code>.</li>
+        <li>Ví dụ trong tài liệu: <code>"aws:SourceVpc": "vpc-*"</code> (StringLike) vẫn là <b>public</b>; đổi thành <code>StringEquals "vpc-91237329"</code> ⇒ non-public.</li>
+        <li><code>aws:SourceIp</code> với dải <b>quá rộng</b> (rộng hơn <code>/8</code> với IPv4, hoặc <code>/32</code> với IPv6, trừ dải private RFC1918) bị coi là public.</li>
+        <li>Access point có <b>network origin = VPC</b> luôn được coi là non-public.</li>
+      </ul>
+
+      <div class="callout note"><span class="ttl">Website tĩnh trên S3 thì sao?</span>
+        <p>Hosting static website bằng website endpoint của S3 cần bucket policy cho phép <code>s3:GetObject</code> với <code>"Principal": "*"</code> ⇒ phải <b>tắt BlockPublicPolicy và RestrictPublicBuckets</b> cho riêng bucket đó (và cấp account/Organization không được chặn). Cách an toàn hơn được khuyến nghị cho đề: đặt <b>CloudFront + OAC</b> phía trước, giữ bucket private và BPA bật đủ.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Block Public Access</span>
+        <ul>
+          <li>“<i>Ensure no S3 bucket in any account of the organization can ever be made public, including future accounts</i>” ⇒ <b>Organization-level Block Public Access</b> (hoặc BPA cấp account + SCP cấm <code>s3:PutAccountPublicAccessBlock</code> – cách cũ).</li>
+          <li>“<i>Prevent users who can edit bucket policies from making buckets public</i>” ⇒ bật <b>BlockPublicPolicy ở cấp account</b>.</li>
+          <li>“<i>Quickly identify buckets shared publicly or with external accounts</i>” ⇒ <b>IAM Access Analyzer for S3</b> (có nút block all public access một click; archive finding cho bucket chủ định public).</li>
+          <li>“<i>Detect and auto-remediate public buckets continuously</i>” ⇒ AWS Config rule <code>s3-bucket-public-read-prohibited</code> / <code>s3-bucket-public-write-prohibited</code> + remediation.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: ENCRYPTION ===================== -->
+      <h2 id="encryption"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">Mã hóa dữ liệu S3: SSE-S3, SSE-KMS, DSSE-KMS, SSE-C, client-side</h2>
+      <p class="lead">Bảo vệ dữ liệu gồm hai trạng thái: <span class="t" data-vi="Mã hóa khi truyền">encryption in transit</span> (SSL/TLS, kể cả hybrid post-quantum key exchange, hoặc client-side encryption) và <span class="t" data-vi="Mã hóa khi lưu trữ">encryption at rest</span>. Từ <b>05/01/2023</b>, mọi object mới upload lên S3 đều <b>tự động mã hóa bằng SSE-S3</b> – không thêm phí, không ảnh hưởng hiệu năng. Câu hỏi trong đề vì vậy không còn là “có mã hóa không” mà là <b>ai quản lý key, ai audit được, ai dùng được key</b>.</p>
+
+      <div class="stats">
+        <div class="stat"><b>05/01/2023</b><span>mọi object mới tự động mã hóa SSE-S3</span></div>
+        <div class="stat"><b>99%</b><span>giảm chi phí request KMS tối đa nhờ S3 Bucket Keys</span></div>
+        <div class="stat"><b>2 lớp</b><span>AES-256 độc lập với DSSE-KMS</span></div>
+        <div class="stat"><b>04/2026</b><span>SSE-C bị chặn mặc định cho bucket mới</span></div>
+        <div class="stat"><b>Cùng Region</b><span>KMS key phải cùng Region với bucket</span></div>
+        <div class="stat"><b>Symmetric</b><span>S3 chỉ hỗ trợ KMS key đối xứng</span></div>
+      </div>
+
+      <h3>Bảng so sánh các lựa chọn mã hóa at rest</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>SSE-S3</th><th>SSE-KMS</th><th>DSSE-KMS</th><th>SSE-C</th><th>Client-side</th></tr></thead>
+        <tbody>
+          <tr><td>Ai quản lý key</td><td>Amazon S3 (hoàn toàn)</td><td>AWS KMS – AWS managed key <code>aws/s3</code> hoặc <b>customer managed key</b></td><td>AWS KMS + một key AES-256 do S3 quản lý</td><td><b>Khách hàng</b> gửi key theo mỗi request; S3 không lưu key</td><td>Khách hàng – mã hóa trước khi upload</td></tr>
+          <tr><td>Header <code>x-amz-server-side-encryption</code></td><td><code>AES256</code></td><td><code>aws:kms</code></td><td><code>aws:kms:dsse</code></td><td>Header riêng <code>x-amz-server-side-encryption-customer-*</code></td><td>–</td></tr>
+          <tr><td>Đặt làm default encryption của bucket</td><td class="yes">Có (mặc định)</td><td class="yes">Có</td><td class="yes">Có</td><td class="no">Không</td><td class="no">Không</td></tr>
+          <tr><td>Audit việc dùng key (CloudTrail)</td><td class="no">Không riêng</td><td class="yes">Có – <code>GenerateDataKey</code>, <code>Decrypt</code></td><td class="yes">Có</td><td class="no">Không</td><td>Tự lo</td></tr>
+          <tr><td>Kiểm soát quyền qua key policy, rotate, disable key</td><td class="no">Không</td><td class="yes">Có (customer managed key)</td><td class="yes">Có</td><td>Tự lo</td><td>Tự lo</td></tr>
+          <tr><td>Chi phí thêm</td><td class="yes">Không</td><td>Phí KMS request (giảm bằng Bucket Keys)</td><td>Cao hơn SSE-KMS; <b>không</b> hỗ trợ Bucket Keys</td><td>Không (chỉ phí request S3)</td><td>Chi phí compute phía client</td></tr>
+          <tr><td>Đặc điểm cần nhớ</td><td>Mặc định của mọi bucket</td><td>Chịu <b>quota request KMS</b>; cross-account cần customer managed key</td><td>Compliance yêu cầu <b>mã hóa nhiều lớp</b></td><td><b>Bắt buộc HTTPS</b>; console không hỗ trợ; mất key = mất dữ liệu</td><td>AWS không bao giờ thấy plaintext</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted">Header <code>AES256</code> cho SSE-S3 và nhóm header <code>x-amz-server-side-encryption-customer-algorithm/-key/-key-MD5</code> cho SSE-C là kiến thức từ API Reference, không nằm trong các trang tài liệu đã trích ở bài này.</p>
+
+      <h3>SSE-S3 – mặc định, không cần làm gì</h3>
+      <ul>
+        <li>S3 mã hóa object trước khi ghi xuống đĩa và giải mã khi bạn tải về. Mỗi bucket đều có <b>default encryption</b> = SSE-S3 trừ khi bạn đổi sang SSE-KMS hoặc DSSE-KMS.</li>
+        <li>Trạng thái mã hóa hiện trong CloudTrail, S3 Inventory, S3 Storage Lens (tỷ lệ % byte được mã hóa), console và header phản hồi API.</li>
+        <li>Đổi default encryption sang SSE-KMS <b>không</b> mã hóa lại object cũ ⇒ dùng <b>S3 Batch Operations – Copy</b> (copy đè lên chính nó) để chuyển hàng tỉ object hiện có sang SSE-KMS.</li>
+      </ul>
+
+      <h3>SSE-KMS – kiểm soát và audit key</h3>
+      <p>S3 dùng cơ chế <span class="t" data-vi="Mã hóa phong bì">envelope encryption</span> của AWS KMS: dữ liệu được mã hóa bằng <span class="t" data-vi="Khóa dữ liệu">data key</span>, rồi data key được mã hóa bằng <b>KMS key</b>.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 820 330" width="820" role="img" aria-label="Luồng envelope encryption của SSE-KMS">
+          <defs><marker id="ah16b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <text x="20" y="24" font-size="13" font-weight="700">PUT (mã hóa) – theo tài liệu “SSE-KMS encryption workflow”</text>
+          <image href="../assets/icons/res/Client.svg" x="30" y="50" width="44" height="44"/>
+          <text x="52" y="112" font-size="11.5" text-anchor="middle" font-weight="600">Ứng dụng</text>
+          <text x="52" y="127" font-size="10" text-anchor="middle" class="muted">PutObject (TLS)</text>
+          <image href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" x="290" y="50" width="48" height="48"/>
+          <text x="314" y="114" font-size="11.5" text-anchor="middle" font-weight="600">Amazon S3</text>
+          <image href="../assets/icons/svc/AWS-Key-Management-Service.svg" x="600" y="50" width="48" height="48"/>
+          <text x="624" y="114" font-size="11.5" text-anchor="middle" font-weight="600">AWS KMS key</text>
+          <text x="624" y="129" font-size="10" text-anchor="middle" class="muted">không bao giờ rời KMS</text>
+          <path class="line-o" d="M80 72 L285 72" marker-end="url(#ah16b)"/>
+          <text x="180" y="64" font-size="10.5" text-anchor="middle">① object plaintext</text>
+          <path class="line-o" d="M345 64 L595 64" marker-end="url(#ah16b)"/>
+          <text x="470" y="56" font-size="10.5" text-anchor="middle">② GenerateDataKey</text>
+          <path class="line-o" d="M595 86 L345 86" marker-end="url(#ah16b)"/>
+          <text x="470" y="102" font-size="10.5" text-anchor="middle">③ data key (plaintext + bản mã hóa)</text>
+          <image href="../assets/icons/res/AWS-Identity-Access-Management_Data-Encryption-Key.svg" x="160" y="160" width="40" height="40"/>
+          <text x="180" y="216" font-size="10.5" text-anchor="middle">④ S3 mã hóa object bằng data key,</text>
+          <text x="180" y="231" font-size="10.5" text-anchor="middle">xóa plaintext key khỏi bộ nhớ</text>
+          <image href="../assets/icons/res/AWS-Identity-Access-Management_Encrypted-Data.svg" x="440" y="160" width="40" height="40"/>
+          <text x="460" y="216" font-size="10.5" text-anchor="middle">⑤ lưu: dữ liệu đã mã hóa +</text>
+          <text x="460" y="231" font-size="10.5" text-anchor="middle">data key đã mã hóa (metadata)</text>
+          <path class="line-o" d="M314 120 L200 158" marker-end="url(#ah16b)"/>
+          <path class="line-o" d="M205 180 L435 180" marker-end="url(#ah16b)"/>
+          <rect x="20" y="256" width="780" height="62" rx="8" fill="none" stroke="#147EBA" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="34" y="278" font-size="11.5" font-weight="700">GET (giải mã):</text>
+          <text x="34" y="298" font-size="10.5">S3 gửi data key đã mã hóa tới KMS bằng <tspan font-weight="700">Decrypt</tspan> ⇒ KMS trả plaintext data key ⇒ S3 giải mã object, trả về client, xóa key khỏi bộ nhớ.</text>
+          <text x="34" y="312" font-size="10.5" class="muted">⇒ Người đọc cần cả s3:GetObject lẫn kms:Decrypt; mỗi lần dùng key được ghi CloudTrail.</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Envelope encryption của SSE-KMS. KMS key chỉ mã hóa/giải mã <b>data key</b>; dữ liệu lớn được mã hóa bằng data key ngay trong S3. Vì vậy upload cần <code>kms:GenerateDataKey</code>, download cần <code>kms:Decrypt</code>, còn <b>multipart upload</b> cần <b>cả hai</b>.</figcaption>
+      </figure>
+
+      <ul>
+        <li><b>AWS managed key (<code>aws/s3</code>)</b>: S3 tự tạo trong account khi bạn upload object SSE-KMS lần đầu mà không chỉ định key. <b>Không chia sẻ cross-account được</b> (trừ khi uploader và người truy cập cùng account).</li>
+        <li><b>Customer managed key</b>: bạn tạo, rotate, disable, viết key policy và audit. <b>Bắt buộc</b> khi cần chia sẻ dữ liệu SSE-KMS sang account khác. Nên dùng <b>ARN đầy đủ</b> của key – dùng alias thì KMS phân giải trong account <b>của requester</b>, có thể mã hóa nhầm bằng key của người upload.</li>
+        <li>KMS key phải <b>cùng Region</b> với bucket và phải là <b>symmetric</b>.</li>
+        <li>Mọi GET/PUT với object SSE-KMS phải dùng <b>SSL/TLS</b> và được ký (SigV4). <b>Không</b> gửi header mã hóa trong GET/HEAD object SSE-KMS – sẽ bị lỗi <b>400 Bad Request</b>.</li>
+        <li><span class="t" data-vi="Ngữ cảnh mã hóa">Encryption context</span>: mặc định là <b>ARN của object</b> (hoặc ARN của bucket nếu bật Bucket Key); dùng để lọc CloudTrail và viết điều kiện key policy. Không đặt thông tin nhạy cảm vào context (không được mã hóa).</li>
+        <li>Bucket dùng làm đích của <b>server access logging</b> phải dùng <b>SSE-S3</b> – nếu đặt SSE-KMS, log có thể được mã hóa bằng key mà bạn không truy cập được.</li>
+        <li>Dùng KMS key trong <b>external key store</b> thì bạn chịu trách nhiệm về tính sẵn sàng và độ bền của key material (shared responsibility thay đổi).</li>
+        <li>SSE-KMS chịu <b>quota request/giây của AWS KMS</b> (theo Region, có thể xin tăng) – workload hàng nghìn request/giây có thể bị throttling; đó là lý do có S3 Bucket Keys.</li>
+      </ul>
+
+      <h3>S3 Bucket Keys – giảm chi phí và tải KMS</h3>
+      <ul>
+        <li>Không có Bucket Key: S3 dùng <b>một data key riêng cho mỗi object</b> và gọi KMS cho <b>mỗi request</b> tới object mã hóa KMS.</li>
+        <li>Có Bucket Key: KMS sinh một <b>bucket-level key ngắn hạn</b>, S3 giữ tạm và dùng nó tạo data key cho object mới ⇒ giảm request <code>Encrypt</code>/<code>GenerateDataKey</code>/<code>Decrypt</code> tới KMS, <b>giảm tới 99%</b> chi phí request KMS. Bật bằng vài click, <b>không sửa ứng dụng</b>.</li>
+        <li>Tác dụng phụ: CloudTrail của KMS ghi <b>ARN bucket</b> thay vì ARN object và <b>ít event hơn</b>; IAM/key policy nào dùng ARN object làm encryption context phải đổi sang ARN bucket.</li>
+        <li>Chỉ áp dụng cho object <b>mới</b>; object cũ cần <code>CopyObject</code>. <b>Không hỗ trợ DSSE-KMS.</b> Dùng được với SRR/CRR.</li>
+      </ul>
+
+      <h3>DSSE-KMS – mã hóa hai lớp</h3>
+      <p><span class="t" data-vi="Mã hóa phía máy chủ hai lớp với KMS">DSSE-KMS</span> áp dụng <b>hai lớp AES-256 độc lập</b>: lớp 1 bằng data key do AWS KMS sinh, lớp 2 bằng một key AES-256 riêng do S3 quản lý. Dùng khi tiêu chuẩn compliance <b>bắt buộc mã hóa nhiều lớp</b> và cần toàn quyền kiểm soát key. Đánh đổi: độ trễ cao hơn một chút, <b>phí cao hơn</b> SSE-KMS, không có Bucket Keys. Ép bằng bucket policy <code>s3:x-amz-server-side-encryption = aws:kms:dsse</code>.</p>
+
+      <h3>SSE-C – khách hàng tự cung cấp key</h3>
+      <ul>
+        <li>Bạn gửi key trong <b>mỗi request</b>; S3 mã hóa/giải mã thay bạn nhưng <b>không bao giờ lưu key</b>. Bạn phải tự theo dõi key nào mã hóa object (version) nào – <b>mất key = mất object</b>.</li>
+        <li><b>Bắt buộc HTTPS</b>: S3 từ chối request SSE-C qua HTTP; key lỡ gửi qua HTTP coi như bị lộ.</li>
+        <li><b>Không hỗ trợ trên S3 console</b> (không upload, không sửa storage class/metadata của object SSE-C qua console). Dịch vụ AWS managed <b>không giải mã native</b> được object SSE-C.</li>
+        <li><b>Thay đổi 04/2026</b>: SSE-C bị <b>tắt mặc định</b> cho mọi general purpose bucket mới và bucket hiện có trong account chưa từng có object SSE-C. Muốn dùng phải chủ động bật bằng <code>PutBucketEncryption</code> (đặt <code>BlockedEncryptionTypes</code> = <code>NONE</code>). Khi bị chặn, mọi <code>PutObject</code>/<code>CopyObject</code>/<code>PostObject</code>/multipart/replication chỉ định SSE-C bị lỗi <b>403 AccessDenied</b>.</li>
+      </ul>
+
+      <h3>Client-side encryption</h3>
+      <p>Bạn mã hóa dữ liệu <b>trước khi gửi</b> lên S3 và tự quản lý quy trình, key và công cụ (vd Amazon S3 Encryption Client). S3 chỉ lưu ciphertext. Chọn khi đề nói “<i>data must be encrypted before it leaves the on-premises environment</i>” hoặc “<i>AWS must never have access to plaintext data or keys</i>”.</p>
+
+      <h3>Ép buộc mã hóa bằng policy</h3>
+<pre>{
+  <span class="s">"Sid"</span>: "DenyObjectsThatAreNotSSEKMS",
+  <span class="s">"Effect"</span>: <span class="k">"Deny"</span>, <span class="s">"Principal"</span>: "*",
+  <span class="s">"Action"</span>: "s3:PutObject",
+  <span class="s">"Resource"</span>: "arn:aws:s3:::amzn-s3-demo-bucket1/*",
+  <span class="s">"Condition"</span>: { "Null": { <span class="k">"s3:x-amz-server-side-encryption-aws-kms-key-id": "true"</span> } }
+}</pre>
+      <ul>
+        <li>Policy trên từ tài liệu: từ chối upload nếu request không kèm header KMS key ID. Muốn ép <b>một key cụ thể</b> ⇒ <code>StringNotEquals</code> trên <code>s3:x-amz-server-side-encryption-aws-kms-key-id</code> với <b>ARN đầy đủ</b> của key.</li>
+        <li>Ngày nay cách đơn giản hơn thường là đặt <b>default encryption</b> của bucket = SSE-KMS (object không chỉ định header sẽ tự mã hóa bằng key mặc định); policy deny dùng khi cần <b>cưỡng chế</b> và chặn key lạ.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Mã hóa</span>
+        <ul>
+          <li>“<i>Encrypt at rest with least operational overhead</i>” ⇒ <b>SSE-S3</b> (đã mặc định).</li>
+          <li>“<i>Audit who used the key / control key rotation / separate permissions for key and data</i>” ⇒ <b>SSE-KMS với customer managed key</b>.</li>
+          <li>“<i>Share KMS-encrypted objects with another account</i>” ⇒ customer managed key + key policy cho account kia (không dùng <code>aws/s3</code>).</li>
+          <li>“<i>SSE-KMS costs are high / KMS throttling (ThrottlingException) with millions of objects</i>” ⇒ <b>S3 Bucket Keys</b>.</li>
+          <li>“<i>Regulation requires multi-layer (dual-layer) encryption</i>” ⇒ <b>DSSE-KMS</b>.</li>
+          <li>“<i>Company must manage keys outside AWS and supply them per request</i>” ⇒ <b>SSE-C</b>; “<i>encrypt before upload, AWS never sees plaintext</i>” ⇒ <b>client-side encryption</b>.</li>
+          <li>“<i>Encrypt existing unencrypted/SSE-S3 objects with KMS</i>” ⇒ đổi default encryption + <b>S3 Batch Operations Copy</b> (dựa trên S3 Inventory).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – Mã hóa</span>
+        <ul>
+          <li>User có <code>s3:GetObject</code> nhưng vẫn nhận <b>AccessDenied</b> ⇒ thiếu <code>kms:Decrypt</code> trên key (hay gặp trong cross-account, replication, Athena/Glue đọc bucket SSE-KMS).</li>
+          <li>Đổi default encryption <b>không</b> mã hóa lại object cũ.</li>
+          <li>SSE-C và client-side encryption <b>không</b> cho bạn audit qua CloudTrail KMS; SSE-S3 cũng không có audit key riêng.</li>
+          <li>“Mã hóa bằng KMS key ở Region khác” ⇒ không được; key phải cùng Region với bucket (replication CRR dùng key ở Region đích – Bài 15).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: OBJECT LOCK & VAULT LOCK ===================== -->
+      <h2 id="object-lock"><img src="../assets/icons/res/Amazon-Simple-Storage-Service-Glacier_Vault.svg" alt="">S3 Object Lock và Glacier Vault Lock – lưu trữ WORM</h2>
+      <p class="lead"><span class="t" data-vi="Khóa đối tượng S3">S3 Object Lock</span> ngăn object bị <b>xóa hoặc ghi đè</b> trong một khoảng thời gian cố định, thay đổi được, hoặc vô thời hạn, theo mô hình <span class="t" data-vi="Ghi một lần, đọc nhiều lần">WORM (write-once-read-many)</span>. Object Lock đã được <b>Cohasset Associates</b> đánh giá cho môi trường chịu quy định <b>SEC 17a-4, CFTC và FINRA</b>.</p>
+
+      <div class="stats">
+        <div class="stat"><b>2</b><span>retention mode: Governance và Compliance</span></div>
+        <div class="stat"><b>2</b><span>cơ chế: retention period và legal hold (độc lập)</span></div>
+        <div class="stat"><b>Bắt buộc</b><span>bucket phải bật S3 Versioning</span></div>
+        <div class="stat"><b>Một chiều</b><span>bật rồi không tắt được, không suspend versioning được</span></div>
+        <div class="stat"><b>1–36.500 ngày</b><span>hoặc 1–100 năm cho event hold duration (variable retention)</span></div>
+        <div class="stat"><b>24 giờ</b><span>để hoàn tất Glacier Vault Lock sau khi initiate</span></div>
+      </div>
+
+      <h3>Nguyên lý: khóa theo từng object version</h3>
+      <ul>
+        <li>Thông tin khóa lưu trong <b>metadata của từng object version</b>. Khóa chỉ bảo vệ <b>đúng version</b> được chỉ định; <b>không</b> ngăn tạo version mới hoặc chèn delete marker lên trên.</li>
+        <li>PUT object trùng key với object đang bị khóa ⇒ tạo <b>version mới</b>; version cũ vẫn khóa theo cấu hình của nó. Ví dụ tài liệu: version cũ đang ở ngày 15 của retention 30 ngày, PUT version mới với 60 ngày ⇒ version cũ xóa được sau 15 ngày nữa.</li>
+        <li>Xóa object bị khóa:
+          <ul>
+            <li><b>DELETE kèm version ID</b> (xóa vĩnh viễn) ⇒ <b>403 Access Denied</b>.</li>
+            <li><b>DELETE thường</b> (không version ID) ⇒ <b>200 OK</b>, S3 chèn <b>delete marker</b> làm current version – dữ liệu version bị khóa vẫn còn nguyên.</li>
+          </ul></li>
+        <li>Bật Object Lock: lúc <b>tạo bucket</b> (console: Advanced settings, hoặc <code>--object-lock-enabled-for-bucket</code>) <b>hoặc trên bucket đã có</b> (Properties ⇒ Object Lock, hoặc <code>PutObjectLockConfiguration</code>). Phải xác nhận rằng việc bật là <b>vĩnh viễn</b>.</li>
+        <li>Bucket có Object Lock <b>không dùng làm đích server access log</b> được. Replication bucket nguồn có Object Lock thì đích cũng phải bật Object Lock (Bài 15).</li>
+      </ul>
+
+      <h3>Governance mode vs Compliance mode</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Governance mode</h4>
+          <ul>
+            <li>Hầu hết user <b>không</b> xóa/ghi đè version hay sửa cài đặt khóa được.</li>
+            <li>User có quyền đặc biệt <code>s3:BypassGovernanceRetention</code> <b>và</b> gửi header <code>x-amz-bypass-governance-retention:true</code> thì <b>vượt qua</b> được (console tự gửi header này).</li>
+            <li>Dùng để bảo vệ khỏi đa số người dùng nhưng vẫn cho admin linh hoạt; hoặc để <b>thử nghiệm</b> retention trước khi chuyển sang Compliance.</li>
+          </ul></div>
+        <div style="--accent:#D13212"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service-Glacier_Vault.svg" alt="">Compliance mode</h4>
+          <ul>
+            <li><b>Không ai</b> xóa/ghi đè version được, <b>kể cả root user</b>.</li>
+            <li>Không đổi được mode, <b>không rút ngắn</b> được retention period (chỉ <b>kéo dài</b> được).</li>
+            <li>Cách duy nhất xóa trước hạn: <b>xóa luôn AWS account</b>.</li>
+            <li>Dùng cho dữ liệu phải tuân thủ quy định (tài chính, y tế, kiểm toán).</li>
+          </ul></div>
+      </div>
+
+      <h3>Retention period: fixed và variable</h3>
+      <ul>
+        <li><b>Fixed retention</b>: chỉ định <b>Retain Until Date</b>. Có thể đặt cho từng version hoặc làm <b>default retention</b> của bucket (số ngày/năm, S3 cộng vào thời điểm tạo version). Setting riêng của version <b>ghi đè</b> default của bucket.</li>
+        <li><b>Variable retention</b> (event hold): bật <b>event hold</b> + <b>event hold duration</b>; object được bảo vệ suốt khi hold còn bật; khi release, S3 đặt retain-until-date = <b>thời điểm release + duration</b>. Trong lúc hold bật, ngày này “trôi” theo thời gian (vd duration 1 năm, xem lúc 2027-01-01 ⇒ 2028-01-01). Giảm duration không kéo lùi được retain-until-date đã tính. Có thể kèm retain-until-date tối thiểu – S3 lấy ngày <b>muộn hơn</b>.</li>
+        <li>Use case variable retention: chưa biết ngày hết hạn lúc ghi – vd thời hạn tính từ sự kiện kinh doanh (hoàn tất hợp đồng, đóng tài khoản, giải quyết bồi thường) hoặc cửa sổ khôi phục cấu hình được chống ransomware.</li>
+        <li>Giới hạn min/max retention được phép bằng điều kiện <code>s3:object-lock-remaining-retention-days</code> trong bucket policy.</li>
+        <li>Quyền: <code>s3:PutObjectRetention</code> (đặt/kéo dài retention), <code>s3:GetObjectRetention</code>, <code>s3:PutBucketObjectLockConfiguration</code>, <code>s3:BypassGovernanceRetention</code>…</li>
+      </ul>
+
+      <h3>Legal hold</h3>
+      <ul>
+        <li>Bảo vệ giống retention period nhưng <b>không có ngày hết hạn</b> – tồn tại tới khi bị gỡ. Ai có <code>s3:PutObjectLegalHold</code> đều đặt/gỡ được.</li>
+        <li><b>Độc lập</b> với retention: retention hết hạn mà legal hold còn ⇒ object vẫn được bảo vệ; gỡ legal hold khi retention còn hiệu lực ⇒ vẫn được bảo vệ tới hết retention.</li>
+        <li>Use case: <b>chưa biết cần giữ bao lâu</b> – vụ kiện, cuộc kiểm toán sắp tới, dự án đang dùng dataset.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 820 300" width="820" role="img" aria-label="Dòng thời gian bảo vệ của retention period và legal hold">
+          <defs><marker id="ah16c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <text x="20" y="24" font-size="13" font-weight="700">Một object version – khi nào xóa được?</text>
+          <path class="line-o" d="M120 250 L800 250" marker-end="url(#ah16c)"/>
+          <text x="800" y="270" font-size="10.5" text-anchor="end" class="muted">thời gian</text>
+          <text x="120" y="270" font-size="10.5" text-anchor="middle">PUT (ngày 0)</text>
+          <!-- row 1 retention -->
+          <text x="20" y="72" font-size="11.5" font-weight="700">Retention</text>
+          <text x="20" y="87" font-size="10" class="muted">Compliance 365 ngày</text>
+          <rect x="120" y="56" width="400" height="34" rx="6" fill="#D13212" opacity=".18" stroke="#D13212"/>
+          <text x="320" y="78" font-size="11" text-anchor="middle" font-weight="600">khóa tới Retain Until Date (không rút ngắn được)</text>
+          <!-- row 2 legal hold -->
+          <text x="20" y="132" font-size="11.5" font-weight="700">Legal hold</text>
+          <text x="20" y="147" font-size="10" class="muted">bật ngày 300, gỡ ngày 500</text>
+          <rect x="420" y="116" width="250" height="34" rx="6" fill="#8C4FFF" opacity=".18" stroke="#8C4FFF"/>
+          <text x="545" y="138" font-size="11" text-anchor="middle" font-weight="600">ON – không có hạn</text>
+          <!-- row 3 effective -->
+          <text x="20" y="192" font-size="11.5" font-weight="700">Hiệu lực</text>
+          <text x="20" y="207" font-size="10" class="muted">= hợp của 2 cơ chế</text>
+          <rect x="120" y="176" width="550" height="34" rx="6" fill="#7AA116" opacity=".18" stroke="#7AA116"/>
+          <text x="395" y="198" font-size="11" text-anchor="middle" font-weight="600">WORM: DELETE kèm versionId ⇒ 403</text>
+          <rect x="670" y="176" width="125" height="34" rx="6" fill="none" stroke="#545B64" stroke-dasharray="4 3"/>
+          <text x="732" y="198" font-size="11" text-anchor="middle">xóa được</text>
+          <path d="M520 50 L520 250" stroke="#D13212" stroke-dasharray="4 3"/>
+          <text x="520" y="44" font-size="10" text-anchor="middle">hết retention</text>
+          <path d="M670 110 L670 250" stroke="#8C4FFF" stroke-dasharray="4 3"/>
+          <text x="670" y="104" font-size="10" text-anchor="middle">gỡ legal hold</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Retention period và legal hold độc lập nhau – version được bảo vệ khi <b>ít nhất một</b> cơ chế còn hiệu lực. Ở ví dụ, retention Compliance hết hạn ở ngày 365 nhưng legal hold vẫn bật tới ngày 500, nên tới ngày 500 version mới xóa được. DELETE thường (không version ID) lúc nào cũng thành công nhưng chỉ chèn delete marker.</figcaption>
+      </figure>
+
+      <h3>Glacier Vault Lock (dịch vụ Glacier gốc dùng vault)</h3>
+      <p><span class="t" data-vi="Khóa kho lưu trữ Glacier">Glacier Vault Lock</span> cho phép triển khai và cưỡng chế các control compliance (vd WORM, deny delete trước N ngày) cho một <b>vault</b> của Amazon Glacier bằng <b>Vault Lock policy</b> (ngôn ngữ IAM policy), rồi <b>khóa policy</b> để không ai sửa được nữa.</p>
+      <ol class="steps">
+        <li><b>Initiate</b> – gắn Vault Lock policy vào vault ⇒ lock ở trạng thái <b>in-progress</b> và trả về <b>lock ID</b>.</li>
+        <li><b>Kiểm thử trong 24 giờ</b> – nếu policy không như ý, <b>abort</b> và làm lại. Quá 24 giờ mà chưa complete ⇒ lock ID hết hạn, policy bị xóa.</li>
+        <li><b>Complete</b> bằng lock ID ⇒ policy <b>không thể sửa hay xóa</b> nữa.</li>
+      </ol>
+      <ul>
+        <li><b>Vault Lock policy</b> (bất biến, cho compliance) khác <b>vault access policy</b> (sửa thường xuyên, cho quyền tạm thời/không compliance). Dùng chung được: Vault Lock policy deny delete, access policy allow read cho đối tác.</li>
+        <li>AWS khuyên tạo vault, hoàn tất Vault Lock policy <b>rồi mới upload archive</b>.</li>
+        <li><b>Lưu ý hiện trạng</b>: Amazon Glacier dạng vault (API gốc 2012) <b>không còn nhận khách hàng mới</b>; AWS khuyên dùng các <b>S3 Glacier storage class</b> trong S3 – khi đó WORM được làm bằng <b>S3 Object Lock</b>. Đề cũ vẫn có thể hỏi “<i>Glacier vault lock</i>” cho yêu cầu WORM trên archive.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Object Lock / Vault Lock</span>
+        <ul>
+          <li>“<i>WORM, SEC 17a-4, no one including the root user can delete for 7 years</i>” ⇒ <b>Object Lock – Compliance mode</b> (retention 7 năm).</li>
+          <li>“<i>Prevent deletion by most users, but allow a few administrators to delete/shorten retention</i>” ⇒ <b>Governance mode</b> + <code>s3:BypassGovernanceRetention</code> cho admin.</li>
+          <li>“<i>Retain objects indefinitely until litigation ends</i>” ⇒ <b>legal hold</b>.</li>
+          <li>“<i>Retention period starts when a contract ends (unknown at write time)</i>” ⇒ <b>variable retention (event hold)</b>.</li>
+          <li>“<i>Protect backups/CloudTrail logs from ransomware or a compromised admin</i>” ⇒ Versioning + <b>Object Lock</b> (thường kèm replication sang account riêng – Bài 15).</li>
+          <li>“<i>Archive vault policy must be immutable</i>” ⇒ <b>Glacier Vault Lock</b> (initiate ⇒ 24 giờ test ⇒ complete).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – Object Lock</span>
+        <ul>
+          <li>“Object Lock ngăn mọi lệnh DELETE” ⇒ <b>sai</b>: DELETE không version ID vẫn thành công (tạo delete marker); chỉ version bị khóa là không mất.</li>
+          <li>Governance mode <b>không</b> đáp ứng yêu cầu “even the root user cannot delete” – phải là Compliance.</li>
+          <li>Compliance mode đặt nhầm 100 năm thì không rút ngắn được – AWS khuyên thử bằng Governance trước.</li>
+          <li>MFA Delete (Bài 14) chỉ yêu cầu thêm MFA khi xóa version; <b>không</b> phải WORM và không có thời hạn lưu giữ.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: PRESIGNED URL ===================== -->
+      <h2 id="presigned-url"><img src="../assets/icons/res/AWS-Identity-Access-Management_Temporary-Security-Credential.svg" alt="">Presigned URL – chia sẻ và upload có thời hạn</h2>
+      <p class="lead"><span class="t" data-vi="URL ký sẵn">Presigned URL</span> cấp quyền <b>có thời hạn</b> để tải (GET), upload (PUT), đọc metadata (HEAD)… một object cụ thể <b>mà không cần sửa bucket policy</b> và người dùng không cần credential AWS. URL dùng <b>credential của IAM principal đã tạo ra nó</b>, và dùng được <b>nhiều lần</b> tới khi hết hạn.</p>
+
+      <div class="stats">
+        <div class="stat"><b>12 giờ</b><span>tối đa khi tạo bằng S3 console (từ 1 phút)</span></div>
+        <div class="stat"><b>7 ngày</b><span>tối đa khi tạo bằng AWS CLI/SDK (SigV4, IAM user)</span></div>
+        <div class="stat"><b>~6 giờ</b><span>credential của EC2 instance profile</span></div>
+        <div class="stat"><b>1 giờ</b><span>mặc định session của STS AssumeRole</span></div>
+        <div class="stat"><b>604800</b><span>giây = 7 ngày (<code>--expires-in</code>)</span></div>
+        <div class="stat"><b>5 TB</b><span>object tối đa chia sẻ presigned qua console</span></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng<small>trình duyệt / mobile</small></div>
+          <span class="arrow">① xin upload</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Backend<small>Lambda / EC2 với IAM role có s3:PutObject</small></div>
+          <span class="arrow dashed">② ký URL (SDK)</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_Temporary-Security-Credential.svg" alt="">Presigned URL<small>bucket + key + PUT + hết hạn 15 phút</small></div>
+          <span class="arrow">③ PUT trực tiếp</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 bucket<small>private, BPA bật</small></div>
+        </div>
+        <figcaption><b>Hình 4.</b> Mẫu upload trực tiếp lên S3 bằng presigned URL: backend chỉ <b>ký</b> URL (không nhận file), client upload thẳng vào bucket private ⇒ giảm tải cho server, bucket không cần public, người dùng không cần credential AWS. Nếu object cùng key đã tồn tại, S3 <b>ghi đè</b> object đó (hoặc tạo version mới nếu bật versioning).</figcaption>
+      </figure>
+
+      <h3>Thời hạn phụ thuộc credential tạo URL</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Credential dùng để ký</th><th>URL hiệu lực tối đa</th></tr></thead>
+        <tbody>
+          <tr><td><b>IAM user</b> (access key dài hạn, SigV4)</td><td>Tới <b>7 ngày</b></td></tr>
+          <tr><td><b>IAM role</b> (credential tạm)</td><td>Hết khi <b>role session hết hạn</b>, dù đặt expiration dài hơn</td></tr>
+          <tr><td><b>EC2 instance profile</b></td><td>Thời hạn credential của role (thường <b>~6 giờ</b>, xoay vòng định kỳ)</td></tr>
+          <tr><td><b>AWS STS</b> (AssumeRole…)</td><td>Chỉ trong thời hạn của credential tạm (AssumeRole mặc định <b>1 giờ</b>)</td></tr>
+          <tr><td>ECS task role</td><td>Credential thường xoay vòng mỗi 1–6 giờ</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>URL hết hạn ở thời điểm <b>sớm hơn</b> giữa expiration đã đặt và lúc credential hết hạn. Credential bị <b>revoke, xóa, deactivate</b> ⇒ URL mất hiệu lực ngay.</li>
+        <li>S3 kiểm tra hạn <b>lúc bắt đầu request</b>: tải file lớn bắt đầu ngay trước giờ hết hạn vẫn tải xong; nhưng mất kết nối rồi thử lại sau giờ hết hạn thì thất bại.</li>
+        <li>Người tạo URL phải <b>có quyền</b> thực hiện thao tác đó (vd <code>s3:GetObject</code>) – nếu không, URL tạo được nhưng dùng sẽ bị <b>403</b>. Bucket policy explicit deny vẫn chặn.</li>
+        <li>Region ra mắt sau <b>20/03/2019</b> phải chỉ định <code>--region</code> và <code>--endpoint-url</code> khi presign bằng CLI.</li>
+        <li>Upload qua presigned URL kiểm tra toàn vẹn được bằng checksum (SigV4 hỗ trợ CRC32, CRC32C, SHA-256…; SigV2 chỉ MD5).</li>
+      </ul>
+
+      <h3>Giới hạn rủi ro của presigned URL</h3>
+      <p>Presigned URL là <b>bearer token</b> – ai có URL đều dùng được. Các cách hạn chế theo tài liệu:</p>
+      <ul>
+        <li><b><code>s3:signatureAge</code></b> trong bucket/access point policy: deny nếu chữ ký cũ hơn N mili giây (ví dụ tài liệu: <code>600000</code> = 10 phút).</li>
+        <li><b>Network path</b>: deny nếu không đến từ dải IP (<code>aws:SourceIp</code> – endpoint công khai) hoặc từ VPC/VPC endpoint (<code>aws:SourceVpc</code>/<code>aws:SourceVpce</code>). Đặt trên principal ký URL, trên bucket, hoặc cả hai.</li>
+        <li>Đặt expiration ngắn nhất có thể; ký bằng role có quyền tối thiểu.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Presigned URL</span>
+        <ul>
+          <li>“<i>Allow users without AWS credentials to download/upload a specific private object for a limited time</i>” ⇒ <b>presigned URL</b>.</li>
+          <li>“<i>Mobile/web clients upload large files directly to S3 without passing through the application servers</i>” ⇒ backend sinh <b>presigned PUT URL</b> (kết hợp multipart nếu file lớn).</li>
+          <li>“<i>Presigned URL expires earlier than configured</i>” ⇒ URL được ký bằng <b>credential tạm</b> (role/instance profile/STS) – ký bằng credential có thời hạn dài hơn.</li>
+          <li>“<i>Serve private content to many users via CDN with expiring links</i>” ⇒ <b>CloudFront signed URL/signed cookies</b> + OAC, không phải S3 presigned URL (bài CloudFront).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – Presigned URL</span>
+        <ul>
+          <li>“Tạo presigned URL hiệu lực 30 ngày” ⇒ <b>không</b> được; tối đa 7 ngày (SigV4).</li>
+          <li>Presigned URL không “mở public” bucket và <b>không cần</b> tắt Block Public Access.</li>
+          <li>Ai cầm URL cũng dùng được trong thời hạn – không gắn với danh tính người nhận. Muốn thu hồi sớm ⇒ revoke/vô hiệu credential đã ký (hoặc session của role).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: ACCESS POINTS ===================== -->
+      <h2 id="access-points"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_General-Access-Points.svg" alt="">S3 Access Points – quản lý truy cập dataset dùng chung</h2>
+      <p class="lead"><span class="t" data-vi="Điểm truy cập S3">S3 Access Points</span> là các <b>network endpoint có tên</b> gắn vào một nguồn dữ liệu (bucket, volume FSx for NetApp ONTAP / OpenZFS, hoặc S3 recovery point của AWS Backup). Mỗi access point có <b>policy riêng</b>, <b>network control riêng</b> (Internet hoặc chỉ VPC) và <b>Block Public Access riêng</b>. Thay vì một bucket policy khổng lồ phục vụ hàng trăm ứng dụng, mỗi ứng dụng/nhóm dùng một access point.</p>
+
+      <div class="stats">
+        <div class="stat"><b>10.000</b><span>access point mỗi account mỗi Region (xin tăng được)</span></div>
+        <div class="stat"><b>20 KB</b><span>kích thước tối đa access point policy</span></div>
+        <div class="stat"><b>3–50</b><span>ký tự tên access point, duy nhất trong account + Region</span></div>
+        <div class="stat"><b>1</b><span>bucket/volume cho mỗi access point – không đổi được</span></div>
+        <div class="stat"><b>HTTPS</b><span>only; bắt buộc SigV4; không anonymous</span></div>
+        <div class="stat"><b>VPC / Internet</b><span>network origin – không đổi sau khi tạo</span></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Storage.svg" alt="">AWS Cloud – Region ap-southeast-1</span>
+          <div class="row">
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC analytics</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EMR / EC2<small>đội Analytics</small></div>
+                <span class="arrow">gateway endpoint</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_VPC-Access-Points.svg" alt="">AP analytics-vpc<small>origin = VPC · GET prefix raw/</small></div>
+              </div>
+            </div>
+            <div class="grp region"><span class="lbl">Ứng dụng khác</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Ingest app<small>role ingest</small></div>
+                <span class="arrow">PUT</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_General-Access-Points.svg" alt="">AP ingest<small>PUT prefix raw/</small></div>
+              </div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account đối tác<small>cross-account AP</small></div>
+                <span class="arrow dashed">GET</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_General-Access-Points.svg" alt="">AP partner<small>GET prefix shared/</small></div>
+              </div>
+            </div>
+          </div>
+          <div class="row center">
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">Bucket data-lake<small>bucket policy ủy quyền: s3:DataAccessPointAccount = 111122223333</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> Một bucket, ba access point. Bucket policy chỉ cần <b>ủy quyền</b> cho các access point của account (<code>s3:DataAccessPointAccount</code>); quyền chi tiết theo prefix nằm trong từng access point policy. Access point có <b>VPC network origin</b> chỉ nhận request từ VPC chỉ định và luôn được coi là non-public. Request phải được <b>cả</b> access point policy lẫn bucket policy cho phép.</figcaption>
+      </figure>
+
+      <h3>Cách hoạt động</h3>
+      <ul>
+        <li>Chỉ dùng cho <b>thao tác trên object</b> (GetObject, PutObject, ListBucket qua AP…) – không dùng để xóa bucket hay tạo replication configuration. Access point <b>không làm đích replication</b> được.</li>
+        <li>Để access point policy có hiệu lực, bucket cũng phải cho phép – hai cách: <b>(khuyến nghị) ủy quyền</b> toàn bộ kiểm soát cho access point bằng bucket policy với điều kiện <code>s3:DataAccessPointAccount</code>, hoặc lặp lại quyền trong bucket policy.</li>
+        <li>Resource trong access point policy có dạng <code>arn:aws:s3:region:account:accesspoint/name/object/prefix/*</code> (khác ARN bucket).</li>
+        <li>Policy access point chỉ áp dụng cho request <b>đi qua</b> access point đó; truy cập trực tiếp vào bucket vẫn theo bucket policy như cũ.</li>
+        <li>Điều kiện hữu ích: <code>s3:AccessPointNetworkOrigin</code> (<code>VPC</code>/<code>Internet</code>), <code>s3:DataAccessPointArn</code>, <code>s3:DataAccessPointAccount</code>. Ví dụ tài liệu: <b>SCP</b> deny <code>s3:CreateAccessPoint</code> khi network origin ≠ VPC ⇒ cả tổ chức chỉ tạo được access point nội bộ VPC; <b>bucket policy</b> deny mọi thao tác object không đi qua access point VPC.</li>
+        <li><b>Cross-account access point</b>: account khác tạo access point trỏ tới bucket của bạn, nhưng giống CNAME DNS – <b>không cấp quyền gì</b> cho tới khi bucket owner cập nhật bucket policy. Bucket owner luôn giữ quyền kiểm soát cuối cùng.</li>
+        <li>Access point chỉ địa chỉ hóa theo <b>virtual-hosted-style</b>; có <b>alias</b> (hậu tố <code>-s3alias</code>) dùng thay tên bucket ở các ứng dụng chỉ nhận bucket name.</li>
+        <li>Biến thể liên quan: <b>Multi-Region Access Points</b> (một endpoint toàn cầu định tuyến tới bucket gần nhất, failover – Bài 15) và <b>S3 Object Lambda Access Points</b> (chạy Lambda biến đổi dữ liệu khi GET, vd che PII).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Access Points</span>
+        <ul>
+          <li>“<i>Hundreds of applications/teams share one bucket; the bucket policy is becoming too complex to manage</i>” ⇒ <b>S3 Access Points</b>, mỗi team một access point policy.</li>
+          <li>“<i>Data in the bucket must be accessible only from a specific VPC</i>” ⇒ access point với <b>VPC network origin</b> (hoặc bucket policy <code>aws:SourceVpce</code>).</li>
+          <li>“<i>Redact PII when an application reads objects, without storing a second copy</i>” ⇒ <b>S3 Object Lambda Access Point</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: CORS ===================== -->
+      <h2 id="cors"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">CORS – cho phép ứng dụng web khác domain gọi S3</h2>
+      <p class="lead"><span class="t" data-vi="Chia sẻ tài nguyên khác nguồn gốc">Cross-origin resource sharing (CORS)</span> định nghĩa cách ứng dụng web chạy trên trình duyệt ở <b>một domain</b> tương tác với tài nguyên ở <b>domain khác</b>. Trình duyệt mặc định chặn JavaScript gọi khác origin; S3 trả các header CORS khi bucket có <b>CORS configuration</b> phù hợp. CORS là cơ chế của <b>trình duyệt</b>, <b>không thay thế</b> quyền truy cập: ACL và policy vẫn áp dụng.</p>
+
+      <h3>Hai kịch bản trong tài liệu</h3>
+      <ol class="steps">
+        <li>Website tĩnh ở <code>http://website.s3-website.us-east-1.amazonaws.com</code>; JavaScript trên trang muốn gọi GET/PUT có xác thực tới API endpoint <code>website.s3.us-east-1.amazonaws.com</code> – hai origin khác nhau ⇒ bật CORS cho origin website.</li>
+        <li>Host <b>web font</b> trên S3: trình duyệt bắt buộc <b>preflight check</b> khi tải font ⇒ cấu hình bucket chứa font cho phép origin cần thiết (hoặc mọi origin).</li>
+      </ol>
+
+      <h3>Các phần tử của CORS configuration</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Phần tử</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><code>AllowedOrigins</code></td><td>Origin được phép, vd <code>https://www.example.com</code>; tối đa <b>một</b> ký tự <code>*</code> (vd <code>http://*.example.com</code>) hoặc <code>*</code> cho mọi origin.</td></tr>
+          <tr><td><code>AllowedMethods</code></td><td>Chỉ gồm <code>GET</code>, <code>PUT</code>, <code>POST</code>, <code>DELETE</code>, <code>HEAD</code>.</td></tr>
+          <tr><td><code>AllowedHeaders</code></td><td>Header được phép trong preflight (<code>Access-Control-Request-Headers</code>); mỗi chuỗi tối đa một <code>*</code> (vd <code>x-amz-*</code>).</td></tr>
+          <tr><td><code>ExposeHeaders</code></td><td>Header phản hồi mà JavaScript được đọc (vd <code>x-amz-server-side-encryption</code>, <code>x-amz-request-id</code>).</td></tr>
+          <tr><td><code>MaxAgeSeconds</code></td><td>Thời gian (giây) trình duyệt cache kết quả preflight <code>OPTIONS</code> (ví dụ tài liệu: 3000).</td></tr>
+        </tbody>
+      </table></div>
+<pre>[
+  {
+    <span class="s">"AllowedHeaders"</span>: ["*"],
+    <span class="s">"AllowedMethods"</span>: ["PUT", "POST", "DELETE"],
+    <span class="s">"AllowedOrigins"</span>: [<span class="k">"https://www.example.com"</span>],
+    <span class="s">"ExposeHeaders"</span>: ["x-amz-server-side-encryption", "x-amz-request-id", "x-amz-id-2"],
+    <span class="s">"MaxAgeSeconds"</span>: 3000
+  }
+]</pre>
+      <ul>
+        <li>Tối đa <b>100 rule</b> mỗi configuration; trên console phải viết bằng <b>JSON</b>.</li>
+        <li>Khi nhận preflight, S3 dùng <b>rule đầu tiên khớp</b>: <code>Origin</code> khớp <code>AllowedOrigins</code>, method trong <code>Access-Control-Request-Method</code> khớp <code>AllowedMethods</code>, mọi header trong <code>Access-Control-Request-Headers</code> khớp <code>AllowedHeaders</code>.</li>
+        <li>CORS được cấu hình trên bucket <b>chứa tài nguyên được gọi tới</b> (bucket đích), không phải bucket chứa trang web gọi đi.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – CORS</span>
+        <p>“<i>A static website in bucket A loads images/fonts/JSON from bucket B (or calls the S3 API from JavaScript) and the browser shows a CORS error / ‘No Access-Control-Allow-Origin header’</i>” ⇒ thêm <b>CORS configuration trên bucket B</b> cho origin của website A. Không phải sửa IAM, không phải tắt Block Public Access.</p></div>
+
+      <!-- ===================== PHẦN 9: MONITORING ===================== -->
+      <h2 id="monitoring"><img src="../assets/icons/svc/AWS-Security-Hub.svg" alt="">Giám sát và kiểm toán bảo mật S3</h2>
+      <p class="lead">Phòng ngừa chưa đủ – tài liệu “Security best practices” liệt kê nhóm <b>monitoring &amp; auditing</b> và các <b>managed AWS security services</b> giúp phát hiện cấu hình sai, dữ liệu nhạy cảm và hành vi bất thường trên S3, từ một account tới hàng nghìn account trong Organization.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-IAM-Access-Analyzer.svg" alt="">
+          <div><h4>IAM Access Analyzer for S3</h4><span class="vi">Phân tích truy cập</span><p>Suy luận logic trên bucket policy, ACL, access point / Multi-Region Access Point policy ⇒ finding bucket <b>public hoặc chia sẻ với account ngoài</b>; block public một click.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Macie.svg" alt="">
+          <div><h4>Amazon Macie</h4><span class="vi">Phát hiện dữ liệu nhạy cảm</span><p>Machine learning + pattern matching tìm <b>PII</b>, dữ liệu tài chính, credential trong object S3; hỗ trợ custom regex.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-GuardDuty.svg" alt="">
+          <div><h4>GuardDuty S3 Protection</h4><span class="vi">Phát hiện mối đe dọa</span><p>Phân tích CloudTrail management + data events của S3 bằng threat intelligence và ML để phát hiện truy cập độc hại, bất thường.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">
+          <div><h4>AWS CloudTrail</h4><span class="vi">Nhật ký API</span><p>Management events (PutBucketPolicy, PutBucketAcl…) có sẵn; <b>data events</b> (GetObject, PutObject, DeleteObject) phải bật trên trail.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Config.svg" alt="">
+          <div><h4>AWS Config</h4><span class="vi">Đánh giá cấu hình</span><p>Managed rule: <code>s3-bucket-public-read/write-prohibited</code>, <code>s3-bucket-ssl-requests-only</code>, <code>s3-bucket-versioning-enabled</code>, <code>s3-bucket-logging-enabled</code>… (chỉ general purpose bucket).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Trusted-Advisor.svg" alt="">
+          <div><h4>Trusted Advisor · Security Hub · Detective</h4><span class="vi">Tư vấn · Tổng hợp finding · Điều tra</span><p>Cảnh báo bucket “open access permissions”; Security Hub CSPM gom finding và chạy control (vd S3.8); Detective dựng behavior graph để điều tra.</p></div></div>
+      </div>
+      <ul>
+        <li><b>Server access logging</b>: bản ghi chi tiết từng request tới bucket – dùng cho audit bảo mật và hiểu hóa đơn; bucket đích nên dùng SSE-S3 và không bật Object Lock.</li>
+        <li><b>S3 Inventory</b>: báo cáo trạng thái <b>mã hóa</b> và <b>replication</b> của object cho compliance. <b>S3 Storage Lens</b>: % byte mã hóa, bucket thiếu versioning/replication, thiếu rule dọn multipart upload quá 7 ngày.</li>
+        <li><b>CloudWatch</b>: theo dõi <code>4xxErrors</code>, <code>PutRequests</code>, <code>DeleteRequests</code>; alarm khi có <code>PutBucketPolicy</code>/<code>PutBucketAcl</code>/thay đổi lifecycle, replication (qua CloudTrail).</li>
+        <li>Nên tạo bucket trong <b>account regional namespace</b> (tên chỉ account bạn tạo được) và <b>không xóa</b> bucket đang dùng trong global namespace – tránh account khác “chiếm” lại tên và nhận nhầm request. Quota mặc định nay là <b>10.000 bucket</b> mỗi account.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Giám sát</span>
+        <ul>
+          <li>“<i>Discover PII / credit card numbers stored in S3</i>” ⇒ <b>Amazon Macie</b>.</li>
+          <li>“<i>Detect anomalous API activity / data exfiltration from S3</i>” ⇒ <b>GuardDuty S3 Protection</b>.</li>
+          <li>“<i>Who deleted this object and when?</i>” ⇒ <b>CloudTrail data events</b> (hoặc server access logs).</li>
+          <li>“<i>Which buckets are shared with external accounts?</i>” ⇒ <b>IAM Access Analyzer for S3</b>.</li>
+          <li>“<i>Continuously check every bucket has encryption/versioning/SSL-only and auto-remediate</i>” ⇒ <b>AWS Config rules</b> + remediation (SSM Automation).</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li>S3 mặc định <b>private</b>, <b>ACL tắt</b> (Bucket owner enforced), <b>SSE-S3 bật sẵn</b> (từ 05/01/2023), <b>SSE-C bị chặn</b> với bucket mới (từ 04/2026).</li>
+          <li>Bucket policy: ép HTTPS (<code>aws:SecureTransport</code>), giới hạn Organization (<code>aws:PrincipalOrgID</code>), VPC endpoint (<code>aws:SourceVpce</code>), mã hóa (<code>s3:x-amz-server-side-encryption*</code>). Cross-account cần cả bucket policy + IAM policy (+ KMS key policy).</li>
+          <li><b>Block Public Access</b>: 4 setting (BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, RestrictPublicBuckets), 4 cấp, áp dụng tổ hợp <b>chặt nhất</b>; Organization-level để bảo vệ cả account tương lai.</li>
+          <li>Mã hóa: SSE-S3 (đơn giản) · SSE-KMS (audit, key policy, cross-account cần customer managed key, quota KMS ⇒ <b>Bucket Keys giảm tới 99%</b>) · DSSE-KMS (hai lớp) · SSE-C (key theo request, HTTPS, không console) · client-side (AWS không thấy plaintext).</li>
+          <li><b>Object Lock</b> cần versioning, bật rồi không tắt: Governance (bypass bằng <code>s3:BypassGovernanceRetention</code> + header) · Compliance (kể cả root không xóa được, chỉ kéo dài) · legal hold (không hạn) · variable retention (event hold). <b>Glacier Vault Lock</b>: initiate ⇒ 24 giờ ⇒ complete, bất biến.</li>
+          <li><b>Presigned URL</b>: dùng quyền của người ký; console ≤ 12 giờ, CLI/SDK ≤ 7 ngày; hết sớm nếu credential tạm hết hạn; hạn chế bằng <code>s3:signatureAge</code>, IP, VPC.</li>
+          <li><b>Access Points</b>: mỗi ứng dụng một endpoint + policy, VPC-only được, 10.000/account/Region, ủy quyền qua <code>s3:DataAccessPointAccount</code>. <b>CORS</b>: cấu hình trên bucket bị gọi tới, ≤ 100 rule.</li>
+          <li>Giám sát: Access Analyzer (chia sẻ ngoài), Macie (PII), GuardDuty (đe dọa), CloudTrail data events (ai làm gì), Config (tuân thủ cấu hình).</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Bucket policy</dt><dd><b>Chính sách bucket</b> – resource-based policy JSON gắn vào bucket, có <code>Principal</code>.</dd></div>
+        <div><dt>S3 Object Ownership / Bucket owner enforced</dt><dd><b>Quyền sở hữu object / Chủ bucket sở hữu tất cả</b> – setting mặc định, vô hiệu mọi ACL.</dd></div>
+        <div><dt>ACL (access control list)</dt><dd><b>Danh sách kiểm soát truy cập</b> – cơ chế cũ; nhóm <code>AllUsers</code>/<code>AuthenticatedUsers</code> = public.</dd></div>
+        <div><dt>S3 Block Public Access</dt><dd><b>Chặn truy cập công khai</b> – BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, RestrictPublicBuckets.</dd></div>
+        <div><dt>aws:SecureTransport</dt><dd><b>Điều kiện kết nối mã hóa</b> – <code>false</code> nghĩa là request qua HTTP.</dd></div>
+        <div><dt>aws:PrincipalOrgID</dt><dd><b>Mã tổ chức của principal</b> – giới hạn truy cập trong một AWS Organization.</dd></div>
+        <div><dt>aws:SourceVpce / aws:SourceVpc</dt><dd><b>VPC endpoint / VPC nguồn của request</b> – giới hạn truy cập từ mạng riêng.</dd></div>
+        <div><dt>SSE-S3</dt><dd><b>Mã hóa phía máy chủ với khóa do S3 quản lý</b> – mặc định, header <code>AES256</code>.</dd></div>
+        <div><dt>SSE-KMS</dt><dd><b>Mã hóa phía máy chủ với khóa AWS KMS</b> – audit, key policy; header <code>aws:kms</code>.</dd></div>
+        <div><dt>DSSE-KMS</dt><dd><b>Mã hóa phía máy chủ hai lớp với KMS</b> – 2 lớp AES-256; header <code>aws:kms:dsse</code>.</dd></div>
+        <div><dt>SSE-C</dt><dd><b>Mã hóa phía máy chủ với khóa do khách hàng cung cấp</b> – key theo request, bắt buộc HTTPS.</dd></div>
+        <div><dt>Client-side encryption</dt><dd><b>Mã hóa phía client</b> – mã hóa trước khi upload.</dd></div>
+        <div><dt>Envelope encryption / Data key</dt><dd><b>Mã hóa phong bì / Khóa dữ liệu</b> – dữ liệu mã hóa bằng data key, data key mã hóa bằng KMS key.</dd></div>
+        <div><dt>Encryption context</dt><dd><b>Ngữ cảnh mã hóa</b> – cặp key-value (mặc định ARN object/bucket) dùng làm AAD.</dd></div>
+        <div><dt>S3 Bucket Key</dt><dd><b>Khóa cấp bucket</b> – giảm tới 99% request/chi phí KMS; không hỗ trợ DSSE-KMS.</dd></div>
+        <div><dt>S3 Object Lock / WORM</dt><dd><b>Khóa đối tượng / Ghi một lần, đọc nhiều lần</b>.</dd></div>
+        <div><dt>Governance mode / Compliance mode</dt><dd><b>Chế độ quản trị / Chế độ tuân thủ</b> – bypass được bằng quyền đặc biệt / không ai bypass được.</dd></div>
+        <div><dt>Retention period / Retain Until Date</dt><dd><b>Thời hạn lưu giữ / Ngày giữ đến</b> – fixed hoặc variable.</dd></div>
+        <div><dt>Variable retention / Event hold</dt><dd><b>Lưu giữ thay đổi được / Giữ theo sự kiện</b> – ngày hết hạn = lúc release + duration.</dd></div>
+        <div><dt>Legal hold</dt><dd><b>Giữ pháp lý</b> – khóa không thời hạn tới khi gỡ.</dd></div>
+        <div><dt>Glacier Vault Lock / Vault Lock policy</dt><dd><b>Khóa kho Glacier / Chính sách khóa kho</b> – bất biến sau khi complete (24 giờ để kiểm thử).</dd></div>
+        <div><dt>Presigned URL</dt><dd><b>URL ký sẵn</b> – quyền tạm thời tới một object, dùng credential của người ký.</dd></div>
+        <div><dt>Bearer token</dt><dd><b>Mã thông báo người cầm</b> – ai có cũng dùng được.</dd></div>
+        <div><dt>S3 Access Point / Network origin</dt><dd><b>Điểm truy cập S3 / Nguồn mạng</b> (Internet hoặc VPC).</dd></div>
+        <div><dt>S3 Object Lambda Access Point</dt><dd><b>Điểm truy cập biến đổi dữ liệu bằng Lambda</b> khi đọc.</dd></div>
+        <div><dt>CORS</dt><dd><b>Chia sẻ tài nguyên khác nguồn gốc</b> – AllowedOrigins/Methods/Headers, ExposeHeaders, MaxAgeSeconds.</dd></div>
+        <div><dt>Preflight request</dt><dd><b>Request kiểm tra trước</b> – trình duyệt gửi <code>OPTIONS</code> trước request thật.</dd></div>
+        <div><dt>IAM Access Analyzer for S3</dt><dd><b>Phân tích truy cập S3</b> – phát hiện bucket public/chia sẻ ra ngoài.</dd></div>
+        <div><dt>Amazon Macie</dt><dd><b>Dịch vụ phát hiện dữ liệu nhạy cảm</b> (PII) trong S3.</dd></div>
+        <div><dt>CloudTrail data events</dt><dd><b>Sự kiện dữ liệu</b> – log API cấp object (GetObject, PutObject, DeleteObject).</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="B">
+          <div class="qh">A company's security policy requires that all data sent to an Amazon S3 bucket be encrypted in transit. Some legacy clients still use HTTP. What should a solutions architect do to enforce this requirement?</div>
+          <ol class="opts">
+            <li data-k="A">Enable default encryption with SSE-KMS on the bucket.</li>
+            <li data-k="B">Add a bucket policy statement that denies all S3 actions when the aws:SecureTransport condition key is false.</li>
+            <li data-k="C">Enable S3 Block Public Access on the bucket.</li>
+            <li data-k="D">Enable S3 Transfer Acceleration so that all requests use the accelerated endpoint.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Tài liệu “Security best practices” khuyến nghị chỉ cho phép kết nối HTTPS (TLS) bằng điều kiện <code>aws:SecureTransport</code> trong bucket policy: <b>Deny</b> khi giá trị là <code>false</code>. <b>A sai</b>: SSE-KMS là mã hóa <b>at rest</b>, không chặn HTTP. <b>C sai</b>: BPA chặn quyền công khai, không liên quan giao thức. <b>D sai</b>: Transfer Acceleration tăng tốc truyền tải, không ép HTTPS.</div>
+          <div class="trans">
+            <div class="tq">Chính sách bảo mật của một công ty yêu cầu mọi dữ liệu gửi tới một Amazon S3 bucket phải được mã hóa khi truyền (in transit). Một số client cũ vẫn dùng HTTP. Solutions architect nên làm gì để bắt buộc thực thi yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật default encryption với SSE-KMS trên bucket.</span><span class="why">Sai: SSE-KMS mã hóa dữ liệu at rest (khi lưu trữ), hoàn toàn không ngăn client gửi request qua HTTP không mã hóa.</span></li>
+              <li data-k="B"><span class="tv">Thêm một statement vào bucket policy để từ chối (deny) mọi thao tác S3 khi condition key aws:SecureTransport có giá trị false.</span><span class="why">Đúng: aws:SecureTransport = false nghĩa là request đi qua HTTP; Deny trong trường hợp này buộc mọi client phải dùng HTTPS (TLS), đúng yêu cầu mã hóa in transit.</span></li>
+              <li data-k="C"><span class="tv">Bật S3 Block Public Access trên bucket.</span><span class="why">Sai: Block Public Access chỉ chặn quyền truy cập công khai, không liên quan đến giao thức HTTP hay HTTPS.</span></li>
+              <li data-k="D"><span class="tv">Bật S3 Transfer Acceleration để mọi request đều dùng endpoint tăng tốc.</span><span class="why">Sai: Transfer Acceleration chỉ tăng tốc truyền tải qua edge location, không bắt buộc HTTPS và không chặn HTTP.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A financial company must store trade confirmations in Amazon S3 for 7 years to comply with SEC Rule 17a-4. No user, including the AWS account root user, can be allowed to delete or overwrite the records during this period. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Enable S3 Versioning and MFA Delete on the bucket.</li>
+            <li data-k="B">Enable S3 Object Lock in governance mode with a 7-year default retention period.</li>
+            <li data-k="C">Add a bucket policy that denies s3:DeleteObject for all principals, and use a lifecycle rule to expire objects after 7 years.</li>
+            <li data-k="D">Enable S3 Object Lock in compliance mode with a 7-year default retention period.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Compliance mode</b>: không user nào, <b>kể cả root</b>, xóa/ghi đè được version trong thời hạn lưu giữ; retention không rút ngắn được; Object Lock đã được Cohasset đánh giá cho SEC 17a-4. <b>A sai</b>: MFA Delete chỉ thêm bước MFA, root vẫn xóa được. <b>B sai</b>: governance mode cho phép user có <code>s3:BypassGovernanceRetention</code> xóa. <b>C sai</b>: bucket policy có thể bị root/admin sửa hoặc xóa – không phải WORM bất biến.</div>
+          <div class="trans">
+            <div class="tq">Một công ty tài chính phải lưu các xác nhận giao dịch trong Amazon S3 trong 7 năm để tuân thủ SEC Rule 17a-4. Không user nào, kể cả AWS account root user, được phép xóa hoặc ghi đè các bản ghi trong khoảng thời gian này. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật S3 Versioning và MFA Delete trên bucket.</span><span class="why">Sai: MFA Delete chỉ thêm bước xác thực MFA khi xóa version; root user có MFA vẫn xóa được, nên không đảm bảo WORM.</span></li>
+              <li data-k="B"><span class="tv">Bật S3 Object Lock ở governance mode với thời hạn lưu giữ mặc định 7 năm.</span><span class="why">Sai: governance mode cho phép user có quyền s3:BypassGovernanceRetention (và root) xóa hoặc rút ngắn retention, vi phạm yêu cầu "không ai được xóa".</span></li>
+              <li data-k="C"><span class="tv">Thêm bucket policy từ chối s3:DeleteObject cho mọi principal, và dùng lifecycle rule để hết hạn object sau 7 năm.</span><span class="why">Sai: bucket policy có thể bị root/admin sửa hoặc xóa bất cứ lúc nào, nên không phải lưu trữ bất biến đạt chuẩn tuân thủ.</span></li>
+              <li data-k="D"><span class="tv">Bật S3 Object Lock ở compliance mode với thời hạn lưu giữ mặc định 7 năm.</span><span class="why">Đúng: compliance mode không cho bất kỳ ai, kể cả root, xóa/ghi đè version hay rút ngắn retention; Object Lock đã được đánh giá đáp ứng SEC 17a-4.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">An application uses SSE-KMS with a customer managed key to encrypt millions of small objects in an S3 bucket. The company's AWS KMS bill has increased significantly, and the application occasionally receives KMS throttling errors. Which solution will reduce KMS costs with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Enable S3 Bucket Keys for the bucket's SSE-KMS default encryption.</li>
+            <li data-k="B">Switch to DSSE-KMS for all new objects.</li>
+            <li data-k="C">Switch to SSE-C and manage the keys in the application.</li>
+            <li data-k="D">Create a separate customer managed key for each prefix.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>S3 Bucket Keys</b> dùng một bucket-level key ngắn hạn để sinh data key, giảm request <code>GenerateDataKey</code>/<code>Decrypt</code> tới KMS ⇒ giảm tới <b>99%</b> chi phí request KMS, bật bằng vài click, không sửa ứng dụng. <b>B sai</b>: DSSE-KMS <b>đắt hơn</b> và không hỗ trợ Bucket Keys. <b>C sai</b>: SSE-C tăng gánh nặng quản lý key, mất audit KMS và nay bị chặn mặc định. <b>D sai</b>: nhiều key không giảm số request KMS, lại tốn phí key.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng dùng SSE-KMS với customer managed key để mã hóa hàng triệu object nhỏ trong một S3 bucket. Hóa đơn AWS KMS của công ty tăng đáng kể và ứng dụng thỉnh thoảng nhận lỗi throttling từ KMS. Giải pháp nào giảm chi phí KMS với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật S3 Bucket Keys cho default encryption SSE-KMS của bucket.</span><span class="why">Đúng: Bucket Key cấp bucket sinh data key cục bộ, giảm tới 99% request GenerateDataKey/Decrypt tới KMS (giảm cả chi phí lẫn throttling), chỉ cần bật cấu hình, không sửa ứng dụng.</span></li>
+              <li data-k="B"><span class="tv">Chuyển sang DSSE-KMS cho mọi object mới.</span><span class="why">Sai: DSSE-KMS mã hóa hai lớp nên đắt hơn và không hỗ trợ Bucket Keys, làm chi phí KMS tăng thêm.</span></li>
+              <li data-k="C"><span class="tv">Chuyển sang SSE-C và tự quản lý key trong ứng dụng.</span><span class="why">Sai: SSE-C buộc ứng dụng tự quản lý và gửi key mỗi request, tăng gánh nặng vận hành và mất audit của KMS – trái với yêu cầu ít overhead.</span></li>
+              <li data-k="D"><span class="tv">Tạo một customer managed key riêng cho mỗi prefix.</span><span class="why">Sai: số request KMS không giảm vì mỗi object vẫn gọi KMS, còn phát sinh thêm phí hàng tháng cho mỗi key.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company has a bucket in Account A that stores objects encrypted with SSE-KMS using the AWS managed key (aws/s3). A data analytics team in Account B has been granted s3:GetObject through the bucket policy, but requests from Account B fail with AccessDenied. What should the solutions architect do to allow access?</div>
+          <ol class="opts">
+            <li data-k="A">Disable S3 Block Public Access on the bucket.</li>
+            <li data-k="B">Add the s3:GetObjectAcl permission to the bucket policy.</li>
+            <li data-k="C">Re-encrypt the objects with a customer managed KMS key and update the key policy to allow kms:Decrypt for the Account B role.</li>
+            <li data-k="D">Edit the key policy of the aws/s3 AWS managed key to allow Account B.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Tài liệu nêu: object SSE-KMS mã hóa bằng <b>AWS managed key không chia sẻ cross-account được</b>; muốn chia sẻ phải dùng <b>customer managed key</b> và cấp <code>kms:Decrypt</code> trong key policy (account B cũng cần IAM policy cho phép). <b>A sai</b>: đây không phải truy cập công khai. <b>B sai</b>: ACL không liên quan, ACL thường đã bị tắt. <b>D sai</b>: không sửa được key policy của AWS managed key.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có một bucket ở Account A lưu các object được mã hóa bằng SSE-KMS sử dụng AWS managed key (aws/s3). Một nhóm phân tích dữ liệu ở Account B đã được cấp s3:GetObject qua bucket policy, nhưng các request từ Account B bị lỗi AccessDenied. Solutions architect nên làm gì để cho phép truy cập?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tắt S3 Block Public Access trên bucket.</span><span class="why">Sai: đây là truy cập cross-account có xác thực, không phải truy cập công khai; lỗi nằm ở quyền KMS chứ không phải BPA.</span></li>
+              <li data-k="B"><span class="tv">Thêm quyền s3:GetObjectAcl vào bucket policy.</span><span class="why">Sai: GetObjectAcl chỉ để đọc ACL của object, không giúp giải mã dữ liệu; nguyên nhân là Account B không có quyền kms:Decrypt.</span></li>
+              <li data-k="C"><span class="tv">Mã hóa lại các object bằng một customer managed KMS key và cập nhật key policy để cho phép kms:Decrypt cho role của Account B.</span><span class="why">Đúng: AWS managed key không thể chia sẻ cross-account; chỉ customer managed key mới cho phép sửa key policy để cấp kms:Decrypt cho account khác.</span></li>
+              <li data-k="D"><span class="tv">Sửa key policy của AWS managed key aws/s3 để cho phép Account B.</span><span class="why">Sai: key policy của AWS managed key do AWS quản lý, khách hàng không thể chỉnh sửa.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company wants to ensure that no S3 bucket in any of its 300 AWS accounts can be made publicly accessible, including accounts created in the future. The company also wants to be alerted to any bucket that is shared with an AWS account outside the organization. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Enable S3 Block Public Access at the organization level by using an AWS Organizations S3 policy attached to the root.</li>
+            <li data-k="B">Enable S3 Transfer Acceleration on all buckets.</li>
+            <li data-k="C">Enable default encryption with SSE-S3 on every bucket.</li>
+            <li data-k="D">Use IAM Access Analyzer for S3 to review findings for buckets shared outside the organization.</li>
+            <li data-k="E">Create presigned URLs for every object that must be shared.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> <b>Organization-level Block Public Access</b> gắn ở root/OU tự áp dụng cho mọi account thành viên, kể cả account mới, và ghi đè setting cấp account. <b>IAM Access Analyzer for S3</b> cảnh báo bucket cho phép truy cập từ Internet hoặc từ account khác, kể cả ngoài Organization. <b>B sai</b>: không liên quan bảo mật. <b>C sai</b>: mã hóa không ngăn bucket bị public. <b>E sai</b>: presigned URL là cách chia sẻ, không ngăn hay phát hiện bucket public.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn đảm bảo không S3 bucket nào trong bất kỳ account nào trong số 300 AWS account của mình có thể bị đặt ở chế độ truy cập công khai, kể cả các account được tạo trong tương lai. Công ty cũng muốn được cảnh báo về bất kỳ bucket nào được chia sẻ với một AWS account bên ngoài tổ chức. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật S3 Block Public Access ở cấp tổ chức bằng một AWS Organizations S3 policy gắn vào root.</span><span class="why">Đúng: policy gắn ở root tự áp dụng cho mọi account thành viên, kể cả account tạo sau này, và ghi đè thiết lập cấp account – chặn bucket bị public trên toàn tổ chức.</span></li>
+              <li data-k="B"><span class="tv">Bật S3 Transfer Acceleration trên tất cả bucket.</span><span class="why">Sai: Transfer Acceleration chỉ tăng tốc upload/download, không liên quan đến kiểm soát truy cập công khai hay cảnh báo chia sẻ.</span></li>
+              <li data-k="C"><span class="tv">Bật default encryption với SSE-S3 trên mọi bucket.</span><span class="why">Sai: mã hóa at rest không ngăn bucket bị cấp quyền public và không phát hiện chia sẻ ra ngoài.</span></li>
+              <li data-k="D"><span class="tv">Dùng IAM Access Analyzer for S3 để xem các finding về bucket được chia sẻ ra ngoài tổ chức.</span><span class="why">Đúng: Access Analyzer for S3 sinh finding cho bucket cho phép truy cập từ Internet hoặc từ account bên ngoài Organization – đáp ứng yêu cầu cảnh báo.</span></li>
+              <li data-k="E"><span class="tv">Tạo presigned URL cho mọi object cần chia sẻ.</span><span class="why">Sai: presigned URL là một cách chia sẻ object, không ngăn bucket bị public và cũng không phát hiện chia sẻ ra ngoài.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A mobile application lets users upload profile videos of up to 2 GB. The company wants uploads to go directly to a private S3 bucket without passing through the application servers, and users do not have AWS credentials. Which solution meets these requirements MOST securely?</div>
+          <ol class="opts">
+            <li data-k="A">Make the bucket public for PutObject and rely on S3 Object Ownership to keep the bucket owner as the object owner.</li>
+            <li data-k="B">Create an IAM user for each mobile user and distribute access keys in the application.</li>
+            <li data-k="C">Have the backend generate a short-lived presigned URL for a PUT operation on a specific object key and return it to the client.</li>
+            <li data-k="D">Configure CORS on the bucket to allow PUT requests from all origins.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Presigned URL</b> cho phép upload một object cụ thể mà người dùng không cần credential AWS, bucket vẫn private, URL hết hạn ngắn. Backend chỉ ký URL nên không phải xử lý file 2 GB. <b>A sai</b>: mở public write là lỗ hổng nghiêm trọng (và bị BPA chặn). <b>B sai</b>: phân phối credential dài hạn trái best practice, không mở rộng được. <b>D sai</b>: CORS chỉ là cơ chế trình duyệt, <b>không cấp quyền</b> – policy/ACL vẫn áp dụng.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng di động cho phép người dùng tải lên video hồ sơ có dung lượng tới 2 GB. Công ty muốn việc upload đi thẳng vào một S3 bucket private mà không đi qua các application server, và người dùng không có AWS credential. Giải pháp nào đáp ứng các yêu cầu này MOST securely (an toàn nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt bucket ở chế độ public cho PutObject và dựa vào S3 Object Ownership để bucket owner vẫn là chủ sở hữu object.</span><span class="why">Sai: cho phép ghi công khai là lỗ hổng nghiêm trọng (ai cũng ghi được) và bị Block Public Access chặn; vi phạm yêu cầu bucket private.</span></li>
+              <li data-k="B"><span class="tv">Tạo một IAM user cho mỗi người dùng di động và phân phối access key trong ứng dụng.</span><span class="why">Sai: nhúng credential dài hạn vào app là trái best practice, dễ lộ key và không mở rộng được cho số lượng lớn người dùng.</span></li>
+              <li data-k="C"><span class="tv">Để backend sinh một presigned URL ngắn hạn cho thao tác PUT trên một object key cụ thể và trả về cho client.</span><span class="why">Đúng: presigned URL cho phép client upload thẳng lên S3 một object cụ thể mà không cần credential AWS, bucket vẫn private, URL hết hạn nhanh; backend chỉ ký URL, không xử lý file 2 GB.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình CORS trên bucket để cho phép request PUT từ mọi origin.</span><span class="why">Sai: CORS chỉ là cơ chế của trình duyệt, không cấp quyền; request vẫn bị từ chối nếu không có policy hoặc chữ ký hợp lệ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A developer generates presigned URLs for S3 objects from an application running on an Amazon EC2 instance that uses an instance profile. The URLs are configured to expire in 7 days, but users report that the links stop working after a few hours. What is the cause?</div>
+          <ol class="opts">
+            <li data-k="A">Presigned URLs generated through the AWS SDK have a maximum expiration of 12 hours.</li>
+            <li data-k="B">The URLs were signed with temporary credentials from the instance profile, so they expire when those credentials expire.</li>
+            <li data-k="C">S3 Block Public Access invalidates presigned URLs after a few hours.</li>
+            <li data-k="D">S3 Object Lock in governance mode is shortening the URL lifetime.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> URL hết hạn ở thời điểm <b>sớm hơn</b> giữa expiration đã đặt và thời điểm credential ký hết hạn. Credential của <b>EC2 instance profile</b> là tạm thời, tối đa khoảng <b>6 giờ</b>. Muốn URL sống tới 7 ngày phải ký bằng credential IAM user (SigV4). <b>A sai</b>: 12 giờ là giới hạn của <b>console</b>; CLI/SDK tối đa 7 ngày. <b>C sai</b>: BPA không tác động presigned URL. <b>D sai</b>: Object Lock chỉ chặn xóa/ghi đè version.</div>
+          <div class="trans">
+            <div class="tq">Một developer sinh presigned URL cho các S3 object từ một ứng dụng chạy trên Amazon EC2 instance có dùng instance profile. Các URL được cấu hình hết hạn sau 7 ngày, nhưng người dùng báo rằng các link ngừng hoạt động chỉ sau vài giờ. Nguyên nhân là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Presigned URL sinh qua AWS SDK có thời hạn tối đa là 12 giờ.</span><span class="why">Sai: 12 giờ là giới hạn khi tạo trên console; qua CLI/SDK với SigV4 có thể đặt tối đa 7 ngày.</span></li>
+              <li data-k="B"><span class="tv">Các URL được ký bằng credential tạm thời của instance profile, nên chúng hết hạn khi các credential đó hết hạn.</span><span class="why">Đúng: URL hết hạn ở thời điểm sớm hơn giữa expiration đã đặt và lúc credential ký hết hạn; credential của instance profile là tạm thời (vài giờ), nên link chết sau vài giờ.</span></li>
+              <li data-k="C"><span class="tv">S3 Block Public Access vô hiệu hóa presigned URL sau vài giờ.</span><span class="why">Sai: Block Public Access không ảnh hưởng đến presigned URL vì đó là request đã được ký bằng credential hợp lệ.</span></li>
+              <li data-k="D"><span class="tv">S3 Object Lock ở governance mode đang rút ngắn thời gian sống của URL.</span><span class="why">Sai: Object Lock chỉ ngăn xóa/ghi đè object version, không liên quan đến thời hạn của presigned URL.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A data lake bucket is shared by more than 50 internal applications, each requiring access to different prefixes. The bucket policy is approaching its size limit and is difficult to audit. Some applications must be able to access the data only from within a specific VPC. Which solution will simplify access management?</div>
+          <ol class="opts">
+            <li data-k="A">Split the data into 50 buckets and replicate data between them with S3 Same-Region Replication.</li>
+            <li data-k="B">Enable S3 object ACLs and grant each application access to its objects.</li>
+            <li data-k="C">Create IAM users for each application and embed the bucket name in their policies.</li>
+            <li data-k="D">Create an S3 access point for each application with its own access point policy, use a VPC network origin where required, and delegate access control from the bucket policy to the access points.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>S3 Access Points</b> giải đúng bài toán “dataset dùng chung, bucket policy quá phức tạp”: mỗi ứng dụng một access point với policy riêng (tối đa 20 KB mỗi policy, tới 10.000 access point/account/Region), access point có <b>VPC network origin</b> chỉ nhận request từ VPC; bucket policy chỉ cần ủy quyền bằng <code>s3:DataAccessPointAccount</code>. <b>A sai</b>: nhân bản dữ liệu, tốn chi phí và vận hành. <b>B sai</b>: AWS khuyên tắt ACL; ACL không giới hạn được theo VPC. <b>C sai</b>: credential dài hạn, không giải quyết yêu cầu VPC.</div>
+          <div class="trans">
+            <div class="tq">Một bucket data lake được dùng chung bởi hơn 50 ứng dụng nội bộ, mỗi ứng dụng cần truy cập các prefix khác nhau. Bucket policy đang gần chạm giới hạn kích thước và khó kiểm tra (audit). Một số ứng dụng chỉ được phép truy cập dữ liệu từ bên trong một VPC cụ thể. Giải pháp nào sẽ đơn giản hóa việc quản lý truy cập?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chia dữ liệu thành 50 bucket và sao chép dữ liệu giữa chúng bằng S3 Same-Region Replication.</span><span class="why">Sai: nhân bản dữ liệu tốn thêm chi phí lưu trữ, replication và công vận hành, lại không giải quyết yêu cầu giới hạn theo VPC.</span></li>
+              <li data-k="B"><span class="tv">Bật S3 object ACL và cấp cho mỗi ứng dụng quyền truy cập vào các object của nó.</span><span class="why">Sai: AWS khuyến nghị tắt ACL; quản lý ACL trên hàng triệu object còn phức tạp hơn và ACL không giới hạn được theo VPC.</span></li>
+              <li data-k="C"><span class="tv">Tạo IAM user cho mỗi ứng dụng và ghi tên bucket vào policy của họ.</span><span class="why">Sai: dùng credential dài hạn là trái best practice và không đáp ứng yêu cầu chỉ truy cập từ VPC.</span></li>
+              <li data-k="D"><span class="tv">Tạo một S3 access point cho mỗi ứng dụng với access point policy riêng, dùng VPC network origin ở nơi cần, và ủy quyền kiểm soát truy cập từ bucket policy sang các access point.</span><span class="why">Đúng: mỗi ứng dụng có access point và policy riêng nên bucket policy gọn lại; VPC network origin chỉ nhận request từ VPC chỉ định – đúng bài toán dataset dùng chung.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company hosts a single-page application in an S3 bucket named app-site and serves it from https://app.example.com. The JavaScript code fetches JSON files from a second bucket named app-data by using the S3 REST endpoint. The browser blocks the requests with a "No 'Access-Control-Allow-Origin' header" error. The app-data bucket must remain private, and the application already authenticates by using presigned URLs. Which TWO statements are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Add a CORS configuration to the app-site bucket that allows GET from the app-data bucket.</li>
+            <li data-k="B">Add a CORS configuration to the app-data bucket with AllowedOrigins set to https://app.example.com and AllowedMethods set to GET.</li>
+            <li data-k="C">Disable S3 Block Public Access on the app-data bucket so that the browser can read the JSON files.</li>
+            <li data-k="D">Configuring CORS grants anonymous read access to the objects, so the presigned URLs are no longer needed.</li>
+            <li data-k="E">Even with CORS configured, requests must still be authorized by the bucket policy, IAM permissions, or the presigned URL.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> CORS phải được cấu hình trên bucket <b>bị gọi tới</b> (app-data), với <code>AllowedOrigins</code> là origin của trang (<code>https://app.example.com</code>) và <code>AllowedMethods</code> chứa GET. Tài liệu nhấn mạnh: khi bật CORS, <b>ACL và policy vẫn áp dụng</b> – CORS không cấp quyền. <b>A sai</b>: đặt sai bucket. <b>C sai</b>: bucket phải giữ private; lỗi là CORS, không phải quyền. <b>D sai</b>: CORS không cấp quyền anonymous.</div>
+          <div class="trans">
+            <div class="tq">Một công ty host một single-page application trong S3 bucket tên app-site và phục vụ nó tại https://app.example.com. Mã JavaScript lấy các file JSON từ bucket thứ hai tên app-data qua S3 REST endpoint. Trình duyệt chặn các request với lỗi "No 'Access-Control-Allow-Origin' header". Bucket app-data phải giữ private, và ứng dụng đã xác thực bằng presigned URL. HAI phát biểu nào là đúng? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm cấu hình CORS vào bucket app-site cho phép GET từ bucket app-data.</span><span class="why">Sai: CORS phải đặt trên bucket được gọi tới (app-data), không phải bucket chứa trang web; origin cũng là app.example.com chứ không phải bucket.</span></li>
+              <li data-k="B"><span class="tv">Thêm cấu hình CORS vào bucket app-data với AllowedOrigins là https://app.example.com và AllowedMethods là GET.</span><span class="why">Đúng: bucket bị gọi (app-data) phải trả header CORS cho origin của trang, cho phép phương thức GET – sửa đúng lỗi trình duyệt báo.</span></li>
+              <li data-k="C"><span class="tv">Tắt S3 Block Public Access trên bucket app-data để trình duyệt đọc được các file JSON.</span><span class="why">Sai: đề yêu cầu bucket giữ private và lỗi là thiếu header CORS, không phải thiếu quyền.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình CORS sẽ cấp quyền đọc anonymous cho các object, nên không cần presigned URL nữa.</span><span class="why">Sai: CORS không cấp bất kỳ quyền nào; vẫn cần presigned URL hoặc policy để được phép truy cập.</span></li>
+              <li data-k="E"><span class="tv">Kể cả khi đã cấu hình CORS, request vẫn phải được cho phép bởi bucket policy, quyền IAM hoặc presigned URL.</span><span class="why">Đúng: tài liệu S3 nhấn mạnh khi bật CORS, policy và ACL vẫn được áp dụng – CORS chỉ báo cho trình duyệt được phép gọi cross-origin.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A healthcare company stores millions of documents in Amazon S3 across many accounts. The compliance team needs to automatically discover which buckets contain personally identifiable information (PII) and receive findings in a central security dashboard. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Enable Amazon Macie for the organization and send findings to AWS Security Hub.</li>
+            <li data-k="B">Enable Amazon GuardDuty S3 Protection in every account.</li>
+            <li data-k="C">Use S3 Inventory reports and Amazon Athena to search object names for PII patterns.</li>
+            <li data-k="D">Enable IAM Access Analyzer for S3 in each Region.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Amazon Macie</b> dùng machine learning và pattern matching để <b>phát hiện dữ liệu nhạy cảm (PII, tài chính, credential)</b> trong S3 và sinh finding; Security Hub gom finding từ Macie, GuardDuty, Access Analyzer… vào một nơi. <b>B sai</b>: GuardDuty phát hiện <b>hoạt động độc hại</b> từ CloudTrail events, không quét nội dung object. <b>C sai</b>: Inventory chỉ liệt kê metadata, tìm theo tên object không phát hiện được PII trong nội dung, lại nhiều công sức. <b>D sai</b>: Access Analyzer phát hiện bucket <b>chia sẻ ra ngoài</b>, không phân tích nội dung.</div>
+          <div class="trans">
+            <div class="tq">Một công ty y tế lưu hàng triệu tài liệu trong Amazon S3 trên nhiều account. Nhóm tuân thủ cần tự động phát hiện bucket nào chứa thông tin nhận dạng cá nhân (PII) và nhận các finding trên một dashboard bảo mật tập trung. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật Amazon Macie cho toàn tổ chức và gửi các finding tới AWS Security Hub.</span><span class="why">Đúng: Macie là dịch vụ managed dùng machine learning và pattern matching để tự động phát hiện PII trong object S3; Security Hub gom finding về một dashboard tập trung.</span></li>
+              <li data-k="B"><span class="tv">Bật Amazon GuardDuty S3 Protection trong mọi account.</span><span class="why">Sai: GuardDuty phát hiện hoạt động đáng ngờ/độc hại dựa trên CloudTrail events, không quét nội dung object để tìm PII.</span></li>
+              <li data-k="C"><span class="tv">Dùng báo cáo S3 Inventory và Amazon Athena để tìm các mẫu PII trong tên object.</span><span class="why">Sai: Inventory chỉ chứa metadata; tìm theo tên object không phát hiện được PII nằm trong nội dung, lại tốn nhiều công tự xây dựng.</span></li>
+              <li data-k="D"><span class="tv">Bật IAM Access Analyzer for S3 ở mỗi Region.</span><span class="why">Sai: Access Analyzer chỉ phát hiện bucket được chia sẻ ra ngoài hoặc public, không phân tích nội dung dữ liệu.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/example-bucket-policies.html" target="_blank" rel="noopener">Examples of Amazon S3 bucket policies</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html" target="_blank" rel="noopener">Using server-side encryption with AWS KMS keys (SSE-KMS)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-key.html" target="_blank" rel="noopener">Reducing the cost of SSE-KMS with Amazon S3 Bucket Keys</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingDSSEncryption.html" target="_blank" rel="noopener">Using dual-layer server-side encryption with AWS KMS keys (DSSE-KMS)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerSideEncryptionCustomerKeys.html" target="_blank" rel="noopener">Using server-side encryption with customer-provided keys (SSE-C)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock-configure.html" target="_blank" rel="noopener">Configuring S3 Object Lock</a></li>
+        <li><a href="https://docs.aws.amazon.com/amazonglacier/latest/dev/vault-lock.html" target="_blank" rel="noopener">Amazon Glacier Vault Lock</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html" target="_blank" rel="noopener">Download and upload objects with presigned URLs</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-points.html" target="_blank" rel="noopener">Managing access to shared datasets with access points</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-points-restrictions-limitations-naming-rules.html" target="_blank" rel="noopener">Access points naming rules, restrictions, and limitations</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-points-policies.html" target="_blank" rel="noopener">Configuring IAM policies for using access points</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/cors.html" target="_blank" rel="noopener">Using cross-origin resource sharing (CORS)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/ManageCorsUsing.html" target="_blank" rel="noopener">Elements of a CORS configuration</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

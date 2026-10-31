@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 3 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/cat/Customer-Enablement.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="3" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Phát biểu chính xác <span class="t" data-vi="Mô hình trách nhiệm chia sẻ">Shared Responsibility Model</span>: AWS lo <b>Security OF the cloud</b>, khách hàng lo <b>Security IN the cloud</b>.</li>
+          <li>Xác định ranh giới trách nhiệm thay đổi thế nào giữa dịch vụ <span class="t" data-vi="Hạ tầng như một dịch vụ">IaaS</span> (Amazon EC2), dịch vụ managed (Amazon RDS) và dịch vụ <span class="t" data-vi="Được trừu tượng hóa">abstracted</span> (Amazon S3, DynamoDB, Lambda).</li>
+          <li>Phân biệt 3 nhóm control: <b>Inherited</b>, <b>Shared</b> và <b>Customer Specific</b>.</li>
+          <li>Hiểu <span class="t" data-vi="Người dùng gốc">root user</span> của tài khoản AWS, các tác vụ <b>chỉ root user mới làm được</b> và toàn bộ best practices bảo vệ root user.</li>
+          <li>Nắm các loại <span class="t" data-vi="Xác thực đa yếu tố">MFA</span> AWS hỗ trợ, giới hạn 8 thiết bị MFA và cách giám sát việc dùng root user.</li>
+          <li>So sánh các <b>AWS Support plans</b> (Basic, Business Support+, Enterprise, Unified Operations và các gói cũ Developer/Business/Enterprise On-Ramp) để chọn đúng gói theo yêu cầu đề.</li>
+        </ul>
+      </div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN SRM ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Security-Identity-Compliance.svg" alt="">Shared Responsibility Model là gì?</h2>
+      <p class="lead">Khi đưa workload lên AWS, <b>bảo mật và tuân thủ (security and compliance) là trách nhiệm chung giữa AWS và khách hàng</b>. <span class="t" data-vi="Mô hình trách nhiệm chia sẻ">Shared Responsibility Model</span> giúp giảm gánh nặng vận hành cho khách hàng: AWS vận hành, quản lý và kiểm soát các thành phần từ hệ điều hành host, lớp ảo hóa (virtualization layer) cho tới bảo mật vật lý của các cơ sở (facilities) nơi dịch vụ chạy.</p>
+      <p>AWS tóm gọn sự phân chia này bằng hai cụm từ rất hay xuất hiện trong đề thi:</p>
+
+      <div class="compare">
+        <div style="--accent:#EC7211"><h4><img src="../assets/icons/svc/AWS-Support.svg" alt="">AWS – Security “OF” the Cloud</h4>
+          <ul>
+            <li>“AWS is responsible for protecting the <b>infrastructure</b> that runs all of the services offered in the AWS Cloud.”</li>
+            <li>Hạ tầng gồm <b>hardware, software, networking và facilities</b> chạy các dịch vụ AWS.</li>
+            <li>Bao gồm hạ tầng toàn cầu: <span class="t" data-vi="Vùng địa lý">Regions</span>, <span class="t" data-vi="Vùng sẵn sàng">Availability Zones</span>, <span class="t" data-vi="Vị trí biên">Edge Locations</span> (học ở Bài 1).</li>
+            <li>Với dịch vụ managed: AWS còn lo cả OS, nền tảng (platform) và việc vá lỗi của chúng.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Users.svg" alt="">Khách hàng – Security “IN” the Cloud</h4>
+          <ul>
+            <li>“Customer responsibility will be <b>determined by the AWS Cloud services that a customer selects</b>.”</li>
+            <li>Dữ liệu khách hàng (customer data), quản lý định danh và quyền truy cập (IAM).</li>
+            <li>Guest OS, ứng dụng, cấu hình firewall (security group), cấu hình mạng – khi dùng IaaS như EC2.</li>
+            <li>Mã hóa phía client/server, bảo vệ traffic mạng (mã hóa, tính toàn vẹn, định danh).</li>
+          </ul></div>
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 420" width="760" role="img" aria-label="Mô hình trách nhiệm chia sẻ: các lớp của khách hàng ở trên, các lớp của AWS ở dưới">
+          <!-- Customer band -->
+          <rect x="10" y="10" width="740" height="236" rx="8" fill="none" stroke="#147EBA" stroke-width="2.5"/>
+          <image href="../assets/icons/res/Users.svg" x="24" y="22" width="34" height="34"/>
+          <text x="66" y="38" font-size="15" font-weight="700" style="fill:#147EBA">KHÁCH HÀNG</text>
+          <text x="66" y="56" font-size="12" class="muted">Responsible for security “IN” the cloud</text>
+          <g font-size="13" font-weight="600" text-anchor="middle">
+            <rect x="30" y="70" width="700" height="34" rx="4" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+            <text x="380" y="92">Customer data (dữ liệu khách hàng)</text>
+            <rect x="30" y="110" width="700" height="34" rx="4" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+            <text x="380" y="132">Platform, applications, Identity &amp; Access Management</text>
+            <rect x="30" y="150" width="700" height="34" rx="4" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+            <text x="380" y="172">Operating system, network &amp; firewall configuration</text>
+            <rect x="30" y="190" width="228" height="46" rx="4" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+            <text x="144" y="210">Client-side data encryption</text><text x="144" y="226" font-weight="400" class="muted">&amp; data integrity authentication</text>
+            <rect x="266" y="190" width="228" height="46" rx="4" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+            <text x="380" y="210">Server-side encryption</text><text x="380" y="226" font-weight="400" class="muted">(file system and/or data)</text>
+            <rect x="502" y="190" width="228" height="46" rx="4" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+            <text x="616" y="210">Networking traffic protection</text><text x="616" y="226" font-weight="400" class="muted">(encryption, integrity, identity)</text>
+          </g>
+          <!-- AWS band -->
+          <rect x="10" y="262" width="740" height="148" rx="8" fill="none" stroke="#EC7211" stroke-width="2.5"/>
+          <image href="../assets/icons/cat/Customer-Enablement.svg" x="24" y="274" width="34" height="34"/>
+          <text x="66" y="290" font-size="15" font-weight="700" style="fill:#EC7211">AWS</text>
+          <text x="66" y="308" font-size="12" class="muted">Responsible for security “OF” the cloud</text>
+          <g font-size="13" font-weight="600" text-anchor="middle">
+            <rect x="30" y="320" width="166" height="34" rx="4" fill="none" stroke="#EC7211" stroke-width="1.5"/><text x="113" y="342">Compute</text>
+            <rect x="206" y="320" width="166" height="34" rx="4" fill="none" stroke="#EC7211" stroke-width="1.5"/><text x="289" y="342">Storage</text>
+            <rect x="382" y="320" width="166" height="34" rx="4" fill="none" stroke="#EC7211" stroke-width="1.5"/><text x="465" y="342">Database</text>
+            <rect x="558" y="320" width="172" height="34" rx="4" fill="none" stroke="#EC7211" stroke-width="1.5"/><text x="644" y="342">Networking</text>
+            <rect x="30" y="362" width="700" height="38" rx="4" fill="none" stroke="#EC7211" stroke-width="1.5"/>
+            <text x="380" y="386">Hardware / AWS Global Infrastructure: Regions · Availability Zones · Edge Locations</text>
+          </g>
+        </svg>
+        <figcaption><b>Hình 1.</b> Shared Responsibility Model theo cách AWS minh họa: phần “IN the cloud” (khách hàng) nằm trên phần “OF the cloud” (AWS). Đường ranh giới thật sự dịch lên/xuống tùy dịch vụ bạn chọn.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Thuê căn hộ trong một tòa chung cư: <b>ban quản lý tòa nhà (AWS)</b> chịu trách nhiệm móng, kết cấu, thang máy, bảo vệ cổng, hệ thống điện nước chung. <b>Bạn (khách hàng)</b> chịu trách nhiệm khóa cửa căn hộ, ai được giữ chìa khóa, đồ đạc bên trong. Nếu bạn để cửa mở và mất đồ, đó không phải lỗi của ban quản lý. Thuê <i>căn hộ dịch vụ</i> (dịch vụ managed) thì ban quản lý lo thêm dọn dẹp, sửa chữa nội thất, nhưng việc bạn giao chìa khóa cho ai vẫn do bạn quyết định.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Nhận diện nhanh</span>
+        <ul>
+          <li>Câu chứa <i>physical security, data center, hardware, hypervisor/virtualization layer, global infrastructure, decommissioning storage devices</i> ⇒ trách nhiệm của <b>AWS</b>.</li>
+          <li>Câu chứa <i>customer data, IAM users/roles/policies, security group rules, guest OS patching (EC2), encryption choice, application code</i> ⇒ trách nhiệm của <b>khách hàng</b>.</li>
+          <li>Dữ liệu <b>luôn luôn</b> là trách nhiệm của khách hàng, kể cả với dịch vụ serverless.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: THEO LOẠI DỊCH VỤ ===================== -->
+      <h2 id="theo-dich-vu"><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">Ranh giới trách nhiệm thay đổi theo loại dịch vụ</h2>
+      <p class="lead">Điểm mấu chốt AWS nhấn mạnh: phần việc của khách hàng <b>phụ thuộc vào dịch vụ được chọn</b>, mức độ tích hợp dịch vụ đó vào môi trường IT, cùng các luật và quy định áp dụng. Vì vậy có sự <b>linh hoạt</b> và khách hàng <b>kiểm soát được</b> cách triển khai.</p>
+
+      <h3>Infrastructure as a Service – ví dụ Amazon EC2</h3>
+      <p>Theo AWS, một dịch vụ như Amazon EC2 được xếp vào nhóm <span class="t" data-vi="Hạ tầng như một dịch vụ">Infrastructure as a Service (IaaS)</span> và “<i>requires the customer to perform all of the necessary security configuration and management tasks</i>”. Khi triển khai một EC2 instance, khách hàng chịu trách nhiệm:</p>
+      <ul>
+        <li>Quản lý <span class="t" data-vi="Hệ điều hành khách (chạy trên máy ảo)">guest operating system</span>, <b>bao gồm cập nhật và vá bảo mật (security patches)</b>.</li>
+        <li>Mọi phần mềm ứng dụng hoặc tiện ích khách hàng cài trên instance.</li>
+        <li>Cấu hình firewall do AWS cung cấp – <span class="t" data-vi="Nhóm bảo mật (tường lửa ảo cấp instance)">security group</span> – trên mỗi instance.</li>
+      </ul>
+
+      <h3>Abstracted services – ví dụ Amazon S3, Amazon DynamoDB</h3>
+      <p>Với các dịch vụ <span class="t" data-vi="Được trừu tượng hóa">abstracted</span> như Amazon S3 và Amazon DynamoDB, <b>AWS vận hành lớp hạ tầng, hệ điều hành và nền tảng</b>; khách hàng chỉ truy cập các endpoint để lưu và lấy dữ liệu. Khách hàng vẫn chịu trách nhiệm:</p>
+      <ul>
+        <li>Quản lý <b>dữ liệu</b> của mình, <b>bao gồm các tùy chọn mã hóa (encryption options)</b>.</li>
+        <li><b>Phân loại tài sản</b> (classifying assets).</li>
+        <li>Dùng công cụ IAM để <b>cấp quyền phù hợp</b>.</li>
+      </ul>
+
+      <h3>Ở giữa: dịch vụ managed (container/platform) – ví dụ Amazon RDS</h3>
+      <p>Nhiều tài liệu đào tạo của AWS còn nêu một nhóm “ở giữa” – dịch vụ managed như Amazon RDS, Amazon ElastiCache, AWS Elastic Beanstalk: AWS lo OS và việc vá engine; khách hàng vẫn cấu hình mạng, quyền truy cập, tùy chọn mã hóa, sao lưu… Bảng dưới tổng hợp theo kiến thức thi phổ biến.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Hạng mục</th><th>Amazon EC2<br><small>IaaS</small></th><th>Amazon RDS<br><small>Managed DB</small></th><th>AWS Lambda<br><small>Serverless compute</small></th><th>Amazon S3 / DynamoDB<br><small>Abstracted</small></th></tr></thead>
+        <tbody>
+          <tr><td>Bảo mật vật lý data center, hardware</td><td>AWS</td><td>AWS</td><td>AWS</td><td>AWS</td></tr>
+          <tr><td>Hypervisor / host OS</td><td>AWS</td><td>AWS</td><td>AWS</td><td>AWS</td></tr>
+          <tr><td>Guest OS &amp; vá OS</td><td class="no">Khách hàng</td><td>AWS</td><td>AWS</td><td>AWS</td></tr>
+          <tr><td>Vá database engine / runtime</td><td class="no">Khách hàng (nếu tự cài DB)</td><td>AWS <small>(khách hàng chọn maintenance window, bật auto minor version upgrade)</small></td><td>AWS <small>(runtime được quản lý)</small></td><td>AWS</td></tr>
+          <tr><td>Code ứng dụng</td><td class="no">Khách hàng</td><td class="no">Khách hàng (schema, query)</td><td class="no">Khách hàng (function code, dependencies)</td><td>—</td></tr>
+          <tr><td>Firewall mạng</td><td class="no">Security group, NACL</td><td class="no">Security group, subnet, public access</td><td class="no">VPC config (nếu gắn VPC)</td><td class="no">Bucket policy, Block Public Access, VPC endpoint policy</td></tr>
+          <tr><td>IAM / quyền truy cập</td><td class="no">Khách hàng</td><td class="no">Khách hàng (IAM + DB users)</td><td class="no">Khách hàng (execution role, resource policy)</td><td class="no">Khách hàng</td></tr>
+          <tr><td>Mã hóa dữ liệu</td><td class="no">Khách hàng chọn (EBS encryption…)</td><td class="no">Khách hàng bật encryption at rest, TLS</td><td class="no">Khách hàng (biến môi trường, dữ liệu xử lý)</td><td class="no">Khách hàng chọn SSE-S3/SSE-KMS…</td></tr>
+          <tr><td>Sao lưu dữ liệu</td><td class="no">Khách hàng (snapshot, AWS Backup)</td><td>AWS chạy automated backup; <span class="no">khách hàng cấu hình retention, snapshot</span></td><td>—</td><td class="no">Khách hàng bật Versioning, Replication, PITR</td></tr>
+          <tr><td>Tính sẵn sàng của hạ tầng</td><td class="no">Khách hàng thiết kế Multi-AZ</td><td class="no">Khách hàng bật Multi-AZ; AWS thực hiện failover</td><td>AWS (chạy trên nhiều AZ)</td><td>AWS (S3 Standard lưu trên ≥ 3 AZ)</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 330" width="760" role="img" aria-label="Ranh giới trách nhiệm dịch xuống khi dịch vụ càng được quản lý">
+          <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <g font-size="12" text-anchor="middle">
+            <!-- column headers -->
+            <image href="../assets/icons/svc/Amazon-EC2.svg" x="92" y="8" width="40" height="40"/>
+            <text x="112" y="64" font-weight="700" font-size="13">Amazon EC2</text>
+            <image href="../assets/icons/svc/Amazon-RDS.svg" x="282" y="8" width="40" height="40"/>
+            <text x="302" y="64" font-weight="700" font-size="13">Amazon RDS</text>
+            <image href="../assets/icons/svc/AWS-Lambda.svg" x="472" y="8" width="40" height="40"/>
+            <text x="492" y="64" font-weight="700" font-size="13">AWS Lambda</text>
+            <image href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" x="642" y="8" width="40" height="40"/>
+            <text x="662" y="64" font-weight="700" font-size="13">Amazon S3</text>
+          </g>
+          <g font-size="12" text-anchor="middle">
+            <!-- EC2 column: customer layers 1-4, AWS 5-6 -->
+            <rect x="32" y="76" width="160" height="32" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/><text x="112" y="97">Data</text>
+            <rect x="32" y="112" width="160" height="32" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/><text x="112" y="133">Application</text>
+            <rect x="32" y="148" width="160" height="32" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/><text x="112" y="169">Guest OS + patch</text>
+            <rect x="32" y="184" width="160" height="32" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/><text x="112" y="205">Network / SG</text>
+            <rect x="32" y="220" width="160" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="112" y="241">Virtualization</text>
+            <rect x="32" y="256" width="160" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="112" y="277">Hardware / Facilities</text>
+            <!-- RDS column -->
+            <rect x="222" y="76" width="160" height="32" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/><text x="302" y="97">Data</text>
+            <rect x="222" y="112" width="160" height="32" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/><text x="302" y="133">Schema, DB users</text>
+            <rect x="222" y="148" width="160" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="302" y="169">DB engine + OS patch</text>
+            <rect x="222" y="184" width="160" height="32" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/><text x="302" y="205">Network / SG</text>
+            <rect x="222" y="220" width="160" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="302" y="241">Virtualization</text>
+            <rect x="222" y="256" width="160" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="302" y="277">Hardware / Facilities</text>
+            <!-- Lambda column -->
+            <rect x="412" y="76" width="160" height="32" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/><text x="492" y="97">Data</text>
+            <rect x="412" y="112" width="160" height="32" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/><text x="492" y="133">Function code + IAM</text>
+            <rect x="412" y="148" width="160" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="492" y="169">Runtime + OS</text>
+            <rect x="412" y="184" width="160" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="492" y="205">Network / scaling</text>
+            <rect x="412" y="220" width="160" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="492" y="241">Virtualization</text>
+            <rect x="412" y="256" width="160" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="492" y="277">Hardware / Facilities</text>
+            <!-- S3 column -->
+            <rect x="592" y="76" width="140" height="32" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/><text x="662" y="97">Data + encryption</text>
+            <rect x="592" y="112" width="140" height="32" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/><text x="662" y="133">IAM / bucket policy</text>
+            <rect x="592" y="148" width="140" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="662" y="169">Platform</text>
+            <rect x="592" y="184" width="140" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="662" y="205">OS</text>
+            <rect x="592" y="220" width="140" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="662" y="241">Virtualization</text>
+            <rect x="592" y="256" width="140" height="32" rx="3" fill="none" stroke="#EC7211" stroke-width="2"/><text x="662" y="277">Hardware / Facilities</text>
+          </g>
+          <path class="line-o" d="M40 312 H720" marker-end="url(#ah3)"/>
+          <text x="380" y="326" font-size="12" text-anchor="middle" class="muted">Càng sang phải: AWS quản lý càng nhiều, khách hàng càng ít việc vận hành (nhưng Data + IAM luôn là của khách hàng)</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> So sánh ranh giới trách nhiệm: khung <b style="color:#147EBA">xanh</b> = khách hàng, khung <b style="color:#EC7211">cam</b> = AWS. Với EC2 khách hàng phải vá OS; với RDS/Lambda/S3, AWS lo OS và nền tảng.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“<i>AWS is responsible for patching the guest OS on EC2</i>” ⇒ <b>sai</b>. AWS chỉ vá hạ tầng; guest OS trên EC2 là việc của khách hàng (có thể tự động hóa bằng <b>AWS Systems Manager Patch Manager</b> – nhưng trách nhiệm vẫn của khách hàng).</li>
+          <li>“<i>Because S3 is managed, AWS encrypts and classifies my sensitive data automatically, so I have no responsibility</i>” ⇒ <b>sai</b>. Khách hàng vẫn quyết định quyền truy cập (bucket policy, IAM), phân loại dữ liệu (có thể dùng Amazon Macie) và tùy chọn mã hóa.</li>
+          <li>Security group <b>có sẵn</b> do AWS cung cấp, nhưng <b>cấu hình rule</b> là trách nhiệm của khách hàng. Mở port 22 ra 0.0.0.0/0 là lỗi của khách hàng.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>Đề hỏi “<i>Which option shifts the MOST security responsibility to AWS</i>” hoặc “<i>reduce operational overhead of patching</i>” ⇒ chọn dịch vụ <b>managed/serverless</b>: tự cài MySQL trên EC2 → chuyển sang <b>Amazon RDS / Aurora</b>; chạy cron job trên EC2 → chuyển sang <b>AWS Lambda + EventBridge Scheduler</b>; tự quản lý file server → <b>Amazon S3 / Amazon EFS / FSx</b>.</p></div>
+
+      <!-- ===================== PHẦN 3: CONTROLS ===================== -->
+      <h2 id="controls"><img src="../assets/icons/svc/AWS-Artifact.svg" alt="">Inherited, Shared và Customer Specific controls</h2>
+      <p class="lead">Mô hình trách nhiệm chia sẻ cũng áp dụng cho <b>IT controls</b> (các biện pháp kiểm soát CNTT). Giống như trách nhiệm vận hành môi trường IT được chia giữa AWS và khách hàng, việc <b>quản lý, vận hành và kiểm chứng (verification)</b> các IT control cũng được chia sẻ. AWS giúp giảm gánh nặng vận hành control bằng cách quản lý các control gắn với hạ tầng vật lý.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại control</th><th>Định nghĩa (theo AWS)</th><th>Ví dụ AWS nêu</th></tr></thead>
+        <tbody>
+          <tr><td><b><span class="t" data-vi="Control được kế thừa">Inherited Controls</span></b></td><td>Control mà khách hàng <b>kế thừa hoàn toàn</b> từ AWS.</td><td><b>Physical and Environmental controls</b> – bảo mật vật lý, điện, làm mát, chống cháy… của data center.</td></tr>
+          <tr><td><b><span class="t" data-vi="Control dùng chung">Shared Controls</span></b></td><td>Control áp dụng cho <b>cả lớp hạ tầng lẫn lớp khách hàng</b>, nhưng trong hai bối cảnh/góc nhìn hoàn toàn khác nhau. AWS cung cấp yêu cầu cho hạ tầng; khách hàng phải tự triển khai control cho phần mình dùng.</td><td>
+            <b>Patch Management</b> – AWS vá và sửa lỗi trong hạ tầng; khách hàng vá guest OS và ứng dụng.<br>
+            <b>Configuration Management</b> – AWS duy trì cấu hình thiết bị hạ tầng; khách hàng cấu hình guest OS, database và ứng dụng.<br>
+            <b>Awareness &amp; Training</b> – AWS đào tạo nhân viên AWS; khách hàng phải đào tạo nhân viên của mình.</td></tr>
+          <tr><td><b><span class="t" data-vi="Control riêng của khách hàng">Customer Specific</span></b></td><td>Control <b>chỉ thuộc trách nhiệm khách hàng</b>, dựa trên ứng dụng họ triển khai trong các dịch vụ AWS.</td><td><b>Service and Communications Protection</b> hoặc <b>Zone Security</b> – ví dụ yêu cầu định tuyến/phân vùng dữ liệu trong các môi trường bảo mật cụ thể.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Artifact.svg" alt="">
+          <div><h4>AWS Artifact</h4><span class="vi">Cổng báo cáo tuân thủ</span><p>Tải về các báo cáo kiểm toán bên thứ ba của AWS (SOC, ISO, PCI…) – bằng chứng cho phần “OF the cloud” và các Inherited Controls.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Systems-Manager.svg" alt="">
+          <div><h4>AWS Systems Manager</h4><span class="vi">Patch &amp; configuration</span><p>Patch Manager, State Manager giúp khách hàng thực hiện phần việc của mình trong Patch/Configuration Management.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Config.svg" alt="">
+          <div><h4>AWS Config</h4><span class="vi">Theo dõi cấu hình</span><p>Ghi nhận cấu hình tài nguyên và đánh giá tuân thủ bằng rules – kiểm chứng Configuration Management phía khách hàng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Security-Hub.svg" alt="">
+          <div><h4>AWS Security Hub</h4><span class="vi">Tư thế bảo mật tổng thể</span><p>Đánh giá môi trường theo các tiêu chuẩn (CIS, AWS Foundational Security Best Practices…).</p></div></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>Auditor requests AWS compliance reports (SOC 2, PCI DSS, ISO 27001)</i>” ⇒ <b>AWS Artifact</b>. “<i>Which control is shared between AWS and the customer?</i>” ⇒ <b>Patch management, Configuration management, Awareness &amp; training</b>. “<i>Which control is fully inherited from AWS?</i>” ⇒ <b>Physical and environmental controls</b>.</p></div>
+
+      <!-- ===================== PHẦN 4: ROOT USER ===================== -->
+      <h2 id="root-user"><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">Tài khoản AWS và root user</h2>
+      <p class="lead">Khi tạo một <span class="t" data-vi="Tài khoản AWS">AWS account</span>, bạn bắt đầu với <b>một định danh đăng nhập duy nhất có toàn quyền truy cập mọi dịch vụ và tài nguyên trong tài khoản</b>. Định danh này gọi là <span class="t" data-vi="Người dùng gốc của tài khoản">AWS account root user</span>. Thông tin đăng nhập của root user chính là <b>địa chỉ email và mật khẩu</b> dùng khi tạo tài khoản.</p>
+
+      <div class="stats">
+        <div class="stat"><b>100%</b><span>quyền trên mọi tài nguyên &amp; billing – không thể giới hạn bằng IAM policy trong chính account</span></div>
+        <div class="stat"><b>8</b><span>thiết bị MFA tối đa cho root user (và cho mỗi IAM user)</span></div>
+        <div class="stat"><b>14 ngày</b><span>thời hạn ân hạn phải đăng ký MFA cho root user kể từ lần đăng nhập console đầu tiên</span></div>
+        <div class="stat"><b>8–128</b><span>ký tự cho mật khẩu root user, gồm ≥ 3 loại ký tự</span></div>
+      </div>
+
+      <div class="callout note"><span class="ttl">Khuyến nghị cốt lõi của AWS</span>
+        <p>“<i>We strongly recommend that you don't use the root user for your everyday tasks.</i>” Hãy tạo một <b>administrative user</b> cho công việc hằng ngày: với tài khoản đơn lẻ dùng <b>IAM roles</b>; với nhiều tài khoản trong AWS Organizations dùng <b>IAM Identity Center</b> (workforce users). Người dùng nên xác thực bằng <span class="t" data-vi="Thông tin xác thực tạm thời">temporary credentials</span> thay vì <span class="t" data-vi="Thông tin xác thực dài hạn">long-term credentials</span> (mật khẩu, access key của IAM user).</p></div>
+
+      <h3>Các tác vụ CHỈ root user mới thực hiện được</h3>
+      <p>Đây là danh sách AWS công bố (đề thi hay hỏi dạng “<i>Which task requires the root user?</i>”):</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhóm</th><th>Tác vụ cần root user credentials</th></tr></thead>
+        <tbody>
+          <tr><td><b>Account management</b></td><td>
+            • <b>Change account settings</b> – với tài khoản standalone (không thuộc Organizations): đổi <b>email</b>, <b>mật khẩu root</b>, <b>access key của root</b>. (Tên tài khoản, thông tin liên hệ, alternate contacts, tiền tệ thanh toán, bật/tắt Region <i>không</i> cần root.)<br>
+            • <b>Close your AWS account</b> (standalone; trong Organizations có thể đóng member account từ management account).<br>
+            • <b>Reopen your AWS account</b> trong post-closure period (nếu tự đóng và không còn nợ).<br>
+            • <b>Restore IAM user permissions</b> – khi IAM admin duy nhất lỡ tự thu hồi quyền của chính mình.</td></tr>
+          <tr><td><b>Billing</b></td><td>• <b>Activate IAM access to the Billing and Cost Management console</b>.<br>• Một số tác vụ billing khác và xem một số hóa đơn thuế (tax invoices).</td></tr>
+          <tr><td><b>AWS GovCloud (US)</b></td><td>• Đăng ký AWS GovCloud (US).<br>• Yêu cầu access key của root user GovCloud từ AWS Support.</td></tr>
+          <tr><td><b>Amazon EC2</b></td><td>• <b>Register as a seller</b> trong <b>Reserved Instance Marketplace</b>.</td></tr>
+          <tr><td><b>AWS KMS</b></td><td>• Khôi phục KMS key không còn quản lý được (unmanageable) qua AWS Support – Support xác thực qua số điện thoại chính của root user.</td></tr>
+          <tr><td><b>Amazon S3</b></td><td>• <b>Configure an S3 bucket to enable MFA Delete</b>.<br>• Sửa/xóa <b>bucket policy từ chối mọi principal</b> (deny all) khiến bucket bị khóa.</td></tr>
+          <tr><td><b>Amazon SQS</b></td><td>• Sửa/xóa resource-based policy của SQS queue từ chối mọi principal.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“<i>Change the AWS Support plan</i>”, “<i>create an IAM user</i>”, “<i>launch EC2</i>”, “<i>enable CloudTrail</i>” <b>không</b> nằm trong danh sách chỉ-root ⇒ một IAM user/role đủ quyền làm được.</li>
+          <li>Đổi <b>tên tài khoản</b>, <b>contact information</b>, <b>alternate contacts</b> hoặc bật Region <b>không</b> cần root user (theo tài liệu hiện tại).</li>
+          <li><b>MFA Delete</b> trên S3 chỉ bật được bởi <b>root user</b> (qua CLI/API, cần versioning) – đề hay dùng làm đáp án gây nhiễu kiểu “an IAM administrator enables MFA Delete in the console”.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: ROOT USER BEST PRACTICES & MFA ===================== -->
+      <h2 id="root-best-practices"><img src="../assets/icons/res/AWS-Identity-Access-Management_MFA-Token.svg" alt="">Best practices bảo vệ root user &amp; MFA</h2>
+      <p class="lead">Root user có đặc quyền cao nhất, nên AWS đưa ra 9 nhóm <span class="t" data-vi="Thực hành tốt nhất">best practices</span> để bảo vệ thông tin đăng nhập và <span class="t" data-vi="Cơ chế khôi phục tài khoản">account recovery mechanisms</span> của nó.</p>
+
+      <ol class="steps">
+        <li><b>Secure your root user credentials</b> – chỉ dùng cho các tác vụ bắt buộc; không chia sẻ mật khẩu, MFA, access key, CloudFront key pair hay signing certificate với bất kỳ ai không có nhu cầu kinh doanh chặt chẽ. Không lưu mật khẩu root trong công cụ phụ thuộc vào chính tài khoản AWS đó (mất mật khẩu thì cũng mất quyền vào công cụ). Việc truy cập nơi lưu mật khẩu nên cần ≥ 2 người và được log, giám sát.</li>
+        <li><b>Use a strong root user password</b> – mạnh và duy nhất (dùng password manager). AWS yêu cầu: <b>8–128 ký tự</b>; có ít nhất <b>3 trong các loại</b>: chữ hoa, chữ thường, số, ký tự đặc biệt; <b>không trùng</b> tên tài khoản hoặc email.</li>
+        <li><b>Secure root sign-in with <span class="t" data-vi="Xác thực đa yếu tố">MFA</span></b> – thêm yếu tố thứ hai ngoài email + mật khẩu. Đăng ký được <b>tối đa 8 thiết bị MFA</b> (kết hợp mọi loại). <b>Mọi loại tài khoản</b> (standalone, management, member) đều <b>bắt buộc MFA cho root user</b>; nếu chưa bật, phải đăng ký trong <b>14 ngày</b> kể từ lần đăng nhập console đầu tiên.</li>
+        <li><b>Don't create access keys for the root user</b> – root có toàn quyền kể cả billing. Tác vụ root hiếm khi cần nên hãy làm trên console. Nếu thật sự cần CLI/SDK, dùng lệnh <code>aws login</code> để nhận <b>credentials tạm thời, tự xoay vòng</b> thay vì tạo access key dài hạn.</li>
+        <li><b>Use multi-person approval for root sign-in</b> – không để một người nắm cả mật khẩu và MFA. Ví dụ: nhóm admin A giữ mật khẩu, nhóm admin B giữ MFA; cần một người từ mỗi nhóm mới đăng nhập được.</li>
+        <li><b>Use a group email address</b> – email do doanh nghiệp quản lý, chuyển tiếp tới một nhóm người, để AWS liên hệ không bị chậm trễ khi một cá nhân nghỉ phép/nghỉ việc. Email root không dùng cho mục đích khác.</li>
+        <li><b>Restrict access to account recovery mechanisms</b> – quản lý hộp thư email root và <b>số điện thoại</b> liên hệ (hai kênh khôi phục). Mất hết MFA thì cần cả email và số điện thoại đã đăng ký còn dùng được. <b>Không ai được nắm cả email lẫn số điện thoại</b> – hai nhóm người quản lý hai kênh.</li>
+        <li><b>Secure AWS Organizations root user credentials</b> – management account <b>bắt buộc MFA</b>; member account nên <b>xóa root credentials</b> bằng centralized root access, hoặc ít nhất bảo vệ bằng MFA; có thể dùng <b>SCP</b> chặn hành động của root user ở member accounts.</li>
+        <li><b>Monitor access and usage</b> – cảnh báo mỗi khi root đăng nhập/sử dụng; có quy trình xác minh và leo thang (escalate) nếu nghi ngờ sự cố bảo mật.</li>
+      </ol>
+
+      <h3>Các loại MFA AWS hỗ trợ</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại MFA</th><th>Mô tả</th><th>Đặc điểm</th></tr></thead>
+        <tbody>
+          <tr><td><b>Passkeys &amp; security keys</b> <small>(FIDO)</small></td><td>Chuẩn FIDO, dùng mật mã khóa công khai. Hai dạng: <b>security key</b> gắn thiết bị (vd YubiKey) và <b>synced passkey</b> (qua Google, Apple, Microsoft, 1Password, Bitwarden…).</td><td class="yes"><b>Phishing-resistant</b> – AWS khuyến nghị mạnh nhất; một security key dùng được cho nhiều root/IAM user; không cần pin. Chỉ bật được qua <b>console</b> (không qua CLI/API).</td></tr>
+          <tr><td><b>Virtual authenticator app</b></td><td>Ứng dụng trên điện thoại giả lập thiết bị, dùng thuật toán <b>TOTP</b>; một thiết bị chứa nhiều token.</td><td>Tiện, miễn phí; AWS coi là giải pháp tạm thời khi chưa có security key.</td></tr>
+          <tr><td><b>Hardware TOTP token</b></td><td>Thiết bị phần cứng sinh mã <b>6 chữ số</b> theo TOTP.</td><td>Chỉ dùng token có seed được chia sẻ an toàn với AWS (mua từ link AWS chỉ định).</td></tr>
+          <tr><td><b>SMS MFA</b></td><td>Mã qua tin nhắn.</td><td class="no"><b>AWS đã ngừng hỗ trợ bật SMS MFA</b> – không phải đáp án đúng.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout note"><span class="ttl">Lưu ý về MFA</span>
+        <ul>
+          <li>Bật MFA cho root user <b>chỉ ảnh hưởng root user</b>; mỗi IAM user có cấu hình MFA riêng.</li>
+          <li>Có nhiều thiết bị MFA thì chỉ cần <b>một</b> thiết bị để đăng nhập; mất một thiết bị vẫn đăng nhập được bằng thiết bị còn lại mà không cần quy trình khôi phục tài khoản.</li>
+          <li>Không thể truyền thông tin MFA của passkey/security key vào API của AWS STS; khi dùng CLI/SDK với passkey thì dùng <code>aws login</code>.</li>
+          <li>Với nhiều tài khoản, AWS gợi ý <b>IAM Identity Center</b> để có single sign-on có MFA tới mọi tài khoản được gán.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>Câu hỏi “<i>secure the root user / AWS account after creation</i>” ⇒ đáp án đúng thường là tổ hợp: <b>bật MFA cho root</b> + <b>xóa/không tạo access key root</b> + <b>tạo admin user/role cho việc hằng ngày</b> + <b>mật khẩu mạnh</b> + <b>email nhóm</b>. Đáp án “<i>share the root credentials with the operations team</i>” hoặc “<i>create root access keys for automation scripts</i>” luôn <b>sai</b>.</p></div>
+
+      <!-- ===================== PHẦN 6: MULTI-ACCOUNT & MONITORING ===================== -->
+      <h2 id="giam-sat-root"><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">Quản lý root tập trung &amp; giám sát việc dùng root</h2>
+      <p class="lead">Khi chuyển sang chiến lược nhiều tài khoản với <span class="t" data-vi="Dịch vụ quản lý nhiều tài khoản">AWS Organizations</span>, <b>mỗi tài khoản đều có root user riêng</b> cần được bảo vệ. Tài khoản tạo tổ chức là <span class="t" data-vi="Tài khoản quản lý">management account</span>; các tài khoản còn lại là <span class="t" data-vi="Tài khoản thành viên">member accounts</span> (chi tiết ở Bài 6).</p>
+
+      <h3>Centralized root access cho member accounts</h3>
+      <ul>
+        <li><b>Remove member account root user credentials</b> – xóa mật khẩu, access key, signing certificate và hủy MFA của root ở member accounts. <b>Tài khoản mới tạo trong Organizations mặc định không có root credentials.</b> Member account khi đó không thể đăng nhập root hay tự khôi phục mật khẩu root (trừ khi bật account recovery).</li>
+        <li><b>Perform privileged tasks</b> – management account hoặc <span class="t" data-vi="Quản trị viên được ủy quyền">delegated administrator</span> cho IAM thực hiện một số tác vụ chỉ-root trên member account qua <code>sts:AssumeRoot</code> (phiên đặc quyền ngắn hạn), ví dụ: mở khóa S3 bucket hoặc SQS queue có policy deny-all.</li>
+        <li><b>Allow password recovery</b> – khi thật cần root của member account, management account bật khôi phục, người giữ hộp thư email root reset mật khẩu; xong việc nên xóa lại root credentials.</li>
+        <li><b>SCP</b> (Service Control Policy) – nếu member account vẫn còn root credentials, dùng SCP <b>deny mọi hành động của root user</b> ngoại trừ một số tác vụ chỉ-root.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">AWS Organizations</span>
+          <div class="row">
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Management-Account.svg" alt="">Management account</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_MFA-Token.svg" alt="">Root user<small>BẮT BUỘC MFA</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Single-Sign-On.svg" alt="">IAM Identity Center<small>admin hằng ngày</small></div>
+                <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_AWS-STS.svg" alt="">sts:AssumeRoot<small>privileged task</small></div>
+              </div></div>
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">OU: Workloads – SCP deny root actions</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Member account Prod<small>root credentials đã xóa</small></div>
+                <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Member account Dev<small>root credentials đã xóa</small></div>
+              </div></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Quản lý root tập trung: chỉ management account giữ root (có MFA); member accounts không còn root credentials, tác vụ đặc quyền thực hiện từ management account hoặc delegated admin qua <code>sts:AssumeRoot</code>.</figcaption>
+      </figure>
+
+      <h3>Giám sát và cảnh báo khi root user được sử dụng</h3>
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/User.svg" alt="">Root user sign-in<small>console / API</small></div>
+          <span class="arrow">ghi log</span>
+          <div class="node"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">AWS CloudTrail<small>ConsoleLogin, API calls</small></div>
+          <span class="arrow">event</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">EventBridge rule<small>userIdentity.type = Root</small></div>
+          <span class="arrow">notify</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" alt="">Amazon SNS<small>email đội bảo mật</small></div>
+          <span class="arrow dashed">bổ sung</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-GuardDuty.svg" alt="">GuardDuty<small>finding RootCredentialUsage</small></div>
+        </div>
+        <figcaption><b>Hình 4.</b> Cảnh báo khi root user đăng nhập: CloudTrail ghi sự kiện → EventBridge (CloudWatch Events) lọc sự kiện của root → SNS gửi thông báo. GuardDuty cũng có finding khi root credentials được dùng.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Mục đích</th><th>Dịch vụ</th><th>Cách dùng theo AWS</th></tr></thead>
+        <tbody>
+          <tr><td>Ghi nhận ai/khi nào dùng root</td><td>AWS CloudTrail</td><td>Log riêng sự kiện đăng nhập root và phiên đặc quyền (privileged root sessions) qua <code>sts:AssumeRoot</code>.</td></tr>
+          <tr><td>Thông báo khi root đăng nhập</td><td>Amazon EventBridge + Amazon SNS (CloudWatch Events)</td><td>Tạo rule phát hiện root credentials được sử dụng ⇒ gửi thông báo cho security admin.</td></tr>
+          <tr><td>Phát hiện mối đe dọa</td><td>Amazon GuardDuty</td><td>Mở rộng để cảnh báo khi root credentials được dùng.</td></tr>
+          <tr><td>Kiểm tra tuân thủ MFA/access key</td><td>AWS Config</td><td>Managed rules <code>root-account-mfa-enabled</code>, <code>iam-root-access-key-check</code>.</td></tr>
+          <tr><td>Đánh giá theo tiêu chuẩn</td><td>AWS Security Hub CSPM</td><td>Control kiểm tra MFA cho root, không có access key root.</td></tr>
+          <tr><td>Kiểm tra nhanh</td><td>AWS Trusted Advisor</td><td>Security check <b>“MFA on Root Account”</b> (có cả ở gói Basic).</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout note"><span class="ttl">Lưu ý</span>
+        <p>Nếu bạn làm đúng best practice <b>xóa root credentials</b> ở member accounts, các rule MFA (Config/Security Hub) có thể đánh giá các tài khoản đó là <b>not applicable</b> – không phải lỗi.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>Notify the security team whenever the root user signs in</i>” với <i>LEAST operational overhead</i> ⇒ <b>CloudTrail + EventBridge rule + SNS</b>. “<i>Prevent member accounts' root users from performing actions</i>” ⇒ <b>SCP</b> (hoặc centralized root access để xóa hẳn root credentials). IAM policy <b>không</b> giới hạn được root user trong chính tài khoản đó.</p></div>
+
+      <!-- ===================== PHẦN 7: SUPPORT PLANS ===================== -->
+      <h2 id="support-plans"><img src="../assets/icons/svc/AWS-Support.svg" alt="">AWS Support plans</h2>
+      <p class="lead">AWS cung cấp các <span class="t" data-vi="Gói hỗ trợ">Support plans</span> để khách hàng chọn theo nhu cầu kinh doanh. <b>Basic Support</b> được tặng kèm mọi tài khoản; các gói trả phí tính theo tháng, <b>không cần hợp đồng dài hạn</b>, và mở được các <span class="t" data-vi="Yêu cầu hỗ trợ kỹ thuật">technical support cases</span>.</p>
+
+      <div class="callout note"><span class="ttl">Cập nhật danh mục gói (theo tài liệu AWS Support hiện tại)</span>
+        <p>Danh mục hiện tại gồm <b>Basic</b>, <b>AWS Business Support+</b>, <b>AWS Enterprise Support</b> và <b>AWS Unified Operations</b>. AWS thông báo <b>ngừng</b> các gói <b>Developer</b>, <b>Business</b> và <b>Enterprise On-Ramp</b> từ <b>1/1/2027</b> (khách hàng Enterprise On-Ramp được tự động nâng lên Enterprise trong năm 2026; ba gói này vẫn có ở AWS GovCloud (US)). Đề SAA-C03 và nhiều tài liệu ôn tập vẫn có thể dùng tên gói cũ, nên bạn cần biết <b>cả hai</b> danh mục.</p></div>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Support.svg" alt="">
+          <div><h4>Basic</h4><span class="vi">Miễn phí, mọi khách hàng</span><p>24/7: trả lời 1-1 câu hỏi <b>account &amp; billing</b>, tăng service quota, support forums, service health checks, tài liệu/whitepaper/best practice guides, Trusted Advisor <b>core checks</b>. <b>Không</b> có technical support case.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Forums.svg" alt="">
+          <div><h4>Business Support+</h4><span class="vi">Từ $29/tháng/tài khoản</span><p>Trợ giúp bằng generative AI theo ngữ cảnh; 24/7 phone, web, chat với Cloud Support Engineers; <b>&lt; 30 phút</b> cho business-critical system down; <b>500+ check</b> Trusted Advisor; AWS Support API; hỗ trợ phần mềm bên thứ ba; số case không giới hạn.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Managed-Services.svg" alt="">
+          <div><h4>Enterprise Support</h4><span class="vi">Tối thiểu $5,000/tháng (giảm từ $15,000)</span><p>Mọi thứ của Business Support+, cộng <b>designated Technical Account Manager (TAM)</b>, phản hồi <b>&lt; 15 phút</b> cho sự cố production-critical, <b>AWS Security Incident Response</b> không tính thêm phí, strategic business reviews, AWS Countdown, Trusted Advisor Priority.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Personal-Health-Dashboard.svg" alt="">
+          <div><h4>Unified Operations</h4><span class="vi">Cao nhất</span><p><b>&lt; 5 phút</b> từ Incident Management Engineer cho business-critical; TAM + <b>Domain Specialist Engineer (DSE)</b>; application architecture guidance; <b>Infrastructure Event Management</b>; Critical Workload Reviews, runbook riêng; 1 subscription AWS Countdown Premium; 24/7 workload monitoring.</p></div></div>
+      </div>
+
+      <h3>Thời gian phản hồi theo mức độ nghiêm trọng (gói hiện tại)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Case severity</th><th>Basic</th><th>Business Support+</th><th>Enterprise Support</th><th>Unified Operations</th></tr></thead>
+        <tbody>
+          <tr><td>General guidance</td><td class="no">—</td><td>&lt; 24 giờ</td><td>&lt; 24 giờ</td><td>&lt; 24 giờ</td></tr>
+          <tr><td>System impaired</td><td class="no">—</td><td>&lt; 12 giờ</td><td>&lt; 12 giờ</td><td>&lt; 12 giờ</td></tr>
+          <tr><td>Production system impaired</td><td class="no">—</td><td>&lt; 4 giờ</td><td>&lt; 4 giờ</td><td>&lt; 4 giờ</td></tr>
+          <tr><td>Production system down</td><td class="no">—</td><td>&lt; 1 giờ</td><td>&lt; 1 giờ</td><td>&lt; 1 giờ</td></tr>
+          <tr><td>Business-critical system down</td><td class="no">—</td><td>&lt; 30 phút (best effort)</td><td class="yes">&lt; 15 phút (best effort)</td><td class="yes">&lt; 5 phút</td></tr>
+          <tr><td>Designated TAM</td><td class="no">Không</td><td class="no">Không</td><td class="yes">Có</td><td class="yes">Có (+ DSE)</td></tr>
+          <tr><td>Trusted Advisor</td><td>Core checks</td><td>Full checks</td><td>Full + TA Priority</td><td>Full + TA Priority</td></tr>
+        </tbody>
+      </table></div>
+      <p><small>AWS ghi chú: AWS “<i>will make every reasonable effort</i>” để đáp ứng các khung thời gian – đây không phải SLA bảo đảm.</small></p>
+
+      <h3>Các gói cũ (legacy) – vẫn thường gặp trong đề và tài liệu ôn</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Developer</th><th>Business</th><th>Enterprise On-Ramp</th><th>Enterprise (cũ)</th></tr></thead>
+        <tbody>
+          <tr><td>Đối tượng điển hình</td><td>Thử nghiệm, dev/test</td><td>Có workload production</td><td>Workload production / business-critical</td><td>Workload mission-critical</td></tr>
+          <tr><td>Kênh hỗ trợ kỹ thuật</td><td>Email, <b>giờ hành chính</b></td><td>24/7 phone, email, chat</td><td>24/7 phone, email, chat</td><td>24/7 phone, email, chat</td></tr>
+          <tr><td>Phản hồi nhanh nhất</td><td>System impaired &lt; 12 giờ</td><td>Production system down &lt; 1 giờ</td><td>Business-critical down &lt; 30 phút</td><td>Business-critical down &lt; 15 phút</td></tr>
+          <tr><td>Trusted Advisor</td><td>Core checks</td><td class="yes">Full checks</td><td class="yes">Full checks</td><td class="yes">Full checks</td></tr>
+          <tr><td>TAM</td><td class="no">Không</td><td class="no">Không</td><td>Pool of TAMs</td><td class="yes">Designated TAM</td></tr>
+          <tr><td>Concierge Support (billing)</td><td class="no">Không</td><td class="no">Không</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Infrastructure Event Management</td><td class="no">Không</td><td>Trả thêm phí</td><td>1 lần/năm</td><td class="yes">Có</td></tr>
+          <tr><td>Trạng thái</td><td colspan="3" class="no">Ngừng từ 1/1/2027 (trừ GovCloud)</td><td>Thay bằng Enterprise Support mới (min $5,000)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Chọn gói Support</span>
+        <ul>
+          <li>Chỉ cần hỏi về <b>billing/account</b>, tăng quota ⇒ <b>Basic</b> là đủ (miễn phí).</li>
+          <li>“<i>Production workload, 24/7 phone access, response within 1 hour for production system down, full Trusted Advisor checks, AWS Support API</i>” ⇒ <b>Business</b> (nay là <b>Business Support+</b>) – gói <b>rẻ nhất</b> đáp ứng.</li>
+          <li>“<i>Designated Technical Account Manager</i>”, “<i>15-minute response for business-critical</i>”, “<i>proactive guidance, strategic reviews</i>” ⇒ <b>Enterprise</b>.</li>
+          <li>Đề thường hỏi “<i>MOST cost-effective plan that meets the requirements</i>” ⇒ chọn gói <b>thấp nhất</b> thỏa mọi điều kiện, không chọn gói cao hơn “cho chắc”.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: TỪ KHÓA ĐỀ ===================== -->
+      <h2 id="tu-khoa"><img src="../assets/icons/res/AWS-Trusted-Advisor_Checklist-Security.svg" alt="">Từ khóa trong đề ⇒ đáp án</h2>
+      <p class="lead">Chủ đề bài này thuộc <b>Domain 1 – Design Secure Architectures</b> (Task 1.1: <i>Design secure access to AWS resources</i>), trong đó Exam Guide liệt kê rõ kiến thức về <span class="t" data-vi="Mô hình trách nhiệm chia sẻ">shared responsibility model</span> và best practices bảo vệ root user (MFA).</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cụm từ trong đề</th><th>Hướng đáp án</th></tr></thead>
+        <tbody>
+          <tr><td><i>physical security of data centers, hardware disposal, hypervisor</i></td><td>Trách nhiệm của <b>AWS</b> (OF the cloud)</td></tr>
+          <tr><td><i>patch the operating system of EC2 instances</i></td><td>Trách nhiệm của <b>khách hàng</b>; tự động hóa bằng Systems Manager Patch Manager</td></tr>
+          <tr><td><i>patch the database engine with least operational overhead</i></td><td>Chuyển sang <b>Amazon RDS/Aurora</b> (AWS vá engine trong maintenance window)</td></tr>
+          <tr><td><i>reduce the security responsibility of the company</i></td><td>Dùng dịch vụ <b>managed/serverless</b> (Lambda, Fargate, S3, DynamoDB)</td></tr>
+          <tr><td><i>compliance reports, SOC/PCI/ISO attestation of AWS</i></td><td><b>AWS Artifact</b></td></tr>
+          <tr><td><i>secure the root user, newly created account</i></td><td>MFA + không access key + admin role/Identity Center + mật khẩu mạnh</td></tr>
+          <tr><td><i>alert when root user is used</i></td><td><b>CloudTrail + EventBridge + SNS</b>; GuardDuty</td></tr>
+          <tr><td><i>restrict root in member accounts</i></td><td><b>SCP</b> / centralized root access (Organizations)</td></tr>
+          <tr><td><i>designated TAM, 15-minute response</i></td><td><b>Enterprise Support</b></td></tr>
+          <tr><td><i>cheapest plan with 24/7 phone and &lt; 1 hour production down</i></td><td><b>Business</b> / <b>Business Support+</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <p>Đề có thể hỏi về <b>trách nhiệm “chia sẻ” với cùng một tính năng</b>: ví dụ <i>encryption at rest cho S3</i> – AWS cung cấp khả năng mã hóa và quản lý hạ tầng khóa (KMS), nhưng <b>chọn bật/cấu hình mã hóa, quản lý key policy và quyền truy cập</b> là việc của khách hàng. Đừng chọn đáp án “AWS chịu trách nhiệm hoàn toàn về mã hóa dữ liệu của khách hàng”.</p></div>
+
+      <!-- 3. TÓM TẮT -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>AWS = Security OF the cloud</b>: hardware, software, networking, facilities, global infrastructure (Regions, AZs, Edge Locations).</li>
+          <li><b>Khách hàng = Security IN the cloud</b>: phụ thuộc dịch vụ chọn; <b>dữ liệu và IAM luôn của khách hàng</b>.</li>
+          <li><b>EC2 (IaaS)</b>: khách hàng vá guest OS, quản lý ứng dụng, cấu hình security group. <b>S3/DynamoDB (abstracted)</b>: AWS lo hạ tầng, OS, platform; khách hàng lo dữ liệu, mã hóa, phân loại, IAM.</li>
+          <li><b>Inherited</b>: physical &amp; environmental. <b>Shared</b>: patch management, configuration management, awareness &amp; training. <b>Customer specific</b>: service &amp; communications protection, zone security.</li>
+          <li><b>Root user</b> = email + mật khẩu tạo tài khoản, toàn quyền; <b>không dùng hằng ngày</b>, không tạo access key.</li>
+          <li>Tác vụ chỉ-root: đổi email/mật khẩu/access key root (standalone), đóng/mở lại account, khôi phục quyền IAM admin, bật IAM access vào Billing console, đăng ký seller RI Marketplace, bật <b>S3 MFA Delete</b>, gỡ bucket/SQS policy deny-all, đăng ký GovCloud.</li>
+          <li><b>MFA</b>: bắt buộc cho root ở mọi loại tài khoản (14 ngày ân hạn); tối đa <b>8 thiết bị</b>; ưu tiên <b>passkey/security key (FIDO, phishing-resistant)</b>; SMS MFA đã ngừng.</li>
+          <li>Multi-account: xóa root credentials ở member accounts (centralized root access, <code>sts:AssumeRoot</code>), SCP chặn root; giám sát bằng CloudTrail + EventBridge + SNS, GuardDuty, Config, Security Hub, Trusted Advisor.</li>
+          <li>Support: Basic (miễn phí, chỉ account/billing) · Business Support+ ($29+, &lt; 30 phút business-critical) · Enterprise ($5,000+, designated TAM, &lt; 15 phút) · Unified Operations (&lt; 5 phút). Legacy Developer/Business/Enterprise On-Ramp ngừng từ 1/1/2027.</li>
+        </ul></div>
+
+      <!-- 4. THUẬT NGỮ -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Shared Responsibility Model</dt><dd><b>Mô hình trách nhiệm chia sẻ</b> – phân chia trách nhiệm bảo mật &amp; tuân thủ giữa AWS và khách hàng.</dd></div>
+        <div><dt>Security OF the cloud</dt><dd><b>Bảo mật của đám mây</b> – phần AWS chịu trách nhiệm: hạ tầng chạy mọi dịch vụ.</dd></div>
+        <div><dt>Security IN the cloud</dt><dd><b>Bảo mật trong đám mây</b> – phần khách hàng chịu trách nhiệm, tùy dịch vụ được chọn.</dd></div>
+        <div><dt>Infrastructure as a Service (IaaS)</dt><dd><b>Hạ tầng như một dịch vụ</b> – vd Amazon EC2; khách hàng làm mọi cấu hình bảo mật từ guest OS trở lên.</dd></div>
+        <div><dt>Abstracted service</dt><dd><b>Dịch vụ được trừu tượng hóa</b> – vd S3, DynamoDB; AWS vận hành hạ tầng, OS, platform.</dd></div>
+        <div><dt>Guest operating system</dt><dd><b>Hệ điều hành khách</b> – OS chạy bên trong máy ảo EC2, do khách hàng quản lý và vá.</dd></div>
+        <div><dt>Inherited Controls</dt><dd><b>Control được kế thừa</b> – khách hàng kế thừa hoàn toàn từ AWS (physical &amp; environmental).</dd></div>
+        <div><dt>Shared Controls</dt><dd><b>Control dùng chung</b> – áp dụng cho cả lớp hạ tầng và lớp khách hàng (patch, configuration, training).</dd></div>
+        <div><dt>Customer Specific Controls</dt><dd><b>Control riêng của khách hàng</b> – chỉ khách hàng chịu trách nhiệm (vd zone security).</dd></div>
+        <div><dt>AWS Artifact</dt><dd><b>Cổng báo cáo tuân thủ</b> – tải báo cáo kiểm toán/chứng nhận của AWS.</dd></div>
+        <div><dt>AWS account root user</dt><dd><b>Người dùng gốc của tài khoản</b> – định danh có toàn quyền, đăng nhập bằng email + mật khẩu tạo tài khoản.</dd></div>
+        <div><dt>Multi-factor authentication (MFA)</dt><dd><b>Xác thực đa yếu tố</b> – thêm yếu tố thứ hai ngoài mật khẩu.</dd></div>
+        <div><dt>Passkey / Security key (FIDO)</dt><dd><b>Khóa truy cập / khóa bảo mật</b> – MFA dùng mật mã khóa công khai, chống phishing.</dd></div>
+        <div><dt>TOTP</dt><dd><b>Mật khẩu dùng một lần theo thời gian</b> – thuật toán của virtual MFA app và hardware token.</dd></div>
+        <div><dt>Phishing-resistant MFA</dt><dd><b>MFA chống lừa đảo</b> – không thể bị đánh cắp bằng trang giả mạo (passkey, security key).</dd></div>
+        <div><dt>Temporary credentials</dt><dd><b>Thông tin xác thực tạm thời</b> – do IAM role/STS cấp, tự hết hạn.</dd></div>
+        <div><dt>Account recovery mechanisms</dt><dd><b>Cơ chế khôi phục tài khoản</b> – email và số điện thoại đăng ký của root user.</dd></div>
+        <div><dt>Multi-person approval</dt><dd><b>Phê duyệt nhiều người</b> – tách người giữ mật khẩu và người giữ MFA.</dd></div>
+        <div><dt>Management account / Member account</dt><dd><b>Tài khoản quản lý / Tài khoản thành viên</b> trong AWS Organizations.</dd></div>
+        <div><dt>Centralized root access</dt><dd><b>Quản lý root tập trung</b> – xóa root credentials ở member accounts, thực hiện tác vụ đặc quyền từ management account.</dd></div>
+        <div><dt>Privileged task (sts:AssumeRoot)</dt><dd><b>Tác vụ đặc quyền</b> – phiên root ngắn hạn trên member account.</dd></div>
+        <div><dt>Delegated administrator</dt><dd><b>Quản trị viên được ủy quyền</b> – member account được giao quản trị một dịch vụ cho cả tổ chức.</dd></div>
+        <div><dt>MFA Delete</dt><dd><b>Xóa có MFA</b> – S3 yêu cầu MFA khi xóa phiên bản object/tắt versioning; chỉ root bật được.</dd></div>
+        <div><dt>Support plan</dt><dd><b>Gói hỗ trợ</b> – Basic, Business Support+, Enterprise, Unified Operations (và các gói cũ).</dd></div>
+        <div><dt>Technical Account Manager (TAM)</dt><dd><b>Quản lý tài khoản kỹ thuật</b> – chuyên gia AWS được chỉ định, hướng dẫn chủ động (gói Enterprise trở lên).</dd></div>
+        <div><dt>Case severity</dt><dd><b>Mức độ nghiêm trọng của case</b> – general guidance → business-critical system down.</dd></div>
+        <div><dt>Infrastructure Event Management (IEM)</dt><dd><b>Quản lý sự kiện hạ tầng</b> – AWS hỗ trợ kiến trúc/scaling cho sự kiện lớn (ra mắt, khuyến mãi).</dd></div>
+        <div><dt>Concierge Support</dt><dd><b>Hỗ trợ tận tình về billing/account</b> – có ở các gói Enterprise.</dd></div>
+      </dl>
+
+      <!-- 5. CÂU HỎI ÔN TẬP -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a web application on Amazon EC2 instances that use an Amazon Linux AMI. A security audit finds that several instances are missing critical operating system security patches. According to the AWS shared responsibility model, who is responsible for applying these patches?</div>
+          <ol class="opts">
+            <li data-k="A">AWS, because AWS manages the infrastructure that runs Amazon EC2.</li>
+            <li data-k="B">AWS, because the instances were launched from an AWS-provided AMI.</li>
+            <li data-k="C">The company, because it manages the guest operating system on its EC2 instances.</li>
+            <li data-k="D">AWS Support, but only if the company has an Enterprise Support plan.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> EC2 là IaaS: theo AWS, khách hàng quản lý <b>guest operating system, bao gồm cập nhật và security patches</b>, ứng dụng và security group. <b>A sai</b>: AWS chỉ chịu trách nhiệm hạ tầng (hardware, virtualization), không phải OS bên trong instance. <b>B sai</b>: AMI do AWS cung cấp chỉ là điểm khởi đầu; sau khi chạy, việc vá OS thuộc khách hàng. <b>D sai</b>: không gói Support nào chuyển trách nhiệm vá guest OS sang AWS (TAM chỉ tư vấn).</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng web trên các Amazon EC2 instance dùng Amazon Linux AMI. Một cuộc kiểm toán bảo mật phát hiện nhiều instance đang thiếu các bản vá bảo mật quan trọng của hệ điều hành. Theo AWS shared responsibility model (mô hình trách nhiệm chia sẻ), ai chịu trách nhiệm áp dụng các bản vá này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">AWS, vì AWS quản lý hạ tầng chạy Amazon EC2.</span><span class="why">Sai: AWS chỉ chịu trách nhiệm hạ tầng (phần cứng, lớp ảo hóa), không phải hệ điều hành bên trong instance.</span></li>
+              <li data-k="B"><span class="tv">AWS, vì các instance được khởi chạy từ AMI do AWS cung cấp.</span><span class="why">Sai: AMI của AWS chỉ là điểm khởi đầu; sau khi chạy, vá guest OS là việc của khách hàng.</span></li>
+              <li data-k="C"><span class="tv">Công ty, vì công ty quản lý guest operating system trên các EC2 instance của mình.</span><span class="why">Đúng: EC2 là IaaS – khách hàng quản lý guest OS, gồm cập nhật và security patch, cùng ứng dụng và security group.</span></li>
+              <li data-k="D"><span class="tv">AWS Support, nhưng chỉ khi công ty có gói Enterprise Support.</span><span class="why">Sai: không gói Support nào chuyển trách nhiệm vá guest OS sang AWS; TAM chỉ tư vấn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company hosts a MySQL database on a self-managed Amazon EC2 instance. The operations team spends many hours each month patching the operating system and the database engine. The company wants to reduce this operational overhead while keeping a MySQL-compatible relational database. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Migrate the database to Amazon RDS for MySQL and configure a maintenance window for automatic patching.</li>
+            <li data-k="B">Use AWS Systems Manager Patch Manager to patch the EC2 instance and keep the self-managed database.</li>
+            <li data-k="C">Migrate the database to Amazon DynamoDB.</li>
+            <li data-k="D">Move the EC2 instance to a Dedicated Host so that AWS patches the operating system.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Với Amazon RDS, AWS quản lý OS và vá database engine (trong maintenance window khách hàng chọn) ⇒ dịch chuyển trách nhiệm sang AWS và giảm overhead nhiều nhất. <b>B sai</b>: tự động hóa giúp được phần OS nhưng khách hàng vẫn chịu trách nhiệm vá OS và DB engine, overhead vẫn còn. <b>C sai</b>: DynamoDB là NoSQL, không tương thích MySQL. <b>D sai</b>: Dedicated Host chỉ là phần cứng chuyên dụng; guest OS vẫn do khách hàng vá.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy database MySQL trên một Amazon EC2 instance tự quản lý. Nhóm vận hành mất nhiều giờ mỗi tháng để vá hệ điều hành và database engine. Công ty muốn giảm gánh nặng vận hành này nhưng vẫn giữ một database quan hệ tương thích MySQL. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển database sang Amazon RDS for MySQL và cấu hình maintenance window để vá tự động.</span><span class="why">Đúng: với RDS, AWS quản lý OS và vá DB engine trong maintenance window bạn chọn – chuyển trách nhiệm sang AWS, giảm overhead nhiều nhất mà vẫn là MySQL.</span></li>
+              <li data-k="B"><span class="tv">Dùng AWS Systems Manager Patch Manager để vá EC2 instance và giữ database tự quản lý.</span><span class="why">Sai: tự động hóa được phần OS nhưng khách hàng vẫn chịu trách nhiệm vá OS và DB engine, overhead vẫn còn.</span></li>
+              <li data-k="C"><span class="tv">Chuyển database sang Amazon DynamoDB.</span><span class="why">Sai: DynamoDB là NoSQL, không phải database quan hệ tương thích MySQL.</span></li>
+              <li data-k="D"><span class="tv">Chuyển EC2 instance sang Dedicated Host để AWS vá hệ điều hành.</span><span class="why">Sai: Dedicated Host chỉ là phần cứng chuyên dụng; guest OS vẫn do khách hàng vá.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,D">
+          <div class="qh">Under the AWS shared responsibility model, which TWO of the following are the responsibility of AWS? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Configuring security group rules for Amazon EC2 instances</li>
+            <li data-k="B">Physical security of the data centers that host AWS services</li>
+            <li data-k="C">Choosing and enabling server-side encryption for objects in Amazon S3</li>
+            <li data-k="D">Maintaining and patching the virtualization layer that runs Amazon EC2 instances</li>
+            <li data-k="E">Managing IAM user permissions in the company's AWS account</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, D.</b> “Security OF the cloud”: AWS bảo vệ hardware, software, networking và facilities – gồm bảo mật vật lý data center (Inherited Control) và lớp ảo hóa. <b>A sai</b>: security group do AWS cung cấp nhưng <i>cấu hình</i> rule là việc khách hàng. <b>C sai</b>: khách hàng quản lý dữ liệu “bao gồm tùy chọn mã hóa”. <b>E sai</b>: IAM luôn là trách nhiệm khách hàng.</div>
+          <div class="trans">
+            <div class="tq">Theo AWS shared responsibility model, HAI mục nào sau đây là trách nhiệm của AWS? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình rule của security group cho các Amazon EC2 instance</span><span class="why">Sai: AWS cung cấp tính năng security group, nhưng cấu hình rule là trách nhiệm khách hàng.</span></li>
+              <li data-k="B"><span class="tv">Bảo mật vật lý của các data center chứa dịch vụ AWS</span><span class="why">Đúng: thuộc "security OF the cloud" – AWS bảo vệ cơ sở vật chất; khách hàng kế thừa hoàn toàn (Inherited Control).</span></li>
+              <li data-k="C"><span class="tv">Lựa chọn và bật mã hóa phía server (server-side encryption) cho các object trong Amazon S3</span><span class="why">Sai: khách hàng quản lý dữ liệu của mình, bao gồm các tùy chọn mã hóa.</span></li>
+              <li data-k="D"><span class="tv">Bảo trì và vá lớp ảo hóa (virtualization layer) chạy các Amazon EC2 instance</span><span class="why">Đúng: lớp ảo hóa/hypervisor là hạ tầng do AWS vận hành – thuộc security OF the cloud.</span></li>
+              <li data-k="E"><span class="tv">Quản lý quyền của IAM user trong tài khoản AWS của công ty</span><span class="why">Sai: quản lý danh tính và quyền truy cập (IAM) luôn là trách nhiệm khách hàng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A startup has just created a new AWS account. The founders have been signing in with the root user for all daily tasks and have created root user access keys for a deployment script. A solutions architect must improve the security of the account by following AWS best practices. Which combination of actions should the solutions architect take?</div>
+          <ol class="opts">
+            <li data-k="A">Rotate the root user access keys every 30 days and store them in the deployment script's configuration file.</li>
+            <li data-k="B">Share the root user password with all founders through a team chat channel so that each founder can sign in when needed.</li>
+            <li data-k="C">Attach an IAM policy to the root user that denies all actions except billing.</li>
+            <li data-k="D">Enable MFA for the root user, delete the root user access keys, and create an administrative user (IAM Identity Center or IAM role) for daily tasks, with the deployment script using an IAM role.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Đúng best practices: bật MFA cho root, <b>không có access key root</b>, tạo administrative user cho việc hằng ngày và dùng credentials tạm thời (IAM role) cho script. <b>A sai</b>: vẫn là access key dài hạn của root – AWS khuyến nghị không tạo. <b>B sai</b>: không chia sẻ credentials root; nên dùng multi-person approval và kênh lưu trữ an toàn. <b>C sai</b>: không thể gắn IAM policy để giới hạn root user trong chính tài khoản đó (chỉ SCP ở Organizations mới giới hạn root của member account).</div>
+          <div class="trans">
+            <div class="tq">Một startup vừa tạo tài khoản AWS mới. Các nhà sáng lập đăng nhập bằng root user cho mọi công việc hằng ngày và đã tạo access key của root user cho một script triển khai. Solutions architect phải tăng cường bảo mật tài khoản theo best practice của AWS. Solutions architect nên thực hiện tổ hợp hành động nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Xoay vòng access key của root user mỗi 30 ngày và lưu chúng trong file cấu hình của script triển khai.</span><span class="why">Sai: vẫn là access key dài hạn của root – AWS khuyến nghị không tạo access key cho root, và lưu key trong file cấu hình rất rủi ro.</span></li>
+              <li data-k="B"><span class="tv">Chia sẻ mật khẩu root user cho tất cả nhà sáng lập qua kênh chat của nhóm để mỗi người có thể đăng nhập khi cần.</span><span class="why">Sai: không được chia sẻ credentials root qua kênh không an toàn; nên dùng cơ chế phê duyệt nhiều người và lưu trữ an toàn.</span></li>
+              <li data-k="C"><span class="tv">Gắn một IAM policy vào root user để từ chối mọi hành động trừ billing.</span><span class="why">Sai: không thể gắn IAM policy để giới hạn root user trong chính tài khoản đó (chỉ SCP mới giới hạn root của member account).</span></li>
+              <li data-k="D"><span class="tv">Bật MFA cho root user, xóa access key của root user, và tạo một administrative user (IAM Identity Center hoặc IAM role) cho công việc hằng ngày, đồng thời cho script triển khai dùng IAM role.</span><span class="why">Đúng: đủ các best practice – MFA cho root, không có access key root, dùng user quản trị cho việc hằng ngày và credentials tạm thời (IAM role) cho script.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company stores compliance records in an Amazon S3 bucket with versioning enabled. The security team requires that deleting any object version must require multi-factor authentication. An IAM administrator with the AdministratorAccess policy tries to configure this setting but fails. What is the reason?</div>
+          <ol class="opts">
+            <li data-k="A">MFA Delete can be enabled only when the bucket uses SSE-KMS encryption.</li>
+            <li data-k="B">MFA Delete can be enabled only by the AWS account root user.</li>
+            <li data-k="C">MFA Delete requires an Enterprise Support plan.</li>
+            <li data-k="D">MFA Delete can be enabled only on buckets that have versioning suspended.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> “Configure an Amazon S3 bucket to enable MFA Delete” nằm trong danh sách <b>tác vụ chỉ root user</b> làm được. <b>A sai</b>: MFA Delete không phụ thuộc kiểu mã hóa. <b>C sai</b>: tính năng S3 không phụ thuộc gói Support. <b>D sai</b>: ngược lại – MFA Delete gắn với cấu hình versioning của bucket (bucket cần versioning).</div>
+          <div class="trans">
+            <div class="tq">Một công ty lưu hồ sơ tuân thủ trong một bucket Amazon S3 đã bật versioning. Nhóm bảo mật yêu cầu việc xóa bất kỳ phiên bản object nào cũng phải xác thực đa yếu tố (MFA). Một IAM administrator có policy AdministratorAccess cố cấu hình thiết lập này nhưng thất bại. Lý do là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">MFA Delete chỉ bật được khi bucket dùng mã hóa SSE-KMS.</span><span class="why">Sai: MFA Delete không phụ thuộc kiểu mã hóa của bucket.</span></li>
+              <li data-k="B"><span class="tv">MFA Delete chỉ có thể được bật bởi root user của tài khoản AWS.</span><span class="why">Đúng: cấu hình MFA Delete cho bucket S3 nằm trong danh sách tác vụ chỉ root user mới làm được, kể cả admin có AdministratorAccess cũng không làm được.</span></li>
+              <li data-k="C"><span class="tv">MFA Delete yêu cầu gói Enterprise Support.</span><span class="why">Sai: tính năng S3 không phụ thuộc gói Support.</span></li>
+              <li data-k="D"><span class="tv">MFA Delete chỉ bật được trên bucket có versioning ở trạng thái tạm dừng (suspended).</span><span class="why">Sai: ngược lại – MFA Delete gắn với cấu hình versioning của bucket và cần versioning.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,E">
+          <div class="qh">An auditor asks a company to identify the controls that are shared between AWS and the company under the AWS shared responsibility model. Which TWO controls are examples of shared controls? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Patch management</li>
+            <li data-k="B">Physical and environmental controls</li>
+            <li data-k="C">Zone security for routing data within specific security environments</li>
+            <li data-k="D">Fire suppression systems in AWS data centers</li>
+            <li data-k="E">Awareness and training</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, E.</b> AWS liệt kê 3 Shared Controls: <b>Patch Management</b>, <b>Configuration Management</b>, <b>Awareness &amp; Training</b> (AWS đào tạo nhân viên AWS, khách hàng đào tạo nhân viên của mình). <b>B và D sai</b>: physical &amp; environmental (gồm hệ thống chữa cháy) là <b>Inherited Controls</b> – khách hàng kế thừa hoàn toàn. <b>C sai</b>: zone security / service &amp; communications protection là <b>Customer Specific</b> control.</div>
+          <div class="trans">
+            <div class="tq">Một kiểm toán viên yêu cầu công ty xác định các control được chia sẻ giữa AWS và công ty theo AWS shared responsibility model. HAI control nào là ví dụ về shared control (control chia sẻ)? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Quản lý bản vá (Patch management)</span><span class="why">Đúng: AWS vá hạ tầng, khách hàng vá guest OS và ứng dụng – một trong ba Shared Control.</span></li>
+              <li data-k="B"><span class="tv">Các control vật lý và môi trường (Physical and environmental controls)</span><span class="why">Sai: đây là Inherited Control – khách hàng kế thừa hoàn toàn từ AWS.</span></li>
+              <li data-k="C"><span class="tv">Bảo mật theo vùng (zone security) để định tuyến dữ liệu trong các môi trường bảo mật cụ thể</span><span class="why">Sai: zone security / bảo vệ dịch vụ và truyền thông là Customer Specific control – chỉ khách hàng chịu trách nhiệm.</span></li>
+              <li data-k="D"><span class="tv">Hệ thống chữa cháy trong data center của AWS</span><span class="why">Sai: thuộc nhóm physical &amp; environmental – Inherited Control do AWS chịu hoàn toàn.</span></li>
+              <li data-k="E"><span class="tv">Nâng cao nhận thức và đào tạo (Awareness and training)</span><span class="why">Đúng: AWS đào tạo nhân viên AWS, khách hàng đào tạo nhân viên của mình – một trong ba Shared Control.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company's security policy requires that the security team receives an email notification within minutes whenever the AWS account root user signs in to the AWS Management Console. The solution must have the LEAST operational overhead. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Write a script on an Amazon EC2 instance that downloads CloudTrail log files from Amazon S3 every hour and searches for root user sign-in events.</li>
+            <li data-k="B">Ask the security team to review the IAM credential report every morning.</li>
+            <li data-k="C">Ensure AWS CloudTrail is logging, create an Amazon EventBridge rule that matches sign-in events from the root user, and send the matching events to an Amazon SNS topic that has the security team's email subscribed.</li>
+            <li data-k="D">Enable VPC Flow Logs and create a CloudWatch alarm for traffic to the AWS Management Console.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> AWS khuyến nghị tạo rule (EventBridge/CloudWatch Events) phát hiện khi root credentials được dùng và gửi thông báo (SNS) cho security admin – hoàn toàn managed, gần real time. <b>A sai</b>: tự vận hành EC2 + script, chậm (mỗi giờ) và tốn công. <b>B sai</b>: thủ công, không đáp ứng “within minutes”. <b>D sai</b>: VPC Flow Logs ghi traffic mạng trong VPC, không ghi sự kiện đăng nhập console.</div>
+          <div class="trans">
+            <div class="tq">Chính sách bảo mật của một công ty yêu cầu nhóm bảo mật nhận thông báo email trong vòng vài phút mỗi khi root user của tài khoản AWS đăng nhập vào AWS Management Console. Giải pháp phải có LEAST operational overhead (ít gánh nặng vận hành nhất). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Viết một script trên Amazon EC2 instance tải file log CloudTrail từ Amazon S3 mỗi giờ và tìm các sự kiện đăng nhập của root user.</span><span class="why">Sai: phải tự vận hành EC2 và script, lại chậm (mỗi giờ) – không đáp ứng "trong vài phút" và tốn công.</span></li>
+              <li data-k="B"><span class="tv">Yêu cầu nhóm bảo mật xem IAM credential report mỗi sáng.</span><span class="why">Sai: thủ công và chỉ một lần mỗi ngày, không đáp ứng thông báo trong vài phút.</span></li>
+              <li data-k="C"><span class="tv">Đảm bảo AWS CloudTrail đang ghi log, tạo một Amazon EventBridge rule khớp với sự kiện đăng nhập của root user, và gửi các sự kiện khớp tới một Amazon SNS topic có email của nhóm bảo mật đăng ký.</span><span class="why">Đúng: CloudTrail + EventBridge + SNS hoàn toàn managed, gần thời gian thực, không cần server – đúng cách AWS khuyến nghị để cảnh báo khi root được dùng.</span></li>
+              <li data-k="D"><span class="tv">Bật VPC Flow Logs và tạo CloudWatch alarm cho lưu lượng tới AWS Management Console.</span><span class="why">Sai: VPC Flow Logs ghi lưu lượng mạng trong VPC, không ghi sự kiện đăng nhập console.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A global retailer runs mission-critical workloads on AWS. The company requires a designated technical point of contact at AWS who provides proactive guidance, and it needs a response within 15 minutes when a business-critical system is down. Which AWS Support plan is the MOST cost-effective option that meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Basic</li>
+            <li data-k="B">Developer</li>
+            <li data-k="C">Business Support+</li>
+            <li data-k="D">Enterprise Support</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Enterprise Support có <b>designated Technical Account Manager (TAM)</b> và phản hồi <b>trong 15 phút</b> cho sự cố business/production-critical – gói thấp nhất thỏa cả hai yêu cầu (Unified Operations cũng thỏa nhưng đắt hơn). <b>A sai</b>: Basic không có technical support case. <b>B sai</b>: Developer chỉ email giờ hành chính, phản hồi nhanh nhất &lt; 12 giờ, và sẽ ngừng từ 1/1/2027. <b>C sai</b>: Business Support+ phản hồi &lt; 30 phút và không có TAM được chỉ định.</div>
+          <div class="trans">
+            <div class="tq">Một nhà bán lẻ toàn cầu chạy các workload mission-critical (trọng yếu) trên AWS. Công ty cần một đầu mối kỹ thuật được chỉ định tại AWS đưa ra hướng dẫn chủ động, và cần được phản hồi trong vòng 15 phút khi một hệ thống business-critical ngừng hoạt động. Gói AWS Support nào là lựa chọn MOST cost-effective (tiết kiệm chi phí nhất) đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Basic</span><span class="why">Sai: Basic không có technical support case, không có TAM.</span></li>
+              <li data-k="B"><span class="tv">Developer</span><span class="why">Sai: Developer chỉ hỗ trợ qua email giờ hành chính, phản hồi nhanh nhất &lt; 12 giờ, không có TAM.</span></li>
+              <li data-k="C"><span class="tv">Business Support+</span><span class="why">Sai: phản hồi business-critical &lt; 30 phút (không đạt 15 phút) và không có TAM được chỉ định.</span></li>
+              <li data-k="D"><span class="tv">Enterprise Support</span><span class="why">Đúng: có Technical Account Manager (TAM) được chỉ định và phản hồi trong 15 phút cho sự cố business-critical – gói rẻ nhất thỏa cả hai yêu cầu.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A small company is moving its first production workload to AWS. The company needs 24/7 phone and chat access to AWS engineers, a response within 1 hour when a production system is down, access to the full set of AWS Trusted Advisor checks, and programmatic access through the AWS Support API. The company does not need a Technical Account Manager. Which AWS Support plan meets these requirements at the LOWEST cost?</div>
+          <ol class="opts">
+            <li data-k="A">Basic</li>
+            <li data-k="B">Business Support+</li>
+            <li data-k="C">Enterprise Support</li>
+            <li data-k="D">AWS Unified Operations</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Business Support+ (thay cho gói Business cũ) có 24/7 phone/web/chat, &lt; 1 giờ cho production system down (&lt; 30 phút business-critical), 500+ check Trusted Advisor và AWS Support API, giá từ $29/tháng. <b>A sai</b>: Basic chỉ hỗ trợ account/billing và core checks. <b>C và D sai</b>: đáp ứng được nhưng đắt hơn nhiều (Enterprise tối thiểu $5,000/tháng) và có TAM mà công ty không cần ⇒ không phải lowest cost.</div>
+          <div class="trans">
+            <div class="tq">Một công ty nhỏ đang chuyển workload production đầu tiên lên AWS. Công ty cần liên hệ kỹ sư AWS 24/7 qua điện thoại và chat, phản hồi trong vòng 1 giờ khi hệ thống production ngừng hoạt động, truy cập toàn bộ các check của AWS Trusted Advisor, và truy cập lập trình qua AWS Support API. Công ty không cần Technical Account Manager. Gói AWS Support nào đáp ứng các yêu cầu này với chi phí LOWEST (thấp nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Basic</span><span class="why">Sai: Basic chỉ hỗ trợ tài khoản/billing và core check, không có hỗ trợ kỹ thuật 24/7 hay Support API.</span></li>
+              <li data-k="B"><span class="tv">Business Support+</span><span class="why">Đúng: có 24/7 phone/web/chat, &lt; 1 giờ khi production down, đầy đủ check Trusted Advisor và Support API – gói rẻ nhất thỏa mọi yêu cầu.</span></li>
+              <li data-k="C"><span class="tv">Enterprise Support</span><span class="why">Sai: đáp ứng được nhưng đắt hơn nhiều (tối thiểu khoảng $5,000/tháng) và kèm TAM mà công ty không cần.</span></li>
+              <li data-k="D"><span class="tv">AWS Unified Operations</span><span class="why">Sai: gói cao cấp nhất, đắt nhất – thừa so với yêu cầu, không phải chi phí thấp nhất.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company uses AWS Organizations to manage 150 member accounts. Each member account still has root user credentials, and the security team struggles to secure and rotate them. The company wants to prevent anyone from signing in as the root user of member accounts while still being able to perform root-only tasks, such as unlocking an S3 bucket with a misconfigured deny-all bucket policy, when necessary. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Enable centralized root access for member accounts in IAM, remove the root user credentials from the member accounts, and perform privileged root tasks from the management account or a delegated administrator account.</li>
+            <li data-k="B">Attach an IAM identity-based policy to the root user of each member account that denies all actions.</li>
+            <li data-k="C">Store each member account's root password and MFA device in a shared spreadsheet and rotate the passwords monthly.</li>
+            <li data-k="D">Close all member accounts and recreate the workloads in the management account.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Centrally manage root access</b>: xóa mật khẩu, access key, signing certificate, MFA của root ở member accounts (tài khoản mới tạo mặc định không có root credentials); các tác vụ chỉ-root như gỡ bucket policy deny-all được thực hiện như <b>privileged task</b> (<code>sts:AssumeRoot</code>) từ management account/delegated admin. <b>B sai</b>: IAM policy không gắn được vào root user; muốn giới hạn root của member account phải dùng SCP – và SCP cũng không cho phép làm tác vụ chỉ-root khi cần. <b>C sai</b>: chia sẻ credentials qua spreadsheet vi phạm best practices, overhead lớn. <b>D sai</b>: phá vỡ chiến lược multi-account, workload trong management account là anti-pattern.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng AWS Organizations để quản lý 150 member account. Mỗi member account vẫn còn credentials của root user, và nhóm bảo mật gặp khó khăn trong việc bảo vệ và xoay vòng chúng. Công ty muốn ngăn mọi người đăng nhập bằng root user của member account, nhưng vẫn thực hiện được các tác vụ chỉ root làm được khi cần, chẳng hạn mở khóa một bucket S3 bị cấu hình nhầm bucket policy từ chối tất cả (deny-all). Giải pháp nào đáp ứng yêu cầu với LEAST operational overhead (ít gánh nặng vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật quản lý root access tập trung (centralized root access) cho member account trong IAM, xóa credentials root user khỏi các member account, và thực hiện các tác vụ root đặc quyền từ management account hoặc một tài khoản delegated administrator.</span><span class="why">Đúng: xóa được mật khẩu/access key/MFA root của member account, và các tác vụ chỉ-root như gỡ bucket policy deny-all được làm dưới dạng privileged task (sts:AssumeRoot) từ tài khoản quản lý.</span></li>
+              <li data-k="B"><span class="tv">Gắn một IAM identity-based policy từ chối mọi hành động vào root user của từng member account.</span><span class="why">Sai: không thể gắn IAM policy vào root user; SCP có thể giới hạn root nhưng khi đó cũng không làm được tác vụ chỉ-root khi cần.</span></li>
+              <li data-k="C"><span class="tv">Lưu mật khẩu root và thiết bị MFA của từng member account trong một bảng tính dùng chung và xoay vòng mật khẩu hàng tháng.</span><span class="why">Sai: chia sẻ credentials qua bảng tính vi phạm best practice và gánh nặng vận hành lớn với 150 tài khoản.</span></li>
+              <li data-k="D"><span class="tv">Đóng tất cả member account và tạo lại workload trong management account.</span><span class="why">Sai: phá vỡ chiến lược multi-account; chạy workload trong management account là anti-pattern.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- 6. NGUỒN -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-user.html" target="_blank" rel="noopener">AWS account root user &amp; tasks that require root user credentials</a></li>
+        <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa.html" target="_blank" rel="noopener">AWS Multi-factor authentication in IAM</a></li>
+        <li><a href="https://docs.aws.amazon.com/awssupport/latest/user/aws-support-plans.html" target="_blank" rel="noopener">AWS Support Plans – AWS Support User Guide</a></li>
+        <li><a href="https://aws.amazon.com/premiumsupport/plans/business-plus/" target="_blank" rel="noopener">AWS Business Support+ plan details</a></li>
+        <li><a href="https://aws.amazon.com/premiumsupport/plans/enterprise/" target="_blank" rel="noopener">AWS Enterprise Support plan details</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

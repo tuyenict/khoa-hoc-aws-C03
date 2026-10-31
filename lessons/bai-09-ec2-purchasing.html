@@ -1,0 +1,934 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 9 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Savings-Plans.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="9" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Kể được 7 cách “mua” EC2 theo tài liệu AWS: <span class="t" data-vi="Trả theo nhu cầu">On-Demand</span>, <span class="t" data-vi="Gói tiết kiệm">Savings Plans</span>, <span class="t" data-vi="Máy chủ đặt trước">Reserved Instances</span>, <span class="t" data-vi="Máy chủ dư thừa giá rẻ">Spot Instances</span>, Dedicated Hosts, Dedicated Instances, <span class="t" data-vi="Đặt trước năng lực">Capacity Reservations</span> – và biết mỗi cách giải quyết bài toán gì (giá, năng lực, tuân thủ, license).</li>
+          <li>Phân biệt <b>Standard vs Convertible RI</b>, <b>regional vs zonal RI</b>, hiểu <b>normalization factor</b> và cách RI được áp vào hóa đơn trong AWS Organizations.</li>
+          <li>Chọn đúng loại <b>Savings Plans</b> (Compute / EC2 Instance / Database / SageMaker AI) và so sánh được với RI.</li>
+          <li>Thiết kế workload chạy trên <b>Spot</b> an toàn: interruption notice 2 phút, rebalance recommendation, interruption behavior, allocation strategy <code>price-capacity-optimized</code>, EC2 Fleet / Auto Scaling.</li>
+          <li>Biết khi nào cần <b>Dedicated Host</b> (BYOL per-socket/per-core) và khi nào chỉ cần <b>Dedicated Instance</b>; khi nào dùng <b>On-Demand Capacity Reservation</b> hoặc <b>Capacity Blocks for ML</b>.</li>
+          <li>Kết hợp nhiều phương thức mua thành một chiến lược <i>cost-optimized</i> – loại câu hỏi rất hay gặp trong Domain 4 của SAA-C03.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 2 – Compute</span>
+        <p>Bài 8 đã dạy instance type, AMI, user data, IMDS, vòng đời instance và hibernate – bài này <b>không lặp lại</b> mà chỉ nhắc khi chúng ảnh hưởng tới giá (vd hibernate khi Spot bị interrupt). Placement group và ENI học ở <b>Bài 10</b>; Auto Scaling group chi tiết (mixed instances policy, capacity rebalancing) ở <b>Bài 13</b>; các công cụ quản lý chi phí (Cost Explorer, Budgets, CUR, Compute Optimizer) sẽ học sâu ở module cuối. <b>Consolidated billing</b> của AWS Organizations đã học ở Bài 6 – ở đây chỉ xem nó chia sẻ RI/Savings Plans ra sao.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">Bức tranh tổng thể: các phương thức mua EC2</h2>
+      <p class="lead">Cùng một <code>m7g.large</code> chạy cùng một AMI, nhưng hóa đơn có thể chênh nhau nhiều lần tùy <b>cách bạn mua</b>. Trang “Amazon EC2 billing and purchasing options” liệt kê 7 lựa chọn để tối ưu chi phí. Lúc <b>đang chạy</b>, một instance Spot, On-Demand hay được RI che phủ là <b>giống hệt nhau</b> về phần cứng và hiệu năng – khác nhau ở <b>giá</b>, <b>cam kết</b>, <b>đảm bảo năng lực</b> và <b>quyền dừng máy</b>.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">
+          <div><h4>On-Demand Instances</h4><span class="vi">Trả theo giây, không cam kết</span><p>Trả theo giây cho instance bạn launch; bạn toàn quyền start/stop/terminate.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Savings-Plans.svg" alt="">
+          <div><h4>Savings Plans</h4><span class="vi">Cam kết chi tiêu USD/giờ</span><p>Cam kết một mức sử dụng nhất quán (USD mỗi giờ) trong <b>1 hoặc 3 năm</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Reserved-Instance-Reporting.svg" alt="">
+          <div><h4>Reserved Instances</h4><span class="vi">Cam kết cấu hình cụ thể</span><p>Cam kết một cấu hình instance nhất quán (instance type, Region…) trong 1 hoặc 3 năm.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" alt="">
+          <div><h4>Spot Instances</h4><span class="vi">Dùng năng lực dư thừa</span><p>Xin các instance EC2 chưa dùng tới với giá giảm sâu – đổi lại có thể bị thu hồi.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Traditional-server.svg" alt="">
+          <div><h4>Dedicated Hosts</h4><span class="vi">Thuê nguyên máy chủ vật lý</span><p>Trả tiền cho cả host vật lý; mang license per-socket, per-core, per-VM sẵn có (BYOL).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">
+          <div><h4>Dedicated Instances</h4><span class="vi">Phần cứng đơn khách hàng</span><p>Trả theo instance chạy trên phần cứng <b>single-tenant</b> dành riêng cho account của bạn.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">
+          <div><h4>Capacity Reservations</h4><span class="vi">Giữ chỗ năng lực trong 1 AZ</span><p>Đặt trước năng lực cho instance trong một Availability Zone cụ thể, bao lâu tùy bạn.</p></div></div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><b>60 giây</b><span>mức tính tối thiểu của On-Demand, sau đó tính theo giây khi ở trạng thái <code>running</code></span></div>
+        <div class="stat"><b>tới 72%</b><span>giảm so với On-Demand: EC2 Instance Savings Plans &amp; Standard RI</span></div>
+        <div class="stat"><b>tới 66%</b><span>giảm: Compute Savings Plans &amp; Convertible RI</span></div>
+        <div class="stat"><b>tới 90%</b><span>giảm: Spot Instances (theo trang Spot best practices)</span></div>
+        <div class="stat"><b>2 phút</b><span>cảnh báo trước khi Spot bị interrupt (stop/terminate)</span></div>
+        <div class="stat"><b>tới 70%</b><span>giảm: Dedicated Host Reservations so với Dedicated Host On-Demand</span></div>
+      </div>
+
+      <h3>Tài liệu gợi ý chọn thế nào?</h3>
+      <p>Đoạn tóm tắt cuối trang “purchasing options” chính là “kim chỉ nam” cho đề thi:</p>
+      <ul>
+        <li>Không cam kết được <b>cấu hình instance cụ thể</b> nhưng cam kết được <b>mức chi tiêu</b> ⇒ <b>Savings Plans</b>.</li>
+        <li>Cần <b>đặt trước năng lực</b> (capacity) ⇒ <b>Reserved Instances (zonal)</b> hoặc <b>Capacity Reservations</b> trong một AZ cụ thể. Cần một cụm GPU trong thời gian ngắn ⇒ <b>Capacity Blocks</b>.</li>
+        <li>Linh hoạt về <b>thời điểm chạy</b> và ứng dụng <b>chịu được gián đoạn</b> ⇒ <b>Spot Instances</b>.</li>
+        <li>Yêu cầu <b>tuân thủ (compliance)</b> hoặc tận dụng <b>license gắn với server</b> ⇒ <b>Dedicated Hosts</b> hoặc <b>Dedicated Instances</b>.</li>
+        <li>Workload <b>ngắn hạn, không đều, không được gián đoạn</b> ⇒ <b>On-Demand</b> (khuyến nghị của trang On-Demand).</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 330" width="760" role="img" aria-label="Cây quyết định chọn phương thức mua EC2">
+          <defs><marker id="ah9a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="250" y="12" width="260" height="44" rx="8" fill="none" stroke="#EC7211" stroke-width="2"/>
+          <text x="380" y="39" font-size="14" font-weight="700" text-anchor="middle">Workload EC2 của bạn</text>
+          <path class="line-o" d="M380 56 L110 110" marker-end="url(#ah9a)"/>
+          <path class="line-o" d="M380 56 L300 110" marker-end="url(#ah9a)"/>
+          <path class="line-o" d="M380 56 L480 110" marker-end="url(#ah9a)"/>
+          <path class="line-o" d="M380 56 L660 110" marker-end="url(#ah9a)"/>
+          <text x="110" y="128" font-size="12.5" font-weight="700" text-anchor="middle">Chạy ổn định 24/7,</text>
+          <text x="110" y="144" font-size="12.5" font-weight="700" text-anchor="middle">dự đoán được 1–3 năm?</text>
+          <text x="300" y="128" font-size="12.5" font-weight="700" text-anchor="middle">Chịu được gián đoạn,</text>
+          <text x="300" y="144" font-size="12.5" font-weight="700" text-anchor="middle">linh hoạt thời gian?</text>
+          <text x="480" y="128" font-size="12.5" font-weight="700" text-anchor="middle">Cần chắc chắn có</text>
+          <text x="480" y="144" font-size="12.5" font-weight="700" text-anchor="middle">capacity trong 1 AZ?</text>
+          <text x="660" y="128" font-size="12.5" font-weight="700" text-anchor="middle">License per-core /</text>
+          <text x="660" y="144" font-size="12.5" font-weight="700" text-anchor="middle">compliance single-tenant?</text>
+          <path class="line-o" d="M110 152 L110 196" marker-end="url(#ah9a)"/>
+          <path class="line-o" d="M300 152 L300 196" marker-end="url(#ah9a)"/>
+          <path class="line-o" d="M480 152 L480 196" marker-end="url(#ah9a)"/>
+          <path class="line-o" d="M660 152 L660 196" marker-end="url(#ah9a)"/>
+          <image href="../assets/icons/svc/Savings-Plans.svg" x="86" y="200" width="48" height="48"/>
+          <image href="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" x="276" y="200" width="48" height="48"/>
+          <image href="../assets/icons/svc/Amazon-EC2.svg" x="456" y="200" width="48" height="48"/>
+          <image href="../assets/icons/res/Traditional-server.svg" x="636" y="200" width="48" height="48"/>
+          <text x="110" y="268" font-size="13" font-weight="700" text-anchor="middle">Savings Plans / RI</text>
+          <text x="110" y="285" font-size="11.5" text-anchor="middle" class="muted">linh hoạt ⇒ Compute SP</text>
+          <text x="110" y="300" font-size="11.5" text-anchor="middle" class="muted">cố định family ⇒ EC2 Instance SP</text>
+          <text x="300" y="268" font-size="13" font-weight="700" text-anchor="middle">Spot Instances</text>
+          <text x="300" y="285" font-size="11.5" text-anchor="middle" class="muted">batch, CI/CD, big data,</text>
+          <text x="300" y="300" font-size="11.5" text-anchor="middle" class="muted">stateless web, HPC, render</text>
+          <text x="480" y="268" font-size="13" font-weight="700" text-anchor="middle">Capacity Reservation</text>
+          <text x="480" y="285" font-size="11.5" text-anchor="middle" class="muted">+ Savings Plans / regional RI</text>
+          <text x="480" y="300" font-size="11.5" text-anchor="middle" class="muted">để có giảm giá</text>
+          <text x="660" y="268" font-size="13" font-weight="700" text-anchor="middle">Dedicated Host</text>
+          <text x="660" y="285" font-size="11.5" text-anchor="middle" class="muted">chỉ cần tách phần cứng ⇒</text>
+          <text x="660" y="300" font-size="11.5" text-anchor="middle" class="muted">Dedicated Instance</text>
+          <text x="380" y="324" font-size="12" text-anchor="middle" class="muted">Không rơi vào nhánh nào (ngắn hạn, không đều, không được gián đoạn) ⇒ On-Demand</text>
+        </svg>
+        <figcaption><b>Hình 1.</b> Cây quyết định rút ra từ trang “Amazon EC2 billing and purchasing options”. Các nhánh <b>không loại trừ nhau</b>: một hệ thống thực tế thường kết hợp Savings Plans cho phần nền, Spot cho phần co giãn chịu lỗi, On-Demand cho phần đột biến (xem phần 8).</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – đi lại bằng ô tô</span>
+        <p><b>On-Demand</b> là <i>gọi taxi</i>: lúc nào cần cũng có (thường là vậy), trả đúng quãng đường, đắt nhất. <b>Savings Plans</b> là <i>gói thuê bao “cam kết chi 5 triệu/tháng”</i> của hãng xe – đi xe 4 chỗ hay 7 chỗ, ở Hà Nội hay Đà Nẵng đều được giảm giá. <b>Reserved Instance</b> là <i>thuê dài hạn một chiếc xe model cố định</i> – rẻ, nhưng đổi model thì rắc rối. <b>Spot</b> là <i>xe ghép chuyến giá rẻ</i>: rẻ cực kỳ nhưng tài xế có thể báo “2 phút nữa anh xuống nhé” khi có khách VIP. <b>Dedicated Host</b> là <i>mua riêng cả chiếc xe buýt</i> để tự xếp chỗ (vì vé tháng của bạn tính theo số ghế). <b>Capacity Reservation</b> là <i>đặt cọc giữ chỗ ở bãi xe</i> – trả tiền dù không đến, nhưng chắc chắn có chỗ.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – đọc từ khóa để chọn phương thức mua</span>
+        <ul>
+          <li>“<i>steady-state, predictable usage, 1 or 3 years, MOST cost-effective</i>” ⇒ <b>Savings Plans</b> (hoặc <b>Reserved Instances</b> nếu đáp án không có Savings Plans).</li>
+          <li>“<i>can be interrupted, fault-tolerant, stateless, flexible start/end time, batch</i>” ⇒ <b>Spot Instances</b>.</li>
+          <li>“<i>short-term, spiky, unpredictable, cannot be interrupted, new application, unknown usage</i>” ⇒ <b>On-Demand</b>.</li>
+          <li>“<i>server-bound licenses, per-socket / per-core, BYOL, visibility of sockets and cores</i>” ⇒ <b>Dedicated Hosts</b>.</li>
+          <li>“<i>guarantee capacity in a specific AZ, no long-term commitment, for an event / DR</i>” ⇒ <b>On-Demand Capacity Reservations</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: ON-DEMAND ===================== -->
+      <h2 id="on-demand"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">On-Demand Instances &amp; hạn mức vCPU</h2>
+      <p class="lead">Với <span class="t" data-vi="Trả theo nhu cầu">On-Demand Instances</span>, bạn trả tiền compute <b>theo giây</b>, <b>không cam kết dài hạn</b>, và <b>toàn quyền</b> vòng đời instance – tự quyết định khi nào launch, stop, hibernate, start, reboot hay terminate.</p>
+      <ul>
+        <li>Chỉ trả cho số giây instance ở trạng thái <code>running</code>, <b>tối thiểu 60 giây</b>. Đơn giá mỗi giây <b>cố định</b> (niêm yết trên trang On-Demand Pricing) – khác Spot là giá biến động.</li>
+        <li>AWS khuyến nghị On-Demand cho ứng dụng <b>ngắn hạn, không đều (irregular)</b>, <b>không được gián đoạn</b>. Muốn tiết kiệm đáng kể hơn: Savings Plans, Spot, Reserved Instances.</li>
+        <li>On-Demand <b>không đảm bảo</b> luôn có năng lực: nếu AZ hết capacity cho type bạn chọn, lệnh launch trả về lỗi <span class="t" data-vi="Lỗi không đủ năng lực">insufficient capacity error (ICE)</span>. Muốn chắc chắn có máy ⇒ Capacity Reservation (phần 7).</li>
+      </ul>
+
+      <h3>On-Demand Instance quotas – tính theo vCPU</h3>
+      <p>Hạn mức số instance On-Demand đang chạy được tính <b>theo số vCPU</b> (không theo số instance), cho từng account, từng Region. Mỗi loại quota áp cho một nhóm instance family. Instance ở trạng thái <code>pending</code>, <code>stopping</code>, <code>stopped</code>, <code>hibernated</code> <b>không</b> tính vào quota; nhưng <b>Capacity Reservation tính vào quota kể cả khi chưa dùng</b>.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tên quota</th><th>Mặc định (vCPU)</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td>Running On-Demand <b>Standard (A, C, D, H, I, M, R, T, Z)</b> instances</td><td><b>5</b></td><td>Quota “thường gặp” nhất; tăng được</td></tr>
+          <tr><td>Running On-Demand P / G and VT / Inf / Trn / DL / F instances</td><td>0</td><td>GPU, ML, FPGA – phải xin tăng trước khi dùng</td></tr>
+          <tr><td>Running On-Demand X / High Memory / HPC instances</td><td>0</td><td>Memory intensive, U, Hpc</td></tr>
+        </tbody>
+      </table></div>
+      <p>Ví dụ trong tài liệu: với quota Standard <b>256 vCPU</b>, bạn chạy được 32 × <code>m5.2xlarge</code> (32 × 8 vCPU) <b>hoặc</b> 16 × <code>c5.4xlarge</code> (16 × 16 vCPU) – kết hợp type nào cũng được miễn tổng vCPU không vượt quota. EC2 tự động nâng quota theo mức sử dụng, nhưng bạn vẫn có thể chủ động xin tăng qua <b>Service Quotas console</b>; xem quota ở Service Quotas hoặc trang Service limits của <b>AWS Trusted Advisor</b>; đặt <b>CloudWatch alarm</b> cảnh báo sắp chạm quota.</p>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Đề mô tả “<i>launch thêm instance bị lỗi <code>VcpuLimitExceeded</code></i>” ⇒ cần <b>xin tăng Service Quota</b> (vCPU-based), không phải đổi Region hay mua RI.</li>
+          <li>Mua Savings Plans/RI <b>không</b> làm tăng quota và <b>không</b> tự động giữ chỗ capacity (trừ zonal RI).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: RESERVED INSTANCES ===================== -->
+      <h2 id="reserved-instances"><img src="../assets/icons/svc/Reserved-Instance-Reporting.svg" alt="">Reserved Instances (RI)</h2>
+      <p class="lead"><span class="t" data-vi="Máy chủ đặt trước">Reserved Instances</span> giúp tiết kiệm đáng kể so với On-Demand. Điểm mấu chốt tài liệu nhấn mạnh: RI <b>không phải là instance vật lý</b>, mà là một <span class="t" data-vi="Chiết khấu trên hóa đơn">billing discount</span> tự động áp vào các On-Demand Instance đang chạy trong account <b>khớp thuộc tính</b> (instance type, Region…).</p>
+
+      <div class="callout note"><span class="ttl">Khuyến nghị hiện tại của AWS</span>
+        <p>Trang RI mở đầu bằng: “<i>We recommend Savings Plans over Reserved Instances</i>”. Savings Plans là cách <b>dễ và linh hoạt nhất</b>, mức giảm tương đương (tới 72%). Tuy vậy đề SAA-C03 vẫn hỏi RI rất nhiều – đặc biệt <b>zonal RI giữ capacity</b>, <b>Standard vs Convertible</b> và <b>RI Marketplace</b> – nên phải nắm chắc.</p></div>
+
+      <p>Kịch bản minh họa của tài liệu: bạn có một T2 On-Demand đang chạy; mua RI khớp thuộc tính ⇒ discount <b>áp ngay lập tức</b>, không cần restart. Mua tiếp một RI cho C4 nhưng chưa có C4 nào chạy ⇒ RI “nằm chờ” (vẫn tính tiền); khi bạn launch instance C4 khớp thuộc tính, discount lập tức áp vào.</p>
+
+      <h3>Các biến quyết định giá RI</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Biến</th><th>Chi tiết</th></tr></thead>
+        <tbody>
+          <tr><td><b>Instance attributes</b> (4 thuộc tính)</td><td><b>Instance type</b> (vd <code>m4.large</code> = family <code>m4</code> + size <code>large</code>), <b>Region</b> mua RI, <b>Tenancy</b> (default/shared hay dedicated), <b>Platform</b> (Windows, Linux/Unix…).</td></tr>
+          <tr><td><b>Term</b></td><td><b>1 năm</b> (31.536.000 giây = 365 ngày) hoặc <b>3 năm</b> (94.608.000 giây = 1.095 ngày). 3 năm giảm sâu hơn. RI <b>không tự gia hạn</b>: hết hạn thì instance vẫn chạy bình thường nhưng tính giá On-Demand.</td></tr>
+          <tr><td><b>Payment option</b></td><td><b>All Upfront</b> – trả hết từ đầu, không phí theo giờ. <b>Partial Upfront</b> – trả trước một phần, phần còn lại tính theo giờ đã giảm. <b>No Upfront</b> – trả theo giờ đã giảm cho <b>mọi giờ</b> trong kỳ (là nghĩa vụ hợp đồng trả hằng tháng, cần lịch sử thanh toán tốt). Nói chung trả trước càng nhiều càng rẻ.</td></tr>
+          <tr><td><b>Offering class</b></td><td><b>Standard</b> (giảm nhiều nhất, chỉ modify được) hoặc <b>Convertible</b> (giảm ít hơn, exchange được).</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Quan trọng: RI không hủy được</span>
+        <p>Đã mua RI thì <b>không cancel</b> được. Nếu nhu cầu thay đổi, bạn chỉ có thể <b>modify</b>, <b>exchange</b> (Convertible) hoặc <b>bán</b> (Standard) trên RI Marketplace. Với No Upfront và Partial Upfront, bạn vẫn trả phí theo giờ <b>dù không dùng</b>.</p></div>
+
+      <h3>Offering class: Standard vs Convertible</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Standard Reserved Instance</th><th>Convertible Reserved Instance</th></tr></thead>
+        <tbody>
+          <tr><td>Mức giảm</td><td class="yes">Nhiều nhất (tới 72%)</td><td>Thấp hơn (tới 66%)</td></tr>
+          <tr><td>Modify</td><td class="yes">Một số thuộc tính modify được</td><td class="yes">Một số thuộc tính modify được</td></tr>
+          <tr><td>Exchange</td><td class="no">Không exchange được</td><td class="yes">Exchange trong kỳ sang Convertible RI khác với thuộc tính mới: <b>instance family, instance type, platform, scope, tenancy</b></td></tr>
+          <tr><td>Bán trên RI Marketplace</td><td class="yes">Bán được</td><td class="no">Không bán được</td></tr>
+          <tr><td>Mua trên RI Marketplace</td><td class="yes">Mua được</td><td class="no">Không mua được</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted">Offering class <b>không</b> ảnh hưởng cách discount được áp vào hóa đơn – chỉ ảnh hưởng khả năng thay đổi. Tenancy của RI không đổi được bằng modify; chỉ Convertible RI exchange được sang tenancy khác.</p>
+
+      <h3>Scope: regional vs zonal RI</h3>
+      <p>Khi mua RI bạn chọn <b>scope</b>: mua cho một Region ⇒ <span class="t" data-vi="RI cấp vùng">regional RI</span>; mua cho một AZ cụ thể ⇒ <span class="t" data-vi="RI cấp AZ">zonal RI</span>. Scope <b>không ảnh hưởng giá</b>.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Regional Reserved Instances</th><th>Zonal Reserved Instances</th></tr></thead>
+        <tbody>
+          <tr><td>Giữ chỗ năng lực (capacity)</td><td class="no">Không reserve capacity</td><td class="yes">Reserve capacity trong AZ chỉ định</td></tr>
+          <tr><td>Linh hoạt AZ</td><td class="yes">Discount áp cho mọi AZ trong Region</td><td class="no">Chỉ áp trong AZ chỉ định</td></tr>
+          <tr><td>Instance size flexibility</td><td class="yes">Áp cho mọi size trong cùng family (chỉ Linux/Unix, default tenancy)</td><td class="no">Chỉ đúng family và size đã mua</td></tr>
+          <tr><td>Queue purchase (hẹn ngày mua)</td><td class="yes">Được</td><td class="no">Không</td></tr>
+          <tr><td>Hạn mức mặc định</td><td>20 RI / Region (tăng được)</td><td>20 RI / AZ (tăng được)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Instance size flexibility &amp; normalization factor</h3>
+      <p>Với regional RI, discount áp cho mọi size trong cùng family dựa trên <span class="t" data-vi="Hệ số chuẩn hóa">normalization factor</span>, đi <b>từ size nhỏ nhất tới lớn nhất</b>. Chỉ cần khớp 3 thuộc tính: <b>instance family, tenancy, platform</b>.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Size</th><th>nano</th><th>micro</th><th>small</th><th>medium</th><th>large</th><th>xlarge</th><th>2xlarge</th><th>4xlarge</th><th>8xlarge</th><th>16xlarge</th><th>24xlarge</th></tr></thead>
+        <tbody>
+          <tr><td><b>Factor</b></td><td>0.25</td><td>0.5</td><td>1</td><td>2</td><td>4</td><td>8</td><td>16</td><td>32</td><td>64</td><td>128</td><td>192</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 260" width="760" role="img" aria-label="Ví dụ normalization factor của regional RI">
+          <defs><marker id="ah9b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="20" y="20" width="200" height="140" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <image href="../assets/icons/svc/Reserved-Instance-Reporting.svg" x="90" y="34" width="56" height="56"/>
+          <text x="120" y="112" font-size="14" font-weight="700" text-anchor="middle">1 × m3.2xlarge RI</text>
+          <text x="120" y="130" font-size="12" text-anchor="middle" class="muted">regional, Linux, default</text>
+          <text x="120" y="148" font-size="13" font-weight="700" text-anchor="middle" style="fill:#7AA116">= 16 đơn vị/giờ</text>
+          <path class="line-o" d="M222 70 L330 50" marker-end="url(#ah9b)"/>
+          <path class="line-o" d="M222 100 L330 120" marker-end="url(#ah9b)"/>
+          <path class="line-o" d="M222 130 L330 200" marker-end="url(#ah9b)"/>
+          <text x="275" y="45" font-size="11" text-anchor="middle" class="muted">① 4+4</text>
+          <text x="275" y="125" font-size="11" text-anchor="middle" class="muted">② 8</text>
+          <text x="275" y="188" font-size="11" text-anchor="middle" class="muted">hết</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="336" y="22" width="44" height="44"/>
+          <text x="390" y="40" font-size="13" font-weight="700">2 × m3.large (us-east-1b)</text>
+          <text x="390" y="58" font-size="12" class="muted">4 + 4 = 8 đơn vị ⇒ được giảm 100%</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="336" y="96" width="44" height="44"/>
+          <text x="390" y="114" font-size="13" font-weight="700">m3.xlarge #1 (us-east-1a)</text>
+          <text x="390" y="132" font-size="12" class="muted">8 đơn vị còn lại ⇒ được giảm 100%</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="336" y="176" width="44" height="44"/>
+          <text x="390" y="194" font-size="13" font-weight="700">m3.xlarge #2 (us-east-1a)</text>
+          <text x="390" y="212" font-size="12" style="fill:#DD344C">hết đơn vị ⇒ tính giá On-Demand</text>
+          <text x="380" y="250" font-size="12" text-anchor="middle" class="muted">Discount đi từ size nhỏ nhất tới lớn nhất, ở bất kỳ AZ nào trong Region – nhưng KHÔNG giữ capacity</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> “Scenario 2” trong tài liệu “How Reserved Instance discounts are applied”: một regional RI <code>m3.2xlarge</code> (16 đơn vị) che phủ trọn 2 × <code>m3.large</code> (8 đơn vị) rồi 1 × <code>m3.xlarge</code> (8 đơn vị); instance <code>m3.xlarge</code> thứ hai trả giá On-Demand. Tương tự, một <code>t2.medium</code> RI (2) che trọn 2 × <code>t2.small</code> (1 + 1) hoặc 50% một <code>t2.large</code> (4).</figcaption>
+      </figure>
+
+      <p><b>Không hỗ trợ</b> instance size flexibility: zonal RI; RI cho <b>Windows Server</b> (kể cả có SQL Server), <b>RHEL</b>, <b>SUSE Linux Enterprise Server</b>; RI <b>dedicated tenancy</b>; và một số family như G4dn, G5, G6, P5, Inf1, Inf2… Bare metal (<code>metal</code>) có cùng factor với size ảo hóa tương đương (vd <code>i3.metal</code> = <code>i3.16xlarge</code> = 128).</p>
+
+      <h3>RI trong AWS Organizations (consolidated billing)</h3>
+      <ul>
+        <li>Với mục đích tính tiền, mọi account trong organization được coi như <b>một account</b>. RI được áp <b>trước tiên</b> cho usage trong <b>account đã mua</b>, sau đó tới usage khớp ở các account khác trong organization.</li>
+        <li>Ngoại lệ (Scenario 4): <b>zonal RI chưa dùng</b> của account khác được áp <b>trước</b> regional RI của chính account – để tối đa hóa mức sử dụng RI và giảm hóa đơn.</li>
+        <li><b>Capacity</b> của zonal RI <b>chỉ dành cho account sở hữu</b>, không chia sẻ được. Cần chia sẻ capacity cho account khác ⇒ dùng <b>On-Demand Capacity Reservations</b> (shared).</li>
+      </ul>
+
+      <h3>Reserved Instance Marketplace</h3>
+      <p>Nơi khách hàng AWS và bên thứ ba <b>bán lại Standard RI chưa dùng</b> (vd khi chuyển Region, đổi instance type, xong dự án sớm, thừa capacity). Người mua có thể tìm RI với <b>kỳ hạn ngắn hơn</b> và giá thấp hơn.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Quy định</th><th>Chi tiết</th></tr></thead>
+        <tbody>
+          <tr><td>Loại được bán</td><td>Chỉ <b>Standard RI</b> của EC2 (regional và zonal). <b>Không</b> bán Convertible RI, <b>không</b> bán RI của dịch vụ khác (RDS, ElastiCache…).</td></tr>
+          <tr><td>Điều kiện</td><td>Còn <b>ít nhất 1 tháng</b> trong kỳ; RI đã active <b>ít nhất 30 ngày</b>; nếu có upfront thì AWS phải nhận đủ tiền upfront; không mua bằng volume discount.</td></tr>
+          <tr><td>Đăng ký người bán</td><td>Chỉ <b>root user</b> đăng ký được; cần <b>tài khoản ngân hàng địa chỉ Mỹ</b> và hoàn thành tax interview.</td></tr>
+          <tr><td>Phí &amp; giới hạn</td><td>AWS thu <b>12%</b> tổng giá upfront mỗi RI bán được. Giới hạn trọn đời account: bán tối đa <b>50.000 USD</b> và <b>5.000 RI</b>.</td></tr>
+          <tr><td>Sau khi bán</td><td>Bạn mất capacity reservation và giá giảm; nếu vẫn chạy instance thì bị tính <b>On-Demand</b> từ lúc RI được bán.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Reserved Instances</span>
+        <ul>
+          <li>“<i>Need a discount AND guaranteed capacity in a specific AZ for 3 years</i>” ⇒ <b>zonal Standard RI</b> (hoặc Capacity Reservation + Savings Plans).</li>
+          <li>“<i>Expect to change instance family / OS during the term, still want RI pricing</i>” ⇒ <b>Convertible RI</b> (hoặc tốt hơn: <b>Compute Savings Plans</b>).</li>
+          <li>“<i>No longer need the reservation, recover cost</i>” ⇒ bán <b>Standard RI</b> trên <b>Reserved Instance Marketplace</b> (Convertible thì không bán được).</li>
+          <li>“<i>Share RI discounts across accounts</i>” ⇒ <b>AWS Organizations consolidated billing</b> (chia sẻ discount bật mặc định; management account có thể tắt cho từng account).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: SAVINGS PLANS ===================== -->
+      <h2 id="savings-plans"><img src="../assets/icons/svc/Savings-Plans.svg" alt="">Savings Plans</h2>
+      <p class="lead"><span class="t" data-vi="Gói tiết kiệm">Savings Plans</span> cho giá thấp hơn On-Demand, đổi lại bạn <b>cam kết sử dụng một lượng compute đo bằng USD/giờ</b> trong <b>1 năm</b> (365 ngày) hoặc <b>3 năm</b> (1.095 ngày). Khác RI ở chỗ: bạn cam kết <b>số tiền</b>, không cam kết <b>cấu hình</b> – tiết kiệm <b>tới 72%</b> cho compute.</p>
+      <ul>
+        <li>Trong suốt kỳ hạn, đơn giá bạn trả cho usage <b>giữ nguyên</b>. Thanh toán: <b>All upfront</b>, <b>Partial upfront</b>, <b>No upfront</b>.</li>
+        <li>Mỗi giờ, usage đủ điều kiện được tính theo giá Savings Plans cho tới khi hết mức cam kết; <b>phần vượt</b> trả giá On-Demand. Dùng ít hơn mức cam kết thì bạn <b>vẫn trả đủ</b> cam kết.</li>
+        <li><b>Không hủy được</b> trong kỳ, không đổi được điều khoản sau khi mua; nhu cầu tăng thì mua thêm plan mới.</li>
+        <li>Quản lý bằng <b>AWS Cost Explorer</b>: xem <b>recommendations</b> mức cam kết tối ưu (dựa trên usage lịch sử), mua, theo dõi hiệu quả (performance reporting), đặt <b>budget alerts</b>.</li>
+      </ul>
+
+      <h3>Bốn loại Savings Plans</h3>
+      <div class="compare">
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/cat/Compute.svg" alt="">Compute Savings Plans</h4>
+          <ul>
+            <li>Linh hoạt nhất, giảm <b>tới 66%</b>.</li>
+            <li>Áp cho EC2 <b>bất kể</b> family, size, <b>Region</b>, OS, tenancy – <b>và cả AWS Fargate, AWS Lambda</b>.</li>
+            <li>Ví dụ: chuyển c5 → m5, từ EU (Ireland) → EU (London), hay từ EC2 sang ECS on Fargate mà vẫn giữ giá giảm.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">EC2 Instance Savings Plans</h4>
+          <ul>
+            <li>Giảm sâu nhất, <b>tới 72%</b>.</li>
+            <li>Cam kết <b>một instance family trong một Region</b> (vd m5 ở N. Virginia).</li>
+            <li>Tự áp bất kể size (m5.xlarge ↔ m5.2xlarge), OS (Windows ↔ Linux), tenancy (Host/Dedicated/Default) trong family đó.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/cat/Database.svg" alt="">Database Savings Plans</h4>
+          <ul>
+            <li>Giảm <b>tới 35%</b> cho Aurora, RDS, DynamoDB, ElastiCache, DocumentDB, Neptune, Keyspaces, Timestream, DMS, OpenSearch Service.</li>
+            <li>Bất kể engine, family, size, AZ, Region (thế hệ instance mới nhất); áp cả usage serverless.</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/cat/Analytics.svg" alt="">SageMaker AI Savings Plans</h4>
+          <ul>
+            <li>Giảm <b>tới 64%</b> cho instance Amazon SageMaker AI.</li>
+            <li>Bất kể family (ml.m5, ml.c5…), size, Region, component (Notebook, Training, Inference…).</li>
+          </ul></div>
+      </div>
+
+      <h3>So sánh Savings Plans và Reserved Instances (bảng của tài liệu)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Compute SP</th><th>EC2 Instance SP</th><th>Convertible RI</th><th>Standard RI</th></tr></thead>
+        <tbody>
+          <tr><td>Tiết kiệm so với On-Demand</td><td>Tới 66%</td><td>Tới 72%</td><td>Tới 66%</td><td>Tới 72%</td></tr>
+          <tr><td>Giá thấp đổi lấy cam kết <b>tiền</b> (USD/giờ)</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">—</td><td class="no">—</td></tr>
+          <tr><td>Tự áp cho mọi instance family</td><td class="yes">✓</td><td class="no">—</td><td class="no">— (phải exchange thủ công)</td><td class="no">—</td></tr>
+          <tr><td>Tự áp cho mọi instance size</td><td class="yes">✓</td><td class="yes">✓</td><td>— (regional RI có size flexibility)</td><td>— (regional RI có size flexibility)</td></tr>
+          <tr><td>Tự áp cho mọi tenancy / OS</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">—</td><td class="no">—</td></tr>
+          <tr><td>Áp cho ECS/EKS trên Fargate</td><td class="yes">✓</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+          <tr><td>Áp cho Lambda</td><td class="yes">✓</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+          <tr><td>Áp xuyên Region</td><td class="yes">✓</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+          <tr><td>Kỳ hạn 1 hoặc 3 năm</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Những ghi chú hay bị bẫy (từ tài liệu Savings Plans)</span>
+        <ul>
+          <li>Savings Plans <b>không giữ capacity</b>. Cần capacity ⇒ tạo <b>On-Demand Capacity Reservation (ODCR)</b>, Savings Plans vẫn áp giá giảm lên đó.</li>
+          <li>Savings Plans <b>không áp cho Spot</b> và <b>không áp cho usage đã được RI che phủ</b>. Chi tiêu Spot cũng không được tính vào cam kết Compute SP.</li>
+          <li>Phí <b>2 USD/giờ</b> mỗi Region có ít nhất một Dedicated Instance đang chạy <b>không được</b> Savings Plans giảm.</li>
+          <li>Compute và EC2 Instance SP áp cho EC2 nằm trong cluster EMR, EKS, ECS; nhưng phí riêng của Amazon EKS thì không.</li>
+          <li>Giá Savings Plans <b>không phụ thuộc</b> độ lớn của mức cam kết (không có “mua nhiều giảm thêm”).</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Savings Plans</span>
+        <ul>
+          <li>“<i>Workloads on EC2, Fargate AND Lambda; may change Regions / instance families; reduce cost with a commitment</i>” ⇒ <b>Compute Savings Plans</b>.</li>
+          <li>“<i>Will stay on the same instance family in one Region, want the LARGEST discount with flexibility on size/OS</i>” ⇒ <b>EC2 Instance Savings Plans</b>.</li>
+          <li>“<i>How much should we commit?</i>” ⇒ <b>Savings Plans recommendations trong AWS Cost Explorer</b>.</li>
+          <li>Có cả Savings Plans và Standard RI trong đáp án, đề nhấn “<i>flexibility, least operational overhead</i>” ⇒ chọn <b>Savings Plans</b> (không phải exchange/modify).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: SPOT ===================== -->
+      <h2 id="spot"><img src="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" alt="">Spot Instances</h2>
+      <p class="lead">Một <span class="t" data-vi="Máy chủ dư thừa giá rẻ">Spot Instance</span> dùng <b>năng lực EC2 dư thừa</b> với giá thấp hơn On-Demand – tiết kiệm <b>tới 90%</b>. Khác biệt <b>duy nhất</b> so với On-Demand: EC2 có thể <b>thu hồi (interrupt)</b> Spot Instance với <b>2 phút báo trước</b> khi cần lấy lại năng lực. Khi đang chạy, Spot Instance <b>giống hệt</b> On-Demand.</p>
+
+      <h3>Các khái niệm cốt lõi</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khái niệm</th><th>Ý nghĩa theo tài liệu</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Bể năng lực Spot">Spot capacity pool</span></td><td>Tập instance EC2 chưa dùng có <b>cùng instance type</b> (vd <code>m5.large</code>) <b>và cùng AZ</b> (vd us-east-1a). Mỗi cặp (type, AZ) là một pool riêng.</td></tr>
+          <tr><td><span class="t" data-vi="Giá Spot">Spot price</span></td><td>Giá theo giờ hiện tại của Spot Instance, do EC2 đặt cho từng type ở từng AZ và <b>điều chỉnh từ từ</b> theo cung–cầu <b>dài hạn</b>. Bạn trả Spot price (không phải giá tối đa đã đặt).</td></tr>
+          <tr><td><b>Maximum price</b></td><td>Tùy chọn, giá tối đa bạn chấp nhận. Tài liệu lưu ý: <b>đặt maximum price khiến bị interrupt thường xuyên hơn</b> so với không đặt (mặc định trần là giá On-Demand).</td></tr>
+          <tr><td><span class="t" data-vi="Yêu cầu Spot">Spot Instance request</span></td><td><b>one-time</b> hoặc <b>persistent</b>. Persistent request được EC2 <b>tự gửi lại</b> sau khi Spot Instance liên quan bị interrupt.</td></tr>
+          <tr><td><span class="t" data-vi="Khuyến nghị tái cân bằng">EC2 instance rebalance recommendation</span></td><td>Tín hiệu báo Spot Instance đang có <b>rủi ro bị interrupt cao</b> – thường đến <b>sớm hơn</b> thông báo 2 phút, cho bạn cơ hội chủ động chuyển workload.</td></tr>
+          <tr><td><span class="t" data-vi="Gián đoạn Spot">Spot Instance interruption</span></td><td>EC2 <b>terminate, stop hoặc hibernate</b> Spot Instance khi cần lấy lại năng lực; kèm <b>interruption notice 2 phút</b>.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Spot khác On-Demand ở đâu?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Spot Instances</th><th>On-Demand Instances</th></tr></thead>
+        <tbody>
+          <tr><td>Thời điểm launch</td><td>Chỉ launch ngay nếu request đang active <b>và</b> có capacity</td><td>Launch ngay khi bạn gửi lệnh và có capacity</td></tr>
+          <tr><td>Khi hết capacity</td><td>Request <b>tự động thử lại</b> cho tới khi có capacity</td><td>Nhận lỗi <b>insufficient capacity error (ICE)</b></td></tr>
+          <tr><td>Giá theo giờ</td><td>Biến động theo cung–cầu dài hạn</td><td>Cố định</td></tr>
+          <tr><td>Rebalance recommendation</td><td>Có tín hiệu khi rủi ro interrupt tăng</td><td>Không áp dụng – bạn quyết định khi nào dừng</td></tr>
+          <tr><td>Interruption</td><td>Bạn stop/start được (EBS-backed); <b>EC2 có thể interrupt</b> khi hết capacity</td><td>Chỉ bạn quyết định stop/hibernate/terminate</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Vì sao Spot bị interrupt? Và bị gì?</h3>
+      <ul>
+        <li><b>Capacity</b> – lý do chính: EC2 cần lấy lại năng lực (cũng có thể do bảo trì host, thay phần cứng).</li>
+        <li><b>Price</b> – Spot price cao hơn <b>maximum price</b> bạn đặt.</li>
+        <li><b>Constraints</b> – request có ràng buộc như <i>launch group</i> hoặc <i>Availability Zone group</i>: khi không còn thỏa, các instance bị terminate <b>cùng lúc theo nhóm</b>.</li>
+      </ul>
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" alt="">Terminate (mặc định)</h4>
+          <ul>
+            <li>Hành vi mặc định khi bị interrupt.</li>
+            <li>Dữ liệu trên instance store và root volume (nếu <code>DeleteOnTermination</code>) mất ⇒ lưu trạng thái ra S3/EFS/DynamoDB.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" alt="">Stop</h4>
+          <ul>
+            <li>Bắt buộc request <b>persistent</b> (fleet: loại <code>maintain</code>), không dùng launch group.</li>
+            <li><b>Chỉ EC2</b> start lại khi có capacity cùng AZ, cùng type. Trong lúc stopped chỉ trả tiền <b>EBS volume</b>.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Hibernate</h4>
+          <ul>
+            <li>Lưu RAM xuống EBS (điều kiện hibernate như Bài 8); EC2 tự resume khi có capacity.</li>
+            <li>Vẫn có interruption notice nhưng <b>không có 2 phút</b> báo trước – hibernation bắt đầu <b>ngay</b>.</li>
+          </ul></div>
+      </div>
+
+      <h3>Nhận cảnh báo: interruption notice &amp; rebalance recommendation</h3>
+      <p>Interruption notice được phát (best effort) theo 2 kênh: sự kiện <b>Amazon EventBridge</b> <code>"EC2 Spot Instance Interruption Warning"</code> (trường <code>instance-action</code> = <code>hibernate</code> | <code>stop</code> | <code>terminate</code>) và mục <b>instance metadata</b> <code>spot/instance-action</code> (trả 404 nếu không có kế hoạch interrupt). AWS khuyên kiểm tra metadata <b>mỗi 5 giây</b>. Mục <code>spot/termination-time</code> chỉ còn để tương thích ngược.</p>
+
+<pre><span class="c"># Chạy định kỳ trên Spot Instance (IMDSv2) – nhận 404 nghĩa là chưa có gì</span>
+TOKEN=$(curl -s -X PUT <span class="s">"http://169.254.169.254/latest/api/token"</span> -H <span class="s">"X-aws-ec2-metadata-token-ttl-seconds: 21600"</span>)
+curl -s -H <span class="s">"X-aws-ec2-metadata-token: $TOKEN"</span> http://169.254.169.254/latest/meta-data/spot/instance-action
+<span class="c"># {"action": "terminate", "time": "2017-09-18T08:22:00Z"}  ⇒ checkpoint, deregister khỏi load balancer, drain job</span></pre>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Compute.svg" alt="">AWS Cloud – Region</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" alt="">Spot Instance<small>rủi ro interrupt tăng</small></div>
+            <span class="arrow">① rebalance recommendation<br>② interruption warning (−2 phút)</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">Amazon EventBridge<small>rule bắt sự kiện EC2 Spot</small></div>
+            <span class="arrow">③ trigger</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">AWS Lambda<small>checkpoint, drain, thông báo</small></div>
+            <span class="arrow">④ lưu tiến độ</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Amazon S3 / SQS<small>job đang dở quay lại hàng đợi</small></div>
+            <span class="arrow dashed">⑤ thay thế (Capacity Rebalancing)</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">Auto Scaling group / EC2 Fleet<small>launch Spot mới ở pool khác</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Xử lý gián đoạn Spot theo “Spot best practices”: tạo rule <b>EventBridge</b> bắt rebalance recommendation và interruption notice để <b>checkpoint</b> tiến độ hoặc xử lý gracefully; Auto Scaling group / EC2 Fleet bật <b>Capacity Rebalancing</b> sẽ chủ động thay instance có rủi ro cao bằng instance mới ở pool ít rủi ro hơn. Ứng dụng tốt nhất là <b>stateless</b>, lấy việc từ <b>hàng đợi</b> (SQS) để job bị gián đoạn được làm lại.</figcaption>
+      </figure>
+
+      <h3>Tính tiền khi Spot bị interrupt</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Ai interrupt?</th><th>Hệ điều hành</th><th>Trong giờ đầu tiên</th><th>Sau giờ đầu tiên</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="2"><b>Bạn</b> stop/terminate</td><td>Windows, Linux (trừ SUSE)</td><td>Tính theo giây đã dùng</td><td>Tính theo giây đã dùng</td></tr>
+          <tr><td>SUSE</td><td>Tính trọn 1 giờ</td><td>Tính trọn các giờ, giờ dở dang tính tròn 1 giờ</td></tr>
+          <tr><td rowspan="2"><b>Amazon EC2</b> interrupt</td><td>Windows, Linux (trừ SUSE)</td><td class="yes"><b>Miễn phí</b></td><td>Tính theo giây đã dùng</td></tr>
+          <tr><td>SUSE</td><td class="yes"><b>Miễn phí</b></td><td>Tính trọn các giờ đã dùng, <b>miễn phí</b> giờ dở dang bị interrupt</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Best practices – Spot dùng cho gì, không dùng cho gì</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" alt="">Phù hợp</h4>
+          <ul>
+            <li>Ứng dụng <b>stateless, fault-tolerant, flexible</b>: big data, container, <b>CI/CD</b>, stateless web server, <b>HPC</b>, <b>rendering</b>, data analysis, batch job, background processing.</li>
+            <li>Dịch vụ tích hợp sẵn Spot: Amazon EMR, ECS, EKS, AWS Batch, SageMaker AI, Elastic Beanstalk, GameLift.</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/Amazon-EC2_DB-Instance.svg" alt="">Không phù hợp</h4>
+          <ul>
+            <li>Workload <b>inflexible, stateful, fault-intolerant</b>, hoặc <b>tightly coupled</b> giữa các node.</li>
+            <li>Workload không chịu được lúc <b>không đủ</b> target capacity. AWS <b>không khuyến khích</b> “failover sang On-Demand” khi bị interrupt.</li>
+          </ul></div>
+      </div>
+      <ol class="steps">
+        <li><b>Chuẩn bị từng instance cho interruption</b>: dùng rebalance recommendation và interruption notice; workload “time-flexible” có thể chọn stop/hibernate thay vì terminate.</li>
+        <li><b>Linh hoạt instance type và AZ</b>: quy tắc ngón tay cái – linh hoạt <b>ít nhất 10 instance types</b> mỗi workload; bật mọi AZ trong VPC. Scale dọc được thì thêm size lớn hơn; chỉ scale ngang thì thêm cả <b>thế hệ cũ</b> (ít khách On-Demand tranh).</li>
+        <li><b>Attribute-based instance type selection</b>: khai báo vCPU, memory, storage… để Auto Scaling/EC2 Fleet tự chọn type phù hợp, kể cả type mới ra.</li>
+        <li><b>Spot placement score</b>: điểm <b>1–10</b> cho từng Region/AZ về khả năng đáp ứng capacity bạn cần (10 = rất có thể thành công). Chỉ là gợi ý tại thời điểm, không đảm bảo.</li>
+        <li><b>Quản lý capacity tổng bằng Auto Scaling group hoặc EC2 Fleet</b>, nghĩ theo vCPU/memory thay vì từng instance.</li>
+        <li><b>Dùng allocation strategy <code>price-capacity-optimized</code></b> (xem bên dưới).</li>
+      </ol>
+
+      <h3>Spot Fleet, EC2 Fleet và allocation strategies</h3>
+      <p><span class="t" data-vi="Đội máy Spot">Spot Fleet</span> và <span class="t" data-vi="Đội máy EC2">EC2 Fleet</span> launch hàng chục–hàng nghìn instance trong <b>một thao tác</b>, từ launch template: nhiều instance type, nhiều AZ, <b>kết hợp Spot + On-Demand</b> (On-Demand trong fleet vẫn hưởng RI/Savings Plans), tự thay Spot bị interrupt (fleet loại <code>maintain</code>), Capacity Rebalancing, dùng được Capacity Reservation và Capacity Blocks.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Spot allocation strategy</th><th>Cách chọn pool</th><th>Khi nào dùng</th></tr></thead>
+        <tbody>
+          <tr><td><b>price-capacity-optimized</b> (khuyến nghị)</td><td>Chọn các pool <b>nhiều capacity nhất</b> (ít rủi ro interrupt), rồi lấy pool <b>rẻ nhất</b> trong số đó</td><td>Đa số workload: container stateless, microservice, web, data &amp; analytics, batch</td></tr>
+          <tr><td><b>capacity-optimized</b></td><td>Chỉ ưu tiên pool có capacity sẵn nhất (dựa trên dữ liệu real-time)</td><td>Chi phí interrupt cao: CI dài, render, deep learning, HPC. Biến thể <b>capacity-optimized-prioritized</b> tôn trọng thứ tự ưu tiên instance type (best effort)</td></tr>
+          <tr><td><b>diversified</b></td><td>Rải đều qua <b>mọi</b> pool</td><td>Fleet lớn hoặc chạy lâu: 10 pool × 10 instance ⇒ một pool bị thu hồi chỉ ảnh hưởng 10%</td></tr>
+          <tr><td><b>lowest-price</b> (không khuyến nghị)</td><td>Pool rẻ nhất còn capacity (mặc định khi dùng CLI)</td><td>Rủi ro interrupt <b>cao nhất</b> vì không xét capacity</td></tr>
+        </tbody>
+      </table></div>
+      <p>Với phần On-Demand trong fleet: <b>lowest-price</b> (mặc định) hoặc <b>prioritized</b> (theo thứ tự ưu tiên – ví dụ tài liệu: đặt <code>m5.large</code> ưu tiên 1 để dùng hết RI <code>m5.large</code> còn thừa).</p>
+
+      <div class="callout warn"><span class="ttl">API nào để xin Spot? (bảng “Which is the best Spot request method”)</span>
+        <ul>
+          <li><b>CreateAutoScalingGroup</b> – <b>Yes</b>: muốn AWS quản lý vòng đời, scale ngang giữa min/max.</li>
+          <li><b>CreateFleet</b> (EC2 Fleet) – <b>Yes</b>: muốn tự quản lý vòng đời; không cần auto scaling thì dùng fleet loại <code>instant</code>.</li>
+          <li><b>RunInstances</b> – không khuyến nghị: chỉ một instance type mỗi request.</li>
+          <li><b>RequestSpotFleet</b> và <b>RequestSpotInstances</b> – <b>DO NOT USE</b>: là <i>legacy API, no planned investment</i>. Spot Fleet vẫn xuất hiện trong đề, nhưng thiết kế mới nên dùng <b>Auto Scaling group</b> hoặc <b>EC2 Fleet</b>.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Spot</span>
+        <ul>
+          <li>“<i>Batch jobs that can be stopped and resumed, flexible on time, MOST cost-effective</i>” ⇒ <b>Spot Instances</b> (thường kèm SQS + Auto Scaling).</li>
+          <li>“<i>Minimize Spot interruptions while keeping cost low</i>” ⇒ đa dạng instance type/AZ + <b>price-capacity-optimized</b> (hoặc capacity-optimized).</li>
+          <li>“<i>Get notified before a Spot Instance is reclaimed to save state</i>” ⇒ <b>EventBridge rule</b> cho interruption warning / rebalance recommendation, hoặc poll <code>spot/instance-action</code>.</li>
+          <li>“<i>Database / stateful / must not be interrupted</i>” ⇒ <b>KHÔNG</b> dùng Spot.</li>
+          <li>Persistent Spot request: muốn dừng hẳn phải <b>cancel request trước</b>, rồi mới terminate instance – nếu không EC2 sẽ launch lại.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: DEDICATED ===================== -->
+      <h2 id="dedicated"><img src="../assets/icons/res/Traditional-server.svg" alt="">Tenancy: Dedicated Hosts &amp; Dedicated Instances</h2>
+      <p class="lead">Mặc định instance EC2 chạy trên phần cứng <span class="t" data-vi="Dùng chung">shared tenancy</span> – nhiều AWS account có thể chung một máy vật lý (vẫn cách ly bằng hypervisor). Khi có yêu cầu <b>tuân thủ</b> hoặc <b>license gắn với phần cứng</b>, bạn có hai lựa chọn <span class="t" data-vi="Đơn khách hàng">single-tenant</span>.</p>
+
+      <ul>
+        <li><span class="t" data-vi="Máy chủ vật lý dành riêng">Dedicated Host</span>: một <b>server vật lý</b> dành trọn cho bạn. Có <b>visibility</b> số socket, physical core, host ID; kiểm soát vị trí đặt instance và <span class="t" data-vi="Gắn kết với host">host affinity</span> (instance luôn quay về đúng host sau stop/start). Hỗ trợ <b>BYOL đầy đủ</b> cho license per-socket, per-core, per-VM: Windows Server, SQL Server, SUSE, RHEL…</li>
+        <li><span class="t" data-vi="Máy chủ ảo trên phần cứng riêng">Dedicated Instance</span>: instance chạy trên phần cứng dành riêng cho <b>một AWS account</b> – cách ly vật lý với account khác, <b>kể cả các account cùng chung payer account</b>; nhưng có thể chung phần cứng với instance non-dedicated của <b>chính account đó</b>. Không thấy/không kiểm soát được host; stop/start có thể sang host khác.</li>
+        <li>Tài liệu nhấn mạnh: <b>không có khác biệt về hiệu năng, bảo mật hay vật lý</b> giữa Dedicated Instance và instance trên Dedicated Host – khác biệt nằm ở <b>khả năng kiểm soát, license và cách tính tiền</b>.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Dedicated Host</th><th>Dedicated Instance</th></tr></thead>
+        <tbody>
+          <tr><td>Server vật lý</td><td>Năng lực instance của server dành trọn cho bạn</td><td>Server dành riêng cho một customer account</td></tr>
+          <tr><td>Chia sẻ năng lực cho account khác</td><td class="yes">Được (cross-account sharing)</td><td class="no">Không</td></tr>
+          <tr><td>Tính tiền</td><td><b>Theo host</b></td><td><b>Theo instance</b> (+ phí 2 USD/giờ mỗi Region có Dedicated Instance)</td></tr>
+          <tr><td>Thấy socket, core, host ID</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Host &amp; instance affinity</td><td class="yes">Có – luôn chạy trên cùng server</td><td class="no">Không</td></tr>
+          <tr><td>Targeted instance placement</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Automatic instance recovery</td><td class="yes">Có (Dedicated Host recovery)</td><td class="yes">Có</td></tr>
+          <tr><td>BYOL</td><td class="yes">Đầy đủ</td><td>Một phần (SQL Server với License Mobility qua Software Assurance, Windows VDA)</td></tr>
+          <tr><td>Capacity Reservations</td><td class="no">Không hỗ trợ</td><td class="yes">Hỗ trợ</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Những điểm cần nhớ thêm</h3>
+      <ul>
+        <li><b>Giá Dedicated Host</b>: On-Demand theo host; <b>Dedicated Host Reservations</b> giảm <b>tới 70%</b> (phải có host đã allocate trước khi mua); Savings Plans cũng áp cho tenancy Host (xem phần 4).</li>
+        <li>Giới hạn Dedicated Host: quota số host đang chạy theo instance family/account/Region; <b>không</b> launch vào placement group; <b>không</b> hỗ trợ Amazon RDS; không có Free Tier; RHEL/SUSE phải dùng AMI của chính bạn (BYOL). Auto Scaling dùng được qua launch template chỉ định <b>host resource group</b>. Kết hợp <b>AWS License Manager</b> để theo dõi và áp quy tắc license.</li>
+        <li><b>Dedicated Instance</b>: tạo VPC tenancy <code>dedicated</code> (mọi instance trong đó đều dedicated) hoặc VPC <code>default</code> rồi chỉ định tenancy <code>dedicated</code> cho từng instance. Hỗ trợ Dedicated RI, Auto Scaling, Dedicated Spot Instance, T3 dedicated (mặc định unlimited). EBS volume của Dedicated Instance <b>không</b> chạy trên phần cứng single-tenant.</li>
+        <li>RI default tenancy <b>không</b> áp cho instance dedicated (và ngược lại); không modify tenancy của RI được, chỉ Convertible RI exchange được.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Dedicated</span>
+        <ul>
+          <li>“<i>Existing per-socket / per-core licenses (Windows Server, SQL Server, Oracle), need to control instance placement, track host ID</i>” ⇒ <b>Dedicated Hosts</b>.</li>
+          <li>“<i>Compliance requires instances on hardware not shared with other customers, no license requirement</i>” ⇒ <b>Dedicated Instances</b> (rẻ, đơn giản hơn).</li>
+          <li>“<i>All instances in this VPC must be single-tenant</i>” ⇒ VPC với instance tenancy <b>dedicated</b>.</li>
+          <li>“<i>Bare metal for own hypervisor</i>” là chuyện <b>instance type</b> (<code>.metal</code>, Bài 8) – khác với tenancy.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: CAPACITY RESERVATIONS ===================== -->
+      <h2 id="capacity-reservations"><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">On-Demand Capacity Reservations &amp; Capacity Blocks for ML</h2>
+      <p class="lead"><span class="t" data-vi="Đặt trước năng lực theo nhu cầu">On-Demand Capacity Reservations (ODCR)</span> cho phép giữ năng lực compute cho instance EC2 trong <b>một AZ cụ thể</b>, <b>trong bất kỳ khoảng thời gian nào</b>. Dùng khi workload quan trọng có yêu cầu capacity nghiêm ngặt – ngắn hạn hay dài hạn.</p>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">Immediate-use</h4>
+          <ul>
+            <li>Có hiệu lực ngay, <b>không cam kết thời hạn</b>.</li>
+            <li>Sửa đổi, hủy bất cứ lúc nào – hủy là ngừng tính phí.</li>
+            <li>Dùng để che phủ cả instance đang chạy.</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/svc/AWS-Budgets.svg" alt="">Future-dated</h4>
+          <ul>
+            <li>Chỉ định ngày cần capacity và <b>thời gian cam kết</b> giữ nó; billing bắt đầu từ ngày đó.</li>
+            <li>Trong kỳ cam kết không giảm số instance/thời hạn; hủy có thể mất phí.</li>
+            <li>Tối thiểu <b>32 vCPU</b> (vd ≥ 8 × <code>m5.xlarge</code>); family C, G, I, M, R, T, U, X. Chỉ cho instance <b>tăng thêm</b>.</li>
+          </ul></div>
+      </div>
+
+      <ul>
+        <li><b>Tính tiền</b>: ODCR tính theo <b>giá On-Demand</b> của capacity đã giữ <b>dù có chạy instance hay không</b>. Bản thân ODCR <b>không giảm giá</b> – kết hợp <b>Savings Plans</b> hoặc <b>regional RI</b> để được giảm. (Zonal RI discount <b>không</b> áp cho Capacity Reservation.)</li>
+        <li><b>Khớp instance</b>: phải khớp instance type, platform, AZ, tenancy. Mặc định reservation <b>open</b> – tự nhận mọi instance khớp (kể cả do Auto Scaling, ECS, EKS, EMR, Batch, Elastic Beanstalk launch). Hoặc <b>targeted</b> – chỉ instance chỉ định reservation mới chạy vào.</li>
+        <li><b>Quota</b>: ODCR (cả đang active mà chưa dùng) tính vào On-Demand vCPU quota.</li>
+        <li><b>Hạn chế</b>: không chuyển nhượng giữa account nhưng <b>chia sẻ</b> được cho account khác; dùng được trong <b>cluster placement group</b> (không hỗ trợ spread/partition); <b>không</b> dùng với Dedicated Hosts (dùng được với Dedicated Instances); Windows BYOL không dùng được; không đảm bảo instance hibernated resume được.</li>
+        <li>Use case trong tài liệu: <b>sự kiện scale lớn</b> (Black Friday), <b>yêu cầu pháp lý về HA / DR</b> (giữ capacity ở AZ/Region khác), chia sẻ capacity chưa dùng qua <i>Interruptible Capacity Reservations</i>.</li>
+      </ul>
+
+      <h3>So sánh Capacity Reservations, RI và Savings Plans (bảng của tài liệu)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Capacity Reservations</th><th>Zonal RI</th><th>Regional RI</th><th>Savings Plans</th></tr></thead>
+        <tbody>
+          <tr><td>Thời hạn</td><td>Không cam kết (immediate-use); future-dated có thời gian cam kết</td><td colspan="3">Bắt buộc cam kết cố định 1 năm hoặc 3 năm</td></tr>
+          <tr><td>Giữ capacity</td><td class="yes" colspan="2">Giữ capacity trong một AZ cụ thể</td><td class="no" colspan="2">Không giữ capacity</td></tr>
+          <tr><td>Giảm giá</td><td class="no">Không (kết hợp SP / regional RI để giảm)</td><td class="yes" colspan="3">Có billing discount</td></tr>
+          <tr><td>Giới hạn số instance</td><td>Theo On-Demand quota của Region</td><td>Mặc định 20 / AZ</td><td>Mặc định 20 / Region</td><td>Không giới hạn</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Capacity Blocks for ML</h3>
+      <p><span class="t" data-vi="Khối năng lực GPU cho học máy">Capacity Blocks for ML</span> cho phép đặt trước <b>GPU / accelerator instance</b> (P5, P5e, P5en, P6, P4d, Trn1, Trn2…) cho <b>một khoảng thời gian xác định bắt đầu ở ngày tương lai</b> – lý tưởng cho training/fine-tuning model, thử nghiệm ngắn, đỉnh inference tạm thời. Instance được đặt sát nhau trong <b>EC2 UltraClusters</b> (mạng độ trễ thấp, petabit-scale, non-blocking).</p>
+      <div class="stats">
+        <div class="stat"><b>8 tuần</b><span>đặt trước tối đa (start time trong tương lai)</span></div>
+        <div class="stat"><b>64</b><span>instance tối đa mỗi Capacity Block</span></div>
+        <div class="stat"><b>256</b><span>instance tối đa trên mọi Capacity Block (cả organization, cùng một ngày)</span></div>
+        <div class="stat"><b>11:30 UTC</b><span>giờ kết thúc Capacity Block (bắt đầu terminate từ 11:00 UTC ngày cuối)</span></div>
+      </div>
+      <p>Lưu ý: <b>không hủy được</b>, không move/split, chỉ default tenancy, không hỗ trợ placement group, instance phải <b>target đúng reservation ID</b>, và <b>không tính</b> vào On-Demand quota.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Capacity Reservations</span>
+        <ul>
+          <li>“<i>Must guarantee capacity in a specific AZ for a 2-week event / quarterly batch, no 1- or 3-year commitment</i>” ⇒ <b>On-Demand Capacity Reservation</b> (immediate-use, hủy khi xong).</li>
+          <li>“<i>Guaranteed capacity AND discount</i>” ⇒ <b>Capacity Reservation + Savings Plans</b> (hoặc regional RI), hoặc <b>zonal RI</b> nếu cam kết được 1–3 năm.</li>
+          <li>“<i>Reserve a cluster of GPUs for a few days/weeks starting next month for ML training</i>” ⇒ <b>Capacity Blocks for ML</b>.</li>
+          <li>“<i>Share reserved capacity with other accounts</i>” ⇒ <b>Capacity Reservation (shared)</b>, không phải zonal RI.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: KẾT HỢP ===================== -->
+      <h2 id="ket-hop"><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">Kết hợp các phương thức mua – chiến lược cost-optimized</h2>
+      <p class="lead">Trong thực tế (và trong đề), đáp án tối ưu thường là <b>tổ hợp</b>: phần tải <b>nền ổn định</b> che bằng Savings Plans/RI, phần <b>co giãn chịu lỗi</b> chạy Spot, phần <b>đột biến không chịu lỗi</b> chạy On-Demand. Auto Scaling group với <b>mixed instances policy</b> (Bài 13) hoặc EC2 Fleet làm được điều này trong một nhóm duy nhất.</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Compute.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Application Load Balancer</div>
+            </div>
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">Auto Scaling group – mixed instances (m7g, m6g, c7g, r7g…), price-capacity-optimized</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">Availability Zone A</span>
+                  <div class="row center">
+                    <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">On-Demand × 2<small>phần nền – được Compute SP che phủ</small></div>
+                    <div class="node"><img src="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" alt="">Spot × 4<small>phần co giãn</small></div>
+                  </div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone B</span>
+                  <div class="row center">
+                    <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">On-Demand × 2<small>phần nền – được Compute SP che phủ</small></div>
+                    <div class="node"><img src="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" alt="">Spot × 4<small>phần co giãn</small></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/svc/Savings-Plans.svg" alt="">Compute Savings Plans<small>cam kết USD/giờ ≈ mức nền</small></div>
+              <div class="node"><img src="../assets/icons/svc/AWS-Cost-Explorer.svg" alt="">Cost Explorer<small>recommendations, utilization, coverage</small></div>
+              <div class="node"><img src="../assets/icons/svc/AWS-Budgets.svg" alt="">AWS Budgets<small>cảnh báo vượt ngân sách</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> Kiến trúc web tối ưu chi phí: Auto Scaling group trải 2 AZ với <b>On-Demand base capacity</b> (4 instance, được <b>Compute Savings Plans</b> che phủ vì chạy 24/7) và phần trên base là <b>Spot</b> đa dạng instance type theo <code>price-capacity-optimized</code>. Spot bị thu hồi chỉ làm giảm phần co giãn – ứng dụng vẫn <i>highly available</i>. Cost Explorer đưa ra mức cam kết khuyến nghị.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tình huống đề hay gặp</th><th>Tổ hợp hợp lý</th></tr></thead>
+        <tbody>
+          <tr><td>Web app chạy 24/7 với tối thiểu 4 instance, cao điểm lên 20</td><td><b>Savings Plans/RI</b> cho 4 instance nền + <b>Spot</b> (stateless) hoặc <b>On-Demand</b> cho phần cao điểm</td></tr>
+          <tr><td>Batch xử lý ảnh hằng đêm, khởi động lại được, không gấp</td><td><b>Spot</b> + SQS + Auto Scaling; checkpoint lên S3</td></tr>
+          <tr><td>Database production trên EC2 chạy liên tục 3 năm</td><td><b>EC2 Instance Savings Plans</b> hoặc <b>Standard RI</b> (không dùng Spot)</td></tr>
+          <tr><td>Ứng dụng mới, chưa biết tải, chạy thử 2 tháng</td><td><b>On-Demand</b> – đo usage rồi mới mua Savings Plans</td></tr>
+          <tr><td>Cần chắc chắn có 50 instance <code>c6i.4xlarge</code> ở us-east-1a cho đợt sale 1 tuần</td><td><b>On-Demand Capacity Reservation</b> (immediate-use) – hủy sau sự kiện</td></tr>
+          <tr><td>License SQL Server per-core, cần báo cáo số core</td><td><b>Dedicated Host</b> (+ Dedicated Host Reservation nếu dài hạn) + License Manager</td></tr>
+          <tr><td>Tổ chức nhiều account, muốn tận dụng RI/SP thừa giữa các account</td><td><b>AWS Organizations consolidated billing</b> – discount được chia sẻ</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy tổng hợp</span>
+        <ul>
+          <li>“<i>Steady-state</i>” + “<i>cost-effective</i>” mà chọn <b>Spot</b> ⇒ sai nếu workload <b>không chịu được gián đoạn</b>.</li>
+          <li>Chọn <b>Savings Plans</b> khi đề cần <b>đảm bảo capacity</b> ⇒ thiếu; phải thêm Capacity Reservation (hoặc zonal RI).</li>
+          <li>Chọn <b>Dedicated Host</b> khi đề chỉ cần “<i>not shared with other AWS customers</i>” ⇒ đắt và thừa; <b>Dedicated Instance</b> đủ.</li>
+          <li>Workload chỉ chạy <b>vài giờ mỗi ngày</b> mà mua RI/SP cho 24 giờ ⇒ lãng phí; cam kết chỉ nên bằng phần nền thực sự chạy liên tục.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải thuộc</span>
+        <ul>
+          <li><b>On-Demand</b>: theo giây (tối thiểu 60 s), không cam kết, giá cố định, có thể gặp ICE; quota tính theo <b>vCPU</b> (Standard mặc định 5 vCPU).</li>
+          <li><b>RI</b> = billing discount, 1/3 năm, All/Partial/No Upfront, <b>không hủy</b>. <b>Standard</b> (tới 72%, bán được trên Marketplace) vs <b>Convertible</b> (tới 66%, exchange được, không bán được). <b>Zonal</b> giữ capacity, <b>regional</b> linh hoạt AZ + size (normalization factor, Linux default tenancy).</li>
+          <li><b>Savings Plans</b> = cam kết USD/giờ 1/3 năm. <b>Compute SP</b> tới 66% (mọi family/Region/OS/tenancy + Fargate + Lambda); <b>EC2 Instance SP</b> tới 72% (1 family/1 Region); Database SP tới 35%; SageMaker AI SP tới 64%. Không giữ capacity, không áp cho Spot.</li>
+          <li><b>Spot</b> tới 90%, interrupt với <b>2 phút</b> báo trước (EventBridge + <code>spot/instance-action</code>); rebalance recommendation đến sớm hơn; mặc định <b>terminate</b>, có thể stop/hibernate (request persistent). EC2 interrupt trong giờ đầu ⇒ <b>miễn phí</b>. Linh hoạt ≥ 10 instance type, mọi AZ, <code>price-capacity-optimized</code>. Không dùng cho stateful/tightly coupled.</li>
+          <li><b>Dedicated Host</b>: cả server, thấy socket/core, host affinity, BYOL đầy đủ, tính theo host, Reservation tới 70%. <b>Dedicated Instance</b>: phần cứng riêng cho account, tính theo instance + 2 USD/giờ/Region, không kiểm soát placement.</li>
+          <li><b>ODCR</b>: giữ capacity 1 AZ, không cam kết, không giảm giá (kết hợp SP/regional RI), tính vào vCPU quota, chia sẻ được. <b>Capacity Blocks</b>: GPU cho ML, đặt trước tới 8 tuần, ≤ 64 instance/block.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="glossary">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Purchasing option</dt><dd><b>Phương thức mua</b> instance EC2 (On-Demand, RI, SP, Spot, Dedicated, Capacity Reservation).</dd></div>
+        <div><dt>On-Demand Instance</dt><dd><b>Máy chủ trả theo nhu cầu</b> – theo giây, không cam kết.</dd></div>
+        <div><dt>Insufficient capacity error (ICE)</dt><dd><b>Lỗi không đủ năng lực</b> khi AZ hết capacity cho instance type.</dd></div>
+        <div><dt>On-Demand Instance quota (vCPU-based)</dt><dd><b>Hạn mức On-Demand tính theo vCPU</b> mỗi account/Region.</dd></div>
+        <div><dt>Reserved Instance (RI)</dt><dd><b>Máy chủ đặt trước</b> – thực chất là chiết khấu hóa đơn cho cấu hình cụ thể, 1/3 năm.</dd></div>
+        <div><dt>Billing discount</dt><dd><b>Chiết khấu trên hóa đơn</b> – không phải tài nguyên vật lý.</dd></div>
+        <div><dt>All Upfront / Partial Upfront / No Upfront</dt><dd><b>Trả trước toàn bộ / một phần / không trả trước</b>.</dd></div>
+        <div><dt>Standard RI / Convertible RI</dt><dd><b>RI tiêu chuẩn</b> (giảm nhiều, bán được) / <b>RI chuyển đổi được</b> (exchange được).</dd></div>
+        <div><dt>Offering class</dt><dd><b>Hạng gói RI</b> – Standard hoặc Convertible.</dd></div>
+        <div><dt>Regional RI / Zonal RI</dt><dd><b>RI cấp vùng</b> (linh hoạt AZ, size) / <b>RI cấp AZ</b> (giữ capacity).</dd></div>
+        <div><dt>Instance size flexibility</dt><dd><b>Linh hoạt kích cỡ</b> – discount áp cho mọi size trong family.</dd></div>
+        <div><dt>Normalization factor</dt><dd><b>Hệ số chuẩn hóa</b> theo size (small = 1, large = 4, xlarge = 8…).</dd></div>
+        <div><dt>Modify / Exchange (RI)</dt><dd><b>Sửa thuộc tính / Đổi sang RI khác</b> (exchange chỉ Convertible).</dd></div>
+        <div><dt>Reserved Instance Marketplace</dt><dd><b>Chợ bán lại RI</b> – chỉ Standard RI, phí 12%.</dd></div>
+        <div><dt>Savings Plans</dt><dd><b>Gói tiết kiệm</b> – cam kết chi tiêu USD/giờ trong 1/3 năm.</dd></div>
+        <div><dt>Compute SP / EC2 Instance SP</dt><dd><b>Gói tiết kiệm compute linh hoạt</b> (EC2, Fargate, Lambda) / <b>gói cho một family trong một Region</b>.</dd></div>
+        <div><dt>Database SP / SageMaker AI SP</dt><dd><b>Gói tiết kiệm cho dịch vụ CSDL / cho SageMaker AI</b>.</dd></div>
+        <div><dt>Hourly commitment</dt><dd><b>Mức cam kết theo giờ</b> (USD/giờ) của Savings Plans.</dd></div>
+        <div><dt>Spot Instance</dt><dd><b>Máy chủ dùng năng lực dư thừa</b> giá rẻ, có thể bị thu hồi.</dd></div>
+        <div><dt>Spot capacity pool</dt><dd><b>Bể năng lực Spot</b> – cùng instance type + cùng AZ.</dd></div>
+        <div><dt>Spot price / Maximum price</dt><dd><b>Giá Spot hiện tại / Giá tối đa chấp nhận</b>.</dd></div>
+        <div><dt>One-time / Persistent Spot request</dt><dd><b>Yêu cầu Spot một lần / bền vững</b> (tự gửi lại sau interrupt).</dd></div>
+        <div><dt>Spot Instance interruption / interruption notice</dt><dd><b>Gián đoạn Spot / thông báo gián đoạn</b> (2 phút).</dd></div>
+        <div><dt>Interruption behavior</dt><dd><b>Hành vi khi bị gián đoạn</b> – terminate (mặc định), stop, hibernate.</dd></div>
+        <div><dt>EC2 instance rebalance recommendation</dt><dd><b>Khuyến nghị tái cân bằng</b> – tín hiệu rủi ro interrupt cao.</dd></div>
+        <div><dt>Capacity Rebalancing</dt><dd><b>Tái cân bằng năng lực</b> – ASG/Fleet chủ động thay Spot rủi ro cao.</dd></div>
+        <div><dt>Spot Fleet / EC2 Fleet</dt><dd><b>Đội máy Spot / Đội máy EC2</b> – launch nhiều instance, nhiều type, nhiều AZ trong một request.</dd></div>
+        <div><dt>Allocation strategy</dt><dd><b>Chiến lược phân bổ</b> pool: price-capacity-optimized, capacity-optimized, diversified, lowest-price.</dd></div>
+        <div><dt>Attribute-based instance type selection</dt><dd><b>Chọn instance type theo thuộc tính</b> (vCPU, memory…).</dd></div>
+        <div><dt>Spot placement score</dt><dd><b>Điểm khả năng có Spot</b> (1–10) theo Region/AZ.</dd></div>
+        <div><dt>Tenancy (default / dedicated / host)</dt><dd><b>Chế độ thuê phần cứng</b> – dùng chung / riêng account / riêng host.</dd></div>
+        <div><dt>Dedicated Host</dt><dd><b>Máy chủ vật lý dành riêng</b> – thấy socket/core, BYOL.</dd></div>
+        <div><dt>Dedicated Instance</dt><dd><b>Instance trên phần cứng riêng</b> cho một account.</dd></div>
+        <div><dt>Host affinity</dt><dd><b>Gắn kết với host</b> – instance luôn quay về cùng server.</dd></div>
+        <div><dt>Bring Your Own License (BYOL)</dt><dd><b>Mang license sẵn có</b> lên AWS.</dd></div>
+        <div><dt>Dedicated Host Reservation</dt><dd><b>Đặt trước Dedicated Host</b> – giảm tới 70%.</dd></div>
+        <div><dt>On-Demand Capacity Reservation (ODCR)</dt><dd><b>Đặt trước năng lực theo nhu cầu</b> trong một AZ, không cam kết.</dd></div>
+        <div><dt>Open / Targeted Capacity Reservation</dt><dd><b>Giữ chỗ mở</b> (tự khớp) / <b>giữ chỗ chỉ định</b>.</dd></div>
+        <div><dt>Future-dated Capacity Reservation</dt><dd><b>Giữ chỗ cho ngày tương lai</b> – có thời gian cam kết, ≥ 32 vCPU.</dd></div>
+        <div><dt>Capacity Blocks for ML</dt><dd><b>Khối năng lực GPU cho học máy</b> – đặt trước tới 8 tuần.</dd></div>
+        <div><dt>Consolidated billing</dt><dd><b>Hợp nhất hóa đơn</b> – chia sẻ RI/SP giữa các account (Bài 6).</dd></div>
+      </dl>
+
+      <!-- ===================== CÂU HỎI ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a nightly image-processing workload on Amazon EC2. Jobs are pulled from an Amazon SQS queue, can be restarted at any time without data loss, and must finish within 8 hours. The company wants to minimize compute cost. Which purchasing option is MOST cost-effective?</div>
+          <ol class="opts">
+            <li data-k="A">On-Demand Instances in an Auto Scaling group</li>
+            <li data-k="B">Standard Reserved Instances with a 3-year term</li>
+            <li data-k="C">Spot Instances across multiple instance types and Availability Zones</li>
+            <li data-k="D">Dedicated Instances with an On-Demand Capacity Reservation</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Job stateless, lấy từ hàng đợi, khởi động lại được và có khung giờ linh hoạt ⇒ đúng kiểu workload <b>fault-tolerant, flexible</b> cho Spot (giảm tới 90%). Đa dạng instance type/AZ giảm rủi ro interrupt. <b>A sai</b>: chạy được nhưng đắt hơn nhiều. <b>B sai</b>: chỉ chạy vài giờ mỗi đêm, cam kết 24/7 trong 3 năm gây lãng phí. <b>D sai</b>: Dedicated + Capacity Reservation đắt nhất, không có yêu cầu tuân thủ hay capacity.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một workload xử lý ảnh hằng đêm trên Amazon EC2. Các job được lấy từ một Amazon SQS queue, có thể khởi động lại bất cứ lúc nào mà không mất dữ liệu, và phải hoàn thành trong vòng 8 giờ. Công ty muốn giảm thiểu chi phí tính toán. Phương án mua nào MOST cost-effective (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">On-Demand Instances trong một Auto Scaling group</span><span class="why">Sai: chạy được nhưng đắt hơn nhiều so với Spot, trong khi workload hoàn toàn chịu được gián đoạn.</span></li>
+              <li data-k="B"><span class="tv">Standard Reserved Instances kỳ hạn 3 năm</span><span class="why">Sai: workload chỉ chạy vài giờ mỗi đêm, cam kết dùng 24/7 trong 3 năm sẽ gây lãng phí.</span></li>
+              <li data-k="C"><span class="tv">Spot Instances trên nhiều instance type và nhiều Availability Zone</span><span class="why">Đúng: job stateless, lấy từ queue, khởi động lại được và có khung thời gian linh hoạt – đúng kiểu workload fault-tolerant cho Spot (giảm tới 90%); đa dạng type/AZ giảm rủi ro bị interrupt.</span></li>
+              <li data-k="D"><span class="tv">Dedicated Instances kèm một On-Demand Capacity Reservation</span><span class="why">Sai: đây là lựa chọn đắt nhất, trong khi đề không có yêu cầu tuân thủ phần cứng riêng hay giữ capacity.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company runs workloads on Amazon EC2, AWS Fargate, and AWS Lambda. Over the next 3 years, the company plans to migrate some EC2 workloads to Fargate and to move part of its usage from eu-west-1 to eu-west-2. The company wants to reduce compute costs with the LEAST management effort. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Purchase a Compute Savings Plan.</li>
+            <li data-k="B">Purchase EC2 Instance Savings Plans in eu-west-1.</li>
+            <li data-k="C">Purchase Convertible Reserved Instances and exchange them when workloads move.</li>
+            <li data-k="D">Purchase Standard Reserved Instances and sell them on the Reserved Instance Marketplace after migration.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Compute Savings Plans</b> tự áp cho EC2 bất kể family/size/OS/tenancy/<b>Region</b>, và cả <b>Fargate, Lambda</b> – không cần thao tác gì khi di chuyển workload. <b>B sai</b>: EC2 Instance SP gắn với một family trong một Region, không áp cho Fargate/Lambda. <b>C sai</b>: Convertible RI không áp cho Fargate/Lambda và phải exchange thủ công. <b>D sai</b>: tốn công bán lại, mất phí 12%, cũng không che phủ Fargate/Lambda.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy workload trên Amazon EC2, AWS Fargate và AWS Lambda. Trong 3 năm tới, công ty dự định di chuyển một số workload EC2 sang Fargate và chuyển một phần mức sử dụng từ eu-west-1 sang eu-west-2. Công ty muốn giảm chi phí tính toán với LEAST management effort (ít công sức quản lý nhất). Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Mua một Compute Savings Plan.</span><span class="why">Đúng: Compute Savings Plans tự áp cho EC2 bất kể family/size/OS/tenancy/Region, và cả Fargate, Lambda – không cần thao tác gì khi workload di chuyển.</span></li>
+              <li data-k="B"><span class="tv">Mua EC2 Instance Savings Plans ở eu-west-1.</span><span class="why">Sai: EC2 Instance Savings Plan gắn với một instance family trong một Region, không áp cho eu-west-2 hay Fargate/Lambda.</span></li>
+              <li data-k="C"><span class="tv">Mua Convertible Reserved Instances và exchange chúng khi workload di chuyển.</span><span class="why">Sai: Convertible RI không áp cho Fargate/Lambda và phải exchange thủ công – tốn công quản lý.</span></li>
+              <li data-k="D"><span class="tv">Mua Standard Reserved Instances và bán chúng trên Reserved Instance Marketplace sau khi di chuyển.</span><span class="why">Sai: tốn công bán lại, mất phí 12%, và RI không che phủ Fargate/Lambda.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A financial services company must ensure that capacity for 40 c6i.2xlarge instances is always available in a specific Availability Zone for a disaster recovery environment. The company cannot commit to a 1-year or 3-year term because the DR strategy will be reviewed in 6 months. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Purchase regional Reserved Instances for c6i.2xlarge.</li>
+            <li data-k="B">Purchase a Compute Savings Plan that covers 40 c6i.2xlarge instances.</li>
+            <li data-k="C">Use a Spot Fleet with the capacity-optimized allocation strategy.</li>
+            <li data-k="D">Create an On-Demand Capacity Reservation for 40 c6i.2xlarge instances in the required Availability Zone.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>On-Demand Capacity Reservation</b> (immediate-use) giữ capacity trong <b>một AZ cụ thể</b>, <b>không cam kết thời hạn</b>, hủy bất cứ lúc nào. <b>A sai</b>: regional RI <b>không</b> giữ capacity và cần cam kết 1/3 năm. <b>B sai</b>: Savings Plans không giữ capacity, cũng cần cam kết 1/3 năm. <b>C sai</b>: Spot không đảm bảo capacity và có thể bị interrupt – không hợp với DR bắt buộc.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dịch vụ tài chính phải đảm bảo capacity cho 40 instance c6i.2xlarge luôn sẵn có trong một Availability Zone cụ thể cho môi trường disaster recovery (DR). Công ty không thể cam kết kỳ hạn 1 năm hoặc 3 năm vì chiến lược DR sẽ được xem xét lại sau 6 tháng. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Mua regional Reserved Instances cho c6i.2xlarge.</span><span class="why">Sai: regional RI không giữ capacity và yêu cầu cam kết 1 hoặc 3 năm.</span></li>
+              <li data-k="B"><span class="tv">Mua một Compute Savings Plan đủ cho 40 instance c6i.2xlarge.</span><span class="why">Sai: Savings Plans chỉ giảm giá, không giữ capacity, và cũng cần cam kết 1 hoặc 3 năm.</span></li>
+              <li data-k="C"><span class="tv">Dùng một Spot Fleet với allocation strategy capacity-optimized.</span><span class="why">Sai: Spot không đảm bảo capacity và có thể bị interrupt – không phù hợp với DR bắt buộc luôn sẵn có.</span></li>
+              <li data-k="D"><span class="tv">Tạo một On-Demand Capacity Reservation cho 40 instance c6i.2xlarge trong Availability Zone yêu cầu.</span><span class="why">Đúng: On-Demand Capacity Reservation giữ capacity trong một AZ cụ thể, không cam kết thời hạn và có thể hủy bất cứ lúc nào.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company wants to migrate an application that uses Microsoft SQL Server licensed per physical core to AWS. The company wants to use its existing licenses and must report the number of sockets and physical cores used for license compliance. Which EC2 option should the company use?</div>
+          <ol class="opts">
+            <li data-k="A">Dedicated Instances</li>
+            <li data-k="B">Dedicated Hosts</li>
+            <li data-k="C">On-Demand Instances with default tenancy</li>
+            <li data-k="D">Spot Instances with a dedicated tenancy</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Dedicated Hosts</b> cho visibility số <b>socket và physical core</b>, host affinity và hỗ trợ <b>BYOL đầy đủ</b> cho license per-socket/per-core. <b>A sai</b>: Dedicated Instances <b>không</b> cho thấy socket/core và chỉ hỗ trợ BYOL một phần. <b>C sai</b>: shared tenancy không đáp ứng license gắn với phần cứng. <b>D sai</b>: Dedicated Spot vẫn là Dedicated Instance (không thấy core) và có thể bị interrupt.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn di chuyển lên AWS một ứng dụng dùng Microsoft SQL Server được cấp license theo physical core. Công ty muốn dùng license hiện có và phải báo cáo số socket và physical core đã dùng để tuân thủ license. Công ty nên dùng tùy chọn EC2 nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dedicated Instances</span><span class="why">Sai: Dedicated Instances không cho thấy số socket/physical core và chỉ hỗ trợ BYOL một phần.</span></li>
+              <li data-k="B"><span class="tv">Dedicated Hosts</span><span class="why">Đúng: Dedicated Hosts cho thấy số socket và physical core, có host affinity và hỗ trợ đầy đủ BYOL cho license per-socket/per-core.</span></li>
+              <li data-k="C"><span class="tv">On-Demand Instances với default tenancy</span><span class="why">Sai: shared tenancy dùng chung phần cứng, không đáp ứng license gắn với phần cứng vật lý và không báo cáo được socket/core.</span></li>
+              <li data-k="D"><span class="tv">Spot Instances với dedicated tenancy</span><span class="why">Sai: Dedicated Spot vẫn là Dedicated Instance (không thấy socket/core) và còn có thể bị interrupt.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company runs a fleet of stateless web servers on Spot Instances behind an Application Load Balancer. The company wants to reduce the frequency of Spot interruptions and to gracefully handle them when they occur. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Configure the Auto Scaling group to use many instance types across all Availability Zones with the price-capacity-optimized allocation strategy.</li>
+            <li data-k="B">Set a low maximum price in the Spot request so that the instances are cheaper.</li>
+            <li data-k="C">Use the lowest-price allocation strategy with a single instance type.</li>
+            <li data-k="D">Create an Amazon EventBridge rule for EC2 Spot Instance interruption warnings and rebalance recommendations that triggers draining and checkpointing.</li>
+            <li data-k="E">Purchase a Compute Savings Plan to protect the Spot Instances from interruption.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> Best practices: linh hoạt nhiều instance type và mọi AZ, dùng <b>price-capacity-optimized</b> để lấy capacity từ pool ít rủi ro interrupt nhất; tạo rule <b>EventBridge</b> bắt interruption notice/rebalance recommendation để xử lý gracefully. <b>B sai</b>: tài liệu nói đặt maximum price khiến bị interrupt <b>thường xuyên hơn</b>. <b>C sai</b>: lowest-price có rủi ro interrupt <b>cao nhất</b>, một type duy nhất càng tệ. <b>E sai</b>: Savings Plans <b>không áp</b> cho Spot và không ngăn interrupt.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một đội web server stateless trên Spot Instances phía sau một Application Load Balancer. Công ty muốn giảm tần suất bị Spot interruption và xử lý chúng một cách êm ái (gracefully) khi xảy ra. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình Auto Scaling group dùng nhiều instance type trên tất cả các Availability Zone với allocation strategy price-capacity-optimized.</span><span class="why">Đúng: linh hoạt nhiều instance type và mọi AZ, kết hợp price-capacity-optimized giúp lấy capacity từ các pool ít rủi ro interrupt nhất.</span></li>
+              <li data-k="B"><span class="tv">Đặt maximum price thấp trong Spot request để instance rẻ hơn.</span><span class="why">Sai: đặt maximum price thấp làm instance bị interrupt thường xuyên hơn – ngược với mục tiêu.</span></li>
+              <li data-k="C"><span class="tv">Dùng allocation strategy lowest-price với một instance type duy nhất.</span><span class="why">Sai: lowest-price có rủi ro interrupt cao nhất, và chỉ một instance type càng làm rủi ro tăng.</span></li>
+              <li data-k="D"><span class="tv">Tạo một Amazon EventBridge rule cho cảnh báo EC2 Spot Instance interruption và rebalance recommendation, kích hoạt việc draining và checkpointing.</span><span class="why">Đúng: bắt interruption notice/rebalance recommendation qua EventBridge cho phép drain kết nối và lưu trạng thái trước khi instance bị thu hồi – xử lý gracefully.</span></li>
+              <li data-k="E"><span class="tv">Mua một Compute Savings Plan để bảo vệ Spot Instances khỏi bị interrupt.</span><span class="why">Sai: Savings Plans không áp dụng cho Spot và không ngăn được interruption.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company purchased Standard Reserved Instances with a 3-year term for an application. After one year, the company decommissions the application and no longer needs the reservations. What can the company do to recover some of the cost?</div>
+          <ol class="opts">
+            <li data-k="A">Cancel the Reserved Instances and receive a prorated refund.</li>
+            <li data-k="B">Exchange the Standard Reserved Instances for Compute Savings Plans.</li>
+            <li data-k="C">Sell the Reserved Instances on the Reserved Instance Marketplace.</li>
+            <li data-k="D">Convert the Standard Reserved Instances to Convertible Reserved Instances and sell them.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Standard RI</b> (đã active ≥ 30 ngày, còn ≥ 1 tháng) bán được trên <b>Reserved Instance Marketplace</b>; AWS thu phí 12% giá upfront. <b>A sai</b>: RI <b>không hủy được</b>. <b>B sai</b>: Standard RI không exchange được, và không có cơ chế đổi RI sang Savings Plans. <b>D sai</b>: không đổi được Standard sang Convertible; và Convertible RI <b>không bán được</b> trên Marketplace.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đã mua Standard Reserved Instances kỳ hạn 3 năm cho một ứng dụng. Sau một năm, công ty ngừng sử dụng ứng dụng và không còn cần các reservation nữa. Công ty có thể làm gì để thu hồi một phần chi phí?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Hủy Reserved Instances và nhận hoàn tiền theo tỷ lệ thời gian còn lại.</span><span class="why">Sai: Reserved Instances không hủy được và không có hoàn tiền theo tỷ lệ.</span></li>
+              <li data-k="B"><span class="tv">Exchange Standard Reserved Instances lấy Compute Savings Plans.</span><span class="why">Sai: Standard RI không exchange được, và không có cơ chế đổi RI sang Savings Plans.</span></li>
+              <li data-k="C"><span class="tv">Bán Reserved Instances trên Reserved Instance Marketplace.</span><span class="why">Đúng: Standard RI (đã active ít nhất 30 ngày, còn ít nhất 1 tháng) có thể bán trên Reserved Instance Marketplace để thu hồi một phần chi phí; AWS thu phí 12% giá upfront.</span></li>
+              <li data-k="D"><span class="tv">Chuyển Standard Reserved Instances thành Convertible Reserved Instances rồi bán chúng.</span><span class="why">Sai: không thể đổi Standard sang Convertible, và Convertible RI cũng không bán được trên Marketplace.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company has purchased one regional m5.2xlarge Linux Reserved Instance with default tenancy in us-east-1. The company is running two m5.large and two m5.xlarge Linux On-Demand Instances with default tenancy in different Availability Zones in us-east-1. How is the Reserved Instance discount applied?</div>
+          <ol class="opts">
+            <li data-k="A">The discount does not apply because no m5.2xlarge instance is running.</li>
+            <li data-k="B">The discount fully covers both m5.large instances and one m5.xlarge instance. The other m5.xlarge instance is billed at the On-Demand rate.</li>
+            <li data-k="C">The discount fully covers both m5.xlarge instances. Both m5.large instances are billed at the On-Demand rate.</li>
+            <li data-k="D">The discount applies only to instances in the Availability Zone where the Reserved Instance was purchased.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Regional RI Linux default tenancy có <b>instance size flexibility</b>: <code>m5.2xlarge</code> = 16 đơn vị; discount áp <b>từ size nhỏ tới lớn</b>: 2 × large (4 + 4 = 8) rồi 1 × xlarge (8) – hết 16 đơn vị; xlarge còn lại tính On-Demand. <b>A sai</b>: không cần đúng size. <b>C sai</b>: thứ tự áp là nhỏ trước, lớn sau. <b>D sai</b>: regional RI áp cho mọi AZ trong Region (và không có AZ “mua”).</div>
+          <div class="trans">
+            <div class="tq">Một công ty đã mua một regional m5.2xlarge Linux Reserved Instance với default tenancy ở us-east-1. Công ty đang chạy hai instance m5.large và hai instance m5.xlarge Linux On-Demand với default tenancy ở các Availability Zone khác nhau trong us-east-1. Chiết khấu của Reserved Instance được áp dụng như thế nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chiết khấu không được áp dụng vì không có instance m5.2xlarge nào đang chạy.</span><span class="why">Sai: regional RI Linux default tenancy có instance size flexibility, không cần chạy đúng size m5.2xlarge.</span></li>
+              <li data-k="B"><span class="tv">Chiết khấu che phủ hoàn toàn cả hai instance m5.large và một instance m5.xlarge. Instance m5.xlarge còn lại tính theo giá On-Demand.</span><span class="why">Đúng: m5.2xlarge = 16 đơn vị, chiết khấu áp từ size nhỏ đến lớn: 2 × large (4 + 4) rồi 1 × xlarge (8) là hết 16 đơn vị; xlarge còn lại trả On-Demand.</span></li>
+              <li data-k="C"><span class="tv">Chiết khấu che phủ hoàn toàn cả hai instance m5.xlarge. Cả hai instance m5.large tính theo giá On-Demand.</span><span class="why">Sai: thứ tự áp chiết khấu là size nhỏ trước, lớn sau, nên hai m5.large được che phủ trước.</span></li>
+              <li data-k="D"><span class="tv">Chiết khấu chỉ áp dụng cho instance trong Availability Zone nơi đã mua Reserved Instance.</span><span class="why">Sai: regional RI áp dụng cho mọi AZ trong Region; nó không gắn với AZ nào.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company is required by its compliance policy to run all Amazon EC2 instances in a new VPC on hardware that is not shared with other AWS customers. The company does not have any server-bound software licenses and does not need control over instance placement. Which solution meets these requirements MOST cost-effectively?</div>
+          <ol class="opts">
+            <li data-k="A">Allocate Dedicated Hosts and launch all instances onto them.</li>
+            <li data-k="B">Launch the instances with default tenancy and enable encryption on all EBS volumes.</li>
+            <li data-k="C">Launch the instances in a spread placement group with default tenancy.</li>
+            <li data-k="D">Create the VPC with an instance tenancy of dedicated so that all instances run as Dedicated Instances.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> VPC tenancy <code>dedicated</code> ⇒ mọi instance là <b>Dedicated Instance</b>, cách ly vật lý với account khác; tính theo instance, không phải trả cả host. <b>A sai</b>: Dedicated Host đáp ứng được nhưng tính theo host, phù hợp khi cần BYOL/kiểm soát placement – ở đây thừa và đắt hơn. <b>B sai</b>: mã hóa EBS không thay đổi việc chia sẻ phần cứng. <b>C sai</b>: spread placement group chỉ đặt instance trên các rack khác nhau để giảm lỗi tương quan (Bài 10); với default tenancy, phần cứng vẫn có thể dùng chung với account khác.</div>
+          <div class="trans">
+            <div class="tq">Chính sách tuân thủ của một công ty yêu cầu tất cả Amazon EC2 instance trong một VPC mới phải chạy trên phần cứng không dùng chung với các khách hàng AWS khác. Công ty không có license phần mềm nào gắn với server và không cần kiểm soát vị trí đặt instance. Giải pháp nào đáp ứng các yêu cầu này MOST cost-effectively (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấp phát Dedicated Hosts và khởi chạy tất cả instance lên đó.</span><span class="why">Sai: Dedicated Host đáp ứng yêu cầu cách ly nhưng tính phí theo cả host, chỉ đáng dùng khi cần BYOL hoặc kiểm soát placement – ở đây thừa và đắt hơn.</span></li>
+              <li data-k="B"><span class="tv">Khởi chạy instance với default tenancy và bật mã hóa trên tất cả EBS volume.</span><span class="why">Sai: mã hóa EBS không thay đổi việc phần cứng vẫn dùng chung với khách hàng khác.</span></li>
+              <li data-k="C"><span class="tv">Khởi chạy instance trong một spread placement group với default tenancy.</span><span class="why">Sai: spread placement group chỉ đặt instance trên các rack khác nhau để giảm lỗi tương quan; với default tenancy phần cứng vẫn có thể dùng chung.</span></li>
+              <li data-k="D"><span class="tv">Tạo VPC với instance tenancy là dedicated để mọi instance chạy dưới dạng Dedicated Instances.</span><span class="why">Đúng: VPC tenancy dedicated buộc mọi instance là Dedicated Instance, cách ly phần cứng với account khác và tính phí theo instance – rẻ hơn Dedicated Host.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">Which TWO statements about Amazon EC2 Savings Plans are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Savings Plans reserve capacity in a specific Availability Zone.</li>
+            <li data-k="B">EC2 Instance Savings Plans apply to usage regardless of instance size, operating system, and tenancy within the chosen instance family and Region.</li>
+            <li data-k="C">Savings Plans discounts apply on top of Spot Instance pricing.</li>
+            <li data-k="D">Savings Plans can be cancelled at any time during the term with a prorated refund.</li>
+            <li data-k="E">Usage that exceeds the hourly commitment is billed at On-Demand rates.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> EC2 Instance SP cam kết một family trong một Region và tự áp bất kể size/OS/tenancy; usage vượt mức cam kết mỗi giờ trả giá On-Demand. <b>A sai</b>: Savings Plans <b>không</b> giữ capacity – cần kết hợp ODCR. <b>C sai</b>: Savings Plans <b>không áp</b> cho Spot. <b>D sai</b>: Savings Plans <b>không hủy được</b> trong kỳ hạn.</div>
+          <div class="trans">
+            <div class="tq">HAI phát biểu nào về Amazon EC2 Savings Plans là đúng? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Savings Plans giữ capacity trong một Availability Zone cụ thể.</span><span class="why">Sai: Savings Plans chỉ là mô hình giảm giá, không giữ capacity – cần kết hợp On-Demand Capacity Reservation.</span></li>
+              <li data-k="B"><span class="tv">EC2 Instance Savings Plans áp dụng cho mức sử dụng bất kể instance size, hệ điều hành và tenancy trong instance family và Region đã chọn.</span><span class="why">Đúng: EC2 Instance Savings Plan cam kết một family trong một Region và tự áp cho mọi size, OS, tenancy trong phạm vi đó.</span></li>
+              <li data-k="C"><span class="tv">Chiết khấu Savings Plans được áp chồng lên giá Spot Instance.</span><span class="why">Sai: Savings Plans không áp dụng cho Spot Instances.</span></li>
+              <li data-k="D"><span class="tv">Savings Plans có thể bị hủy bất cứ lúc nào trong kỳ hạn và được hoàn tiền theo tỷ lệ.</span><span class="why">Sai: Savings Plans không thể hủy trong suốt kỳ hạn cam kết.</span></li>
+              <li data-k="E"><span class="tv">Mức sử dụng vượt quá cam kết theo giờ được tính theo giá On-Demand.</span><span class="why">Đúng: phần usage vượt mức cam kết mỗi giờ được tính giá On-Demand thông thường.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A machine learning team needs 32 GPU instances (p5.48xlarge) for a 10-day model training job that starts in 3 weeks. The team needs assured, uninterrupted access to the GPUs for the entire period and does not want to pay for capacity when the job is finished. Which option meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Reserve EC2 Capacity Blocks for ML for the required dates.</li>
+            <li data-k="B">Launch Spot Instances with the capacity-optimized allocation strategy when the job starts.</li>
+            <li data-k="C">Purchase 1-year Standard Reserved Instances for p5.48xlarge.</li>
+            <li data-k="D">Launch On-Demand Instances when the job starts and request a quota increase.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Capacity Blocks for ML</b> đặt trước GPU cho một khoảng thời gian xác định ở ngày tương lai (tới 8 tuần trước, ≤ 64 instance/block), chỉ trả cho thời gian cần, instance nằm trong EC2 UltraClusters. <b>B sai</b>: Spot không đảm bảo capacity và có thể bị interrupt giữa chừng. <b>C sai</b>: cam kết 1 năm cho job 10 ngày là lãng phí. <b>D sai</b>: On-Demand không đảm bảo có capacity GPU vào ngày cần (có thể gặp ICE), tăng quota không tạo ra capacity.</div>
+          <div class="trans">
+            <div class="tq">Một đội machine learning cần 32 GPU instance (p5.48xlarge) cho một job huấn luyện mô hình kéo dài 10 ngày, bắt đầu sau 3 tuần nữa. Đội cần quyền truy cập GPU được đảm bảo, không bị gián đoạn trong suốt thời gian đó và không muốn trả tiền cho capacity khi job đã kết thúc. Phương án nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt trước EC2 Capacity Blocks for ML cho các ngày cần thiết.</span><span class="why">Đúng: Capacity Blocks for ML đặt trước GPU cho một khoảng thời gian xác định trong tương lai, đảm bảo capacity và chỉ trả cho thời gian cần dùng.</span></li>
+              <li data-k="B"><span class="tv">Khởi chạy Spot Instances với allocation strategy capacity-optimized khi job bắt đầu.</span><span class="why">Sai: Spot không đảm bảo capacity và có thể bị interrupt giữa chừng – trái yêu cầu không gián đoạn.</span></li>
+              <li data-k="C"><span class="tv">Mua Standard Reserved Instances kỳ hạn 1 năm cho p5.48xlarge.</span><span class="why">Sai: cam kết 1 năm cho job chỉ 10 ngày là lãng phí, trái yêu cầu không trả tiền sau khi job kết thúc.</span></li>
+              <li data-k="D"><span class="tv">Khởi chạy On-Demand Instances khi job bắt đầu và yêu cầu tăng quota.</span><span class="why">Sai: On-Demand không đảm bảo có capacity GPU vào ngày cần (có thể gặp lỗi insufficient capacity); tăng quota không tạo ra capacity.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-on-demand-instances.html" target="_blank" rel="noopener">Purchasing On-Demand Instances for Amazon EC2</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-reserved-instances.html" target="_blank" rel="noopener">Reserved Instances for Amazon EC2 overview</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/reserved-instances-scope.html" target="_blank" rel="noopener">Regional and zonal Reserved Instances (scope)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/reserved-instances-types.html" target="_blank" rel="noopener">Types of Reserved Instances (offering classes)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/apply_ri.html" target="_blank" rel="noopener">How Reserved Instance discounts are applied</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ri-market-general.html" target="_blank" rel="noopener">Sell Reserved Instances in the Reserved Instance Marketplace</a></li>
+        <li><a href="https://docs.aws.amazon.com/savingsplans/latest/userguide/plan-types.html" target="_blank" rel="noopener">Savings Plans types</a></li>
+        <li><a href="https://docs.aws.amazon.com/savingsplans/latest/userguide/sp-ris.html" target="_blank" rel="noopener">Compute Savings Plans and Reserved Instances</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-best-practices.html" target="_blank" rel="noopener">Best practices for Amazon EC2 Spot</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-interruptions.html" target="_blank" rel="noopener">Spot Instance interruptions</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/interruption-behavior.html" target="_blank" rel="noopener">Behavior of Spot Instance interruptions</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-instance-termination-notices.html" target="_blank" rel="noopener">Spot Instance interruption notices</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/billing-for-interrupted-spot-instances.html" target="_blank" rel="noopener">Billing for interrupted Spot Instances</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Fleets.html" target="_blank" rel="noopener">EC2 Fleet and Spot Fleet</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-fleet-allocation-strategy.html" target="_blank" rel="noopener">Allocation strategies for EC2 Fleet and Spot Fleet</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/dedicated-hosts-overview.html" target="_blank" rel="noopener">Amazon EC2 Dedicated Hosts</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/dedicated-instance.html" target="_blank" rel="noopener">Amazon EC2 Dedicated Instances</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/capacity-reservation-overview.html" target="_blank" rel="noopener">On-Demand Capacity Reservations and Capacity Blocks for ML</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-capacity-reservations.html" target="_blank" rel="noopener">Reserve compute capacity with EC2 On-Demand Capacity Reservations</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-capacity-blocks.html" target="_blank" rel="noopener">Capacity Blocks for ML</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

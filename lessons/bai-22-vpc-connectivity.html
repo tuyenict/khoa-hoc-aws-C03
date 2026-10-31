@@ -1,0 +1,939 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 22 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Transit-Gateway.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="22" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Thiết lập và giải thích <span class="t" data-vi="Kết nối ngang hàng VPC">VPC peering</span>: quy trình request/accept, route hai chiều, vì sao <b>không bắc cầu (non-transitive)</b> và không cho “mượn” IGW/NAT/VPN/gateway endpoint của VPC bên kia.</li>
+          <li>Phân biệt <span class="t" data-vi="Điểm cuối kiểu cổng">gateway endpoint</span> (S3, DynamoDB – miễn phí, dùng route table + prefix list) với <span class="t" data-vi="Điểm cuối kiểu giao diện mạng">interface endpoint</span> (PrivateLink – ENI có IP private, tính phí, truy cập được từ on-premises).</li>
+          <li>Hiểu mô hình <b>AWS PrivateLink</b> provider/consumer: <span class="t" data-vi="Dịch vụ điểm cuối">endpoint service</span> đặt sau Network Load Balancer, cấp quyền principal, chấp nhận kết nối, private DNS.</li>
+          <li>Thiết kế mạng hub-and-spoke với <b>AWS Transit Gateway</b>: attachment, route table, association, propagation, phân đoạn (segmentation), appliance mode, peering giữa các Region.</li>
+          <li>Dùng <b>AWS RAM</b> để chia sẻ transit gateway và subnet (VPC sharing) giữa nhiều account trong AWS Organizations.</li>
+          <li>Chọn đúng giữa peering / PrivateLink / Transit Gateway / endpoint theo các từ khóa đề hay dùng: <i>least operational overhead, cost-effective, overlapping CIDR, hundreds of VPCs, without traversing the internet</i>.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 4 – Networking</span>
+        <p><b>Bài 20</b> đã dạy VPC, CIDR, subnet, route table, IGW, NAT gateway; <b>Bài 21</b> dạy Security Group vs NACL, Flow Logs, Network Firewall (kể cả <i>inspection VPC</i>); <b>Bài 12</b> đã dạy Gateway Load Balancer và GWLB endpoint; <b>Bài 16</b> đã dạy bucket policy với <code>aws:SourceVpce</code>. Bài này tập trung vào <b>kết nối giữa các VPC và từ VPC tới dịch vụ</b>: peering, VPC endpoint, PrivateLink, Transit Gateway, AWS RAM. Kết nối với <b>on-premises</b> (Site-to-Site VPN, Direct Connect, Direct Connect gateway) sẽ học ở <b>Bài 23</b>; DNS (Route 53, Resolver endpoint) ở <b>Bài 24</b>.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">Tổng quan: VPC là “ốc đảo” – làm sao nối ra ngoài một cách private?</h2>
+      <p class="lead">Một <span class="t" data-vi="Đám mây riêng ảo">VPC</span> được cô lập logic với mọi mạng ảo khác trong AWS Cloud. Theo mặc định, muốn nói chuyện với VPC khác hay với dịch vụ AWS (S3, DynamoDB, SQS, KMS…) thì traffic phải đi qua <b>internet gateway</b> hoặc <b>NAT gateway</b> và dùng địa chỉ public. Bài này trả lời câu hỏi đề SAA-C03 hỏi rất nhiều: <i>“làm sao kết nối <b>privately</b>, <b>without traversing the internet</b>, với chi phí / công vận hành thấp nhất?”</i></p>
+
+      <p>AWS cung cấp bốn nhóm công cụ, mỗi nhóm giải một bài toán khác nhau:</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Peering-Connection.svg" alt="">
+          <div><h4>VPC peering</h4><span class="vi">Kết nối ngang hàng VPC</span><p>Nối <b>1–1</b> hai VPC (cùng/khác account, cùng/khác Region) bằng IP private. Không phải gateway, không phải VPN, không có điểm lỗi đơn. Không bắc cầu.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">
+          <div><h4>Gateway endpoint</h4><span class="vi">Điểm cuối kiểu cổng</span><p>Chỉ cho <b>Amazon S3</b> và <b>DynamoDB</b>. Là một <i>target</i> trong route table. <b>Không tính phí</b>. Không dùng PrivateLink.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-PrivateLink.svg" alt="">
+          <div><h4>AWS PrivateLink</h4><span class="vi">Liên kết riêng</span><p>Interface endpoint = <b>ENI có IP private</b> trong subnet của bạn, trỏ tới dịch vụ AWS, dịch vụ SaaS của đối tác, hoặc <b>endpoint service</b> của account khác.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Transit-Gateway.svg" alt="">
+          <div><h4>AWS Transit Gateway</h4><span class="vi">Cổng trung chuyển</span><p><b>Router ảo cấp Region</b> dạng hub-and-spoke nối hàng nghìn VPC, VPN, Direct Connect gateway. Có route table riêng, hỗ trợ <b>định tuyến bắc cầu</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Resource-Access-Manager.svg" alt="">
+          <div><h4>AWS RAM</h4><span class="vi">Dịch vụ chia sẻ tài nguyên</span><p>Chia sẻ transit gateway, subnet (VPC sharing)… cho account khác / OU / cả organization. <b>Miễn phí</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Elastic-Load-Balancing_Network-Load-Balancer.svg" alt="">
+          <div><h4>Network Load Balancer</h4><span class="vi">Cân bằng tải mạng</span><p>“Mặt tiền” bắt buộc khi bạn <b>tự cung cấp</b> dịch vụ qua PrivateLink (endpoint service). Đã học ở Bài 12.</p></div></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud – một Region</span>
+          <div class="row">
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC A 10.0.0.0/16</span>
+              <div class="grp priv"><span class="lbl">Private subnet</span>
+                <div class="row center">
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">App</div>
+                  <div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">Gateway endpoint<small>→ S3 / DynamoDB</small></div>
+                  <div class="node"><img src="../assets/icons/svc/AWS-PrivateLink.svg" alt="">Interface endpoint<small>ENI → SQS, KMS…</small></div>
+                </div></div>
+            </div>
+            <div class="flow">
+              <span class="arrow">pcx-… (1–1)</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-VPC_Peering-Connection.svg" alt="">VPC peering</div>
+              <span class="arrow">private IP</span>
+            </div>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC B 10.1.0.0/16</span>
+              <div class="grp priv"><span class="lbl">Private subnet</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">Database</div></div></div>
+            </div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC C … VPC N</div>
+            <span class="arrow">VPC attachment</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Transit-Gateway.svg" alt="">Transit gateway<small>hub cấp Region</small></div>
+            <span class="arrow dashed">VPN / DX gateway (Bài 23)</span>
+            <div class="node"><img src="../assets/icons/res/Traditional-server.svg" alt="">On-premises</div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Bức tranh toàn cảnh: <b>endpoint</b> đưa traffic từ VPC tới dịch vụ AWS mà không cần IGW/NAT; <b>peering</b> nối 1–1 hai VPC; <b>Transit Gateway</b> làm hub cho nhiều VPC và mạng on-premises. Mọi lựa chọn đều giữ traffic trên mạng AWS.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – các khu đô thị</span>
+        <p>Mỗi VPC là một <b>khu đô thị có tường rào</b>. <b>VPC peering</b> là <b>cây cầu riêng</b> nối thẳng hai khu – nhưng cư dân khu B không thể đi qua khu A để sang khu C (không bắc cầu), cũng không được dùng cổng ra quốc lộ của khu A. <b>Gateway endpoint</b> là <b>đường nội bộ dẫn thẳng tới kho S3/DynamoDB</b> – miễn phí, chỉ cần cắm biển chỉ đường (route table). <b>Interface endpoint</b> là <b>quầy giao dịch của ngân hàng đặt ngay trong khu</b> (một ENI có số nhà private) – tiện nhưng phải trả tiền thuê mặt bằng theo giờ. <b>Transit Gateway</b> là <b>bến xe trung tâm</b>: mọi khu chỉ cần một tuyến tới bến, bến có bảng điều phối (route table) quyết định ai được đi tới đâu.</p></div>
+
+      <!-- ===================== PHẦN 2: VPC PEERING ===================== -->
+      <h2 id="vpc-peering"><img src="../assets/icons/res/Amazon-VPC_Peering-Connection.svg" alt="">VPC Peering</h2>
+      <p class="lead">Theo tài liệu AWS, một <span class="t" data-vi="Kết nối ngang hàng VPC">VPC peering connection</span> là kết nối mạng giữa <b>hai VPC</b> cho phép định tuyến traffic giữa chúng bằng địa chỉ <b>IPv4 private hoặc IPv6</b>. Instance ở hai bên giao tiếp với nhau <b>như thể nằm trong cùng một mạng</b>. Bạn có thể peer các VPC của chính mình, với VPC của <b>account khác</b>, và giữa các <b>Region khác nhau</b> (<span class="t" data-vi="Peering liên vùng">inter-Region VPC peering</span>).</p>
+
+      <p>AWS dùng chính hạ tầng sẵn có của VPC để tạo peering: nó <b>không phải gateway, không phải VPN</b>, không dựa vào phần cứng vật lý riêng ⇒ <b>không có điểm lỗi đơn (single point of failure)</b> và <b>không có nút thắt băng thông</b>.</p>
+
+      <h3>Quy trình thiết lập (5 bước)</h3>
+      <ol class="steps">
+        <li><b>Request</b> – chủ <span class="t" data-vi="VPC yêu cầu">requester VPC</span> gửi yêu cầu tới chủ <span class="t" data-vi="VPC chấp nhận">accepter VPC</span> (cùng hoặc khác account). Hai VPC <b>không được có CIDR chồng lấn</b>.</li>
+        <li><b>Accept</b> – chủ accepter VPC chấp nhận để kích hoạt kết nối (trạng thái <code>pending-acceptance</code> → <code>active</code>).</li>
+        <li><b>Route</b> – chủ <b>mỗi</b> VPC phải <b>tự thêm route</b> vào một hoặc nhiều route table, đích là CIDR của VPC bên kia, target là <code>pcx-xxxx</code>. Thiếu route ở một phía ⇒ traffic một chiều đi được, chiều về rơi mất.</li>
+        <li><b>Security group</b> – cập nhật rule cho phép traffic từ/đến VPC peer. Nếu <b>hai VPC cùng Region</b>, có thể <b>tham chiếu security group của VPC peer</b> làm source/destination.</li>
+        <li><b>DNS</b> (tùy chọn) – mặc định, public DNS hostname của instance bên kia phân giải ra <b>public IP</b>. Bật <b>DNS resolution</b> cho peering để hostname phân giải ra <b>private IP</b>.</li>
+      </ol>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th colspan="3">Ví dụ route table sau khi peer VPC A (10.0.0.0/16) ↔ VPC B (10.1.0.0/16)</th></tr>
+          <tr><th>Route table</th><th>Destination</th><th>Target</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="2">Subnet của VPC A</td><td><code>10.0.0.0/16</code></td><td>local</td></tr>
+          <tr><td><code>10.1.0.0/16</code></td><td><code>pcx-11112222</code></td></tr>
+          <tr><td rowspan="2">Subnet của VPC B</td><td><code>10.1.0.0/16</code></td><td>local</td></tr>
+          <tr><td><code>10.0.0.0/16</code></td><td><code>pcx-11112222</code></td></tr>
+        </tbody>
+      </table></div>
+      <p>Bạn có thể route <b>cả CIDR</b> của VPC peer hoặc chỉ <b>một phần</b> (vd chỉ subnet DB <code>10.1.5.0/24</code>) để giới hạn phạm vi truy cập.</p>
+
+      <h3>Vòng đời của một peering connection</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Trạng thái</th><th>Ý nghĩa (theo tài liệu)</th></tr></thead>
+        <tbody>
+          <tr><td><code>initiating-request</code></td><td>Yêu cầu vừa được khởi tạo; có thể chuyển sang <code>failed</code> hoặc <code>pending-acceptance</code>.</td></tr>
+          <tr><td><code>failed</code></td><td>Yêu cầu thất bại (vd CIDR chồng lấn); hiển thị cho requester trong <b>2 giờ</b>.</td></tr>
+          <tr><td><code>pending-acceptance</code></td><td>Chờ chủ accepter VPC; requester có thể xóa, accepter có thể accept/reject. Không xử lý ⇒ <b>hết hạn sau 7 ngày</b>.</td></tr>
+          <tr><td><code>expired</code> / <code>rejected</code></td><td>Không thao tác được nữa; vẫn hiển thị một thời gian (2 ngày / 2 giờ tùy phía).</td></tr>
+          <tr><td><code>provisioning</code> → <code>active</code></td><td>Đã chấp nhận; khi <code>active</code> traffic đi được (nếu route + SG cho phép). Một trong hai chủ có thể <b>xóa</b> nhưng không thể reject.</td></tr>
+          <tr><td><code>deleting</code> / <code>deleted</code></td><td>Đang xóa (inter-Region) / đã xóa.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>50 → 125</b><span>active peering connection mỗi VPC (mặc định → tối đa)</span></div>
+        <div class="stat"><b>25</b><span>yêu cầu peering đang chờ (outstanding)</span></div>
+        <div class="stat"><b>7 ngày</b><span>(168 giờ) yêu cầu chưa accept sẽ hết hạn</span></div>
+        <div class="stat"><b>1</b><span>peering connection tối đa giữa cùng một cặp VPC</span></div>
+        <div class="stat"><b>9001 / 8500</b><span>byte MTU: peering cùng Region / inter-Region</span></div>
+      </div>
+
+      <h3>Không bắc cầu (non-transitive) – điểm thi số 1</h3>
+      <p>Peering là quan hệ <b>một-một</b>. Tài liệu ví dụ: VPC A peer với VPC B và với VPC C; B và C <b>không</b> peer với nhau ⇒ <b>không thể</b> dùng A làm điểm trung chuyển cho B ↔ C. Muốn B nói chuyện với C, phải tạo <b>peering riêng B–C</b>.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 700 300" width="700" role="img" aria-label="VPC peering không bắc cầu giữa ba VPC">
+          <defs><marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="270" y="14" width="160" height="96" rx="6" fill="rgba(140,79,255,.06)" stroke="#8C4FFF" stroke-width="2"/>
+          <image href="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" x="326" y="22" width="48" height="48"/>
+          <text x="350" y="86" font-size="13" text-anchor="middle" font-weight="700">VPC A</text>
+          <text x="350" y="102" font-size="11" text-anchor="middle" class="muted">10.0.0.0/16</text>
+          <rect x="40" y="190" width="160" height="96" rx="6" fill="rgba(140,79,255,.06)" stroke="#8C4FFF" stroke-width="2"/>
+          <image href="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" x="96" y="198" width="48" height="48"/>
+          <text x="120" y="262" font-size="13" text-anchor="middle" font-weight="700">VPC B</text>
+          <text x="120" y="278" font-size="11" text-anchor="middle" class="muted">10.1.0.0/16</text>
+          <rect x="500" y="190" width="160" height="96" rx="6" fill="rgba(140,79,255,.06)" stroke="#8C4FFF" stroke-width="2"/>
+          <image href="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" x="556" y="198" width="48" height="48"/>
+          <text x="580" y="262" font-size="13" text-anchor="middle" font-weight="700">VPC C</text>
+          <text x="580" y="278" font-size="11" text-anchor="middle" class="muted">10.2.0.0/16</text>
+          <path class="line-o" d="M290 110 L170 190" marker-end="url(#ah1)" marker-start="url(#ah1)"/>
+          <image href="../assets/icons/res/Amazon-VPC_Peering-Connection.svg" x="206" y="132" width="30" height="30"/>
+          <text x="180" y="140" font-size="11" text-anchor="end">pcx A–B ✔</text>
+          <path class="line-o" d="M410 110 L530 190" marker-end="url(#ah1)" marker-start="url(#ah1)"/>
+          <image href="../assets/icons/res/Amazon-VPC_Peering-Connection.svg" x="464" y="132" width="30" height="30"/>
+          <text x="520" y="140" font-size="11">pcx A–C ✔</text>
+          <path d="M200 238 H500" stroke="#DD344C" stroke-width="2" stroke-dasharray="6 5" fill="none"/>
+          <text x="350" y="230" font-size="12" text-anchor="middle" font-weight="700" style="fill:#DD344C">B ↔ C qua A: ✘ không hỗ trợ</text>
+          <text x="350" y="252" font-size="11" text-anchor="middle" class="muted">cần thêm pcx B–C riêng (full mesh)</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> VPC peering <b>không bắc cầu</b>. Với <i>n</i> VPC muốn nói chuyện đầy đủ với nhau, bạn cần <b>n(n−1)/2</b> peering (full mesh): 10 VPC ⇒ 45 peering, mỗi VPC phải sửa route table cho từng peer. Đây chính là lý do Transit Gateway ra đời.</figcaption>
+      </figure>
+
+      <h3>Không định tuyến “edge-to-edge” qua gateway của VPC peer</h3>
+      <p>Tài liệu liệt kê rõ: nếu VPC A có kết nối ra ngoài, tài nguyên ở VPC B (peer với A) <b>không được dùng nhờ</b>:</p>
+      <ul>
+        <li><b>Internet gateway</b> của VPC A để ra internet.</li>
+        <li><b>NAT device</b> (NAT gateway/instance) của VPC A để ra internet.</li>
+        <li><b>VPN connection</b> của VPC A để tới mạng công ty.</li>
+        <li><b>Direct Connect</b> của VPC A để tới mạng công ty.</li>
+        <li><b>Gateway endpoint</b> (S3) của VPC A để truy cập Amazon S3.</li>
+      </ul>
+
+      <h3>Các giới hạn khác cần nhớ</h3>
+      <ul>
+        <li><b>CIDR chồng lấn</b>: không peer được nếu bất kỳ IPv4 hoặc IPv6 CIDR nào trùng/chồng lấn – kể cả khi VPC có nhiều CIDR và bạn chỉ định dùng phần không chồng lấn.</li>
+        <li>Không thể kết nối hoặc truy vấn <b>Amazon DNS server</b> của VPC peer.</li>
+        <li>Muốn dùng <b>IPv6</b> qua peering: gắn IPv6 CIDR cho mỗi VPC, bật IPv6 cho instance, thêm route IPv6 tới peering.</li>
+        <li><b>Inter-Region</b>: MTU tối đa 8500 byte (cùng Region là 9001 – jumbo frames); phải bật DNS resolution support để phân giải private DNS hostname; <b>không tham chiếu được security group</b> của VPC peer (chỉ hỗ trợ cùng Region).</li>
+        <li><b>Shared VPC</b>: chỉ <b>chủ VPC</b> mới tạo/accept/xóa peering; participant không thao tác được.</li>
+        <li>Tag của peering chỉ áp trong account/Region nơi bạn tạo.</li>
+      </ul>
+
+      <h3>Bảo mật và chi phí</h3>
+      <p>Traffic inter-Region peering được <b>mã hóa</b> trước khi rời cơ sở của AWS, luôn đi trên <b>AWS global backbone</b>, <b>không bao giờ đi qua internet công cộng</b> ⇒ giảm rủi ro khai thác phổ biến và DDoS. Về giá: <b>tạo peering miễn phí</b>; data transfer qua peering <b>trong cùng một AZ là miễn phí</b> (kể cả khác account); traffic <b>đi qua AZ khác hoặc Region khác</b> thì bị tính phí data transfer. Peering <b>không có phí theo giờ</b> và <b>không có phí xử lý dữ liệu</b> như Transit Gateway.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Connect two VPCs</i>” (ít VPC), “<i>lowest cost</i>”, “<i>no single point of failure / no bandwidth bottleneck</i>” ⇒ <b>VPC peering</b>.</li>
+          <li>“<i>VPC A peered with B and C; B cannot reach C</i>” ⇒ peering <b>non-transitive</b>, cần peering B–C hoặc chuyển sang <b>Transit Gateway</b>.</li>
+          <li>“<i>The VPCs have overlapping CIDR blocks</i>” ⇒ <b>không</b> dùng peering (và cũng không route được qua Transit Gateway); dùng <b>AWS PrivateLink</b> để chia sẻ <b>một dịch vụ cụ thể</b>.</li>
+          <li>Peering đã <code>active</code> nhưng không ping được ⇒ thiếu <b>route</b> ở một phía, hoặc <b>security group / NACL</b> chưa cho phép CIDR của VPC peer.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <p>Đáp án “<i>peer VPC B with VPC A and use the NAT gateway in VPC A for internet access</i>” hoặc “<i>use the S3 gateway endpoint in the peered VPC</i>” luôn <b>sai</b> – edge-to-edge routing không được hỗ trợ. Mô hình “dùng chung NAT/egress cho nhiều VPC” phải làm bằng <b>Transit Gateway + egress VPC</b> (phần Transit Gateway bên dưới).</p></div>
+
+      <!-- ===================== PHẦN 3: VPC ENDPOINT TYPES ===================== -->
+      <h2 id="vpc-endpoints"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">VPC Endpoint – các loại và khi nào dùng</h2>
+      <p class="lead">Khi không có endpoint, instance trong <b>private subnet</b> muốn gọi API của S3, SQS, KMS… phải đi qua <b>NAT gateway → internet gateway</b> tới <b>public service endpoint</b> (vd <code>https://monitoring.us-east-2.amazonaws.com</code>). Traffic tuy không rời mạng AWS nhưng vẫn cần IGW/NAT, tốn phí xử lý NAT và vi phạm các yêu cầu kiểu “<i>no internet access</i>”. Một <span class="t" data-vi="Điểm cuối VPC">VPC endpoint</span> cho phép kết nối <b>private</b> tới dịch vụ mà không cần IGW, NAT device, public IP, VPN hay Direct Connect.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại endpoint</th><th>Dùng để</th><th>Cơ chế</th><th>Dùng PrivateLink?</th></tr></thead>
+        <tbody>
+          <tr><td><b>Gateway</b></td><td>Chỉ <b>Amazon S3</b> và <b>DynamoDB</b></td><td>Route trong route table: đích = <b>prefix list</b> của dịch vụ, target = <code>vpce-…</code></td><td class="no">Không</td></tr>
+          <tr><td><b>Interface</b></td><td>Dịch vụ AWS tích hợp PrivateLink, dịch vụ SaaS/Marketplace, <b>endpoint service</b> của account khác</td><td><b>ENI</b> có IP private trong subnet bạn chọn; truy cập qua <b>DNS</b>; gửi TCP hoặc UDP</td><td class="yes">Có</td></tr>
+          <tr><td><b>Gateway Load Balancer</b></td><td>Đưa traffic qua dàn <b>virtual appliance</b> (firewall, IDS/IPS) – Bài 12</td><td>Làm <b>next hop</b> trong route table</td><td class="yes">Có</td></tr>
+          <tr><td><b>Resource</b></td><td>Truy cập trực tiếp <b>một tài nguyên</b> được chia sẻ (DB RDS, instance, IP, domain) ở VPC khác/on-premises – <b>không cần load balancer</b></td><td>Provider tạo <i>resource configuration</i> + <i>resource gateway</i>, chia sẻ qua <b>AWS RAM</b></td><td class="yes">Có</td></tr>
+          <tr><td><b>Service network</b></td><td>Một endpoint duy nhất truy cập nhiều service/resource thuộc một <b>VPC Lattice service network</b></td><td>Chia sẻ qua AWS RAM</td><td class="yes">Có</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted">Ngoài ra tài liệu còn có <i>tunnel endpoint</i> (đóng gói GENEVE để vào một network segment) – ít gặp trong đề SAA-C03. Trọng tâm thi: <b>gateway</b> vs <b>interface</b>, và <b>endpoint service</b>.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>EC2 in a private subnet must access S3 / DynamoDB without internet</i>”, “<i>reduce NAT gateway data processing charges</i>”, “<i>MOST cost-effective</i>” ⇒ <b>gateway endpoint</b>.</li>
+          <li>“<i>Access SQS / SNS / KMS / Secrets Manager / ECR / CloudWatch / Systems Manager from a private subnet with no internet access</i>” ⇒ <b>interface endpoint</b> (các dịch vụ này <b>không có</b> gateway endpoint).</li>
+          <li>“<i>Access S3 privately from on-premises over Direct Connect / VPN</i>” ⇒ <b>S3 interface endpoint</b> (gateway endpoint không truy cập được từ on-premises).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: GATEWAY ENDPOINT ===================== -->
+      <h2 id="gateway-endpoint"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">Gateway endpoint (S3, DynamoDB)</h2>
+      <p class="lead"><span class="t" data-vi="Điểm cuối kiểu cổng">Gateway VPC endpoint</span> cung cấp kết nối tin cậy tới <b>Amazon S3</b> và <b>DynamoDB</b> mà không cần internet gateway hay NAT device. Khác các loại endpoint khác, gateway endpoint <b>không dùng AWS PrivateLink</b>. <b>Không có phí bổ sung</b> khi dùng gateway endpoint.</p>
+
+      <h3>Định tuyến bằng prefix list</h3>
+      <p>Khi tạo gateway endpoint, bạn chọn <b>route table</b> của các subnet cần dùng. AWS <b>tự động thêm</b> route sau vào mỗi route table được chọn:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Destination</th><th>Target</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><code>10.0.0.0/16</code></td><td>local</td><td>Route nội bộ VPC</td></tr>
+          <tr><td><code>pl-63a5400a</code> (<span class="t" data-vi="Danh sách tiền tố do AWS quản lý">AWS-managed prefix list</span> của S3 trong Region)</td><td><code>vpce-0a1b2c3d</code></td><td>Do AWS thêm; <b>không sửa/xóa tay</b> được</td></tr>
+          <tr><td><code>0.0.0.0/0</code></td><td><code>nat-…</code></td><td>Traffic internet khác vẫn đi NAT</td></tr>
+        </tbody>
+      </table></div>
+
+      <ul>
+        <li>Mọi instance trong subnet gắn với route table đó <b>tự động</b> dùng gateway endpoint; subnet không gắn route table này vẫn đi đường public endpoint.</li>
+        <li>Một route table có thể có cả route tới S3 <b>và</b> DynamoDB; nhưng <b>không thể có 2 route tới cùng một dịch vụ</b> trong một route table.</li>
+        <li>Định tuyến theo <span class="t" data-vi="Khớp tiền tố dài nhất">longest prefix match</span>: dù có route <code>0.0.0.0/0 → IGW</code>, traffic tới S3/DynamoDB <b>cùng Region</b> vẫn ưu tiên endpoint route.</li>
+        <li><b>Prefix list là theo Region</b> ⇒ traffic tới S3 ở <b>Region khác</b> không đi qua gateway endpoint mà đi IGW/NAT.</li>
+        <li>Gỡ liên kết route table hoặc xóa endpoint ⇒ AWS xóa route tương ứng.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud – Region us-east-1</span>
+          <div class="row">
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+              <div class="row">
+                <div class="grp priv"><span class="lbl">Private subnet (route table có pl-s3 → vpce)</span>
+                  <div class="flow">
+                    <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2<small>s3.us-east-1.amazonaws.com</small></div>
+                    <span class="arrow">route: prefix list</span>
+                    <div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">Gateway endpoint<small>vpce-… · endpoint policy</small></div>
+                  </div></div>
+              </div>
+            </div>
+            <div class="flow">
+              <span class="arrow">mạng AWS</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Amazon S3<small>bucket policy: aws:SourceVpce</small></div>
+              <div class="node"><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">DynamoDB</div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Gateway endpoint: instance vẫn gọi <b>tên DNS public</b> của S3 (nên dùng IP public của S3), nhưng route table đẩy traffic tới endpoint thay vì NAT/IGW. Không có ENI, không có IP private, không tính phí. Kiểm soát bằng <b>endpoint policy</b> và <b>bucket policy</b> (<code>aws:SourceVpce</code> – Bài 16).</figcaption>
+      </figure>
+
+      <h3>Bảo mật với gateway endpoint</h3>
+      <ul>
+        <li>Instance vẫn truy cập dịch vụ qua <b>public endpoint</b> (IP public của S3/DynamoDB) ⇒ <b>security group</b> outbound phải cho phép tới dịch vụ; cách gọn nhất là tham chiếu <b>prefix list ID</b> (vd TCP 443 → <code>pl-…</code>).</li>
+        <li><b>Network ACL</b> <b>không tham chiếu được prefix list</b> ⇒ phải liệt kê các dải CIDR của dịch vụ lấy từ prefix list (và nhớ ephemeral port chiều về – Bài 21).</li>
+        <li><span class="t" data-vi="Chính sách điểm cuối">VPC endpoint policy</span>: IAM resource policy gắn vào endpoint, quyết định principal nào được làm gì trên tài nguyên nào <b>qua endpoint này</b>. Mặc định cho phép <b>mọi hành động, mọi principal, mọi tài nguyên</b>. Ví dụ: chỉ cho truy cập bucket của công ty để chống rò rỉ dữ liệu sang bucket lạ.</li>
+        <li>Phía S3: bucket policy <code>Deny</code> nếu <code>aws:SourceVpce</code> ≠ endpoint của bạn ⇒ bucket chỉ truy cập được qua endpoint (cẩn thận: console access cũng bị chặn).</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – gateway endpoint chỉ “phục vụ người trong nhà”</span>
+        <ul>
+          <li><b>Không</b> truy cập được từ <b>on-premises</b> (qua VPN/Direct Connect), <b>không</b> từ VPC <b>peer</b>, <b>không</b> từ VPC nối qua Transit Gateway, <b>không</b> cho S3 ở Region khác.</li>
+          <li>Đã tạo endpoint nhưng instance vẫn đi qua NAT ⇒ quên <b>gắn route table</b> của subnet đó vào endpoint.</li>
+          <li>Ứng dụng gọi endpoint <b>dualstack</b> (AAAA) trong khi gateway endpoint chỉ cấu hình IPv4 ⇒ traffic IPv6 không đi qua endpoint.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: INTERFACE ENDPOINT ===================== -->
+      <h2 id="interface-endpoint"><img src="../assets/icons/svc/AWS-PrivateLink.svg" alt="">Interface endpoint (AWS PrivateLink cho dịch vụ AWS)</h2>
+      <p class="lead"><span class="t" data-vi="Liên kết riêng AWS">AWS PrivateLink</span> là công nghệ có tính sẵn sàng cao, mở rộng được, cho phép VPC kết nối <b>private</b> tới dịch vụ và tài nguyên <b>như thể chúng nằm trong VPC của bạn</b>. Khi bạn tạo <span class="t" data-vi="Điểm cuối kiểu giao diện mạng">interface VPC endpoint</span>, AWS tạo một <span class="t" data-vi="Giao diện mạng của điểm cuối">endpoint network interface</span> (ENI do AWS quản lý – <i>requester-managed</i>) trong <b>mỗi subnet</b> bạn chọn, mang IP private lấy từ subnet đó. Traffic tới dịch vụ được <b>phân giải bằng DNS</b> ra IP private của các ENI này.</p>
+
+      <h3>Tên DNS và Private DNS</h3>
+      <p>Mỗi interface endpoint có các tên DNS riêng:</p>
+      <ul>
+        <li><b>Regional</b>: <code>vpce-0abc…-lj2wisx3.monitoring.us-east-2.vpce.amazonaws.com</code></li>
+        <li><b>Zonal</b> (mỗi AZ một tên): <code>vpce-0abc…-lj2wisx3-us-east-2a.monitoring.us-east-2.vpce.amazonaws.com</code> – dùng khi muốn giữ traffic trong cùng AZ.</li>
+        <li><b>Private DNS</b> (khuyến nghị bật): AWS tạo một <b>private hosted zone ẩn do AWS quản lý</b>, ánh xạ tên public mặc định (vd <code>monitoring.us-east-2.amazonaws.com</code>) về IP private của ENI ⇒ ứng dụng/SDK <b>không phải sửa code</b>. Điều kiện: VPC phải bật cả <code>enableDnsHostnames</code> và <code>enableDnsSupport</code>.</li>
+      </ul>
+      <p>Các bản ghi DNS của endpoint là <b>public</b> (phân giải được từ bất cứ đâu) nhưng trả về <b>IP private</b>, nên chỉ dùng được khi có đường mạng vào VPC. Route 53 Resolver của VPC <b>không dùng được từ bên ngoài VPC</b>; muốn on-premises dùng private DNS của endpoint, cần <b>Route 53 Resolver inbound endpoint</b> và rule chuyển tiếp (Bài 24).</p>
+
+      <h3>Subnet, AZ và tính sẵn sàng</h3>
+      <ul>
+        <li>Chọn <b>tối đa một subnet mỗi AZ</b>; mỗi subnet có một ENI. IP của ENI <b>không đổi</b> suốt vòng đời endpoint.</li>
+        <li>Nếu chỉ bật 1 AZ: tài nguyên ở AZ khác vẫn dùng được (DNS trả về ENI đó), nhưng <b>AZ đó gặp sự cố ⇒ mọi AZ mất truy cập</b>. Production: bật <b>≥ 2 AZ</b>, bật private DNS, gọi bằng tên Regional; DNS chọn ENI khỏe theo <b>round robin</b>.</li>
+        <li>ENI của endpoint gắn <b>security group</b> ⇒ inbound phải cho phép HTTPS 443 từ CIDR/SG của client (lỗi rất hay gặp khi endpoint “không trả lời”).</li>
+        <li>Chỉ <b>client khởi tạo</b> kết nối: dịch vụ AWS tự động accept, và <b>dịch vụ không thể khởi tạo request</b> ngược vào tài nguyên của bạn qua endpoint.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16 – enableDnsSupport + enableDnsHostnames</span>
+          <div class="row">
+            <div class="grp az"><span class="lbl">Availability Zone A</span>
+              <div class="grp priv"><span class="lbl">Private subnet 10.0.1.0/24</span>
+                <div class="row center">
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">App</div>
+                  <div class="node"><img src="../assets/icons/svc/AWS-PrivateLink.svg" alt="">Endpoint ENI<small>10.0.1.25 · SG 443</small></div>
+                </div></div></div>
+            <div class="grp az"><span class="lbl">Availability Zone B</span>
+              <div class="grp priv"><span class="lbl">Private subnet 10.0.2.0/24</span>
+                <div class="row center">
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">App</div>
+                  <div class="node"><img src="../assets/icons/svc/AWS-PrivateLink.svg" alt="">Endpoint ENI<small>10.0.2.40 · SG 443</small></div>
+                </div></div></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-Route-53_Resolver.svg" alt="">Private hosted zone ẩn<small>sqs.us-east-1.amazonaws.com → 10.0.1.25 / 10.0.2.40</small></div>
+            <span class="arrow">PrivateLink</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Dịch vụ AWS<small>SQS, KMS, ECR, STS…</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> Interface endpoint đa AZ: mỗi AZ một ENI có IP private, được bảo vệ bởi security group. Nhờ <b>private DNS</b>, ứng dụng vẫn gọi tên public của dịch vụ nhưng nhận về IP private của ENI; traffic không cần IGW hay NAT.</figcaption>
+      </figure>
+
+      <div class="stats">
+        <div class="stat"><b>10 → 100 Gbps</b><span>băng thông mỗi endpoint mỗi AZ (tự scale)</span></div>
+        <div class="stat"><b>8500</b><span>byte MTU tối đa qua VPC endpoint (lớn hơn bị drop)</span></div>
+        <div class="stat"><b>50</b><span>interface + GWLB endpoint mỗi VPC (tăng được)</span></div>
+        <div class="stat"><b>20</b><span>gateway endpoint mỗi Region (tối đa 255/VPC)</span></div>
+        <div class="stat"><b>20.480</b><span>ký tự tối đa của một endpoint policy</span></div>
+      </div>
+
+      <h3>Chi phí</h3>
+      <p>Interface endpoint tính phí <b>theo giờ cho mỗi AZ</b> mà endpoint được cấp phát, cộng phí <b>mỗi GB dữ liệu xử lý</b>. Vì vậy: S3/DynamoDB trong VPC ⇒ ưu tiên gateway endpoint (miễn phí); chỉ dùng interface endpoint khi cần tính năng mà gateway không có.</p>
+
+      <h3>So sánh gateway vs interface endpoint cho Amazon S3</h3>
+      <p>Bảng so sánh chính thức trong tài liệu Amazon S3 (cả hai đều giữ traffic trên mạng AWS):</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Gateway endpoint cho S3</th><th>Interface endpoint cho S3</th></tr></thead>
+        <tbody>
+          <tr><td>Địa chỉ IP dùng để tới S3</td><td>IP <b>public</b> của S3</td><td>IP <b>private</b> trong VPC của bạn</td></tr>
+          <tr><td>Tên DNS</td><td>Giữ nguyên tên DNS S3</td><td>Tên DNS <b>riêng của endpoint</b> (hoặc bật private DNS)</td></tr>
+          <tr><td>Truy cập từ <b>on-premises</b></td><td class="no">Không</td><td class="yes">Có (qua Direct Connect / Site-to-Site VPN)</td></tr>
+          <tr><td>Truy cập từ VPC ở <b>Region khác</b></td><td class="no">Không</td><td class="yes">Có (qua VPC peering hoặc Transit Gateway)</td></tr>
+          <tr><td>Chi phí</td><td class="yes">Không tính phí</td><td class="no">Tính phí (giờ × AZ + GB)</td></tr>
+          <tr><td>Cách đưa traffic vào</td><td>Route table + prefix list</td><td>DNS → ENI</td></tr>
+          <tr><td>Kiểm soát</td><td>Endpoint policy + bucket policy</td><td>Endpoint policy + bucket policy + <b>security group</b> của ENI</td></tr>
+        </tbody>
+      </table></div>
+
+      <p>Hai loại <b>dùng chung được</b> trong một VPC. Mô hình tối ưu chi phí AWS khuyến nghị: giữ <b>gateway endpoint</b> cho traffic từ trong VPC, thêm <b>interface endpoint</b> chỉ cho on-premises. Với S3, tùy chọn <b>Enable private DNS only for inbound endpoints</b> (mặc định bật khi bật private DNS, và <b>yêu cầu VPC có sẵn gateway endpoint S3</b>) làm đúng việc đó: truy vấn DNS đến từ on-premises qua <b>Resolver inbound endpoint</b> nhận IP của interface endpoint, còn traffic trong VPC tự đi qua gateway endpoint miễn phí.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Applications must call AWS APIs without code changes</i>” + interface endpoint ⇒ bật <b>Private DNS</b> (và VPC bật DNS hostnames + DNS resolution).</li>
+          <li>“<i>Interface endpoint created but requests time out</i>” ⇒ kiểm tra <b>security group</b> của endpoint (inbound 443 từ client).</li>
+          <li>“<i>Highly available</i> interface endpoint” ⇒ chọn subnet ở <b>≥ 2 AZ</b>.</li>
+          <li>Instance private kéo image từ <b>Amazon ECR</b> không qua internet ⇒ interface endpoint <code>ecr.api</code> + <code>ecr.dkr</code> <b>và gateway endpoint S3</b> (layer image nằm trên S3).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: ENDPOINT SERVICE ===================== -->
+      <h2 id="endpoint-service"><img src="../assets/icons/svc/AWS-PrivateLink.svg" alt="">PrivateLink endpoint service – tự cung cấp dịch vụ cho VPC khác</h2>
+      <p class="lead">PrivateLink không chỉ để gọi dịch vụ AWS. Bạn có thể tự host dịch vụ của mình thành một <span class="t" data-vi="Dịch vụ điểm cuối">VPC endpoint service</span> và chia sẻ cho account khác, khách hàng SaaS, hay các team trong công ty. Mô hình có hai vai:</p>
+
+      <div class="compare">
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/res/Elastic-Load-Balancing_Network-Load-Balancer.svg" alt="">Service provider (nhà cung cấp)</h4><ul>
+          <li>Chủ dịch vụ: AWS, AWS Partner, hoặc account AWS khác; backend có thể là EC2 hoặc <b>server on-premises</b>.</li>
+          <li>Tạo <b>Network Load Balancer</b> làm “mặt tiền” (hoặc GWLB cho appliance), rồi tạo <b>endpoint service</b> trỏ tới load balancer đó.</li>
+          <li>Mặc định dịch vụ <b>không ai dùng được</b> ⇒ phải <b>thêm permission</b> cho AWS principal cụ thể (account, IAM user/role).</li>
+          <li>Chọn <b>chấp nhận thủ công</b> hay tự động mỗi yêu cầu kết nối; có thể reject cả kết nối đang chạy.</li>
+          <li>Chia sẻ <b>service name</b> (vd <code>com.amazonaws.vpce.us-east-2.vpce-svc-071a…</code>) cho consumer.</li>
+        </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/AWS-PrivateLink.svg" alt="">Service consumer (người dùng)</h4><ul>
+          <li>Tạo <b>interface endpoint</b> trong VPC của mình, chỉ định service name, chọn subnet (mỗi AZ một) + security group.</li>
+          <li>Trạng thái: <code>PendingAcceptance</code> (nếu provider duyệt tay) → <code>Available</code>.</li>
+          <li>Gọi dịch vụ qua tên DNS của endpoint, hoặc <b>private DNS name</b> nếu provider đã cấu hình (và xác minh domain).</li>
+          <li>Chỉ dùng được ở các AZ mà NLB của provider được bật.</li>
+          <li>Có thể truy cập từ <b>on-premises</b> qua VPN/DX vào VPC của consumer.</li>
+        </ul></div>
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 300" width="760" role="img" aria-label="Mô hình PrivateLink provider consumer">
+          <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="16" y="16" width="300" height="268" rx="6" fill="rgba(140,79,255,.05)" stroke="#8C4FFF" stroke-width="2"/>
+          <text x="28" y="38" font-size="13" font-weight="700" style="fill:#8C4FFF">Consumer VPC 10.0.0.0/16 (account A)</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="40" y="100" width="56" height="56"/>
+          <text x="68" y="174" font-size="12" text-anchor="middle" font-weight="600">Client</text>
+          <image href="../assets/icons/svc/AWS-PrivateLink.svg" x="200" y="100" width="56" height="56"/>
+          <text x="228" y="174" font-size="12" text-anchor="middle" font-weight="600">Interface endpoint</text>
+          <text x="228" y="190" font-size="11" text-anchor="middle" class="muted">ENI 10.0.1.25</text>
+          <text x="166" y="250" font-size="11" text-anchor="middle" class="muted">Chỉ consumer khởi tạo kết nối</text>
+          <rect x="444" y="16" width="300" height="268" rx="6" fill="rgba(140,79,255,.05)" stroke="#8C4FFF" stroke-width="2"/>
+          <text x="456" y="38" font-size="13" font-weight="700" style="fill:#8C4FFF">Provider VPC 10.0.0.0/16 (account B)</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Network-Load-Balancer.svg" x="480" y="100" width="56" height="56"/>
+          <text x="508" y="174" font-size="12" text-anchor="middle" font-weight="600">NLB</text>
+          <text x="508" y="190" font-size="11" text-anchor="middle" class="muted">endpoint service</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="650" y="70" width="44" height="44"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="650" y="140" width="44" height="44"/>
+          <text x="672" y="204" font-size="12" text-anchor="middle" font-weight="600">Targets</text>
+          <path class="line-o" d="M98 128 H196" marker-end="url(#ah2)"/>
+          <path class="line-o" d="M258 128 H476" marker-end="url(#ah2)"/>
+          <text x="367" y="118" font-size="12" text-anchor="middle" font-weight="700">AWS PrivateLink</text>
+          <text x="367" y="148" font-size="11" text-anchor="middle" class="muted">mạng AWS, không qua internet</text>
+          <path class="line-o" d="M538 120 L646 94" marker-end="url(#ah2)"/>
+          <path class="line-o" d="M538 136 L646 160" marker-end="url(#ah2)"/>
+          <text x="380" y="250" font-size="11.5" text-anchor="middle" style="fill:#DD344C">Hai VPC trùng CIDR 10.0.0.0/16 vẫn dùng được</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> PrivateLink endpoint service: consumer chỉ “nhìn thấy” <b>một ENI</b> trong VPC của mình, không nhìn thấy mạng của provider. Không cần route table, không cần peering, IGW hay NAT. Vì không ghép hai mạng lại, <b>CIDR chồng lấn không thành vấn đề</b>, và kết nối là <b>một chiều</b> (consumer → provider).</figcaption>
+      </figure>
+
+      <h3>Các điểm cấu hình quan trọng</h3>
+      <ul>
+        <li><b>Tính sẵn sàng</b>: endpoint service chỉ có ở các AZ mà NLB được bật. AWS khuyên bật NLB ở <b>≥ 2 AZ</b> và có target ở mỗi AZ. Bật cross-zone load balancing là phương án thay thế nhưng nếu AZ host dịch vụ hỏng thì consumer mất truy cập, và phát sinh phí data transfer.</li>
+        <li><b>Private DNS name</b>: provider gắn tên miền của mình (vd <code>api.partner.com</code>) cho endpoint service (phải <b>xác minh quyền sở hữu domain</b>), consumer bật private DNS để gọi đúng tên quen thuộc.</li>
+        <li><b>IPv6 / dualstack</b>: provider có thể mở dịch vụ qua IPv4, IPv6 hoặc cả hai, kể cả khi backend chỉ hỗ trợ IPv4 (NLB phải là dualstack).</li>
+        <li><b>Cross-Region access</b>: provider có thể host dịch vụ ở một Region và cho phép consumer ở các Region được hỗ trợ kết nối; PrivateLink lo failover giữa các AZ nhưng <b>không lo failover giữa Region</b>. AWS khuyến nghị dùng kết nối cùng Region khi có thể (độ trễ và chi phí thấp hơn).</li>
+        <li><b>Endpoint policy</b> phía consumer giới hạn principal nào được dùng endpoint.</li>
+      </ul>
+
+      <h3>VPC peering hay PrivateLink?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>VPC peering</th><th>AWS PrivateLink (endpoint service)</th></tr></thead>
+        <tbody>
+          <tr><td>Phạm vi truy cập</td><td>Cả mạng (mọi IP mà route + SG cho phép)</td><td><b>Một dịch vụ cụ thể</b> sau NLB</td></tr>
+          <tr><td>CIDR chồng lấn</td><td class="no">Không cho phép</td><td class="yes">Không sao</td></tr>
+          <tr><td>Chiều kết nối</td><td>Hai chiều</td><td><b>Một chiều</b> (consumer khởi tạo)</td></tr>
+          <tr><td>Cần sửa route table</td><td>Có, cả hai phía</td><td>Không (dùng DNS → ENI)</td></tr>
+          <tr><td>Quy mô</td><td>Tối đa 125 peering/VPC; full mesh khó quản lý</td><td>Hàng nghìn consumer cho một dịch vụ (mô hình SaaS)</td></tr>
+          <tr><td>Chi phí</td><td>Không phí giờ; chỉ data transfer cross-AZ/Region</td><td>Phí giờ × AZ + GB xử lý (consumer trả), NLB (provider trả)</td></tr>
+          <tr><td>Hợp với</td><td>Vài VPC tin cậy nhau cần thông mạng đầy đủ</td><td>Chia sẻ API/dịch vụ cho khách hàng/team khác mà không lộ mạng</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>A SaaS provider wants to expose its application to hundreds of customer VPCs privately</i>”, “<i>without exposing the rest of the VPC</i>”, “<i>customers may have overlapping CIDR</i>” ⇒ <b>NLB + VPC endpoint service (PrivateLink)</b>; khách hàng tạo <b>interface endpoint</b>.</li>
+          <li>“<i>Allow only specific AWS accounts to connect</i>” ⇒ thêm <b>allowed principals</b> trên endpoint service và/hoặc bật <b>acceptance required</b>.</li>
+          <li>Endpoint service luôn cần <b>Network Load Balancer</b> (hoặc GWLB) – đáp án gợi ý ALB làm front end trực tiếp cho endpoint service là sai.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: TRANSIT GATEWAY ===================== -->
+      <h2 id="transit-gateway"><img src="../assets/icons/svc/AWS-Transit-Gateway.svg" alt="">AWS Transit Gateway</h2>
+      <p class="lead"><span class="t" data-vi="Cổng trung chuyển">AWS Transit Gateway</span> là một <b>hub trung chuyển mạng</b> dùng để kết nối các VPC và mạng on-premises. Nó hoạt động như một <b>router ảo cấp Region</b>, <b>tự co giãn</b> theo lưu lượng, định tuyến ở <b>layer 3</b> dựa trên địa chỉ IP đích. Khi hạ tầng mở rộng toàn cầu, <span class="t" data-vi="Peering liên vùng giữa transit gateway">inter-Region peering</span> nối các transit gateway với nhau qua hạ tầng toàn cầu của AWS; mọi traffic giữa các data center AWS được mã hóa ở lớp vật lý.</p>
+
+      <h3>Các khái niệm cốt lõi</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khái niệm</th><th>Giải thích</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Gắn kết">Attachment</span></td><td>“Cổng cắm” vào transit gateway, vừa là nguồn vừa là đích của gói tin. Các loại: <b>VPC</b>; <b>Site-to-Site VPN</b>; <b>Direct Connect gateway</b>; <b>peering</b> với transit gateway khác; <b>Connect</b> (SD-WAN/appliance bên thứ ba qua GRE + BGP); VPN Concentrator; Client VPN endpoint; <b>network function</b> (vd AWS Network Firewall gắn thẳng).</td></tr>
+          <tr><td><span class="t" data-vi="Bảng định tuyến của transit gateway">Transit gateway route table</span></td><td>Có một <b>default route table</b>, có thể tạo thêm (mặc định tối đa 20). Chứa route <b>static</b> và <b>propagated</b>; target là attachment. Có thể tạo <b>blackhole route</b> để drop traffic khớp.</td></tr>
+          <tr><td><span class="t" data-vi="Liên kết">Association</span></td><td>Mỗi attachment được gắn với <b>đúng một</b> route table – bảng này quyết định <b>next hop cho traffic đi VÀO từ attachment đó</b>. Một route table gắn được 0..n attachment.</td></tr>
+          <tr><td><span class="t" data-vi="Lan truyền tuyến">Route propagation</span></td><td>Attachment “quảng bá” route của mình vào <b>một hoặc nhiều</b> route table: VPC ⇒ CIDR của VPC; VPN/DX gateway ⇒ route học qua <b>BGP</b>. Peering attachment <b>không propagate</b> – phải thêm <b>static route</b>.</td></tr>
+          <tr><td>Route trong VPC</td><td>Transit gateway <b>không tự sửa</b> route table của subnet: bạn phải thêm route (vd <code>10.0.0.0/8 → tgw-…</code>) vào route table của VPC.</td></tr>
+          <tr><td>MTU</td><td><b>8500 byte</b> cho traffic giữa VPC, Direct Connect, Connect, peering; <b>1500 byte</b> qua VPN.</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 360" width="760" role="img" aria-label="Transit gateway dạng hub and spoke">
+          <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="300" y="130" width="160" height="110" rx="8" fill="rgba(140,79,255,.08)" stroke="#8C4FFF" stroke-width="2"/>
+          <image href="../assets/icons/svc/AWS-Transit-Gateway.svg" x="350" y="140" width="60" height="60"/>
+          <text x="380" y="218" font-size="13" text-anchor="middle" font-weight="700">Transit gateway</text>
+          <text x="380" y="234" font-size="11" text-anchor="middle" class="muted">default route table</text>
+          <g>
+            <rect x="20" y="20" width="150" height="80" rx="6" fill="none" stroke="#8C4FFF" stroke-width="1.5"/>
+            <image href="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" x="30" y="34" width="40" height="40"/>
+            <text x="78" y="52" font-size="12.5" font-weight="700">VPC A</text>
+            <text x="78" y="70" font-size="11" class="muted">10.1.0.0/16</text>
+            <path class="line-o" d="M170 70 L300 150" marker-end="url(#ah3)" marker-start="url(#ah3)"/>
+          </g>
+          <g>
+            <rect x="590" y="20" width="150" height="80" rx="6" fill="none" stroke="#8C4FFF" stroke-width="1.5"/>
+            <image href="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" x="600" y="34" width="40" height="40"/>
+            <text x="648" y="52" font-size="12.5" font-weight="700">VPC B</text>
+            <text x="648" y="70" font-size="11" class="muted">10.2.0.0/16</text>
+            <path class="line-o" d="M590 70 L460 150" marker-end="url(#ah3)" marker-start="url(#ah3)"/>
+          </g>
+          <g>
+            <rect x="20" y="262" width="150" height="80" rx="6" fill="none" stroke="#8C4FFF" stroke-width="1.5"/>
+            <image href="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" x="30" y="276" width="40" height="40"/>
+            <text x="78" y="294" font-size="12.5" font-weight="700">VPC C</text>
+            <text x="78" y="312" font-size="11" class="muted">10.3.0.0/16</text>
+            <path class="line-o" d="M170 292 L300 220" marker-end="url(#ah3)" marker-start="url(#ah3)"/>
+          </g>
+          <g>
+            <rect x="590" y="262" width="150" height="80" rx="6" fill="none" stroke="#7AA116" stroke-width="1.5"/>
+            <image href="../assets/icons/res/Traditional-server.svg" x="600" y="276" width="40" height="40"/>
+            <text x="648" y="294" font-size="12.5" font-weight="700">On-premises</text>
+            <text x="648" y="312" font-size="11" class="muted">10.99.99.0/24</text>
+            <path class="line-o" d="M590 292 L460 220" marker-end="url(#ah3)" marker-start="url(#ah3)" stroke-dasharray="6 4"/>
+            <text x="540" y="246" font-size="11" text-anchor="middle" class="muted">VPN (BGP)</text>
+          </g>
+          <text x="380" y="40" font-size="11.5" text-anchor="middle">Route table mỗi VPC: local + 0.0.0.0/0 (hoặc 10.0.0.0/8) → tgw</text>
+          <text x="380" y="290" font-size="11" text-anchor="middle">TGW RT: 10.1/16→att-A · 10.2/16→att-B</text>
+          <text x="380" y="306" font-size="11" text-anchor="middle">10.3/16→att-C · 10.99.99/24→att-VPN</text>
+          <text x="380" y="322" font-size="11" text-anchor="middle" class="muted">(tất cả propagated)</text>
+        </svg>
+        <figcaption><b>Hình 6.</b> Kịch bản “<b>centralized router</b>” trong tài liệu: 3 VPC và 1 VPN cùng associate + propagate vào default route table ⇒ mọi attachment nói chuyện được với nhau (<b>định tuyến bắc cầu</b>). Thêm VPC thứ N chỉ cần <b>1 attachment</b> thay vì N−1 peering.</figcaption>
+      </figure>
+
+      <h3>Attachment VPC và Availability Zone</h3>
+      <ul>
+        <li>Khi attach VPC, bạn bật một hoặc nhiều AZ, mỗi AZ chỉ định <b>đúng một subnet</b>; transit gateway đặt một ENI (dùng 1 IP) trong subnet đó. Sau khi bật, traffic tới được <b>mọi subnet trong AZ đó</b>, nhưng chỉ tài nguyên ở <b>AZ có attachment</b> mới tới được transit gateway ⇒ bật <b>nhiều AZ</b> để sẵn sàng cao. Thực hành phổ biến: dùng một subnet nhỏ (vd /28) riêng cho attachment.</li>
+        <li>Một transit gateway chỉ có <b>một VPC attachment cho cùng một VPC</b>. Các VPC attach vào cùng TGW <b>không được trùng CIDR</b> nếu muốn định tuyến giữa chúng (VPC attachment không hỗ trợ ECMP vì CIDR không được chồng lấn).</li>
+        <li><span class="t" data-vi="Chế độ thiết bị">Appliance mode</span>: khi đặt <b>thiết bị stateful</b> (firewall) trong một VPC kiểm tra tập trung, bật appliance mode cho attachment của VPC đó để transit gateway dùng <b>cùng một AZ / ENI cho cả hai chiều</b> của một flow (định tuyến đối xứng), tránh firewall thấy “nửa kết nối” rồi drop.</li>
+      </ul>
+
+      <h3>Phân đoạn mạng (segmentation) bằng nhiều route table</h3>
+      <p>Bằng cách tạo nhiều route table và chọn association/propagation hợp lý, một transit gateway trở thành nhiều <b>router cô lập</b> – giống <b>VRF</b> trong mạng truyền thống. Ví dụ tài liệu “<b>Isolated VPCs with shared services</b>”:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Route table</th><th>Associate với</th><th>Nhận propagation từ</th><th>Kết quả</th></tr></thead>
+        <tbody>
+          <tr><td><b>RT-Spoke</b></td><td>VPC A, VPC B, VPC C (prod/dev…)</td><td>Chỉ <b>VPC D (shared services)</b> + VPN</td><td>Spoke tới được shared services và on-premises, <b>không</b> tới được nhau</td></tr>
+          <tr><td><b>RT-Shared</b></td><td>VPC D, VPN</td><td>VPC A, B, C</td><td>Shared services và on-premises tới được mọi spoke</td></tr>
+        </tbody>
+      </table></div>
+      <p>Tương tự, có thể tách <b>RT-Prod</b> và <b>RT-Dev</b> để môi trường dev không bao giờ route tới prod; hoặc dùng <b>blackhole route</b> để chặn một dải CIDR.</p>
+
+      <h3>Các mẫu kiến trúc khác trong tài liệu</h3>
+      <ul>
+        <li><b>Centralized outbound (egress) to the internet</b>: VPC A, B không có IGW; route <code>0.0.0.0/0 → tgw</code>. TGW đưa traffic tới <b>egress VPC C</b> có <b>NAT gateway + IGW</b> ⇒ dùng chung NAT cho nhiều VPC (điều peering không làm được).</li>
+        <li><b>Appliance in a shared services VPC</b>: mọi traffic giữa attachment đi qua firewall/IDS ở VPC C (bật appliance mode). Ngày nay có thể dùng <b>network function attachment</b> để gắn <b>AWS Network Firewall</b> thẳng vào TGW (AWS tự tạo VPC đệm, appliance mode tự bật), khỏi tự dựng inspection VPC.</li>
+        <li><b>Peered transit gateways</b>: peering attachment giữa hai TGW (cùng hoặc <b>khác Region</b>, cùng hoặc khác account); chỉ hỗ trợ <b>static route</b>; traffic inter-Region được mã hóa, đi trên backbone AWS. Giữa hai TGW chỉ có <b>1</b> peering attachment.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>5.000</b><span>attachment mỗi transit gateway (mặc định)</span></div>
+        <div class="stat"><b>5</b><span>transit gateway mỗi account mỗi Region (tăng được)</span></div>
+        <div class="stat"><b>100 Gbps</b><span>băng thông mỗi VPC attachment mỗi AZ, mỗi chiều</span></div>
+        <div class="stat"><b>20</b><span>route table mỗi transit gateway (tăng được)</span></div>
+        <div class="stat"><b>10.000</b><span>tổng route (static + dynamic) mỗi transit gateway</span></div>
+        <div class="stat"><b>50</b><span>peering attachment mỗi transit gateway</span></div>
+      </div>
+
+      <h3>Chi phí</h3>
+      <p>Bạn trả <b>theo giờ cho mỗi attachment</b> và <b>theo lượng dữ liệu được transit gateway xử lý</b>. Mặc định phí xử lý dữ liệu tính cho account sở hữu <b>attachment nguồn</b> (có thể tùy chỉnh bằng <i>flexible cost allocation</i>). Traffic đi từ một AZ tới AZ khác bên trong TGW không bị TGW tính thêm phí. Vì vậy với <b>2–3 VPC</b> trao đổi khối lượng lớn dữ liệu, peering thường <b>rẻ hơn</b>; còn khi có <b>nhiều VPC + on-premises</b>, TGW tiết kiệm <b>công vận hành</b>.</p>
+
+      <h3>So sánh VPC peering và Transit Gateway</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>VPC peering</th><th>Transit Gateway</th></tr></thead>
+        <tbody>
+          <tr><td>Mô hình</td><td>1–1, full mesh khi nhiều VPC</td><td><b>Hub-and-spoke</b></td></tr>
+          <tr><td>Định tuyến bắc cầu</td><td class="no">Không</td><td class="yes">Có</td></tr>
+          <tr><td>Kết nối on-premises dùng chung (VPN, DX)</td><td class="no">Không (không edge-to-edge)</td><td class="yes">Có – một VPN/DX cho mọi VPC</td></tr>
+          <tr><td>Quy mô</td><td>≤ 125 peering mỗi VPC</td><td>5.000 attachment mỗi TGW</td></tr>
+          <tr><td>Phân đoạn / kiểm soát tập trung</td><td>Phải tự quản route ở từng VPC</td><td>Nhiều route table, blackhole, appliance mode</td></tr>
+          <tr><td>Băng thông</td><td>Không giới hạn riêng (không nút thắt)</td><td>Tới 100 Gbps mỗi VPC attachment mỗi AZ</td></tr>
+          <tr><td>MTU</td><td>9001 (cùng Region) / 8500 (inter-Region)</td><td>8500 (VPN: 1500)</td></tr>
+          <tr><td>Tham chiếu SG xuyên VPC</td><td>Có (cùng Region)</td><td>Có (tùy chọn security group referencing)</td></tr>
+          <tr><td>Chi phí</td><td>Không phí giờ; chỉ data transfer cross-AZ/Region</td><td>Phí giờ mỗi attachment + phí mỗi GB xử lý</td></tr>
+          <tr><td>Hop thêm</td><td>Không (đường đi trực tiếp, độ trễ thấp nhất)</td><td>Thêm một hop qua TGW</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Hundreds of VPCs</i>”, “<i>many accounts</i>”, “<i>simplify network management</i>”, “<i>transitive routing</i>”, “<i>hub-and-spoke</i>”, “<i>connect all VPCs and the on-premises network through one VPN/Direct Connect</i>” ⇒ <b>Transit Gateway</b>.</li>
+          <li>“<i>Dev VPCs must not communicate with prod VPCs, but both need shared services</i>” ⇒ <b>nhiều transit gateway route table</b> (association/propagation riêng).</li>
+          <li>“<i>Centralize internet egress / NAT gateways for multiple VPCs</i>” ⇒ <b>TGW + egress VPC</b>. “<i>Centralized traffic inspection</i>” ⇒ TGW + inspection VPC (Network Firewall/GWLB) với <b>appliance mode</b>.</li>
+          <li>“<i>Connect VPCs across Regions</i>” với nhiều VPC ⇒ <b>Transit Gateway inter-Region peering</b>; chỉ 2 VPC ⇒ <b>inter-Region VPC peering</b> (rẻ hơn).</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Attach VPC vào TGW xong nhưng không thông ⇒ quên thêm route <b>trong route table của subnet VPC</b> trỏ tới <code>tgw-…</code>, hoặc subnet nằm ở AZ <b>chưa bật</b> trong attachment.</li>
+          <li>Hai VPC peer qua TGW peering mà không thông ⇒ peering attachment <b>không propagate</b>, phải thêm <b>static route</b> ở cả hai TGW.</li>
+          <li>Transit Gateway là dịch vụ <b>cấp Region</b> – không attach được VPC ở Region khác; muốn liên Region phải dùng <b>TGW peering</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: AWS RAM ===================== -->
+      <h2 id="aws-ram"><img src="../assets/icons/svc/AWS-Resource-Access-Manager.svg" alt="">AWS RAM – chia sẻ hạ tầng mạng cho nhiều account</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ chia sẻ tài nguyên">AWS Resource Access Manager (AWS RAM)</span> giúp chia sẻ tài nguyên an toàn giữa các account, trong organization hoặc OU, và (với một số loại) với IAM role/user. Bạn <b>tạo tài nguyên một lần</b> rồi chia sẻ, thay vì tạo bản sao ở mọi account ⇒ <b>giảm operational overhead</b>, chính sách nhất quán, dễ audit (CloudWatch, CloudTrail). <b>Không tính phí</b> cho RAM.</p>
+
+      <h3>Cách chia sẻ hoạt động</h3>
+      <ol class="steps">
+        <li><b>Owning account</b> tạo một <span class="t" data-vi="Gói chia sẻ tài nguyên">resource share</span> trong một Region: đặt tên, chọn tài nguyên (cùng Region), chọn <b>principal</b> (account ID, OU, cả organization, hoặc IAM role/user với loại hỗ trợ), gắn <b>managed permission</b>.</li>
+        <li>Nếu đã <b>bật chia sẻ với AWS Organizations</b>, account trong org nhận tài nguyên <b>ngay, không cần lời mời</b>. Chia sẻ với account <b>ngoài</b> org ⇒ RAM gửi <b>invitation</b>, người nhận phải accept.</li>
+        <li><b>Consuming account</b> thấy tài nguyên trong console/API của dịch vụ gốc <b>như tài nguyên của mình</b>; IAM policy và SCP của account đó vẫn áp dụng. Owner <b>giữ toàn quyền sở hữu</b>.</li>
+      </ol>
+
+      <h3>Ba kiểu chia sẻ mạng hay gặp trong đề</h3>
+      <div class="compare">
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/svc/AWS-Transit-Gateway.svg" alt="">Chia sẻ Transit Gateway</h4><ul>
+          <li>Account mạng trung tâm (network account) tạo TGW, chia sẻ qua RAM cho các account ứng dụng.</li>
+          <li>Account được chia sẻ <b>tự attach VPC của họ</b> vào TGW; chủ TGW accept attachment (hoặc bật <i>auto accept shared attachments</i>).</li>
+          <li>Người dùng ở <b>bất kỳ</b> account nào cũng có thể xóa attachment.</li>
+        </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC sharing (chia sẻ subnet)</h4><ul>
+          <li><b>Owner</b> chia sẻ một/nhiều <b>subnet</b> cho <b>participant</b> thuộc <b>cùng organization</b>.</li>
+          <li>Participant tạo EC2, RDS, Redshift, Lambda… <b>vào subnet được chia sẻ</b>; không xem/sửa/xóa được tài nguyên của participant khác hay của owner.</li>
+          <li>Tài nguyên dùng <b>routing ngầm trong cùng VPC</b> – không cần peering/TGW; giảm số VPC phải quản lý, vẫn tách account để <b>billing và kiểm soát truy cập</b>.</li>
+          <li>Owner vẫn quản lý VPC, subnet, route table, NACL, gateway; chỉ owner thao tác được peering.</li>
+        </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/AWS-PrivateLink.svg" alt="">Chia sẻ tài nguyên PrivateLink / khác</h4><ul>
+          <li><b>Resource configuration</b> (DB, IP, domain) và <b>VPC Lattice service network</b> được chia sẻ qua RAM để consumer tạo resource / service-network endpoint.</li>
+          <li>Các tài nguyên mạng khác thường chia sẻ qua RAM: <b>managed prefix list</b>, <b>Route 53 Resolver rules</b> (Bài 24), Network Firewall policy…</li>
+        </ul></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">AWS Organizations</span>
+          <div class="row">
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Network account</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/svc/AWS-Transit-Gateway.svg" alt="">Transit gateway</div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Resource-Access-Manager.svg" alt="">RAM resource share<small>principal: OU Workloads</small></div>
+              </div></div>
+            <div class="flow"><span class="arrow">chia sẻ (không cần invitation)</span></div>
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/AWS-Organizations_Organizational-Unit.svg" alt="">OU Workloads</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account App 1<small>VPC attachment</small></div>
+                <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account App 2<small>VPC attachment</small></div>
+                <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account App N<small>tự động có quyền</small></div>
+              </div></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 7.</b> Mô hình multi-account phổ biến: một <b>network account</b> sở hữu Transit Gateway và chia sẻ qua <b>AWS RAM</b> cho cả OU. Account mới thêm vào OU tự động thấy TGW và tự attach VPC của mình – không phải tạo TGW hay VPN riêng ở từng account.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Share a transit gateway / subnets across accounts in the organization with the LEAST operational overhead</i>” ⇒ <b>AWS RAM</b> (bật sharing with AWS Organizations).</li>
+          <li>“<i>Multiple teams in separate accounts must deploy into a centrally managed VPC; network team keeps control of routing</i>” ⇒ <b>VPC sharing</b> (RAM chia sẻ subnet).</li>
+          <li>RAM chỉ “cho mượn”: tài nguyên vẫn thuộc owner; participant <b>không sửa</b> được subnet/route table được chia sẻ.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: CHỌN GIẢI PHÁP ===================== -->
+      <h2 id="chon-giai-phap"><img src="../assets/icons/res/Amazon-VPC_Router.svg" alt="">Chọn giải pháp kết nối nào? – Bảng quyết định cho đề thi</h2>
+      <p class="lead">Phần lớn câu hỏi của chủ đề này là “chọn đúng công cụ”. Đọc kỹ từ khóa trong đề rồi đối chiếu bảng sau.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu trong đề</th><th>Giải pháp</th><th>Vì sao không phải phương án khác</th></tr></thead>
+        <tbody>
+          <tr><td>EC2 private truy cập S3/DynamoDB, không internet, rẻ nhất</td><td><b>Gateway endpoint</b></td><td>Interface endpoint tốn phí; NAT tốn phí xử lý và đi qua IGW</td></tr>
+          <tr><td>On-premises truy cập S3 privately qua DX/VPN</td><td><b>S3 interface endpoint</b></td><td>Gateway endpoint không phục vụ traffic từ ngoài VPC</td></tr>
+          <tr><td>Private subnet gọi SQS/KMS/Secrets Manager/STS/ECR</td><td><b>Interface endpoint</b> (+ private DNS)</td><td>Các dịch vụ này không có gateway endpoint</td></tr>
+          <tr><td>Nối 2–3 VPC, chi phí thấp, độ trễ thấp</td><td><b>VPC peering</b></td><td>TGW có phí giờ + phí GB</td></tr>
+          <tr><td>Hàng chục/trăm VPC, nhiều account, cần bắc cầu + on-premises</td><td><b>Transit Gateway</b> (+ RAM)</td><td>Peering full mesh không bắc cầu, quá nhiều kết nối</td></tr>
+          <tr><td>Chia sẻ một ứng dụng cho nhiều VPC/khách hàng, CIDR có thể trùng</td><td><b>PrivateLink endpoint service</b> (NLB)</td><td>Peering/TGW không cho CIDR trùng và mở cả mạng</td></tr>
+          <tr><td>Cô lập dev/prod nhưng cùng dùng shared services</td><td><b>TGW nhiều route table</b></td><td>Peering phải tự quản route từng cặp</td></tr>
+          <tr><td>Dùng chung NAT gateway/egress cho nhiều VPC</td><td><b>TGW + egress VPC</b></td><td>Peering không hỗ trợ edge-to-edge qua NAT</td></tr>
+          <tr><td>Nhiều team (account) dùng chung một VPC do team mạng quản lý</td><td><b>VPC sharing qua AWS RAM</b></td><td>Không cần peering/TGW giữa các account</td></tr>
+          <tr><td>Kiểm tra traffic tập trung qua firewall stateful</td><td>TGW + inspection VPC, <b>appliance mode</b> (hoặc Network Firewall attachment)</td><td>Thiếu appliance mode ⇒ định tuyến bất đối xứng</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout note"><span class="ttl">Còn VPN, Direct Connect, Route 53 Resolver?</span>
+        <p>Transit Gateway chấp nhận attachment <b>Site-to-Site VPN</b> và <b>Direct Connect gateway</b> – đó là cách nối nhiều VPC với on-premises. Chi tiết customer gateway, virtual private gateway, DX dedicated/hosted, VPN over DX sẽ học ở <b>Bài 23</b>. Phân giải DNS hai chiều giữa on-premises và VPC (Resolver inbound/outbound endpoint) học ở <b>Bài 24</b>.</p></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>VPC peering</b>: 1–1, cùng/khác account, cùng/khác Region; không phải gateway, không SPOF, không nút thắt băng thông. Phải <b>accept</b> và thêm <b>route ở cả hai phía</b>. <b>Không bắc cầu</b>, <b>không edge-to-edge</b> (IGW, NAT, VPN, DX, gateway endpoint của VPC peer), <b>không CIDR chồng lấn</b>. 50 peering/VPC (tối đa 125). Tạo miễn phí; data transfer trong cùng AZ miễn phí.</li>
+          <li><b>Gateway endpoint</b>: chỉ S3 + DynamoDB; route table + prefix list; miễn phí; chỉ dùng trong VPC, cùng Region (không từ on-premises, peering, TGW).</li>
+          <li><b>Interface endpoint</b> (PrivateLink): ENI IP private mỗi AZ, có security group, private DNS (cần enableDnsHostnames + enableDnsSupport); tính phí giờ × AZ + GB; dùng được từ on-premises; 10 Gbps → 100 Gbps mỗi AZ; MTU 8500.</li>
+          <li><b>Endpoint service</b>: provider đặt dịch vụ sau <b>NLB</b> (hoặc GWLB), cấp quyền principal, duyệt kết nối; consumer tạo interface endpoint. Một chiều, CIDR trùng vẫn được, chỉ lộ đúng một dịch vụ.</li>
+          <li><b>Transit Gateway</b>: router ảo cấp Region, hub-and-spoke, bắc cầu; attachment (VPC, VPN, DX gateway, peering, Connect…); mỗi attachment associate <b>1</b> route table, propagate tới nhiều; VPC phải tự thêm route tới TGW; peering TGW chỉ static route; appliance mode cho firewall stateful; phí theo attachment-giờ + GB.</li>
+          <li><b>AWS RAM</b>: chia sẻ TGW, subnet (VPC sharing), prefix list, Resolver rule… miễn phí; trong organization không cần invitation.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>VPC peering connection</dt><dd><b>Kết nối ngang hàng VPC</b> – kết nối 1–1 giữa hai VPC dùng IP private; ID dạng <code>pcx-…</code>.</dd></div>
+        <div><dt>Requester VPC / Accepter VPC</dt><dd><b>VPC yêu cầu / VPC chấp nhận</b> – bên gửi yêu cầu peering và bên phải accept.</dd></div>
+        <div><dt>Inter-Region VPC peering</dt><dd><b>Peering liên vùng</b> – peering giữa hai Region; mã hóa, đi trên backbone AWS, MTU 8500, không tham chiếu SG.</dd></div>
+        <div><dt>Transitive peering</dt><dd><b>Peering bắc cầu</b> – dùng VPC trung gian để tới VPC thứ ba; <b>không được hỗ trợ</b>.</dd></div>
+        <div><dt>Edge-to-edge routing</dt><dd><b>Định tuyến biên-tới-biên</b> – dùng IGW/NAT/VPN/DX/gateway endpoint của VPC peer; không được hỗ trợ.</dd></div>
+        <div><dt>VPC endpoint</dt><dd><b>Điểm cuối VPC</b> – kết nối private từ VPC tới dịch vụ/tài nguyên không cần IGW, NAT, public IP.</dd></div>
+        <div><dt>Gateway endpoint</dt><dd><b>Điểm cuối kiểu cổng</b> – cho S3/DynamoDB, là target trong route table, miễn phí, không dùng PrivateLink.</dd></div>
+        <div><dt>Interface endpoint</dt><dd><b>Điểm cuối kiểu giao diện mạng</b> – ENI có IP private, dùng PrivateLink, tính phí.</dd></div>
+        <div><dt>Endpoint network interface</dt><dd><b>Giao diện mạng của điểm cuối</b> – ENI requester-managed AWS tạo trong mỗi subnet của interface endpoint.</dd></div>
+        <div><dt>AWS-managed prefix list</dt><dd><b>Danh sách tiền tố do AWS quản lý</b> – tập CIDR của dịch vụ (vd S3) trong một Region; đích của route gateway endpoint.</dd></div>
+        <div><dt>Private DNS (interface endpoint)</dt><dd><b>DNS riêng</b> – private hosted zone ẩn ánh xạ tên public của dịch vụ về IP private của endpoint.</dd></div>
+        <div><dt>VPC endpoint policy</dt><dd><b>Chính sách điểm cuối</b> – IAM resource policy trên endpoint; mặc định cho phép tất cả.</dd></div>
+        <div><dt>AWS PrivateLink</dt><dd><b>Liên kết riêng AWS</b> – công nghệ kết nối private tới dịch vụ như thể nó nằm trong VPC.</dd></div>
+        <div><dt>Endpoint service</dt><dd><b>Dịch vụ điểm cuối</b> – dịch vụ do provider tự host sau NLB/GWLB, chia sẻ qua PrivateLink.</dd></div>
+        <div><dt>Service provider / Service consumer</dt><dd><b>Nhà cung cấp / Người dùng dịch vụ</b> – bên tạo endpoint service / bên tạo interface endpoint.</dd></div>
+        <div><dt>Acceptance required</dt><dd><b>Yêu cầu duyệt kết nối</b> – provider phải accept từng kết nối từ consumer.</dd></div>
+        <div><dt>Resource endpoint / Resource gateway</dt><dd><b>Điểm cuối tài nguyên / Cổng tài nguyên</b> – truy cập trực tiếp một tài nguyên chia sẻ (DB, IP, domain) không cần load balancer.</dd></div>
+        <div><dt>AWS Transit Gateway</dt><dd><b>Cổng trung chuyển</b> – router ảo cấp Region nối VPC và on-premises theo mô hình hub-and-spoke.</dd></div>
+        <div><dt>Transit gateway attachment</dt><dd><b>Gắn kết</b> – VPC, VPN, DX gateway, peering, Connect… gắn vào TGW.</dd></div>
+        <div><dt>Transit gateway route table</dt><dd><b>Bảng định tuyến của TGW</b> – route static/propagated, target là attachment; hỗ trợ blackhole.</dd></div>
+        <div><dt>Association / Propagation</dt><dd><b>Liên kết / Lan truyền tuyến</b> – attachment dùng 1 route table để tra next hop; quảng bá route của mình vào 1+ route table.</dd></div>
+        <div><dt>Blackhole route</dt><dd><b>Tuyến hố đen</b> – route drop traffic khớp đích.</dd></div>
+        <div><dt>Appliance mode</dt><dd><b>Chế độ thiết bị</b> – giữ cả hai chiều của một flow qua cùng AZ/ENI cho thiết bị stateful.</dd></div>
+        <div><dt>Transit gateway peering</dt><dd><b>Peering giữa transit gateway</b> – nối TGW cùng/khác Region; chỉ static route.</dd></div>
+        <div><dt>Hub-and-spoke</dt><dd><b>Mô hình trục-nan hoa</b> – một hub trung tâm nối mọi spoke.</dd></div>
+        <div><dt>Network segmentation</dt><dd><b>Phân đoạn mạng</b> – tách nhóm VPC bằng nhiều route table (giống VRF).</dd></div>
+        <div><dt>AWS RAM (Resource Access Manager)</dt><dd><b>Dịch vụ chia sẻ tài nguyên</b> – chia sẻ TGW, subnet, prefix list… giữa các account; miễn phí.</dd></div>
+        <div><dt>Resource share</dt><dd><b>Gói chia sẻ tài nguyên</b> – tập tài nguyên + principal + managed permission trong RAM.</dd></div>
+        <div><dt>VPC sharing (shared subnet)</dt><dd><b>Chia sẻ VPC</b> – owner chia sẻ subnet cho participant trong cùng organization.</dd></div>
+        <div><dt>VPC owner / Participant</dt><dd><b>Chủ VPC / Bên tham gia</b> – owner quản lý mạng; participant chỉ tạo tài nguyên của mình trong subnet được chia sẻ.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs a data processing application on Amazon EC2 instances in private subnets. The instances download several terabytes of data each day from Amazon S3 buckets in the same AWS Region through a NAT gateway. The NAT gateway data processing charges have become significant. The company wants to reduce costs without changing the application. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create an interface VPC endpoint for Amazon S3 in each private subnet and enable private DNS.</li>
+            <li data-k="B">Create a gateway VPC endpoint for Amazon S3 and associate it with the route tables of the private subnets.</li>
+            <li data-k="C">Move the instances to public subnets and assign Elastic IP addresses so they can access Amazon S3 through the internet gateway.</li>
+            <li data-k="D">Replace the NAT gateway with a NAT instance that uses a larger instance type.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Gateway endpoint cho S3 <b>không tính phí</b>, tự thêm route (prefix list → vpce) vào route table; ứng dụng vẫn gọi tên DNS S3 như cũ nên không phải sửa code; traffic S3 cùng Region không còn đi qua NAT. <b>A sai</b>: interface endpoint chạy được nhưng tốn phí giờ × AZ và phí mỗi GB – không phải phương án rẻ nhất cho traffic trong VPC. <b>C sai</b>: đưa instance ra public subnet làm giảm bảo mật và vẫn tính phí data transfer; không phải thiết kế tốt. <b>D sai</b>: NAT instance tốn công vận hành, là điểm lỗi đơn, và vẫn không loại bỏ đường vòng qua internet gateway.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng xử lý dữ liệu trên các Amazon EC2 instance trong private subnet. Mỗi ngày các instance tải vài terabyte dữ liệu từ các Amazon S3 bucket trong cùng AWS Region thông qua một NAT gateway. Phí xử lý dữ liệu của NAT gateway đã trở nên đáng kể. Công ty muốn giảm chi phí mà không phải thay đổi ứng dụng. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một interface VPC endpoint cho Amazon S3 trong mỗi private subnet và bật private DNS.</span><span class="why">Sai: interface endpoint hoạt động được nhưng tính phí theo giờ cho mỗi AZ và phí mỗi GB, nên không rẻ bằng gateway endpoint miễn phí.</span></li>
+              <li data-k="B"><span class="tv">Tạo một gateway VPC endpoint cho Amazon S3 và gắn nó với route table của các private subnet.</span><span class="why">Đúng: gateway endpoint cho S3 miễn phí, tự thêm route (prefix list → vpce) nên traffic S3 cùng Region không qua NAT nữa; ứng dụng vẫn dùng tên DNS S3 như cũ, không phải sửa code.</span></li>
+              <li data-k="C"><span class="tv">Chuyển các instance sang public subnet và gán Elastic IP để chúng truy cập Amazon S3 qua internet gateway.</span><span class="why">Sai: đưa instance ra public subnet làm giảm bảo mật và không phải thiết kế tốt khi đã có giải pháp private miễn phí.</span></li>
+              <li data-k="D"><span class="tv">Thay NAT gateway bằng một NAT instance dùng instance type lớn hơn.</span><span class="why">Sai: NAT instance tốn công vận hành, là điểm lỗi đơn và traffic vẫn phải đi vòng qua internet gateway.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company has three VPCs: VPC A, VPC B, and VPC C. VPC A is peered with VPC B, and VPC A is peered with VPC C. All route tables and security groups are configured correctly for these peering connections. Instances in VPC B now need to communicate with instances in VPC C. What should a solutions architect do to meet this requirement with the LEAST cost?</div>
+          <ol class="opts">
+            <li data-k="A">Add a route in VPC B's route table that points VPC C's CIDR block to the peering connection between VPC A and VPC B.</li>
+            <li data-k="B">Deploy a transit gateway and attach all three VPCs.</li>
+            <li data-k="C">Create a VPC peering connection between VPC B and VPC C and update the route tables in both VPCs.</li>
+            <li data-k="D">Enable DNS resolution support on both existing peering connections.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> VPC peering <b>không bắc cầu</b>: không thể đi B → A → C. Cách rẻ nhất là tạo peering trực tiếp B–C (tạo miễn phí, không phí giờ) và thêm route ở cả hai phía. <b>A sai</b>: route như vậy hợp lệ về cú pháp nhưng traffic sẽ bị drop vì peering không hỗ trợ transitive routing. <b>B sai</b>: Transit Gateway giải quyết được nhưng có phí theo giờ mỗi attachment và phí GB – đắt hơn khi chỉ có 3 VPC. <b>D sai</b>: DNS resolution chỉ đổi cách phân giải hostname, không tạo đường đi.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có ba VPC: VPC A, VPC B và VPC C. VPC A được peer với VPC B, và VPC A được peer với VPC C. Tất cả route table và security group đã được cấu hình đúng cho các peering connection này. Giờ các instance trong VPC B cần giao tiếp với các instance trong VPC C. Solutions architect nên làm gì để đáp ứng yêu cầu này với LEAST cost (chi phí thấp nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một route trong route table của VPC B trỏ CIDR block của VPC C tới peering connection giữa VPC A và VPC B.</span><span class="why">Sai: VPC peering không hỗ trợ transitive routing, traffic B → A → C sẽ bị drop dù route hợp lệ về cú pháp.</span></li>
+              <li data-k="B"><span class="tv">Triển khai một transit gateway và attach cả ba VPC.</span><span class="why">Sai: Transit Gateway giải quyết được nhưng tính phí theo giờ mỗi attachment và phí mỗi GB, đắt hơn khi chỉ có 3 VPC.</span></li>
+              <li data-k="C"><span class="tv">Tạo một VPC peering connection giữa VPC B và VPC C và cập nhật route table ở cả hai VPC.</span><span class="why">Đúng: peering không bắc cầu nên cần peering trực tiếp B–C; tạo peering miễn phí, không có phí theo giờ, nên là phương án rẻ nhất.</span></li>
+              <li data-k="D"><span class="tv">Bật hỗ trợ DNS resolution trên cả hai peering connection hiện có.</span><span class="why">Sai: DNS resolution chỉ thay đổi cách phân giải hostname, không tạo đường đi giữa B và C.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A software-as-a-service (SaaS) provider hosts an API on Amazon EC2 instances in its own VPC. Hundreds of customers, each in their own AWS account, need to access the API privately without traffic traversing the internet. Many customer VPCs use CIDR blocks that overlap with the provider's VPC. The provider must not expose any other resources in its VPC. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Place the API behind a Network Load Balancer, create a VPC endpoint service, and allow the customer accounts as principals. Customers create interface VPC endpoints.</li>
+            <li data-k="B">Create a VPC peering connection between the provider VPC and each customer VPC.</li>
+            <li data-k="C">Create a transit gateway, share it with the customer accounts by using AWS RAM, and have customers attach their VPCs.</li>
+            <li data-k="D">Place the API behind an Application Load Balancer and create a gateway VPC endpoint for each customer.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>PrivateLink endpoint service</b> đặt sau NLB chỉ lộ đúng một dịch vụ; consumer chỉ thấy một ENI trong VPC của mình, nên <b>CIDR chồng lấn không ảnh hưởng</b>; mở rộng được cho hàng trăm khách hàng. <b>B sai</b>: peering không cho CIDR chồng lấn, tối đa 125 peering mỗi VPC và mở cả mạng. <b>C sai</b>: TGW định tuyến theo IP nên CIDR trùng gây xung đột, và nối cả mạng khách hàng với mạng provider. <b>D sai</b>: gateway endpoint chỉ dành cho S3 và DynamoDB.</div>
+          <div class="trans">
+            <div class="tq">Một nhà cung cấp phần mềm dạng dịch vụ (SaaS) host một API trên các Amazon EC2 instance trong VPC của mình. Hàng trăm khách hàng, mỗi khách hàng có AWS account riêng, cần truy cập API một cách private mà traffic không đi qua Internet. Nhiều VPC của khách hàng dùng CIDR block chồng lấn với VPC của nhà cung cấp. Nhà cung cấp không được để lộ bất kỳ tài nguyên nào khác trong VPC của mình. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt API sau một Network Load Balancer, tạo một VPC endpoint service và cho phép các account khách hàng làm principal. Khách hàng tạo interface VPC endpoint.</span><span class="why">Đúng: PrivateLink endpoint service sau NLB chỉ lộ đúng một dịch vụ; khách hàng chỉ thấy một ENI trong VPC của họ nên CIDR chồng lấn không ảnh hưởng, và mở rộng được cho hàng trăm khách hàng.</span></li>
+              <li data-k="B"><span class="tv">Tạo VPC peering connection giữa VPC của nhà cung cấp và từng VPC của khách hàng.</span><span class="why">Sai: peering không cho phép CIDR chồng lấn, giới hạn 125 peering mỗi VPC và mở toàn bộ mạng thay vì chỉ một dịch vụ.</span></li>
+              <li data-k="C"><span class="tv">Tạo một transit gateway, chia sẻ nó cho các account khách hàng bằng AWS RAM và để khách hàng attach VPC của họ.</span><span class="why">Sai: Transit Gateway định tuyến theo IP nên CIDR trùng gây xung đột, và nối cả mạng khách hàng với mạng của nhà cung cấp.</span></li>
+              <li data-k="D"><span class="tv">Đặt API sau một Application Load Balancer và tạo một gateway VPC endpoint cho mỗi khách hàng.</span><span class="why">Sai: gateway endpoint chỉ dành cho Amazon S3 và DynamoDB, không dùng cho dịch vụ tùy chỉnh.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company has an AWS Direct Connect connection from its data center to a VPC in us-east-1. On-premises applications must upload files to an Amazon S3 bucket in us-east-1 by using private IP connectivity over Direct Connect. The VPC already has a gateway endpoint for Amazon S3 that EC2 instances use. Which solution meets the requirement?</div>
+          <ol class="opts">
+            <li data-k="A">Add a route on the on-premises router that sends S3 traffic to the existing gateway endpoint.</li>
+            <li data-k="B">Update the gateway endpoint policy to allow access from the on-premises CIDR range.</li>
+            <li data-k="C">Create a VPC peering connection between the on-premises network and the VPC to reach the gateway endpoint.</li>
+            <li data-k="D">Create an interface VPC endpoint for Amazon S3 in the VPC and have on-premises applications use the endpoint-specific DNS names.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Theo bảng so sánh của S3: gateway endpoint <b>không cho phép truy cập từ on-premises</b>, còn <b>interface endpoint</b> có IP private trong VPC nên on-premises tới được qua Direct Connect/VPN. Giữ gateway endpoint cho traffic trong VPC (miễn phí) và dùng interface endpoint cho on-premises là mô hình AWS khuyến nghị. <b>A sai</b>: gateway endpoint không có IP để route tới; nó chỉ là target trong route table của VPC. <b>B sai</b>: endpoint policy chỉ kiểm soát quyền, không tạo đường mạng. <b>C sai</b>: VPC peering chỉ nối VPC với VPC, và gateway endpoint cũng không dùng được qua peering.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có kết nối AWS Direct Connect từ data center tới một VPC ở us-east-1. Các ứng dụng on-premises phải upload file lên một Amazon S3 bucket ở us-east-1 bằng kết nối IP private qua Direct Connect. VPC đã có sẵn một gateway endpoint cho Amazon S3 mà các EC2 instance đang dùng. Giải pháp nào đáp ứng yêu cầu?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một route trên router on-premises để gửi traffic S3 tới gateway endpoint hiện có.</span><span class="why">Sai: gateway endpoint không có địa chỉ IP để route tới; nó chỉ là target trong route table của VPC.</span></li>
+              <li data-k="B"><span class="tv">Cập nhật endpoint policy của gateway endpoint để cho phép truy cập từ dải CIDR on-premises.</span><span class="why">Sai: endpoint policy chỉ kiểm soát quyền truy cập, không tạo ra đường mạng từ on-premises.</span></li>
+              <li data-k="C"><span class="tv">Tạo một VPC peering connection giữa mạng on-premises và VPC để tới gateway endpoint.</span><span class="why">Sai: VPC peering chỉ nối VPC với VPC, và gateway endpoint cũng không dùng được qua peering.</span></li>
+              <li data-k="D"><span class="tv">Tạo một interface VPC endpoint cho Amazon S3 trong VPC và cho các ứng dụng on-premises dùng tên DNS riêng của endpoint (endpoint-specific DNS name).</span><span class="why">Đúng: interface endpoint có IP private trong VPC nên on-premises truy cập được qua Direct Connect, trong khi gateway endpoint không hỗ trợ truy cập từ on-premises.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A company's EC2 instances run in private subnets of a VPC that has no internet gateway or NAT gateway. The application must send messages to Amazon SQS and retrieve secrets from AWS Secrets Manager by using the default service endpoints in the AWS SDK, without code changes. Which TWO actions must a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Create interface VPC endpoints for Amazon SQS and AWS Secrets Manager with private DNS enabled.</li>
+            <li data-k="B">Create gateway VPC endpoints for Amazon SQS and AWS Secrets Manager.</li>
+            <li data-k="C">Ensure that the endpoints' security group allows inbound HTTPS (TCP 443) from the instances, and that the VPC has DNS hostnames and DNS resolution enabled.</li>
+            <li data-k="D">Add a route to 0.0.0.0/0 in the private route tables that targets the interface endpoints.</li>
+            <li data-k="E">Create a VPC peering connection to the AWS service VPCs for SQS and Secrets Manager.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> SQS và Secrets Manager chỉ có <b>interface endpoint</b>. Bật <b>private DNS</b> để tên public mặc định của dịch vụ phân giải về IP private của ENI – SDK không cần đổi endpoint (A). Private DNS yêu cầu VPC bật <code>enableDnsHostnames</code> + <code>enableDnsSupport</code>, và ENI của endpoint có security group phải cho phép 443 từ instance (C). <b>B sai</b>: gateway endpoint chỉ có cho S3 và DynamoDB. <b>D sai</b>: interface endpoint hoạt động qua DNS, không phải target route <code>0.0.0.0/0</code>. <b>E sai</b>: không thể peer với VPC dịch vụ của AWS.</div>
+          <div class="trans">
+            <div class="tq">Các EC2 instance của một công ty chạy trong private subnet của một VPC không có internet gateway hay NAT gateway. Ứng dụng phải gửi message tới Amazon SQS và lấy secret từ AWS Secrets Manager bằng các service endpoint mặc định trong AWS SDK, không thay đổi code. Solutions architect phải thực hiện HAI hành động nào? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo interface VPC endpoint cho Amazon SQS và AWS Secrets Manager với private DNS được bật.</span><span class="why">Đúng: SQS và Secrets Manager chỉ có interface endpoint; private DNS làm tên public mặc định phân giải về IP private của ENI nên SDK không cần đổi endpoint.</span></li>
+              <li data-k="B"><span class="tv">Tạo gateway VPC endpoint cho Amazon SQS và AWS Secrets Manager.</span><span class="why">Sai: gateway endpoint chỉ có cho Amazon S3 và DynamoDB.</span></li>
+              <li data-k="C"><span class="tv">Đảm bảo security group của các endpoint cho phép inbound HTTPS (TCP 443) từ các instance, và VPC đã bật DNS hostnames và DNS resolution.</span><span class="why">Đúng: private DNS yêu cầu bật enableDnsHostnames và enableDnsSupport, và ENI của endpoint có security group phải cho phép port 443 từ instance.</span></li>
+              <li data-k="D"><span class="tv">Thêm route 0.0.0.0/0 trong các private route table trỏ tới các interface endpoint.</span><span class="why">Sai: interface endpoint hoạt động qua DNS và IP của ENI, không phải là target của route 0.0.0.0/0.</span></li>
+              <li data-k="E"><span class="tv">Tạo VPC peering connection tới các VPC dịch vụ của AWS cho SQS và Secrets Manager.</span><span class="why">Sai: không thể peer với VPC dịch vụ của AWS; truy cập private phải qua VPC endpoint.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company has 60 VPCs across 15 AWS accounts in AWS Organizations, all in the same Region. The VPCs must communicate with each other and with the on-premises network through a single AWS Site-to-Site VPN connection. The network team wants to manage the connectivity centrally with the LEAST operational overhead. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create a full mesh of VPC peering connections and a VPN connection to a virtual private gateway in each VPC.</li>
+            <li data-k="B">Create a transit gateway in a network account, share it with the organization by using AWS RAM, attach all VPCs, and attach the Site-to-Site VPN to the transit gateway.</li>
+            <li data-k="C">Create a hub VPC with a VPN connection and peer all other VPCs with the hub VPC.</li>
+            <li data-k="D">Create a VPC endpoint service in each VPC and interface endpoints in every other VPC.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Transit Gateway là hub cấp Region hỗ trợ <b>định tuyến bắc cầu</b> giữa VPC và VPN; chia sẻ qua <b>AWS RAM</b> cho cả organization để từng account tự attach VPC; một VPN attachment phục vụ mọi VPC. <b>A sai</b>: 60 VPC cần 1.770 peering, và 60 VPN riêng – vận hành cực nặng. <b>C sai</b>: peering không bắc cầu và không cho dùng VPN của hub VPC (edge-to-edge). <b>D sai</b>: PrivateLink chỉ lộ dịch vụ sau NLB, không cung cấp kết nối mạng đầy đủ, và cũng không giải quyết on-premises.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 60 VPC trên 15 AWS account trong AWS Organizations, tất cả ở cùng một Region. Các VPC phải giao tiếp với nhau và với mạng on-premises thông qua một kết nối AWS Site-to-Site VPN duy nhất. Nhóm mạng muốn quản lý kết nối tập trung với LEAST operational overhead (ít công vận hành nhất). Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo full mesh VPC peering connection và một VPN connection tới virtual private gateway trong mỗi VPC.</span><span class="why">Sai: 60 VPC cần 1.770 peering và 60 VPN riêng, trái với yêu cầu một VPN duy nhất và vận hành cực nặng.</span></li>
+              <li data-k="B"><span class="tv">Tạo một transit gateway trong network account, chia sẻ nó cho organization bằng AWS RAM, attach tất cả VPC và attach Site-to-Site VPN vào transit gateway.</span><span class="why">Đúng: Transit Gateway là hub cấp Region hỗ trợ định tuyến bắc cầu giữa VPC và VPN; chia sẻ qua AWS RAM để các account tự attach, và một VPN attachment phục vụ mọi VPC.</span></li>
+              <li data-k="C"><span class="tv">Tạo một hub VPC có VPN connection và peer tất cả VPC khác với hub VPC.</span><span class="why">Sai: peering không bắc cầu và không cho VPC khác dùng VPN của hub VPC (edge-to-edge routing).</span></li>
+              <li data-k="D"><span class="tv">Tạo một VPC endpoint service trong mỗi VPC và interface endpoint trong mọi VPC khác.</span><span class="why">Sai: PrivateLink chỉ lộ dịch vụ sau NLB, không cung cấp kết nối mạng đầy đủ và không giải quyết kết nối on-premises.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company uses a transit gateway to connect production VPCs, development VPCs, and a shared services VPC. Security policy states that development VPCs must not be able to route traffic to production VPCs, but both environments must reach the shared services VPC. What should a solutions architect configure?</div>
+          <ol class="opts">
+            <li data-k="A">Network ACLs in every production subnet that deny the development CIDR ranges, while keeping all attachments on the default transit gateway route table.</li>
+            <li data-k="B">A second transit gateway for development VPCs, peered with the production transit gateway.</li>
+            <li data-k="C">Security groups in the shared services VPC that deny traffic from development to production.</li>
+            <li data-k="D">Separate transit gateway route tables for production and development attachments. Propagate only the shared services VPC routes (plus each environment's own routes) to each table, and propagate both environments' routes to the shared services route table.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Đây là mẫu “isolated VPCs with shared services”: mỗi attachment <b>associate</b> với route table của môi trường mình; route table của dev không chứa route tới prod nên traffic bị drop tại TGW; shared services nhận propagation từ cả hai. <b>A sai</b>: NACL làm được một phần nhưng phải bảo trì ở mọi subnet, dễ sót – không phải cách kiểm soát tập trung ở tầng định tuyến. <b>B sai</b>: thêm TGW và peering tăng chi phí, vẫn phải cấu hình route; không cần thiết khi một TGW hỗ trợ nhiều route table. <b>C sai</b>: security group không có rule deny, và traffic dev → prod không đi qua shared services VPC.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng transit gateway để kết nối các VPC production, các VPC development và một VPC shared services. Chính sách bảo mật quy định các VPC development không được định tuyến traffic tới các VPC production, nhưng cả hai môi trường đều phải truy cập được VPC shared services. Solutions architect nên cấu hình gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Network ACL trong mọi subnet production từ chối các dải CIDR development, trong khi giữ tất cả attachment trên default transit gateway route table.</span><span class="why">Sai: NACL phải bảo trì ở mọi subnet, dễ bỏ sót; không phải cách kiểm soát tập trung ở tầng định tuyến của TGW.</span></li>
+              <li data-k="B"><span class="tv">Một transit gateway thứ hai cho các VPC development, peer với transit gateway production.</span><span class="why">Sai: thêm TGW và peering làm tăng chi phí mà vẫn phải cấu hình route; không cần thiết khi một TGW hỗ trợ nhiều route table.</span></li>
+              <li data-k="C"><span class="tv">Security group trong VPC shared services từ chối traffic từ development tới production.</span><span class="why">Sai: security group không có rule deny, và traffic dev → prod không hề đi qua VPC shared services.</span></li>
+              <li data-k="D"><span class="tv">Các transit gateway route table riêng cho attachment production và development. Chỉ propagate route của VPC shared services (cộng route của chính môi trường đó) vào mỗi table, và propagate route của cả hai môi trường vào route table của shared services.</span><span class="why">Đúng: đây là mẫu "isolated VPCs with shared services": route table của dev không có route tới prod nên traffic bị drop tại TGW, còn shared services nhận propagation từ cả hai môi trường.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company routes all traffic between its spoke VPCs through a transit gateway to a fleet of stateful firewall appliances in a centralized inspection VPC that spans two Availability Zones. Users report that some connections are dropped intermittently. Investigation shows that request and response packets of the same flow are processed by firewall appliances in different Availability Zones. How should a solutions architect fix this issue?</div>
+          <ol class="opts">
+            <li data-k="A">Enable cross-zone load balancing on the transit gateway.</li>
+            <li data-k="B">Replace the transit gateway with VPC peering connections between each spoke VPC and the inspection VPC.</li>
+            <li data-k="C">Enable appliance mode on the transit gateway VPC attachment for the inspection VPC.</li>
+            <li data-k="D">Add a blackhole route for the spoke VPC CIDR ranges in the inspection VPC route table.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Appliance mode</b> khiến transit gateway chọn một ENI (theo flow hash) trong VPC appliance và dùng <b>cùng ENI/AZ cho cả hai chiều</b> suốt vòng đời flow ⇒ định tuyến đối xứng cho thiết bị stateful. <b>A sai</b>: transit gateway không có tùy chọn “cross-zone load balancing” (đó là khái niệm của ELB). <b>B sai</b>: peering không bắc cầu, spoke không thể đi qua inspection VPC để tới spoke khác. <b>D sai</b>: blackhole route làm drop toàn bộ traffic tới các CIDR đó.</div>
+          <div class="trans">
+            <div class="tq">Một công ty định tuyến toàn bộ traffic giữa các spoke VPC qua một transit gateway tới một nhóm firewall appliance stateful trong một inspection VPC tập trung trải trên hai Availability Zone. Người dùng báo rằng một số kết nối thỉnh thoảng bị rớt. Điều tra cho thấy gói tin request và response của cùng một flow được xử lý bởi các firewall appliance ở các Availability Zone khác nhau. Solutions architect nên khắc phục vấn đề này như thế nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật cross-zone load balancing trên transit gateway.</span><span class="why">Sai: transit gateway không có tùy chọn cross-zone load balancing; đó là khái niệm của Elastic Load Balancing.</span></li>
+              <li data-k="B"><span class="tv">Thay transit gateway bằng các VPC peering connection giữa từng spoke VPC và inspection VPC.</span><span class="why">Sai: peering không bắc cầu, spoke không thể đi qua inspection VPC để tới spoke khác.</span></li>
+              <li data-k="C"><span class="tv">Bật appliance mode trên transit gateway VPC attachment của inspection VPC.</span><span class="why">Đúng: appliance mode khiến TGW dùng cùng một ENI/AZ cho cả hai chiều của một flow suốt vòng đời của nó, đảm bảo định tuyến đối xứng cho firewall stateful.</span></li>
+              <li data-k="D"><span class="tv">Thêm blackhole route cho các dải CIDR của spoke VPC trong route table của inspection VPC.</span><span class="why">Sai: blackhole route sẽ drop toàn bộ traffic tới các CIDR đó, làm mất kết nối hoàn toàn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A solutions architect created a VPC peering connection between VPC A (10.0.0.0/16) in account 1 and VPC B (10.1.0.0/16) in account 2, both in the same Region. The owner of account 2 accepted the request and the connection status is active. However, instances in VPC A cannot connect to a database in VPC B on TCP 5432. Which TWO configuration changes could resolve the issue? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Attach an internet gateway to VPC B so that traffic from VPC A can be routed.</li>
+            <li data-k="B">Add routes in the route tables of both VPCs that point to the other VPC's CIDR block with the peering connection as the target.</li>
+            <li data-k="C">Create a gateway VPC endpoint in VPC B for the database.</li>
+            <li data-k="D">Change VPC B's CIDR block to 10.0.0.0/16 to match VPC A.</li>
+            <li data-k="E">Update the database security group in VPC B to allow TCP 5432 from 10.0.0.0/16 or from the application security group in VPC A.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Sau khi peering <code>active</code>, chủ <b>mỗi</b> VPC phải tự thêm route tới CIDR của VPC peer (B), và security group của DB phải cho phép traffic từ VPC A – cùng Region nên có thể <b>tham chiếu SG của VPC peer</b> (E). <b>A sai</b>: peering không cần internet gateway. <b>C sai</b>: gateway endpoint chỉ cho S3/DynamoDB. <b>D sai</b>: CIDR trùng/chồng lấn khiến peering không được phép.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect đã tạo một VPC peering connection giữa VPC A (10.0.0.0/16) ở account 1 và VPC B (10.1.0.0/16) ở account 2, cả hai cùng một Region. Chủ account 2 đã chấp nhận yêu cầu và trạng thái kết nối là active. Tuy nhiên, các instance trong VPC A không kết nối được tới một database trong VPC B qua TCP 5432. HAI thay đổi cấu hình nào có thể khắc phục sự cố? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gắn một internet gateway vào VPC B để traffic từ VPC A có thể được định tuyến.</span><span class="why">Sai: VPC peering không cần internet gateway; traffic đi trực tiếp qua peering connection.</span></li>
+              <li data-k="B"><span class="tv">Thêm route trong route table của cả hai VPC trỏ tới CIDR block của VPC còn lại với target là peering connection.</span><span class="why">Đúng: sau khi peering active, chủ mỗi VPC phải tự thêm route tới CIDR của VPC peer thì traffic mới đi được.</span></li>
+              <li data-k="C"><span class="tv">Tạo một gateway VPC endpoint trong VPC B cho database.</span><span class="why">Sai: gateway endpoint chỉ dành cho Amazon S3 và DynamoDB.</span></li>
+              <li data-k="D"><span class="tv">Đổi CIDR block của VPC B thành 10.0.0.0/16 cho giống VPC A.</span><span class="why">Sai: CIDR trùng hoặc chồng lấn khiến VPC peering không được phép.</span></li>
+              <li data-k="E"><span class="tv">Cập nhật security group của database trong VPC B để cho phép TCP 5432 từ 10.0.0.0/16 hoặc từ security group của ứng dụng trong VPC A.</span><span class="why">Đúng: security group của DB phải cho phép traffic từ VPC A; vì cùng Region nên có thể tham chiếu security group của VPC peer.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company has several application teams, each with its own AWS account in the same organization in AWS Organizations. The central network team wants all teams to deploy resources into a single VPC that the network team manages, including route tables, network ACLs, and gateways. Each team must be billed separately and must not be able to modify the network configuration. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Use AWS Resource Access Manager (AWS RAM) to share subnets of the central VPC with the application team accounts.</li>
+            <li data-k="B">Create a VPC in each team account and peer each VPC with the central VPC.</li>
+            <li data-k="C">Create a transit gateway and attach a new VPC from each team account.</li>
+            <li data-k="D">Create IAM users for each team in the network account and use cost allocation tags for billing.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>VPC sharing</b> qua AWS RAM: owner chia sẻ subnet cho participant trong cùng organization; participant tạo tài nguyên của mình (tính tiền cho account của họ) nhưng không sửa được subnet, route table, NACL, gateway của owner; tài nguyên dùng routing nội bộ VPC, không cần peering/TGW. <b>B sai</b>: tạo nhiều VPC + peering trái yêu cầu “một VPC” và tăng vận hành. <b>C sai</b>: thêm TGW và nhiều VPC, chi phí và công quản lý cao hơn. <b>D sai</b>: gom mọi team vào một account làm mất ranh giới account, billing bằng tag kém tách biệt và khó kiểm soát quyền.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có nhiều nhóm ứng dụng, mỗi nhóm có AWS account riêng trong cùng một organization của AWS Organizations. Nhóm mạng trung tâm muốn tất cả các nhóm triển khai tài nguyên vào một VPC duy nhất do nhóm mạng quản lý, bao gồm route table, network ACL và gateway. Mỗi nhóm phải được tính tiền riêng và không được phép sửa cấu hình mạng. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng AWS Resource Access Manager (AWS RAM) để chia sẻ các subnet của VPC trung tâm cho account của các nhóm ứng dụng.</span><span class="why">Đúng: VPC sharing qua AWS RAM cho participant tạo tài nguyên trong subnet được chia sẻ (tính tiền cho account của họ) nhưng không sửa được subnet, route table, NACL, gateway của owner.</span></li>
+              <li data-k="B"><span class="tv">Tạo một VPC trong mỗi account của nhóm và peer từng VPC với VPC trung tâm.</span><span class="why">Sai: tạo nhiều VPC và peering trái với yêu cầu dùng một VPC duy nhất và làm tăng công vận hành.</span></li>
+              <li data-k="C"><span class="tv">Tạo một transit gateway và attach một VPC mới từ mỗi account của nhóm.</span><span class="why">Sai: thêm TGW và nhiều VPC làm tăng chi phí và công quản lý, đồng thời không phải "một VPC".</span></li>
+              <li data-k="D"><span class="tv">Tạo IAM user cho từng nhóm trong network account và dùng cost allocation tag để tính tiền.</span><span class="why">Sai: gom mọi nhóm vào một account làm mất ranh giới account; tính tiền bằng tag kém tách biệt và khó ngăn sửa cấu hình mạng.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/peering/vpc-peering-basics.html" target="_blank" rel="noopener">How VPC peering connections work (lifecycle, limitations)</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/peering/vpc-peering-connection-quotas.html" target="_blank" rel="noopener">VPC peering connection quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/privatelink/concepts.html" target="_blank" rel="noopener">AWS PrivateLink concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/privatelink/privatelink-access-aws-services.html" target="_blank" rel="noopener">Access AWS services through AWS PrivateLink (interface endpoints)</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/privatelink/privatelink-share-your-services.html" target="_blank" rel="noopener">Share your services through AWS PrivateLink (endpoint services)</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-limits-endpoints.html" target="_blank" rel="noopener">AWS PrivateLink quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/privatelink-interface-endpoints.html" target="_blank" rel="noopener">AWS PrivateLink for Amazon S3 (gateway vs interface endpoints)</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/tgw/how-transit-gateways-work.html" target="_blank" rel="noopener">How AWS Transit Gateway works (routing, appliance mode, scenarios)</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/tgw/tgw-transit-gateways.html" target="_blank" rel="noopener">Transit gateways (sharing with AWS RAM, segmentation)</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/tgw/transit-gateway-quotas.html" target="_blank" rel="noopener">AWS Transit Gateway quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/ram/latest/userguide/what-is.html" target="_blank" rel="noopener">What is AWS Resource Access Manager?</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-sharing.html" target="_blank" rel="noopener">Share your VPC subnets with other accounts</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

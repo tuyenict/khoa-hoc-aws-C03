@@ -1,0 +1,884 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 20 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="20" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Giải thích được <span class="t" data-vi="Đám mây riêng ảo">Amazon VPC</span> là gì, các thành phần cốt lõi và sự khác nhau giữa <b>default VPC</b> và <b>nondefault VPC</b>.</li>
+          <li>Đọc và thiết kế dải địa chỉ <span class="t" data-vi="Định tuyến liên miền không phân lớp">CIDR</span>: kích thước /16 – /28, dải RFC 1918, secondary CIDR, <b>5 địa chỉ bị AWS giữ lại</b> trong mỗi subnet.</li>
+          <li>Phân biệt <b>public / private / VPN-only / isolated subnet</b> – và hiểu rằng “public” hay “private” là do <b>route table</b> quyết định.</li>
+          <li>Nắm cách <span class="t" data-vi="Bảng định tuyến">route table</span> hoạt động: main vs custom, local route, <b>longest prefix match</b>, thứ tự ưu tiên static / propagated.</li>
+          <li>Cấu hình truy cập Internet đúng: <b>Internet Gateway</b>, <b>NAT Gateway</b> (zonal &amp; regional) so với <b>NAT instance</b>, <b>Egress-only IGW</b> cho IPv6.</li>
+          <li>Chọn cách quản trị instance trong private subnet: <b>bastion host</b> truyền thống so với <b>EC2 Instance Connect Endpoint</b> và Session Manager.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 4 – Networking</span>
+        <p><b>Bài 10</b> đã dạy lớp mạng gắn trực tiếp với instance: ENI, public IPv4 / Elastic IP, security group, source/destination check. Bài này dựng “khung nhà” bên dưới: <b>VPC, CIDR, subnet, route table, IGW, NAT</b>. Các bài kế tiếp trong module: <b>Bài 21</b> – Security Group vs Network ACL, ephemeral ports, Flow Logs, Network Firewall; <b>Bài 22</b> – VPC peering, VPC endpoint (gateway / interface), PrivateLink, Transit Gateway; <b>Bài 23</b> – Site-to-Site VPN, Direct Connect. Ở đây các chủ đề đó chỉ được nhắc tới khi cần để hiểu routing.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">Tổng quan: Amazon VPC là gì?</h2>
+      <p class="lead">Với <span class="t" data-vi="Đám mây riêng ảo">Amazon Virtual Private Cloud (Amazon VPC)</span>, bạn launch tài nguyên AWS vào một <b>mạng ảo cô lập về mặt logic</b> do chính bạn định nghĩa. Mạng ảo này rất giống mạng truyền thống bạn vận hành trong data center của mình, nhưng có lợi thế là chạy trên hạ tầng co giãn của AWS.</p>
+
+      <p>Mọi EC2 instance, RDS database, load balancer, Lambda gắn VPC, EKS node… đều “sống” trong một VPC. Vì vậy gần như câu hỏi kiến trúc nào trong SAA-C03 cũng ngầm hỏi về VPC: instance có ra được Internet không, database có bị lộ ra ngoài không, khi một AZ sập thì đường ra Internet còn không, làm sao giảm phí NAT…</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">
+          <div><h4>VPC</h4><span class="vi">Mạng ảo riêng</span><p>Thuộc <b>một Region</b>, trải trên mọi AZ của Region đó. Có ít nhất một IPv4 CIDR; có thể thêm IPv6.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Router.svg" alt="">
+          <div><h4>Subnet &amp; implicit router</h4><span class="vi">Mạng con &amp; bộ định tuyến ngầm</span><p>Subnet là một dải IP nằm trọn trong <b>một AZ</b>. Router ẩn của VPC chuyển gói tin theo <b>route table</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Route-53_Route-Table.svg" alt="">
+          <div><h4>Route table</h4><span class="vi">Bảng định tuyến</span><p>Tập route <i>destination → target</i>. Mỗi subnet gắn đúng <b>một</b> route table.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" alt="">
+          <div><h4>Internet Gateway</h4><span class="vi">Cổng Internet</span><p>Cho phép giao tiếp <b>hai chiều</b> VPC ↔ Internet; scale ngang, dự phòng, HA, miễn phí.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">
+          <div><h4>NAT Gateway</h4><span class="vi">Cổng dịch địa chỉ mạng</span><p>Cho instance ở private subnet <b>đi ra</b> ngoài, nhưng bên ngoài <b>không khởi tạo</b> kết nối vào được.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Elastic-IP-Address.svg" alt="">
+          <div><h4>IP addressing</h4><span class="vi">Đánh địa chỉ IP</span><p>IPv4 private (RFC 1918), public IPv4 / Elastic IP, IPv6 (globally unique), BYOIP.</p></div></div>
+      </div>
+
+      <h3>Các tính năng của Amazon VPC (theo tài liệu)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tính năng</th><th>Vai trò</th><th>Học ở</th></tr></thead>
+        <tbody>
+          <tr><td><b>VPC, Subnets, IP addressing, Routing</b></td><td>Mạng ảo, dải IP, bảng định tuyến</td><td><b>Bài này</b></td></tr>
+          <tr><td><b>Gateways</b> (internet gateway, NAT, egress-only)</td><td>Nối VPC với mạng khác (Internet)</td><td><b>Bài này</b></td></tr>
+          <tr><td>VPC endpoints, PrivateLink</td><td>Kết nối riêng tới dịch vụ AWS, không cần IGW/NAT</td><td>Bài 22</td></tr>
+          <tr><td>Peering connections, Transit gateways</td><td>Định tuyến giữa các VPC / hub trung tâm</td><td>Bài 22</td></tr>
+          <tr><td>VPC Flow Logs, Traffic Mirroring</td><td>Ghi log / sao chép traffic để phân tích</td><td>Bài 21</td></tr>
+          <tr><td>Site-to-Site VPN</td><td>Nối VPC với mạng on-premises</td><td>Bài 23</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Default VPC và nondefault VPC</h3>
+      <p>Mỗi account có sẵn một <span class="t" data-vi="VPC mặc định">default VPC</span> ở <b>mỗi Region</b>, cấu hình để bạn launch EC2 và kết nối được ngay. Khi AWS tạo default VPC, nó làm những việc sau:</p>
+      <ul>
+        <li>Tạo VPC với IPv4 CIDR <b>/16</b> là <code>172.31.0.0/16</code> (tối đa <b>65.536</b> địa chỉ private).</li>
+        <li>Tạo một <b>default subnet /20</b> ở <b>mỗi AZ</b> (tối đa <b>4.096</b> địa chỉ/subnet, trừ vài địa chỉ AWS giữ lại).</li>
+        <li>Tạo và gắn một <b>internet gateway</b>; thêm route <code>0.0.0.0/0 → igw</code> vào <b>main route table</b> ⇒ mọi default subnet đều là <b>public subnet</b>.</li>
+        <li>Tạo default security group, default network ACL, gắn default DHCP options set; instance launch vào default subnet <b>tự nhận public IPv4</b>.</li>
+      </ul>
+      <p>Default VPC phù hợp để bắt đầu nhanh hoặc chạy website/blog đơn giản. Với production, bạn tự tạo <span class="t" data-vi="VPC không mặc định">nondefault VPC</span> (console “<b>VPC and more</b>” tạo sẵn VPC, subnet public/private ở N AZ, IGW, NAT gateway “1 per AZ”, S3 gateway endpoint). Nondefault VPC mới tạo chỉ có <b>local route</b> trong main route table – <b>không</b> có IGW, <b>không</b> tự gán public IP.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần cho truy cập Internet</th><th>Default VPC</th><th>Nondefault VPC</th></tr></thead>
+        <tbody>
+          <tr><td>Internet gateway</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Route <code>0.0.0.0/0</code> → IGW (IPv4)</td><td class="yes">Có</td><td class="no">Không</td></tr>
+          <tr><td>Route <code>::/0</code> → IGW (IPv6)</td><td class="no">Không</td><td class="no">Không</td></tr>
+          <tr><td>Tự gán public IPv4 cho instance</td><td class="yes">Có (default subnet)</td><td class="no">Không (nondefault subnet)</td></tr>
+          <tr><td>Tự gán IPv6 cho instance</td><td class="no">Không</td><td class="no">Không</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – IAM không chặn được default VPC</span>
+        <p>Khi bạn gọi <code>CreateDefaultVpc</code>, <b>chính AWS</b> tạo IGW, subnet… thay bạn, nên IAM policy deny <code>CreateInternetGateway</code> <b>không</b> ngăn được IGW của default VPC. Muốn chặn phải deny cả <code>CreateDefaultVpc</code>. Muốn chặn tập trung mọi traffic qua IGW trong account/Region ⇒ dùng <span class="t" data-vi="Chặn truy cập công khai VPC">VPC Block Public Access (BPA)</span> với chế độ <b>bidirectional</b> (chặn cả hai chiều qua IGW và egress-only IGW) hoặc <b>ingress-only</b> (chặn chiều vào, vẫn cho NAT gateway / egress-only IGW đi ra), kèm <i>exclusion</i> cho từng VPC/subnet ngoại lệ.</p></div>
+
+      <h3>Chi phí</h3>
+      <p>Bản thân VPC, subnet, route table, internet gateway, egress-only IGW <b>không tính phí</b>. Các thành phần <b>có phí</b>: <b>NAT gateway</b> (theo giờ + theo GB xử lý), IP Address Manager, Traffic Mirroring, Reachability Analyzer, Network Access Analyzer… và <b>mọi public IPv4 address</b> (Elastic IP, public IPv4 tự gán, IP do dịch vụ quản lý như RDS/ELB). Private IPv4 (RFC 1918) không tính phí. Free Tier có <b>750 giờ</b> public IPv4 cho EC2.</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+              <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" alt="">Internet gateway<small>igw-… gắn vào VPC</small></div></div>
+              <div class="row">
+                <div class="grp az"><span class="lbl">Availability Zone A</span>
+                  <div class="grp pub"><span class="lbl">Public subnet 10.0.0.0/24</span>
+                    <div class="row center">
+                      <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB node</div>
+                      <div class="node"><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">NAT gateway A<small>Elastic IP</small></div>
+                    </div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet 10.0.10.0/24</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">App server<small>chỉ private IP</small></div></div></div>
+                  <div class="grp priv"><span class="lbl">Isolated subnet 10.0.20.0/24</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">Database<small>không route ra ngoài VPC</small></div></div></div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone B</span>
+                  <div class="grp pub"><span class="lbl">Public subnet 10.0.1.0/24</span>
+                    <div class="row center">
+                      <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB node</div>
+                      <div class="node"><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">NAT gateway B<small>Elastic IP</small></div>
+                    </div></div>
+                  <div class="grp priv"><span class="lbl">Private subnet 10.0.11.0/24</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">App server<small>chỉ private IP</small></div></div></div>
+                  <div class="grp priv"><span class="lbl">Isolated subnet 10.0.21.0/24</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">Database standby</div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Kiến trúc VPC “chuẩn sách giáo khoa” 3 tầng trên 2 AZ: <b>public subnet</b> (route tới IGW) chứa ALB và NAT gateway; <b>private subnet</b> chứa app server, đi ra Internet qua NAT gateway <b>cùng AZ</b>; <b>isolated subnet</b> chứa database, không có route ra ngoài VPC. Mỗi subnet nằm trọn trong một AZ, VPC trải trên cả Region.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – khu đô thị có cổng bảo vệ</span>
+        <p>VPC giống một <b>khu đô thị khép kín</b> bạn tự quy hoạch. Dải CIDR là <b>quỹ số nhà</b> của cả khu; mỗi subnet là <b>một dãy phố</b> nằm trong một phường (AZ). Route table là <b>biển chỉ đường</b> ở đầu mỗi dãy phố. Internet gateway là <b>cổng chính</b> mở ra đường lớn – ai có “địa chỉ công khai” thì khách bên ngoài tìm đến được. NAT gateway là <b>phòng thư tín</b>: cư dân trong ngõ gửi thư đi được, thư trả lời quay về đúng người, nhưng người lạ không thể gõ cửa từng nhà. Bastion host là <b>chốt bảo vệ</b> nơi kỹ thuật viên phải đăng ký trước khi vào ngõ sâu.</p></div>
+
+      <!-- ===================== PHẦN 2: CIDR ===================== -->
+      <h2 id="cidr"><img src="../assets/icons/res/Amazon-EC2_Elastic-IP-Address.svg" alt="">CIDR và đánh địa chỉ IP cho VPC</h2>
+      <p class="lead">Địa chỉ IP của VPC và subnet được biểu diễn bằng <span class="t" data-vi="Định tuyến liên miền không phân lớp">CIDR (Classless Inter-Domain Routing)</span>: <code>địa-chỉ/độ-dài-prefix</code>. Một VPC <b>bắt buộc</b> có một IPv4 CIDR block; có thể thêm các IPv4 CIDR phụ và một hoặc nhiều IPv6 CIDR block.</p>
+
+      <h3>Đọc CIDR trong 30 giây</h3>
+      <p>IPv4 có 32 bit. Số sau dấu <code>/</code> là số bit “khóa cứng” cho phần mạng; số bit còn lại dành cho host. Số địa chỉ = <b>2<sup>(32 − prefix)</sup></b>.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>CIDR</th><th>Số địa chỉ</th><th>Dùng được trong subnet AWS (− 5)</th><th>Ví dụ</th></tr></thead>
+        <tbody>
+          <tr><td><code>/16</code></td><td>65.536</td><td>65.531</td><td>VPC <code>10.0.0.0/16</code> = 10.0.0.0 – 10.0.255.255 (kích thước VPC <b>lớn nhất</b>)</td></tr>
+          <tr><td><code>/20</code></td><td>4.096</td><td>4.091</td><td>Default subnet <code>172.31.0.0/20</code></td></tr>
+          <tr><td><code>/24</code></td><td>256</td><td><b>251</b></td><td>Subnet <code>10.0.1.0/24</code> = 10.0.1.0 – 10.0.1.255</td></tr>
+          <tr><td><code>/26</code></td><td>64</td><td>59</td><td>Subnet nhỏ cho NAT gateway / endpoint</td></tr>
+          <tr><td><code>/28</code></td><td>16</td><td><b>11</b></td><td>Kích thước VPC / subnet <b>nhỏ nhất</b></td></tr>
+          <tr><td><code>/32</code></td><td>1</td><td>–</td><td>Một host duy nhất (dùng trong rule / route, không dùng làm subnet)</td></tr>
+          <tr><td><code>/0</code></td><td>Tất cả</td><td>–</td><td><code>0.0.0.0/0</code> = mọi địa chỉ IPv4 (“default route”)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Quy tắc IPv4 CIDR của VPC</h3>
+      <div class="stats">
+        <div class="stat"><b>/16 → /28</b><span>kích thước cho phép của VPC và subnet (65.536 → 16 địa chỉ)</span></div>
+        <div class="stat"><b>5</b><span>IPv4 CIDR block mặc định mỗi VPC (tăng được tới 50)</span></div>
+        <div class="stat"><b>5</b><span>VPC mỗi Region (mặc định, tăng được lên hàng trăm)</span></div>
+        <div class="stat"><b>200</b><span>subnet mỗi VPC (mặc định, tăng được)</span></div>
+      </div>
+      <ul>
+        <li>AWS <b>khuyến nghị</b> dùng dải private <b>RFC 1918</b>. Bạn <i>có thể</i> dùng dải public routable hoặc <code>100.64.0.0/10</code>, nhưng không được dùng <code>0.0.0.0/8</code>, <code>127.0.0.0/8</code> (loopback), <code>169.254.0.0/16</code> (link-local), <code>224.0.0.0/4</code> (multicast).</li>
+        <li>Tránh <code>172.17.0.0/16</code>: một số dịch vụ (vd AWS Cloud9, SageMaker AI) dùng dải này, dễ xung đột IP.</li>
+        <li>CIDR được chuẩn hóa: nhập <code>100.68.0.18/18</code> ⇒ AWS tạo <code>100.68.0.0/18</code>.</li>
+        <li><b>Không tăng/giảm kích thước</b> một CIDR block đã có. Hết IP ⇒ <b>thêm secondary CIDR</b> (rồi tạo subnet mới từ dải đó). Thêm CIDR thì AWS tự thêm <b>local route</b> tương ứng vào mọi route table.</li>
+        <li>Secondary CIDR không được trùng CIDR đã có, không được bằng/lớn hơn destination của một route đang tồn tại, và bị giới hạn theo dải gốc – ví dụ VPC có CIDR từ <code>10.0.0.0/8</code> thì <b>không</b> thêm được CIDR từ <code>172.16.0.0/12</code> hay <code>192.168.0.0/16</code>; dải <code>198.19.0.0/16</code> bị cấm. <b>Không</b> gỡ được primary CIDR.</li>
+        <li>VPC sẽ peering, nối Transit Gateway / Direct Connect gateway với nhau hoặc với on-premises ⇒ <b>CIDR không được chồng lấn</b>. Đây là lý do phải <b>quy hoạch IP từ đầu</b>.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Dải RFC 1918</th><th>Prefix</th><th>Ví dụ CIDR cho VPC</th></tr></thead>
+        <tbody>
+          <tr><td>10.0.0.0 – 10.255.255.255</td><td><code>10/8</code></td><td><code>10.0.0.0/16</code></td></tr>
+          <tr><td>172.16.0.0 – 172.31.255.255</td><td><code>172.16/12</code></td><td><code>172.31.0.0/16</code> (default VPC)</td></tr>
+          <tr><td>192.168.0.0 – 192.168.255.255</td><td><code>192.168/16</code></td><td><code>192.168.0.0/20</code></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>5 địa chỉ bị AWS giữ lại trong mỗi subnet</h3>
+      <p><b>4 địa chỉ đầu và 1 địa chỉ cuối</b> của mọi subnet IPv4 không gán được cho tài nguyên. Ví dụ subnet <code>10.0.0.0/24</code>:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Địa chỉ</th><th>Mục đích</th></tr></thead>
+        <tbody>
+          <tr><td><code>10.0.0.0</code></td><td><b>Network address</b> – địa chỉ mạng</td></tr>
+          <tr><td><code>10.0.0.1</code></td><td>AWS giữ cho <b>VPC router</b></td></tr>
+          <tr><td><code>10.0.0.2</code></td><td>AWS giữ – <b>DNS server</b> (Amazon DNS = base của VPC CIDR + 2; AWS cũng giữ base+2 của <i>mỗi</i> subnet)</td></tr>
+          <tr><td><code>10.0.0.3</code></td><td>AWS giữ cho <b>tương lai</b></td></tr>
+          <tr><td><code>10.0.0.255</code></td><td><b>Broadcast address</b> – VPC <b>không hỗ trợ broadcast</b> nên giữ lại</td></tr>
+        </tbody>
+      </table></div>
+      <p>Với IPv6, quy tắc tương tự: 4 địa chỉ đầu (<code>::</code>, <code>::1</code> cho router, <code>::2</code>, <code>::3</code>) và địa chỉ cuối (<code>…:ffff:ffff:ffff:ffff</code>) bị giữ. Riêng dải <b>BYOIP</b> IPv4 thì được dùng cả network address và broadcast address.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – tính số IP dùng được</span>
+        <ul>
+          <li>“<i>How many IP addresses are available in a /27 subnet?</i>” ⇒ 2<sup>5</sup> = 32 − <b>5</b> = <b>27</b>. Với /24 ⇒ <b>251</b>; /28 ⇒ <b>11</b>.</li>
+          <li>Đề cho “cần 29 instance + để dư” trong một subnet ⇒ /27 (27 IP) <b>không đủ</b> ⇒ chọn <b>/26</b> (59 IP). Luôn trừ 5 rồi mới so.</li>
+          <li>“<i>VPC ran out of IP addresses</i>” ⇒ <b>add a secondary IPv4 CIDR block</b> và tạo subnet mới; <b>không</b> có thao tác “resize VPC/subnet”.</li>
+          <li>Hai VPC (hoặc VPC và on-premises) cần nối với nhau ⇒ chọn phương án có <b>CIDR không chồng lấn</b>.</li>
+        </ul></div>
+
+      <h3>IPv6 trong VPC</h3>
+      <ul>
+        <li>Có thể gắn IPv6 CIDR khi tạo VPC hoặc sau đó: tối đa <b>5</b> IPv6 CIDR block (từ <code>/44</code> tới <code>/60</code>, bước <code>/4</code>); Amazon-provided thường là <b>/56</b>, ví dụ <code>2001:db8:1234:1a00::/56</code>. Bạn <b>không chọn được</b> dải Amazon-provided; có thể dùng BYOIP hoặc IPAM.</li>
+        <li>Subnet IPv6 có netmask từ <code>/44</code> tới <code>/64</code> (bước /4); phổ biến nhất là <b>/64</b>.</li>
+        <li>Địa chỉ IPv6 là <b>globally unique ⇒ public theo mặc định</b>. Muốn instance IPv6 chỉ đi ra mà không bị gọi vào ⇒ dùng <b>egress-only internet gateway</b> (phần 7).</li>
+        <li>Ba kiểu subnet theo IP: <b>IPv4-only</b>, <b>dual-stack</b> (VPC phải có cả IPv4 và IPv6 CIDR), <b>IPv6-only</b> (VPC phải có IPv6 CIDR; tài nguyên vẫn nhận địa chỉ link-local <code>169.254.0.0/16</code> để gọi các dịch vụ chỉ có trong VPC).</li>
+        <li>Ghi nhớ: <b>mọi VPC đều phải có IPv4 CIDR</b> – kể cả khi bạn chỉ tạo subnet IPv6-only.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – IPv4 và IPv6 tách biệt hoàn toàn</span>
+        <p>Route <code>0.0.0.0/0</code> <b>không</b> bao gồm IPv6. Muốn IPv6 ra Internet phải thêm route <b>riêng</b> <code>::/0</code>. Tương tự, security group / NACL có rule IPv4 và rule IPv6 riêng. Đề hay cho tình huống “đã bật IPv6, instance có IPv6 nhưng không ra Internet được” ⇒ thiếu route <code>::/0</code>.</p></div>
+
+
+      <!-- ===================== PHẦN 3: SUBNET ===================== -->
+      <h2 id="subnet"><img src="../assets/icons/res/Amazon-VPC_Router.svg" alt="">Subnet: public, private, VPN-only, isolated</h2>
+      <p class="lead">Một <span class="t" data-vi="Mạng con">subnet</span> là một dải địa chỉ IP trong VPC, nơi bạn đặt tài nguyên như EC2. <b>Mỗi subnet phải nằm trọn trong một Availability Zone, không trải qua nhiều AZ.</b> Đặt tài nguyên ở các subnet thuộc nhiều AZ là cách bảo vệ ứng dụng khỏi sự cố của một AZ.</p>
+
+      <h3>Quy tắc cơ bản</h3>
+      <ul>
+        <li>CIDR của subnet có thể <b>bằng</b> CIDR của VPC (VPC chỉ có một subnet) hoặc là <b>tập con</b>; các subnet trong cùng VPC <b>không được chồng lấn</b>. Ví dụ VPC <code>10.0.0.0/24</code> chia thành <code>10.0.0.0/25</code> (10.0.0.0 – .127) và <code>10.0.0.128/25</code> (10.0.0.128 – .255).</li>
+        <li>Mỗi subnet <b>phải</b> gắn với một <b>route table</b> (mặc định: main route table) và một <b>network ACL</b> (mặc định: default NACL – cho phép mọi traffic; chi tiết ở Bài 21).</li>
+        <li>Thuộc tính <span class="t" data-vi="Tự động gán IP">auto-assign IP settings</span>: quyết định network interface tạo trong subnet có tự nhận <b>public IPv4</b> và/hoặc <b>IPv6</b> hay không. Có thể ghi đè cho từng instance lúc launch.</li>
+        <li><span class="t" data-vi="Tên theo tài nguyên">Resource-based name (RBN)</span> settings: chọn kiểu hostname của EC2 (IP name hoặc resource name) và cách trả lời truy vấn DNS A / AAAA.</li>
+      </ul>
+
+      <h3>Loại subnet do routing quyết định</h3>
+      <p>Điều quan trọng nhất của phần này: <b>AWS không có “công tắc” public/private trên subnet.</b> Loại subnet được xác định hoàn toàn bởi <b>route table</b> gắn với nó.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại subnet</th><th>Điều kiện routing (theo docs)</th><th>Dùng cho</th></tr></thead>
+        <tbody>
+          <tr><td><b>Public subnet</b></td><td>Có <b>route trực tiếp tới internet gateway</b></td><td>ALB/NLB internet-facing, NAT gateway (zonal), bastion host, web server cần IP công khai</td></tr>
+          <tr><td><b>Private subnet</b></td><td><b>Không</b> có route trực tiếp tới IGW; cần <b>NAT device</b> để ra Internet</td><td>App server, container, Lambda gắn VPC, worker</td></tr>
+          <tr><td><b>VPN-only subnet</b></td><td>Có route tới <b>Site-to-Site VPN</b> qua virtual private gateway, không có route tới IGW</td><td>Ứng dụng chỉ phục vụ mạng nội bộ công ty</td></tr>
+          <tr><td><b>Isolated subnet</b></td><td><b>Không có route</b> tới đích nào ngoài VPC; chỉ giao tiếp trong VPC</td><td>Database, dữ liệu nhạy cảm, workload tuân thủ nghiêm</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – có public IP chưa chắc ra được Internet</span>
+        <p>Theo docs: instance ở subnet <b>không có route tới IGW</b> thì <b>không giao tiếp được với Internet, kể cả khi có public IP</b>. Ngược lại, instance ở public subnet nhưng <b>không có public IPv4/Elastic IP</b> cũng không ra Internet qua IGW được (IPv4). Muốn “Internet-reachable” cần <b>đủ cả</b>: IGW gắn VPC + route tới IGW + public IP + security group / NACL cho phép.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – đặt tài nguyên vào subnet nào</span>
+        <ul>
+          <li>“<i>Web tier must be accessible from the internet, application and database tiers must not</i>” ⇒ ALB ở <b>public subnet</b>, EC2 ở <b>private subnet</b>, database ở <b>private/isolated subnet</b>.</li>
+          <li>“<i>Highly available</i>” ⇒ mỗi tầng có subnet ở <b>ít nhất 2 AZ</b> (vì một subnet chỉ ở một AZ).</li>
+          <li>“<i>Instances need to download patches but must not be reachable from the internet</i>” ⇒ <b>private subnet + NAT gateway</b> (không phải public subnet + security group chặn inbound).</li>
+          <li>“<i>Must not have any internet access, even outbound</i>” ⇒ <b>isolated subnet</b>; truy cập S3/DynamoDB bằng <b>VPC endpoint</b> (Bài 22).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: ROUTE TABLE ===================== -->
+      <h2 id="route-table"><img src="../assets/icons/res/Amazon-Route-53_Route-Table.svg" alt="">Route table: bộ điều phối traffic của VPC</h2>
+      <p class="lead">VPC có một <span class="t" data-vi="Bộ định tuyến ngầm">implicit router</span>; bạn dùng <span class="t" data-vi="Bảng định tuyến">route table</span> để quyết định traffic từ subnet hoặc gateway đi đâu. Mỗi <b>route</b> gồm <b>destination</b> (CIDR hoặc prefix list) và <b>target</b> (internet gateway, NAT gateway, peering connection, VPN…). Traffic được định tuyến dựa trên <b>địa chỉ IP đích</b>.</p>
+
+      <h3>Khái niệm chính</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khái niệm</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Bảng định tuyến chính">Main route table</span></td><td>Tự có khi tạo VPC; điều khiển routing cho <b>mọi subnet chưa gắn tường minh</b> với route table khác</td></tr>
+          <tr><td><span class="t" data-vi="Bảng định tuyến tùy chỉnh">Custom route table</span></td><td>Route table bạn tự tạo</td></tr>
+          <tr><td><b>Destination</b> / <b>Target</b></td><td>Dải IP muốn tới / gateway, network interface hay connection để gửi traffic tới đó</td></tr>
+          <tr><td><span class="t" data-vi="Tuyến cục bộ">Local route</span></td><td>Route mặc định cho giao tiếp <b>trong VPC</b>; có trong mọi route table; mỗi CIDR của VPC (IPv4 và IPv6) có một local route</td></tr>
+          <tr><td>Route table association</td><td>Liên kết route table với <b>subnet</b>, <b>internet gateway</b> hoặc <b>virtual private gateway</b></td></tr>
+          <tr><td>Subnet route table / Gateway route table</td><td>Route table gắn với subnet / gắn với IGW hoặc VGW</td></tr>
+          <tr><td><span class="t" data-vi="Liên kết biên">Edge association</span></td><td>Gắn route table vào IGW/VGW để đẩy traffic <b>đi vào</b> VPC qua một appliance (firewall, IDS) trước khi tới subnet</td></tr>
+          <tr><td><span class="t" data-vi="Lan truyền tuyến">Route propagation</span></td><td>Bật trên route table khi có virtual private gateway ⇒ route của VPN được <b>tự thêm/xóa</b> (Bài 23)</td></tr>
+          <tr><td>Prefix list</td><td>Nhóm CIDR có tên (customer-managed hoặc AWS-managed, vd prefix list của S3) dùng làm destination</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Quy tắc của route table</h3>
+      <ul>
+        <li>Một subnet chỉ gắn <b>một</b> route table tại một thời điểm; một route table có thể gắn <b>nhiều</b> subnet.</li>
+        <li>Subnet không gắn tường minh ⇒ <b>ngầm định</b> dùng main route table. Có thể thêm/sửa/xóa route của main route table, <b>không xóa</b> được main route table, có thể <b>thay</b> main route table bằng một custom route table.</li>
+        <li>Custom route table chỉ xóa được khi <b>không còn association</b>.</li>
+        <li>Thực hành tốt theo docs: <b>giữ main route table ở trạng thái mặc định</b> (chỉ local route) và gắn tường minh từng subnet mới với custom route table ⇒ subnet quên gắn sẽ <b>không vô tình thành public</b>.</li>
+        <li>Có thể thêm route <b>cụ thể hơn local route</b> (destination = đúng CIDR của một subnet) với target là NAT gateway, network interface hoặc Gateway Load Balancer endpoint – dùng để chèn appliance kiểm tra traffic giữa các subnet.</li>
+        <li>Không thêm được route tới <code>169.254.168.0/22</code> (IPv4) hay <code>fd00:ec2::/32</code> (IPv6) – dải dành cho IMDS, Amazon DNS…</li>
+        <li>Quota: <b>200</b> route table/VPC (tính cả main), <b>500</b> route không-propagated/route table (tăng được tới 1.000, tính riêng IPv4 và IPv6), <b>100</b> propagated route/route table (không tăng được).</li>
+      </ul>
+
+      <h3>Ví dụ route table của public và private subnet</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" alt="">Public subnet route table</h4>
+          <ul>
+            <li><code>10.0.0.0/16 → local</code></li>
+            <li><code>2001:db8:1234:1a00::/56 → local</code></li>
+            <li><code>0.0.0.0/0 → igw-id</code></li>
+            <li><code>::/0 → igw-id</code></li>
+          </ul></div>
+        <div style="--accent:#00A4A6"><h4><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">Private subnet route table (AZ A)</h4>
+          <ul>
+            <li><code>10.0.0.0/16 → local</code></li>
+            <li><code>2001:db8:1234:1a00::/56 → local</code></li>
+            <li><code>0.0.0.0/0 → nat-gateway-id (AZ A)</code></li>
+            <li><code>::/0 → eigw-id</code></li>
+            <li><code>pl-s3 (prefix list S3) → vpce-s3-gateway</code></li>
+          </ul></div>
+      </div>
+      <p>Đây chính là ví dụ “VPC with servers in private subnets and NAT” trong tài liệu AWS: public subnet ra Internet trực tiếp qua IGW (cả IPv4 lẫn IPv6), private subnet ra Internet IPv4 qua NAT gateway, IPv6 qua egress-only IGW và đi S3 qua gateway endpoint miễn phí.</p>
+
+      <h3>Thứ tự ưu tiên route</h3>
+      <ol class="steps">
+        <li><b>Longest prefix match</b> – route <b>cụ thể nhất</b> khớp với đích thắng. Ví dụ <code>10.10.2.15/32</code> thắng <code>10.10.2.0/24</code>. Với bảng gồm <code>10.0.0.0/16 → local</code>, <code>172.31.0.0/16 → pcx-…</code>, <code>0.0.0.0/0 → igw-…</code>: traffic tới 172.31.5.9 đi peering, tới 10.0.x.x đi local, còn lại đi IGW.</li>
+        <li>Nếu destination <b>trùng nhau hoàn toàn</b>: <b>static route</b> (IGW, NAT gateway, network interface, instance ID, gateway VPC endpoint, transit gateway, VPC peering, GWLB endpoint) thắng.</li>
+        <li>Tiếp theo là route tham chiếu <b>prefix list</b>.</li>
+        <li>Cuối cùng là <b>propagated route</b>: Direct Connect BGP → VPN static → VPN BGP.</li>
+      </ol>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 700 300" width="700" role="img" aria-label="Router của VPC chọn route theo longest prefix match">
+          <defs><marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="20" y="118" width="56" height="56"/>
+          <text x="48" y="194" font-size="12" text-anchor="middle" font-weight="600">EC2 10.0.1.25</text>
+          <path class="line-o" d="M80 146 H190" marker-end="url(#ah4)"/>
+          <image href="../assets/icons/res/Amazon-VPC_Router.svg" x="195" y="118" width="56" height="56"/>
+          <text x="223" y="194" font-size="12" text-anchor="middle" font-weight="600">VPC router</text>
+          <text x="223" y="210" font-size="11" text-anchor="middle" class="muted">(10.0.1.1)</text>
+          <path class="line-o" d="M256 140 L440 50" marker-end="url(#ah4)"/>
+          <path class="line-o" d="M256 146 H440" marker-end="url(#ah4)"/>
+          <path class="line-o" d="M256 152 L440 245" marker-end="url(#ah4)"/>
+          <text x="330" y="80" font-size="11" class="muted">đích 10.0.2.40 ⇒ /16</text>
+          <text x="300" y="138" font-size="11" class="muted">đích 172.31.5.9 ⇒ /16</text>
+          <text x="300" y="232" font-size="11" class="muted">đích 8.8.8.8 ⇒ /0</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="448" y="22" width="48" height="48"/>
+          <text x="505" y="44" font-size="12" font-weight="600">local</text>
+          <text x="505" y="60" font-size="11" class="muted">10.0.0.0/16 → local</text>
+          <image href="../assets/icons/res/Amazon-VPC_Peering-Connection.svg" x="448" y="122" width="48" height="48"/>
+          <text x="505" y="144" font-size="12" font-weight="600">peered VPC</text>
+          <text x="505" y="160" font-size="11" class="muted">172.31.0.0/16 → pcx-…</text>
+          <image href="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" x="448" y="222" width="48" height="48"/>
+          <text x="505" y="244" font-size="12" font-weight="600">Internet</text>
+          <text x="505" y="260" font-size="11" class="muted">0.0.0.0/0 → igw-…</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Router ngầm của VPC chọn route theo <b>longest prefix match</b>: cùng một route table, đích trong VPC khớp <code>/16 local</code>, đích ở VPC peer khớp <code>/16 pcx</code>, mọi đích khác rơi về <b>default route</b> <code>0.0.0.0/0</code> tới internet gateway.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – troubleshooting routing</span>
+        <ul>
+          <li>“<i>Instance in a new subnet cannot reach the internet, but instances in another subnet can</i>” ⇒ subnet mới đang <b>ngầm định dùng main route table</b> (không có route tới IGW/NAT) ⇒ gắn đúng custom route table.</li>
+          <li>“<i>Inspect all inbound internet traffic before it reaches the subnets</i>” ⇒ <b>gateway route table</b> gắn vào IGW (<b>edge association</b>) trỏ tới firewall appliance / GWLB endpoint.</li>
+          <li>Không biết vì sao không tới được đích ⇒ <b>Reachability Analyzer</b> phân tích route table, security group, NACL giữa nguồn và đích.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: INTERNET GATEWAY ===================== -->
+      <h2 id="igw"><img src="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" alt="">Internet Gateway (IGW)</h2>
+      <p class="lead"><span class="t" data-vi="Cổng Internet">Internet gateway</span> là thành phần VPC <b>scale ngang (horizontally scaled), dự phòng (redundant) và highly available</b>, cho phép giao tiếp giữa VPC và Internet. Nó hỗ trợ IPv4 và IPv6, <b>không gây rủi ro sẵn sàng hay giới hạn băng thông</b> cho traffic của bạn.</p>
+
+      <ul>
+        <li>IGW là <b>target</b> trong route table cho traffic Internet. Với IPv4, IGW còn thực hiện <b>NAT 1:1</b>: instance chỉ “biết” private IP; khi gói tin rời subnet ra Internet, IGW thay địa chỉ nguồn bằng <b>public IPv4 / Elastic IP</b> của instance, và ngược lại với traffic đi vào.</li>
+        <li>Với IPv6: VPC và subnet phải có IPv6 CIDR, instance có IPv6 từ dải subnet; IPv6 vốn public nên IGW không cần NAT.</li>
+        <li>Chiều kết nối: <b>cả hai chiều</b> – instance khởi tạo ra ngoài được, và người ngoài cũng khởi tạo vào được (nếu SG/NACL cho phép).</li>
+        <li>Mỗi VPC chỉ <b>gắn một IGW</b> tại một thời điểm; quota mặc định <b>5 IGW/Region</b> (tăng theo quota VPC/Region).</li>
+        <li><b>Không tính phí</b> IGW; chỉ tính phí data transfer của EC2 và phí public IPv4.</li>
+        <li>Route có thể là <code>0.0.0.0/0</code> / <code>::/0</code> (mọi đích chưa biết), hoặc hẹp hơn, ví dụ chỉ dải IP public của văn phòng công ty.</li>
+      </ul>
+
+      <h3>Checklist để một instance truy cập Internet qua IGW</h3>
+      <ol class="steps">
+        <li><b>Tạo và attach</b> internet gateway vào VPC.</li>
+        <li>Thêm route <code>0.0.0.0/0</code> (và/hoặc <code>::/0</code>) → <code>igw-id</code> vào route table của subnet ⇒ subnet trở thành <b>public subnet</b>.</li>
+        <li>Instance có <b>public IPv4</b> (auto-assign của subnet hoặc lúc launch) hoặc <b>Elastic IP</b>, hoặc có <b>IPv6</b>.</li>
+        <li><b>Security group</b> và <b>network ACL</b> cho phép traffic liên quan (Bài 21).</li>
+      </ol>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 (public subnet)<small>src 10.0.0.15</small></div>
+          <span class="arrow">route 0.0.0.0/0 → igw</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" alt="">Internet gateway<small>NAT 1:1 private ↔ public</small></div>
+          <span class="arrow">src 203.0.113.25 (EIP)</span>
+          <div class="node"><img src="../assets/icons/res/Internet.svg" alt="">Internet<small>trả lời về 203.0.113.25</small></div>
+        </div>
+        <figcaption><b>Hình 3.</b> Internet gateway dịch địa chỉ <b>1:1</b>: gói tin đi ra mang địa chỉ nguồn là public IPv4/Elastic IP của instance; gói tin đi vào tới public IP được dịch ngược về private IP trước khi vào VPC. Instance không bao giờ “thấy” public IP trên network interface của mình.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – IGW</span>
+        <ul>
+          <li>IGW <b>không phải điểm nghẽn</b> và <b>không cần dự phòng thủ công</b> – phương án “tạo 2 IGW cho HA” luôn sai (một VPC chỉ gắn 1 IGW).</li>
+          <li>“<i>EC2 instance in a public subnet cannot be reached from the internet</i>” ⇒ kiểm tra theo thứ tự: route tới IGW, public IP/EIP, security group inbound, NACL.</li>
+          <li>Thuộc tính <b>public subnet</b> được gắn trên <b>route table</b>, không phải trên IGW hay security group.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: NAT ===================== -->
+      <h2 id="nat"><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">NAT Gateway và NAT instance</h2>
+      <p class="lead"><span class="t" data-vi="Cổng dịch địa chỉ mạng">NAT gateway</span> là dịch vụ Network Address Translation (NAT) được quản lý: instance trong <b>private subnet</b> kết nối được tới dịch vụ bên ngoài VPC, nhưng <b>dịch vụ bên ngoài không thể khởi tạo kết nối</b> tới các instance đó. Kết nối <b>luôn phải được khởi tạo từ bên trong VPC</b> chứa NAT gateway.</p>
+
+      <h3>Hai kiểu connectivity</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">Public NAT gateway (mặc định)</h4>
+          <ul>
+            <li>Tạo trong <b>public subnet</b>, <b>bắt buộc gắn Elastic IP</b> lúc tạo.</li>
+            <li>Route từ NAT gateway ra <b>internet gateway</b> của VPC.</li>
+            <li>Cũng dùng được để đi tới VPC khác / on-premises qua transit gateway hoặc virtual private gateway – khi đó nguồn là <b>private IP</b> của NAT gateway (EIP chỉ dùng khi đi qua IGW).</li>
+          </ul></div>
+        <div style="--accent:#00A4A6"><h4><img src="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" alt="">Private NAT gateway</h4>
+          <ul>
+            <li>Cho private subnet nói chuyện với <b>VPC khác hoặc on-premises</b> qua transit gateway / virtual private gateway.</li>
+            <li><b>Không</b> gắn được Elastic IP; nếu route tới IGW thì IGW <b>drop</b> traffic.</li>
+            <li>Dùng khi hai mạng có <b>CIDR chồng lấn</b> cần giao tiếp: dịch sang private IP của NAT ở một dải không trùng.</li>
+          </ul></div>
+      </div>
+      <p>Cơ chế dịch: NAT gateway thay <b>địa chỉ nguồn private</b> của instance bằng <b>private IPv4 của NAT gateway</b>; với public NAT gateway, internet gateway tiếp tục dịch private IP của NAT gateway sang <b>Elastic IP</b>. Gói trả lời được dịch ngược về địa chỉ gốc của instance. Nhiều instance dùng chung một IP ra ngoài (NAT nhiều-1, phân biệt bằng port) – khác với IGW là NAT 1:1.</p>
+
+      <h3>Thông số của NAT gateway (theo docs)</h3>
+      <div class="stats">
+        <div class="stat"><b>5 → 100 Gbps</b><span>băng thông khởi điểm, tự scale lên tới 100 Gbps</span></div>
+        <div class="stat"><b>1M → 10M pps</b><span>gói tin/giây; vượt ngưỡng sẽ bị drop</span></div>
+        <div class="stat"><b>55.000</b><span>kết nối đồng thời mỗi IP tới mỗi đích duy nhất (IP + port + protocol)</span></div>
+        <div class="stat"><b>8 IP</b><span>tối đa mỗi zonal NAT gateway (1 primary + 7 secondary)</span></div>
+        <div class="stat"><b>2 EIP</b><span>mặc định trên một public NAT gateway (tăng được tới 8)</span></div>
+        <div class="stat"><b>5</b><span>NAT gateway mỗi AZ (mặc định, tăng được)</span></div>
+      </div>
+      <ul>
+        <li>Giao thức: <b>TCP, UDP, ICMP</b>. Hỗ trợ IPv4, và IPv6 qua <b>NAT64</b> (kết hợp <b>DNS64</b> của Route 53 Resolver) để workload IPv6 gọi tài nguyên chỉ có IPv4.</li>
+        <li><b>Không gắn được security group</b> vào NAT gateway – chỉ gắn SG cho instance phía sau; kiểm soát subnet của NAT bằng <b>NACL</b>. NAT gateway dùng port <b>1024–65535</b>.</li>
+        <li>AWS tạo một <b>requester-managed network interface</b> cho NAT gateway (đã gặp ở Bài 10) – chỉ gắn tag được, không sửa được.</li>
+        <li>Không route traffic <b>vào</b> NAT gateway qua VPC peering (<code>Client → Peering → NAT → Internet</code> không hỗ trợ), cũng không từ VPN/Direct Connect qua virtual private gateway (được nếu đi qua <b>transit gateway</b>).</li>
+        <li>MTU tối đa 8500; ra Internet nên để MTU instance ≤ 1500 byte.</li>
+        <li>Cần nhiều hơn 100 Gbps / 10M pps ⇒ chia tài nguyên vào nhiều subnet, mỗi subnet một NAT gateway.</li>
+      </ul>
+
+      <h3>High availability: NAT gateway là tài nguyên <i>zonal</i></h3>
+      <p>Mỗi NAT gateway (zonal) được tạo trong <b>một AZ cụ thể</b> và có dự phòng <b>bên trong AZ đó</b>. Docs nói rõ: nếu tài nguyên ở nhiều AZ dùng chung một NAT gateway và AZ của NAT gateway gặp sự cố, tài nguyên ở các AZ khác <b>mất truy cập Internet</b>. Khuyến nghị: <b>một NAT gateway mỗi AZ</b>, và route của private subnet trỏ tới NAT gateway <b>cùng AZ</b> (cũng giúp tránh phí data transfer cross-AZ).</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 720 360" width="720" role="img" aria-label="NAT gateway mỗi AZ, route private subnet tới NAT cùng AZ">
+          <defs><marker id="ah6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="10" y="10" width="700" height="340" rx="8" fill="none" stroke="#8C4FFF" stroke-width="2"/>
+          <text x="24" y="32" font-size="13" font-weight="700" style="fill:#8C4FFF">VPC 10.0.0.0/16</text>
+          <image href="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" x="332" y="22" width="56" height="56"/>
+          <text x="360" y="94" font-size="12" text-anchor="middle" font-weight="600">Internet gateway</text>
+          <rect x="30" y="110" width="320" height="225" rx="6" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="42" y="130" font-size="12" font-weight="700" style="fill:#147EBA">AZ A</text>
+          <rect x="370" y="110" width="320" height="225" rx="6" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="382" y="130" font-size="12" font-weight="700" style="fill:#147EBA">AZ B</text>
+          <rect x="45" y="140" width="290" height="80" rx="4" fill="rgba(122,161,22,.10)"/>
+          <text x="55" y="158" font-size="11" font-weight="600" style="fill:#7AA116">Public subnet – RT: 0.0.0.0/0 → igw</text>
+          <image href="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" x="160" y="164" width="48" height="48"/>
+          <text x="215" y="194" font-size="11" font-weight="600">NAT-A + EIP</text>
+          <rect x="45" y="235" width="290" height="88" rx="4" fill="rgba(0,164,166,.10)"/>
+          <text x="55" y="253" font-size="11" font-weight="600" style="fill:#00A4A6">Private subnet – RT: 0.0.0.0/0 → NAT-A</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="160" y="262" width="48" height="48"/>
+          <text x="215" y="292" font-size="11" font-weight="600">App A</text>
+          <rect x="385" y="140" width="290" height="80" rx="4" fill="rgba(122,161,22,.10)"/>
+          <text x="395" y="158" font-size="11" font-weight="600" style="fill:#7AA116">Public subnet – RT: 0.0.0.0/0 → igw</text>
+          <image href="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" x="500" y="164" width="48" height="48"/>
+          <text x="555" y="194" font-size="11" font-weight="600">NAT-B + EIP</text>
+          <rect x="385" y="235" width="290" height="88" rx="4" fill="rgba(0,164,166,.10)"/>
+          <text x="395" y="253" font-size="11" font-weight="600" style="fill:#00A4A6">Private subnet – RT: 0.0.0.0/0 → NAT-B</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="500" y="262" width="48" height="48"/>
+          <text x="555" y="292" font-size="11" font-weight="600">App B</text>
+          <path class="line-o" d="M184 262 V216" marker-end="url(#ah6)"/>
+          <path class="line-o" d="M524 262 V216" marker-end="url(#ah6)"/>
+          <path class="line-o" d="M200 166 L340 72" marker-end="url(#ah6)"/>
+          <path class="line-o" d="M520 166 L382 72" marker-end="url(#ah6)"/>
+        </svg>
+        <figcaption><b>Hình 4.</b> Thiết kế NAT “zone-independent”: mỗi AZ có <b>NAT gateway riêng</b> trong public subnet, và mỗi private subnet có <b>route table riêng</b> trỏ <code>0.0.0.0/0</code> tới NAT gateway <b>cùng AZ</b>. Khi AZ A sập, App B vẫn ra Internet qua NAT-B. Nếu cả hai private subnet dùng chung NAT-A thì AZ A sập kéo theo mất Internet ở AZ B.</figcaption>
+      </figure>
+
+      <h3>Regional NAT gateway – tự mở rộng đa AZ</h3>
+      <p>Tài liệu mới của AWS giới thiệu <span class="t" data-vi="Cổng NAT cấp vùng">regional NAT gateway</span> (availability mode = <b>Regional</b>) bên cạnh NAT gateway truyền thống (gọi là <b>zonal</b>):</p>
+      <ul>
+        <li><b>Không cần public subnet</b> để đặt NAT; chọn VPC là xong. AWS tự tạo một route table cho NAT với route sẵn tới IGW.</li>
+        <li><b>Tự mở rộng / thu hẹp</b> theo AZ có ENI của workload (mở rộng sang AZ mới có thể mất tới <b>60 phút</b>; trong lúc đó traffic xử lý cross-zone). Một <b>NAT ID duy nhất</b> dùng chung cho route table của subnet ở mọi AZ.</li>
+        <li>Tới <b>32 IP mỗi AZ</b> (so với 8 của zonal), mỗi IP thêm 55.000 kết nối đồng thời tới một đích.</li>
+        <li>Chế độ <b>automatic</b> (AWS quản lý IP và AZ, khuyến nghị) hoặc <b>manual</b>.</li>
+        <li><b>Không hỗ trợ private NAT</b> và không hỗ trợ constrained AZ ⇒ private NAT vẫn dùng zonal NAT gateway.</li>
+      </ul>
+
+      <h3>NAT gateway vs NAT instance</h3>
+      <p><span class="t" data-vi="Máy chủ NAT tự quản">NAT instance</span> là một EC2 tự cấu hình làm NAT, đặt trong public subnet, có public IP/EIP và phải <b>tắt source/destination check</b> (Bài 10). NAT AMI cũ dựa trên Amazon Linux AMI 2018.03 đã hết hỗ trợ (end of maintenance <b>31/12/2023</b>); AWS khuyến nghị <b>chuyển sang NAT gateway</b>, hoặc tự build NAT AMI từ Amazon Linux mới nếu thật sự cần.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thuộc tính</th><th>NAT gateway</th><th>NAT instance</th></tr></thead>
+        <tbody>
+          <tr><td>Availability</td><td class="yes">HA, dự phòng trong AZ; tạo 1/AZ để độc lập AZ</td><td class="no">Tự viết script failover giữa các instance</td></tr>
+          <tr><td>Bandwidth</td><td class="yes">Scale tới 100 Gbps</td><td>Phụ thuộc instance type</td></tr>
+          <tr><td>Maintenance</td><td class="yes">AWS quản lý, không cần bảo trì</td><td class="no">Bạn tự patch OS, cập nhật phần mềm</td></tr>
+          <tr><td>Performance</td><td>Phần mềm tối ưu cho NAT</td><td>AMI chung cấu hình làm NAT</td></tr>
+          <tr><td>Cost</td><td>Theo số NAT gateway, giờ chạy, <b>GB dữ liệu xử lý</b></td><td>Theo số instance, giờ chạy, instance type/size</td></tr>
+          <tr><td>Type &amp; size</td><td>Đồng nhất, không phải chọn</td><td>Tự chọn theo tải dự kiến</td></tr>
+          <tr><td>Public IP</td><td>Chọn EIP lúc tạo (public NAT)</td><td>EIP hoặc public IP; đổi EIP bất kỳ lúc nào</td></tr>
+          <tr><td>Security groups</td><td class="no">Không gắn được</td><td class="yes">Gắn được (cho NAT instance và tài nguyên phía sau)</td></tr>
+          <tr><td>Network ACLs / Flow logs</td><td>Có (trên subnet) / Có</td><td>Có / Có</td></tr>
+          <tr><td>Port forwarding</td><td class="no">Không hỗ trợ</td><td class="yes">Tự cấu hình được</td></tr>
+          <tr><td>Bastion server</td><td class="no">Không hỗ trợ</td><td class="yes">Dùng kiêm bastion được</td></tr>
+          <tr><td>Timeout behavior</td><td>Gửi <b>RST</b> cho kết nối hết hạn</td><td>Gửi <b>FIN</b> để đóng kết nối</td></tr>
+          <tr><td>IP fragmentation</td><td>Chuyển tiếp fragment UDP; drop fragment TCP/ICMP</td><td>Ráp lại fragment UDP, TCP, ICMP</td></tr>
+        </tbody>
+      </table></div>
+      <p><b>Migrate</b> NAT instance → NAT gateway: tạo NAT gateway cùng subnet, thay route trỏ sang NAT gateway. Muốn giữ cùng EIP: disassociate EIP khỏi NAT instance rồi gắn khi tạo NAT gateway. Kết nối hiện có <b>bị ngắt</b> và phải thiết lập lại.</p>
+
+      <h3>Chi phí NAT gateway và cách giảm</h3>
+      <ul>
+        <li>Tính phí <b>mỗi giờ NAT gateway ở trạng thái available</b> + <b>mỗi GB dữ liệu xử lý</b> (cộng thêm data transfer thông thường).</li>
+        <li>Đặt tài nguyên <b>cùng AZ</b> với NAT gateway, hoặc tạo NAT gateway mỗi AZ có tài nguyên ⇒ tránh phí cross-AZ.</li>
+        <li>Phần lớn traffic qua NAT là tới dịch vụ AWS (S3, DynamoDB…) ⇒ dùng <b>gateway endpoint</b> (S3, DynamoDB – miễn phí) hoặc <b>interface endpoint</b> (Bài 22) thay cho NAT.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – NAT</span>
+        <ul>
+          <li>“<i>Private instances need outbound internet access … least operational overhead / highly available</i>” ⇒ <b>NAT gateway</b> ở public subnet, <b>một cái mỗi AZ</b>.</li>
+          <li>“<i>A single NAT gateway… when an AZ failed, instances in the other AZ lost internet access</i>” ⇒ thêm NAT gateway ở mỗi AZ và sửa route table từng AZ (hoặc dùng regional NAT gateway).</li>
+          <li>“<i>Large data transfer from private subnet to Amazon S3 is expensive (NAT data processing charges)</i>” ⇒ <b>S3 gateway endpoint</b>.</li>
+          <li>Đề nhắc <b>security group cho NAT</b>, <b>port forwarding</b>, <b>dùng làm bastion</b>, hoặc “cheapest, low traffic, chấp nhận tự quản” ⇒ <b>NAT instance</b>. Các trường hợp còn lại ⇒ NAT gateway.</li>
+          <li>Partner yêu cầu <b>whitelist một IP cố định</b> cho traffic đi ra từ nhiều instance private ⇒ NAT gateway với <b>Elastic IP</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – đặt NAT gateway sai chỗ</span>
+        <ul>
+          <li>Public NAT gateway (zonal) phải ở <b>public subnet</b>; đặt ở private subnet thì NAT gateway không ra Internet được.</li>
+          <li>Route <code>0.0.0.0/0 → nat</code> phải nằm ở route table của <b>private subnet</b>, còn route table của subnet chứa NAT phải có <code>0.0.0.0/0 → igw</code>.</li>
+          <li>NAT gateway chỉ cho kết nối <b>đi ra</b>. Muốn người dùng Internet truy cập ứng dụng trong private subnet ⇒ dùng <b>load balancer</b> ở public subnet, không phải NAT.</li>
+          <li>NAT gateway cho IPv4. Với IPv6 chỉ cần đi ra ⇒ <b>egress-only internet gateway</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: IPv6 / EGRESS-ONLY IGW ===================== -->
+      <h2 id="ipv6-eigw"><img src="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" alt="">IPv6 và Egress-only Internet Gateway</h2>
+      <p class="lead"><span class="t" data-vi="Cổng Internet chỉ đi ra">Egress-only internet gateway</span> là thành phần VPC scale ngang, dự phòng, highly available, cho phép <b>đi ra Internet qua IPv6</b> từ instance trong VPC và <b>ngăn Internet khởi tạo</b> kết nối IPv6 tới instance. Nó là “NAT gateway của IPv6” – nhưng <b>không dịch địa chỉ</b>, vì IPv6 vốn globally unique.</p>
+      <ul>
+        <li>Chỉ dùng cho <b>IPv6</b>; outbound-only cho IPv4 thì dùng NAT gateway.</li>
+        <li><b>Stateful</b>: chuyển tiếp traffic từ instance ra Internet/dịch vụ AWS và gửi phản hồi trở lại.</li>
+        <li>Route: <code>::/0 → eigw-id</code> (hoặc một dải IPv6 cụ thể) trong route table của subnet.</li>
+        <li><b>Không gắn được security group</b>; kiểm soát bằng NACL của subnet.</li>
+        <li><b>Miễn phí</b> (chỉ tính data transfer). Mỗi VPC gắn một egress-only IGW; mặc định 5/Region.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhu cầu</th><th>IPv4</th><th>IPv6</th></tr></thead>
+        <tbody>
+          <tr><td>Hai chiều (vào &amp; ra) với Internet</td><td>Internet gateway + public IPv4/EIP</td><td>Internet gateway + IPv6 của instance</td></tr>
+          <tr><td>Chỉ đi ra, chặn chiều vào</td><td><b>NAT gateway</b> (hoặc NAT instance)</td><td><b>Egress-only internet gateway</b></td></tr>
+          <tr><td>Workload IPv6-only gọi đích IPv4</td><td colspan="2"><b>NAT gateway với NAT64 + DNS64</b> (Route 53 Resolver)</td></tr>
+          <tr><td>Phí gateway</td><td>IGW miễn phí; NAT gateway tính giờ + GB</td><td>IGW và egress-only IGW miễn phí</td></tr>
+          <tr><td>Gắn security group lên gateway</td><td colspan="2">Không (IGW, NAT gateway, egress-only IGW đều không)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – IPv6</span>
+        <ul>
+          <li>“<i>IPv6-enabled instances must initiate outbound connections to the internet; inbound connections from the internet must be blocked</i>” ⇒ <b>egress-only internet gateway</b> + route <code>::/0</code>. Không phải NAT gateway (NAT gateway không làm outbound-only thuần IPv6).</li>
+          <li>“<i>Instances in an IPv6-only subnet must reach an IPv4-only service</i>” ⇒ <b>NAT64/DNS64</b> với NAT gateway.</li>
+          <li>“<i>Cannot launch instances: subnet out of IPv4 addresses, application supports IPv6</i>” ⇒ cân nhắc <b>dual-stack</b> / IPv6-only subnet hoặc thêm secondary IPv4 CIDR.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: BASTION ===================== -->
+      <h2 id="bastion"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Bastion host và các cách quản trị instance private</h2>
+      <p class="lead">Docs Amazon VPC khuyến nghị đặt tài nguyên ở <b>private subnet</b>, và dùng <span class="t" data-vi="Máy chủ trung gian (máy nhảy)">bastion host</span> hoặc NAT device để cung cấp truy cập cho tài nguyên ở đó. Bastion host (còn gọi <i>jump box</i>) là một EC2 nhỏ ở <b>public subnet</b>, là <b>điểm duy nhất</b> nhận SSH/RDP từ Internet; admin SSH vào bastion rồi “nhảy” tiếp vào instance private.</p>
+
+      <h3>Cấu hình bastion host chuẩn</h3>
+      <ol class="steps">
+        <li>Launch bastion vào <b>public subnet</b> (tốt nhất mỗi AZ một bastion, hoặc trong Auto Scaling group min = max = 1 để tự thay thế), có <b>Elastic IP</b>.</li>
+        <li><b>Security group của bastion</b>: inbound TCP 22 (SSH) / 3389 (RDP) <b>chỉ từ dải IP công ty</b> (vd <code>198.51.100.0/24</code>), không bao giờ <code>0.0.0.0/0</code>.</li>
+        <li><b>Security group của instance private</b>: inbound 22/3389 <b>chỉ từ security group của bastion</b> (security group referencing – Bài 10).</li>
+        <li>Không lưu private key trên bastion – dùng SSH agent forwarding hoặc ProxyJump; hardening OS, bật log phiên.</li>
+      </ol>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – NAT gateway không phải bastion</span>
+        <p>NAT gateway <b>không hỗ trợ</b> làm bastion và không nhận kết nối vào. Muốn SSH vào instance private từ Internet ⇒ bastion host / EC2 Instance Connect Endpoint / Session Manager. Mở SSH inbound <code>0.0.0.0/0</code> lên bastion là đáp án <b>sai</b> về bảo mật.</p></div>
+
+      <h3>Các lựa chọn hiện đại thay bastion</h3>
+      <ul>
+        <li><span class="t" data-vi="Điểm cuối kết nối EC2 Instance Connect">EC2 Instance Connect Endpoint (EICE)</span> – <b>identity-aware TCP proxy</b>: kết nối an toàn từ Internet tới instance <b>không cần bastion, không cần public IP, VPC không cần IGW</b>. Xác thực bằng <b>IAM</b> trước khi traffic vào VPC; mọi lần kết nối (thành công lẫn thất bại) được log vào <b>CloudTrail</b>. Hỗ trợ <b>SSH và RDP</b>. <b>Không tính thêm phí</b> (chỉ phí data transfer cross-AZ). Giới hạn: <b>1 endpoint mỗi VPC và mỗi subnet</b>, <b>20 kết nối đồng thời</b> mỗi endpoint, phiên TCP tối đa <b>1 giờ (3.600 giây)</b>; dành cho traffic quản trị, truyền dữ liệu lớn bị throttle.</li>
+        <li><b>AWS Systems Manager Session Manager</b> – mở shell/port forwarding qua SSM Agent trên instance, <b>không mở port inbound nào</b>, không cần SSH key, ghi log phiên vào S3/CloudWatch Logs. Instance private cần đường ra tới endpoint của Systems Manager (qua NAT gateway hoặc interface endpoint) và IAM instance profile phù hợp.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="grp plain"><span class="lbl">Cách 1 – Bastion host truyền thống</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/User.svg" alt="">Admin<small>IP công ty</small></div>
+              <span class="arrow">SSH 22 → EIP</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Bastion host<small>public subnet, sg-bastion</small></div>
+              <span class="arrow">SSH 22 (src = sg-bastion)</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">App server<small>private subnet</small></div>
+            </div></div>
+          <div class="grp plain"><span class="lbl">Cách 2 – EC2 Instance Connect Endpoint</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/User.svg" alt="">Admin<small>IAM credentials</small></div>
+              <span class="arrow">tunnel qua dịch vụ EICE (IAM + CloudTrail)</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-VPC_Endpoints.svg" alt="">EICE<small>ENI trong subnet, không cần IGW</small></div>
+              <span class="arrow">SSH/RDP private IP</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">App server<small>không public IP</small></div>
+            </div></div>
+        </div>
+        <figcaption><b>Hình 5.</b> Hai cách quản trị instance trong private subnet. Bastion host cần public subnet, Elastic IP, mở port 22 từ dải IP tin cậy và phải tự vá OS. EC2 Instance Connect Endpoint xác thực bằng IAM, log CloudTrail, không cần public IP hay internet gateway và không tính thêm phí.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Bastion host</th><th>EC2 Instance Connect Endpoint</th><th>Session Manager</th></tr></thead>
+        <tbody>
+          <tr><td>Cần public subnet / IGW</td><td class="no">Có</td><td class="yes">Không</td><td class="yes">Không (cần NAT hoặc interface endpoint)</td></tr>
+          <tr><td>Mở port inbound trên instance đích</td><td>22/3389 từ SG bastion</td><td>22/3389 từ SG của endpoint</td><td class="yes">Không</td></tr>
+          <tr><td>Xác thực</td><td>SSH key / mật khẩu</td><td>IAM (+ key)</td><td>IAM</td></tr>
+          <tr><td>Audit</td><td>Tự cấu hình</td><td>CloudTrail</td><td>CloudTrail + log phiên</td></tr>
+          <tr><td>Chi phí / vận hành</td><td class="no">Trả tiền EC2 + EIP, tự patch</td><td class="yes">Không thêm phí</td><td class="yes">Không cần quản lý máy trung gian</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – truy cập quản trị</span>
+        <ul>
+          <li>“<i>Administrators need SSH access to instances in private subnets from the corporate network</i>” (đáp án cổ điển) ⇒ <b>bastion host</b> trong public subnet, SG chỉ cho IP công ty; SG instance private chỉ cho SG của bastion.</li>
+          <li>“<i>…without exposing any inbound ports / without managing bastion hosts / with IAM-based access and auditing</i>” ⇒ <b>Session Manager</b> hoặc <b>EC2 Instance Connect Endpoint</b>.</li>
+          <li>Bastion phải <b>highly available</b> ⇒ Auto Scaling group trải ≥ 2 AZ.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>VPC</b> thuộc một Region, trải mọi AZ; <b>subnet</b> nằm trọn trong <b>một AZ</b>. Default VPC: <code>172.31.0.0/16</code>, subnet /20 mỗi AZ, có IGW, tự gán public IP. Nondefault VPC: chỉ có local route.</li>
+          <li>CIDR VPC/subnet: <b>/16 → /28</b>; dùng RFC 1918; không resize được ⇒ thêm <b>secondary CIDR</b> (mặc định 5, tối đa 50). Mỗi subnet mất <b>5 IP</b> (.0 network, .1 router, .2 DNS, .3 dự phòng, cuối = broadcast) ⇒ /24 còn 251, /28 còn 11.</li>
+          <li><b>Public/private/VPN-only/isolated</b> do <b>route table</b> quyết định. Có public IP nhưng không có route tới IGW ⇒ vẫn không ra Internet.</li>
+          <li>Route table: mỗi subnet đúng 1 route table; subnet không gắn ⇒ main route table; <b>local route</b> luôn có; ưu tiên <b>longest prefix match</b> ⇒ static ⇒ prefix list ⇒ propagated. IPv4 và IPv6 tách biệt (<code>0.0.0.0/0</code> ≠ <code>::/0</code>).</li>
+          <li><b>IGW</b>: HA, không giới hạn băng thông, miễn phí, 1 IGW/VPC, NAT 1:1 cho IPv4, hai chiều.</li>
+          <li><b>NAT gateway</b>: chỉ outbound, zonal ⇒ <b>1 NAT/AZ</b> + route cùng AZ; public NAT ở public subnet + EIP; 5→100 Gbps, 55.000 kết nối/IP/đích, tối đa 8 IP; không gắn SG; tính phí giờ + GB. <b>Regional NAT gateway</b> tự trải đa AZ, không cần public subnet. <b>NAT instance</b>: tự quản, tắt source/dest check, có SG, port forwarding, kiêm bastion.</li>
+          <li><b>Egress-only IGW</b>: outbound-only cho <b>IPv6</b>, stateful, miễn phí. NAT64/DNS64 cho IPv6 → IPv4.</li>
+          <li><b>Bastion host</b> ở public subnet, SSH chỉ từ IP tin cậy; lựa chọn ít vận hành hơn: <b>EC2 Instance Connect Endpoint</b> (IAM, CloudTrail, không public IP, 20 kết nối, 1 giờ) và <b>Session Manager</b> (không mở port).</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Amazon VPC (Virtual Private Cloud)</dt><dd><b>Đám mây riêng ảo</b> – mạng ảo cô lập logic trong một Region.</dd></div>
+        <div><dt>Default VPC / Nondefault VPC</dt><dd><b>VPC mặc định / VPC tự tạo</b> – default VPC có sẵn IGW, subnet public mỗi AZ.</dd></div>
+        <div><dt>CIDR block</dt><dd><b>Khối địa chỉ CIDR</b> – dải IP dạng địa-chỉ/prefix, vd <code>10.0.0.0/16</code>.</dd></div>
+        <div><dt>RFC 1918</dt><dd><b>Dải IPv4 riêng</b> – 10/8, 172.16/12, 192.168/16.</dd></div>
+        <div><dt>Secondary CIDR block</dt><dd><b>Khối CIDR phụ</b> – thêm vào VPC khi hết IP.</dd></div>
+        <div><dt>Subnet</dt><dd><b>Mạng con</b> – dải IP trong VPC, nằm trong một AZ.</dd></div>
+        <div><dt>Public / Private / VPN-only / Isolated subnet</dt><dd><b>Mạng con công khai / riêng / chỉ VPN / cô lập</b> – phân loại theo route.</dd></div>
+        <div><dt>Dual-stack / IPv6-only subnet</dt><dd><b>Mạng con hai ngăn xếp / chỉ IPv6</b>.</dd></div>
+        <div><dt>Reserved IP addresses</dt><dd><b>Địa chỉ IP bị giữ lại</b> – 4 đầu + 1 cuối mỗi subnet.</dd></div>
+        <div><dt>Auto-assign public IP</dt><dd><b>Tự động gán IP công khai</b> – thuộc tính của subnet.</dd></div>
+        <div><dt>Implicit router (VPC router)</dt><dd><b>Bộ định tuyến ngầm của VPC</b> – địa chỉ base+1 của subnet.</dd></div>
+        <div><dt>Route table</dt><dd><b>Bảng định tuyến</b> – tập route destination → target.</dd></div>
+        <div><dt>Main route table / Custom route table</dt><dd><b>Bảng định tuyến chính / tùy chỉnh</b>.</dd></div>
+        <div><dt>Local route</dt><dd><b>Tuyến cục bộ</b> – giao tiếp trong VPC, có trong mọi route table.</dd></div>
+        <div><dt>Longest prefix match</dt><dd><b>Khớp tiền tố dài nhất</b> – route cụ thể nhất thắng.</dd></div>
+        <div><dt>Route propagation / Propagated route</dt><dd><b>Lan truyền tuyến / Tuyến được lan truyền</b> – route VPN tự thêm từ VGW.</dd></div>
+        <div><dt>Gateway route table / Edge association</dt><dd><b>Bảng định tuyến của gateway / Liên kết biên</b> – chèn appliance cho traffic đi vào.</dd></div>
+        <div><dt>Prefix list</dt><dd><b>Danh sách tiền tố</b> – nhóm CIDR dùng làm destination.</dd></div>
+        <div><dt>Internet gateway (IGW)</dt><dd><b>Cổng Internet</b> – kết nối hai chiều VPC ↔ Internet, NAT 1:1 cho IPv4.</dd></div>
+        <div><dt>NAT gateway (public / private)</dt><dd><b>Cổng NAT được quản lý</b> – cho private subnet đi ra; public dùng EIP, private dùng tới VPC/on-prem.</dd></div>
+        <div><dt>Zonal / Regional NAT gateway</dt><dd><b>Cổng NAT theo AZ / cấp vùng</b> – regional tự trải đa AZ.</dd></div>
+        <div><dt>NAT instance</dt><dd><b>Máy chủ NAT tự quản</b> – EC2 làm NAT, tắt source/dest check.</dd></div>
+        <div><dt>NAT64 / DNS64</dt><dd><b>Dịch IPv6 sang IPv4 / DNS tổng hợp bản ghi AAAA</b>.</dd></div>
+        <div><dt>Egress-only internet gateway</dt><dd><b>Cổng Internet chỉ đi ra</b> – outbound-only cho IPv6.</dd></div>
+        <div><dt>Bastion host (jump box)</dt><dd><b>Máy chủ trung gian</b> – điểm SSH/RDP duy nhất vào mạng private.</dd></div>
+        <div><dt>EC2 Instance Connect Endpoint</dt><dd><b>Điểm cuối EC2 Instance Connect</b> – proxy TCP xác thực IAM tới instance private.</dd></div>
+        <div><dt>VPC Block Public Access</dt><dd><b>Chặn truy cập công khai VPC</b> – chặn traffic qua IGW/EIGW toàn account/Region.</dd></div>
+      </dl>
+
+      <!-- ===================== CÂU HỎI LUYỆN TẬP ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="D">
+          <div class="qh">A company runs an application on Amazon EC2 instances in private subnets across two Availability Zones. The instances must download security patches from the internet but must not be reachable from the internet. The solution must remain available if one Availability Zone fails and must require the LEAST operational overhead. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Launch a NAT instance in a public subnet in one Availability Zone and point the route tables of both private subnets to the NAT instance.</li>
+            <li data-k="B">Create a single NAT gateway in one of the private subnets and add a route to it from both private subnets.</li>
+            <li data-k="C">Attach an egress-only internet gateway to the VPC and add a 0.0.0.0/0 route to it in the private subnets' route tables.</li>
+            <li data-k="D">Create a NAT gateway in a public subnet in each Availability Zone, and configure each private subnet's route table to send 0.0.0.0/0 traffic to the NAT gateway in the same Availability Zone.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> NAT gateway là dịch vụ được quản lý, chỉ cho kết nối đi ra. Vì NAT gateway là tài nguyên <b>zonal</b>, mỗi AZ cần một NAT gateway và route table của từng private subnet trỏ tới NAT <b>cùng AZ</b>, nên một AZ sập không ảnh hưởng AZ kia. <b>A sai</b>: NAT instance tự quản (nhiều vận hành), lại chỉ có một ở một AZ. <b>B sai</b>: NAT gateway đặt ở private subnet thì không ra Internet được, và một NAT duy nhất không chịu được sự cố AZ. <b>C sai</b>: egress-only IGW chỉ dành cho <b>IPv6</b>, không dùng cho route 0.0.0.0/0.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng trên các Amazon EC2 instance trong private subnet ở hai Availability Zone. Các instance phải tải được bản vá bảo mật từ Internet nhưng không được để Internet truy cập vào. Giải pháp phải tiếp tục khả dụng nếu một Availability Zone gặp sự cố và phải có LEAST operational overhead (ít công sức vận hành nhất). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chạy một NAT instance trong public subnet ở một Availability Zone và trỏ route table của cả hai private subnet tới NAT instance đó.</span><span class="why">Sai: NAT instance phải tự quản lý (vá lỗi, scale) và chỉ có một ở một AZ – AZ đó sập thì cả hai subnet mất kết nối ra ngoài.</span></li>
+              <li data-k="B"><span class="tv">Tạo một NAT gateway duy nhất trong một private subnet và thêm route tới nó từ cả hai private subnet.</span><span class="why">Sai: NAT gateway đặt trong private subnet không có đường ra IGW nên không ra Internet được, và một NAT duy nhất không chịu được sự cố AZ.</span></li>
+              <li data-k="C"><span class="tv">Gắn một egress-only internet gateway vào VPC và thêm route 0.0.0.0/0 tới nó trong route table của các private subnet.</span><span class="why">Sai: egress-only internet gateway chỉ dành cho IPv6, không thể dùng cho route IPv4 0.0.0.0/0.</span></li>
+              <li data-k="D"><span class="tv">Tạo một NAT gateway trong public subnet ở mỗi Availability Zone, và cấu hình route table của mỗi private subnet gửi traffic 0.0.0.0/0 tới NAT gateway trong cùng Availability Zone.</span><span class="why">Đúng: NAT gateway là dịch vụ managed chỉ cho kết nối đi ra; vì nó là tài nguyên zonal, mỗi AZ một NAT gateway và route tới NAT cùng AZ giúp một AZ sập không ảnh hưởng AZ còn lại.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A solutions architect creates a new subnet in an existing VPC and launches an EC2 instance with a public IPv4 address into it. The instance cannot reach the internet. Instances in another public subnet of the same VPC can reach the internet without issues. The security group and network ACL allow the traffic. What is the MOST likely cause?</div>
+          <ol class="opts">
+            <li data-k="A">The VPC does not have an internet gateway attached.</li>
+            <li data-k="B">The new subnet is implicitly associated with the main route table, which does not contain a route to the internet gateway.</li>
+            <li data-k="C">The instance needs an Elastic IP address instead of an auto-assigned public IPv4 address.</li>
+            <li data-k="D">The VPC needs a second internet gateway for the new subnet.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Subnet mới không được gắn tường minh sẽ <b>ngầm định dùng main route table</b>; nếu main route table chỉ có local route (thực hành tốt), subnet đó là private dù instance có public IP. Cách sửa: gắn subnet với custom route table có <code>0.0.0.0/0 → igw</code>. <b>A sai</b>: subnet khác ra Internet được nên IGW đã gắn. <b>C sai</b>: public IPv4 tự gán hay Elastic IP đều được IGW dịch như nhau. <b>D sai</b>: mỗi VPC chỉ gắn được <b>một</b> IGW, và một IGW phục vụ mọi subnet.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect tạo một subnet mới trong một VPC hiện có và chạy một EC2 instance có public IPv4 address trong đó. Instance không thể kết nối Internet. Các instance ở một public subnet khác trong cùng VPC truy cập Internet bình thường. Security group và network ACL đều cho phép traffic. Nguyên nhân MOST likely (khả dĩ nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">VPC chưa được gắn internet gateway.</span><span class="why">Sai: instance ở public subnet khác trong cùng VPC vẫn ra Internet được, chứng tỏ IGW đã được gắn.</span></li>
+              <li data-k="B"><span class="tv">Subnet mới được ngầm định gắn với main route table, vốn không có route tới internet gateway.</span><span class="why">Đúng: subnet không gắn tường minh sẽ dùng main route table; nếu main route table chỉ có local route thì subnet là private dù instance có public IP – cần gắn route table có 0.0.0.0/0 → igw.</span></li>
+              <li data-k="C"><span class="tv">Instance cần Elastic IP address thay vì public IPv4 address được tự động gán.</span><span class="why">Sai: IGW dịch địa chỉ như nhau cho public IPv4 tự gán và Elastic IP; loại IP không phải nguyên nhân.</span></li>
+              <li data-k="D"><span class="tv">VPC cần một internet gateway thứ hai cho subnet mới.</span><span class="why">Sai: mỗi VPC chỉ gắn được một IGW, và một IGW phục vụ mọi subnet có route tới nó.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company is migrating an application to a dual-stack VPC. EC2 instances in a subnet must be able to initiate connections to IPv6 endpoints on the internet. Internet hosts must not be able to initiate IPv6 connections to the instances. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create an egress-only internet gateway and add a ::/0 route that targets it in the subnet's route table.</li>
+            <li data-k="B">Create a NAT gateway with an Elastic IP address and add a ::/0 route that targets the NAT gateway.</li>
+            <li data-k="C">Add a ::/0 route to the internet gateway and remove the IPv6 addresses from the instances.</li>
+            <li data-k="D">Add a 0.0.0.0/0 route to the internet gateway and use a security group to deny inbound IPv6 traffic.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Egress-only internet gateway</b> là thành phần stateful, chỉ cho IPv6 đi ra và chặn Internet khởi tạo kết nối IPv6 vào; route <code>::/0 → eigw</code>. <b>B sai</b>: NAT gateway dùng cho IPv4 (với IPv6 chỉ làm NAT64 tới đích IPv4), không phải giải pháp outbound-only IPv6. <b>C sai</b>: bỏ IPv6 của instance thì không còn giao tiếp IPv6. <b>D sai</b>: route 0.0.0.0/0 chỉ áp cho IPv4; security group cũng không có rule deny.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang chuyển một ứng dụng sang VPC dual-stack. Các EC2 instance trong một subnet phải có thể khởi tạo kết nối tới các endpoint IPv6 trên Internet. Các host trên Internet không được phép khởi tạo kết nối IPv6 tới các instance. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một egress-only internet gateway và thêm route ::/0 trỏ tới nó trong route table của subnet.</span><span class="why">Đúng: egress-only internet gateway là thành phần stateful chỉ cho IPv6 đi ra và chặn Internet khởi tạo kết nối IPv6 vào – đúng yêu cầu.</span></li>
+              <li data-k="B"><span class="tv">Tạo một NAT gateway có Elastic IP address và thêm route ::/0 trỏ tới NAT gateway.</span><span class="why">Sai: NAT gateway dùng cho IPv4 (với IPv6 chỉ làm NAT64 tới đích IPv4), không phải giải pháp outbound-only cho IPv6.</span></li>
+              <li data-k="C"><span class="tv">Thêm route ::/0 tới internet gateway và gỡ địa chỉ IPv6 khỏi các instance.</span><span class="why">Sai: gỡ IPv6 thì instance không còn giao tiếp IPv6 được nữa, không đáp ứng yêu cầu kết nối ra endpoint IPv6.</span></li>
+              <li data-k="D"><span class="tv">Thêm route 0.0.0.0/0 tới internet gateway và dùng security group để từ chối traffic IPv6 đi vào.</span><span class="why">Sai: route 0.0.0.0/0 chỉ áp dụng cho IPv4, và security group không có rule deny (chỉ có allow).</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company needs a subnet that can host at least 100 EC2 instances, each with one private IPv4 address. The company wants to use the smallest possible CIDR block to conserve address space in the VPC. Which CIDR block should the solutions architect choose for the subnet?</div>
+          <ol class="opts">
+            <li data-k="A">/27</li>
+            <li data-k="B">/26</li>
+            <li data-k="C">/25</li>
+            <li data-k="D">/24</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Mỗi subnet mất <b>5 IP</b> do AWS giữ (network, router, DNS, dự phòng, broadcast). /25 = 128 − 5 = <b>123</b> IP ≥ 100. <b>A sai</b>: /27 = 32 − 5 = 27 IP. <b>B sai</b>: /26 = 64 − 5 = 59 IP, không đủ. <b>D sai</b>: /24 = 251 IP – đủ nhưng không phải khối nhỏ nhất.</div>
+          <div class="trans">
+            <div class="tq">Một công ty cần một subnet có thể chứa ít nhất 100 EC2 instance, mỗi instance có một private IPv4 address. Công ty muốn dùng CIDR block nhỏ nhất có thể để tiết kiệm không gian địa chỉ trong VPC. Solutions architect nên chọn CIDR block nào cho subnet?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">/27</span><span class="why">Sai: /27 có 32 địa chỉ, trừ 5 IP AWS giữ lại chỉ còn 27 IP – quá ít cho 100 instance.</span></li>
+              <li data-k="B"><span class="tv">/26</span><span class="why">Sai: /26 có 64 địa chỉ, trừ 5 IP dành riêng còn 59 IP – không đủ 100.</span></li>
+              <li data-k="C"><span class="tv">/25</span><span class="why">Đúng: /25 có 128 địa chỉ, trừ 5 IP AWS giữ lại còn 123 IP ≥ 100 – là khối nhỏ nhất đáp ứng yêu cầu.</span></li>
+              <li data-k="D"><span class="tv">/24</span><span class="why">Sai: /24 có 251 IP khả dụng – đủ nhưng không phải khối nhỏ nhất, lãng phí không gian địa chỉ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company's security policy states that EC2 instances in private subnets must not have public IP addresses and that no bastion hosts may be deployed. Administrators must still be able to open interactive sessions to the instances, and all access must be authorized through IAM and logged. Which TWO solutions meet these requirements? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Use AWS Systems Manager Session Manager with an instance profile that grants the required Systems Manager permissions.</li>
+            <li data-k="B">Configure port forwarding on a NAT gateway to forward SSH traffic to the instances.</li>
+            <li data-k="C">Attach an internet gateway and assign Elastic IP addresses only during maintenance windows.</li>
+            <li data-k="D">Create an EC2 Instance Connect Endpoint in the VPC and allow SSH from the endpoint's security group on the instances.</li>
+            <li data-k="E">Attach an egress-only internet gateway so that administrators can connect over IPv6.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> <b>Session Manager</b> mở phiên qua SSM Agent, không mở port inbound, xác thực bằng IAM, ghi log. <b>EC2 Instance Connect Endpoint</b> là proxy TCP xác thực IAM, log mọi lần kết nối vào CloudTrail, không cần public IP hay IGW. <b>B sai</b>: NAT gateway <b>không hỗ trợ port forwarding</b> và không nhận kết nối vào. <b>C sai</b>: vi phạm yêu cầu không có public IP. <b>E sai</b>: egress-only IGW chặn mọi kết nối khởi tạo từ Internet.</div>
+          <div class="trans">
+            <div class="tq">Chính sách bảo mật của một công ty quy định các EC2 instance trong private subnet không được có public IP address và không được triển khai bastion host. Quản trị viên vẫn phải mở được phiên tương tác (interactive session) tới các instance, và mọi truy cập phải được ủy quyền qua IAM và được ghi log. HAI giải pháp nào đáp ứng các yêu cầu này? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng AWS Systems Manager Session Manager với một instance profile cấp các quyền Systems Manager cần thiết.</span><span class="why">Đúng: Session Manager mở phiên qua SSM Agent, không cần public IP hay mở port inbound, xác thực bằng IAM và ghi log phiên làm việc.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình port forwarding trên NAT gateway để chuyển tiếp traffic SSH tới các instance.</span><span class="why">Sai: NAT gateway không hỗ trợ port forwarding và không nhận kết nối khởi tạo từ bên ngoài.</span></li>
+              <li data-k="C"><span class="tv">Gắn internet gateway và chỉ gán Elastic IP address trong các khung giờ bảo trì.</span><span class="why">Sai: gán Elastic IP là cho instance có public IP, vi phạm chính sách dù chỉ tạm thời.</span></li>
+              <li data-k="D"><span class="tv">Tạo một EC2 Instance Connect Endpoint trong VPC và cho phép SSH từ security group của endpoint vào các instance.</span><span class="why">Đúng: EC2 Instance Connect Endpoint là proxy TCP xác thực bằng IAM, ghi log mọi kết nối vào CloudTrail, không cần public IP, IGW hay bastion host.</span></li>
+              <li data-k="E"><span class="tv">Gắn egress-only internet gateway để quản trị viên kết nối qua IPv6.</span><span class="why">Sai: egress-only internet gateway chặn mọi kết nối khởi tạo từ Internet vào, nên quản trị viên không thể kết nối.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A VPC was created with the CIDR block 10.0.0.0/24. The application team now needs to launch many more instances, but all subnets have run out of available IP addresses. The team must keep the existing VPC and resources. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Modify the VPC's primary CIDR block from /24 to /16.</li>
+            <li data-k="B">Resize the existing subnets to use a larger netmask.</li>
+            <li data-k="C">Associate a secondary IPv4 CIDR block with the VPC, and create new subnets from that range.</li>
+            <li data-k="D">Create a new VPC and use VPC peering to share the existing subnets.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> CIDR block của VPC và subnet <b>không thể tăng/giảm kích thước</b>. Cách đúng là <b>thêm secondary IPv4 CIDR</b> (mặc định tới 5 CIDR/VPC, tăng được tới 50) rồi tạo subnet mới; AWS tự thêm local route cho CIDR mới. <b>A, B sai</b>: không có thao tác resize. <b>D sai</b>: peering không “chia sẻ subnet”, và tạo VPC mới đi ngược yêu cầu giữ nguyên VPC.</div>
+          <div class="trans">
+            <div class="tq">Một VPC được tạo với CIDR block 10.0.0.0/24. Nhóm ứng dụng hiện cần chạy thêm nhiều instance, nhưng tất cả subnet đã hết địa chỉ IP khả dụng. Nhóm phải giữ nguyên VPC và các tài nguyên hiện có. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Sửa primary CIDR block của VPC từ /24 thành /16.</span><span class="why">Sai: CIDR block của VPC không thể thay đổi kích thước sau khi tạo.</span></li>
+              <li data-k="B"><span class="tv">Thay đổi kích thước các subnet hiện có để dùng netmask lớn hơn.</span><span class="why">Sai: CIDR của subnet cũng không thể resize; chỉ có thể xóa và tạo lại.</span></li>
+              <li data-k="C"><span class="tv">Gắn thêm một secondary IPv4 CIDR block vào VPC, và tạo các subnet mới từ dải địa chỉ đó.</span><span class="why">Đúng: VPC hỗ trợ thêm secondary IPv4 CIDR (mặc định tới 5, tăng được tới 50); AWS tự thêm local route và có thể tạo subnet mới mà vẫn giữ nguyên VPC.</span></li>
+              <li data-k="D"><span class="tv">Tạo một VPC mới và dùng VPC peering để chia sẻ các subnet hiện có.</span><span class="why">Sai: VPC peering không "chia sẻ subnet", và tạo VPC mới đi ngược yêu cầu giữ nguyên VPC hiện có.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">EC2 instances in private subnets process several terabytes of data each day and store the results in an Amazon S3 bucket in the same Region. The traffic goes through a NAT gateway, and the company notices high NAT gateway data processing charges. Which solution will reduce these costs MOST effectively?</div>
+          <ol class="opts">
+            <li data-k="A">Replace the NAT gateway with a larger NAT instance.</li>
+            <li data-k="B">Create a gateway VPC endpoint for Amazon S3 and add it to the private subnets' route tables.</li>
+            <li data-k="C">Move the instances to public subnets and assign Elastic IP addresses.</li>
+            <li data-k="D">Add a second NAT gateway in another Availability Zone.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Docs về giá NAT gateway khuyến nghị: nếu phần lớn traffic là tới dịch vụ AWS hỗ trợ endpoint thì tạo endpoint. <b>S3 gateway endpoint</b> miễn phí, thêm route (prefix list S3 → vpce) vào route table, traffic không qua NAT nữa. <b>A sai</b>: NAT instance tăng vận hành và vẫn tốn băng thông, kém HA. <b>C sai</b>: lộ instance ra Internet, phát sinh phí public IPv4. <b>D sai</b>: thêm NAT gateway làm tăng chi phí, không giảm phí xử lý dữ liệu.</div>
+          <div class="trans">
+            <div class="tq">Các EC2 instance trong private subnet xử lý vài terabyte dữ liệu mỗi ngày và lưu kết quả vào một Amazon S3 bucket trong cùng Region. Traffic đi qua một NAT gateway, và công ty nhận thấy phí xử lý dữ liệu (data processing) của NAT gateway rất cao. Giải pháp nào sẽ giảm chi phí này MOST effectively (hiệu quả nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thay NAT gateway bằng một NAT instance lớn hơn.</span><span class="why">Sai: NAT instance tăng công vận hành, kém khả dụng và bị giới hạn băng thông theo loại instance; traffic tới S3 vẫn đi vòng qua NAT.</span></li>
+              <li data-k="B"><span class="tv">Tạo một gateway VPC endpoint cho Amazon S3 và thêm nó vào route table của các private subnet.</span><span class="why">Đúng: S3 gateway endpoint miễn phí, thêm route prefix list S3 → vpce vào route table nên traffic tới S3 không đi qua NAT, loại bỏ phí xử lý dữ liệu NAT.</span></li>
+              <li data-k="C"><span class="tv">Chuyển các instance sang public subnet và gán Elastic IP address.</span><span class="why">Sai: để lộ instance ra Internet, giảm bảo mật và phát sinh phí public IPv4.</span></li>
+              <li data-k="D"><span class="tv">Thêm một NAT gateway thứ hai ở Availability Zone khác.</span><span class="why">Sai: thêm NAT gateway làm tăng phí theo giờ, trong khi phí xử lý theo GB vẫn giữ nguyên.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company's application runs on an Auto Scaling group of EC2 instances in private subnets. The application calls a partner's API on the internet. The partner allows requests only from a small set of static, allow-listed public IP addresses. Instances are frequently replaced. Which solution meets this requirement?</div>
+          <ol class="opts">
+            <li data-k="A">Assign an Elastic IP address to each instance in the Auto Scaling group by using a lifecycle hook.</li>
+            <li data-k="B">Route outbound traffic through the VPC's internet gateway directly from the private subnets.</li>
+            <li data-k="C">Use an egress-only internet gateway and give the partner the VPC's IPv6 CIDR block.</li>
+            <li data-k="D">Route outbound traffic from the private subnets through NAT gateways that have Elastic IP addresses, and give the partner those Elastic IP addresses.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Public NAT gateway dịch địa chỉ nguồn sang <b>Elastic IP</b> của nó, nên mọi instance phía sau (dù bị thay liên tục) đều đi ra bằng một tập IP cố định. <b>A sai</b>: phức tạp, tốn EIP (mặc định 5/Region) và đòi instance có route tới IGW. <b>B sai</b>: route tới IGW biến subnet thành public, và instance không có public IP thì không ra được. <b>C sai</b>: partner chỉ allow-list IPv4 tĩnh; đổi sang IPv6 không đáp ứng yêu cầu.</div>
+          <div class="trans">
+            <div class="tq">Ứng dụng của một công ty chạy trên một Auto Scaling group gồm các EC2 instance trong private subnet. Ứng dụng gọi API của một đối tác trên Internet. Đối tác chỉ chấp nhận request từ một nhóm nhỏ địa chỉ public IP tĩnh nằm trong allow list. Các instance thường xuyên bị thay thế. Giải pháp nào đáp ứng yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gán một Elastic IP address cho mỗi instance trong Auto Scaling group bằng một lifecycle hook.</span><span class="why">Sai: phức tạp, tốn nhiều Elastic IP (mặc định 5/Region) khi scale, và instance trong private subnet không có route tới IGW nên EIP cũng không dùng được.</span></li>
+              <li data-k="B"><span class="tv">Định tuyến traffic đi ra qua internet gateway của VPC trực tiếp từ các private subnet.</span><span class="why">Sai: route tới IGW biến subnet thành public, và instance không có public IP thì vẫn không ra Internet được.</span></li>
+              <li data-k="C"><span class="tv">Dùng egress-only internet gateway và cung cấp cho đối tác IPv6 CIDR block của VPC.</span><span class="why">Sai: đối tác chỉ allow-list địa chỉ IPv4 tĩnh; chuyển sang IPv6 không đáp ứng yêu cầu.</span></li>
+              <li data-k="D"><span class="tv">Định tuyến traffic đi ra từ các private subnet qua các NAT gateway có Elastic IP address, và cung cấp các Elastic IP đó cho đối tác.</span><span class="why">Đúng: NAT gateway dịch địa chỉ nguồn sang Elastic IP của nó, nên mọi instance phía sau dù bị thay liên tục đều đi ra bằng một tập IP cố định để đối tác allow-list.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A web server runs on an EC2 instance in a subnet whose route table contains a 0.0.0.0/0 route to an internet gateway. The security group allows inbound HTTP from 0.0.0.0/0, and the network ACL allows all traffic. Users on the internet cannot reach the web server. What should the solutions architect do to resolve the issue?</div>
+          <ol class="opts">
+            <li data-k="A">Associate an Elastic IP address (or a public IPv4 address) with the instance.</li>
+            <li data-k="B">Create a NAT gateway in the subnet and route inbound traffic through it.</li>
+            <li data-k="C">Add a route for the VPC CIDR block that targets the internet gateway.</li>
+            <li data-k="D">Attach a security group to the internet gateway that allows HTTP.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Để giao tiếp IPv4 với Internet qua IGW, instance phải có <b>public IPv4 hoặc Elastic IP</b> – IGW dịch 1:1 giữa private IP và public IP đó. Subnet nondefault mặc định <b>không</b> tự gán public IP. <b>B sai</b>: NAT gateway không nhận kết nối khởi tạo từ Internet. <b>C sai</b>: CIDR của VPC đã có local route, không thể trỏ tới IGW. <b>D sai</b>: không gắn được security group vào IGW.</div>
+          <div class="trans">
+            <div class="tq">Một web server chạy trên một EC2 instance trong một subnet có route table chứa route 0.0.0.0/0 tới internet gateway. Security group cho phép HTTP đi vào từ 0.0.0.0/0, và network ACL cho phép mọi traffic. Người dùng trên Internet không truy cập được web server. Solutions architect nên làm gì để khắc phục?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Gắn một Elastic IP address (hoặc một public IPv4 address) cho instance.</span><span class="why">Đúng: để giao tiếp IPv4 với Internet qua IGW, instance phải có public IPv4 hoặc Elastic IP để IGW dịch 1:1; subnet nondefault mặc định không tự gán public IP.</span></li>
+              <li data-k="B"><span class="tv">Tạo một NAT gateway trong subnet và định tuyến traffic đi vào qua nó.</span><span class="why">Sai: NAT gateway chỉ cho kết nối đi ra, không nhận kết nối khởi tạo từ Internet vào.</span></li>
+              <li data-k="C"><span class="tv">Thêm một route cho CIDR block của VPC trỏ tới internet gateway.</span><span class="why">Sai: CIDR của VPC đã có local route mặc định và không thể trỏ sang IGW; route không phải nguyên nhân.</span></li>
+              <li data-k="D"><span class="tv">Gắn một security group cho phép HTTP vào internet gateway.</span><span class="why">Sai: security group gắn vào network interface của tài nguyên, không thể gắn vào internet gateway.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C,E">
+          <div class="qh">A small development environment requires a low-cost NAT solution that also supports port forwarding and allows security groups to be attached to the NAT device. The team decides to use a NAT instance. Which TWO configuration steps are required for the NAT instance to work? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Launch the NAT instance in a private subnet that has a route to a NAT gateway.</li>
+            <li data-k="B">Add a 0.0.0.0/0 route that targets the NAT instance in the route table of the public subnet where the NAT instance runs.</li>
+            <li data-k="C">Disable the source/destination check on the NAT instance.</li>
+            <li data-k="D">Attach an egress-only internet gateway to the NAT instance.</li>
+            <li data-k="E">Launch the NAT instance in a public subnet and give it a public IPv4 or Elastic IP address.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C, E.</b> NAT instance phải ở <b>public subnet</b> (có route tới IGW) và có <b>public IP/Elastic IP</b> để ra Internet; nó chuyển tiếp gói tin không phải của chính nó nên phải <b>tắt source/destination check</b>. Route <code>0.0.0.0/0 → NAT instance</code> đặt ở route table của <b>private subnet</b>. <b>A sai</b>: đặt ở private subnet thì NAT instance không ra Internet. <b>B sai</b>: route trỏ về chính NAT instance trong public subnet tạo vòng lặp; public subnet phải trỏ tới IGW. <b>D sai</b>: egress-only IGW gắn vào VPC (không gắn vào instance) và chỉ cho IPv6.</div>
+          <div class="trans">
+            <div class="tq">Một môi trường phát triển nhỏ cần một giải pháp NAT chi phí thấp, đồng thời hỗ trợ port forwarding và cho phép gắn security group vào thiết bị NAT. Nhóm quyết định dùng NAT instance. HAI bước cấu hình nào là bắt buộc để NAT instance hoạt động? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chạy NAT instance trong một private subnet có route tới NAT gateway.</span><span class="why">Sai: NAT instance phải ở public subnet có route tới IGW; đặt ở private subnet thì nó không tự ra Internet được.</span></li>
+              <li data-k="B"><span class="tv">Thêm route 0.0.0.0/0 trỏ tới NAT instance trong route table của public subnet nơi NAT instance đang chạy.</span><span class="why">Sai: route này tạo vòng lặp; public subnet phải trỏ 0.0.0.0/0 tới IGW, còn route tới NAT instance đặt ở route table của private subnet.</span></li>
+              <li data-k="C"><span class="tv">Tắt source/destination check trên NAT instance.</span><span class="why">Đúng: NAT instance chuyển tiếp gói tin không có nguồn/đích là chính nó, nên phải tắt source/destination check.</span></li>
+              <li data-k="D"><span class="tv">Gắn một egress-only internet gateway vào NAT instance.</span><span class="why">Sai: egress-only internet gateway gắn vào VPC (không gắn vào instance) và chỉ phục vụ IPv6.</span></li>
+              <li data-k="E"><span class="tv">Chạy NAT instance trong một public subnet và gán cho nó public IPv4 hoặc Elastic IP address.</span><span class="why">Đúng: NAT instance cần nằm ở public subnet (route tới IGW) và có public IP/Elastic IP để dịch địa chỉ cho traffic đi ra Internet.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html" target="_blank" rel="noopener">VPC CIDR blocks</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/subnet-sizing.html" target="_blank" rel="noopener">Subnet CIDR blocks</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/default-vpc-components.html" target="_blank" rel="noopener">Default VPC components</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/RouteTables.html" target="_blank" rel="noopener">Route table concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/subnet-route-tables.html" target="_blank" rel="noopener">Subnet route tables</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/route-tables-priority.html" target="_blank" rel="noopener">How route priority works</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/nat-gateway-basics.html" target="_blank" rel="noopener">NAT gateway basics</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/nat-gateways-regional.html" target="_blank" rel="noopener">Regional NAT gateways</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-comparison.html" target="_blank" rel="noopener">Compare NAT gateways and NAT instances</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/VPC_NAT_Instance.html" target="_blank" rel="noopener">NAT instances</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/nat-gateway-pricing.html" target="_blank" rel="noopener">Pricing for NAT gateways</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/egress-only-internet-gateway.html" target="_blank" rel="noopener">Egress-only internet gateway</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-example-private-subnets-nat.html" target="_blank" rel="noopener">Example: VPC with servers in private subnets and NAT</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/security-vpc-bpa.html" target="_blank" rel="noopener">Block public access to VPCs and subnets</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/amazon-vpc-limits.html" target="_blank" rel="noopener">Amazon VPC quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/connect-with-ec2-instance-connect-endpoint.html" target="_blank" rel="noopener">EC2 Instance Connect Endpoint</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

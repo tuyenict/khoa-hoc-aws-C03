@@ -1,0 +1,970 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 40 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-CloudWatch.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="40" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Phân biệt rõ ba dịch vụ hay bị nhầm: <b>CloudWatch</b> (hiệu năng &amp; vận hành – “<i>đang chạy thế nào?</i>”), <b>CloudTrail</b> (kiểm toán API – “<i>ai đã làm gì, lúc nào?</i>”), <b>AWS Config</b> (cấu hình &amp; tuân thủ – “<i>tài nguyên đang được cấu hình ra sao, có đúng chuẩn không?</i>”).</li>
+          <li>Nắm chắc khái niệm <b>metric</b> của CloudWatch: namespace, dimension, statistic, period, percentile, <b>standard vs high resolution</b>, lịch lưu giữ (3 giờ / 15 ngày / 63 ngày / 15 tháng), <b>custom metric</b> qua <code>PutMetricData</code>.</li>
+          <li>Thiết kế <b>CloudWatch alarm</b>: trạng thái, Period / Evaluation Periods / Datapoints to Alarm (M out of N), cách xử lý missing data, các action (SNS, EC2 stop/terminate/reboot/<b>recover</b>, Auto Scaling, Systems Manager), <b>composite alarm</b>.</li>
+          <li>Dùng <b>CloudWatch Logs</b>: log group/stream, retention, log class, <b>metric filter</b>, <b>subscription filter</b>, export S3, <b>Logs Insights</b>; biết khi nào cần cài <b>CloudWatch agent</b> (memory, disk, log file trên EC2/on-premises).</li>
+          <li>Cấu hình <b>CloudTrail</b> đúng: event history 90 ngày, <b>trail</b> multi-Region / organization trail, <b>management vs data events</b>, Insights events, <b>log file integrity validation</b>, CloudTrail Lake.</li>
+          <li>Dùng <b>AWS Config</b>: configuration item, recorder, <b>Config rules</b> (managed/custom, trigger, proactive/detective), conformance pack, aggregator và <b>auto remediation</b> bằng SSM Automation.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 9 – Monitoring, Governance &amp; Operations</span>
+        <p>Bài 13 đã dạy CloudWatch alarm trong <b>target tracking / step scaling</b> của Auto Scaling; Bài 21 đã dạy <b>VPC Flow Logs</b>; Bài 31 đã dạy <b>EventBridge</b> (rule, event pattern, target); Bài 39 đã dạy <b>GuardDuty, Security Hub</b> (dùng CloudTrail và Config làm nguồn dữ liệu). Bài này <b>không lặp lại</b> các phần đó mà tập trung vào chính ba dịch vụ giám sát &amp; kiểm toán. <b>CloudFormation, Systems Manager</b> (Session Manager, Patch Manager, Run Command) học ở <b>Bài 41</b>; <b>Cost Explorer, Budgets, Trusted Advisor</b> học ở <b>Bài 44</b>.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Management-Governance.svg" alt="">Bức tranh tổng thể: giám sát, kiểm toán và tuân thủ</h2>
+      <p class="lead">Khi vận hành hệ thống trên AWS, bạn cần trả lời ba nhóm câu hỏi khác nhau. Ứng dụng <b>đang chạy có khỏe không</b> (CPU, độ trễ, lỗi 5xx, log lỗi)? Ai đã <b>gọi API nào</b> làm thay đổi môi trường (xóa bucket, sửa security group)? Tài nguyên hiện đang <b>được cấu hình thế nào</b>, trước đây ra sao, và có <b>tuân thủ</b> quy định nội bộ không? Ba dịch vụ trong bài này trả lời lần lượt ba nhóm câu hỏi đó và thường được dùng <b>cùng nhau</b>.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">
+          <div><h4>Amazon CloudWatch</h4><span class="vi">Giám sát hiệu năng &amp; vận hành</span><p>Theo dõi tài nguyên và ứng dụng <b>theo thời gian thực</b>: <b>metrics</b>, <b>alarms</b>, <b>dashboards</b>, <b>Logs</b> + Logs Insights, agent, Application Signals, Synthetics, Container/Lambda Insights.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">
+          <div><h4>CloudWatch Alarm</h4><span class="vi">Cảnh báo theo ngưỡng</span><p>Theo dõi một metric (hoặc biểu thức) so với ngưỡng qua nhiều period, rồi gửi <b>SNS</b>, thực hiện action <b>EC2</b> / <b>Auto Scaling</b> / Systems Manager.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">
+          <div><h4>AWS CloudTrail</h4><span class="vi">Kiểm toán hoạt động API</span><p>Ghi lại hành động của user, role, dịch vụ AWS qua Console, CLI, SDK, API thành <b>event</b>: <i>ai, làm gì, trên tài nguyên nào, khi nào, từ đâu</i>. Phục vụ governance, compliance, điều tra bảo mật.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Config.svg" alt="">
+          <div><h4>AWS Config</h4><span class="vi">Ghi nhận cấu hình &amp; đánh giá tuân thủ</span><p>Xem chi tiết <b>cấu hình</b> tài nguyên, <b>quan hệ</b> giữa chúng và <b>lịch sử thay đổi</b>; dùng <b>Config rules</b> đánh giá tuân thủ và <b>remediation</b> để tự sửa.</p></div></div>
+      </div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>CloudWatch</th><th>CloudTrail</th><th>AWS Config</th></tr></thead>
+        <tbody>
+          <tr><td>Câu hỏi trả lời</td><td>“Hệ thống <b>đang hoạt động</b> thế nào?”</td><td>“<b>Ai</b> đã gọi API <b>gì</b>, <b>khi nào</b>, từ <b>IP nào</b>?”</td><td>“Tài nguyên <b>được cấu hình</b> ra sao, đã <b>thay đổi</b> thế nào, có <b>tuân thủ</b> không?”</td></tr>
+          <tr><td>Dữ liệu chính</td><td>Metric (chuỗi số theo thời gian), log, trace</td><td>Event JSON của lời gọi API (và sự kiện không phải API như <code>ConsoleLogin</code>)</td><td><span class="t" data-vi="Mục cấu hình">Configuration item</span> – ảnh chụp cấu hình tại một thời điểm</td></tr>
+          <tr><td>Hành động tự động</td><td>Alarm ⇒ SNS, EC2 action, Auto Scaling, OpsItem</td><td>Gửi event tới <b>EventBridge</b> / CloudWatch Logs ⇒ cảnh báo, Lambda</td><td>Rule ⇒ NON_COMPLIANT ⇒ <b>remediation</b> (SSM Automation)</td></tr>
+          <tr><td>Ví dụ đề</td><td>“<i>Notify when CPU &gt; 80%</i>”, “<i>monitor memory usage</i>”</td><td>“<i>Who deleted the S3 bucket?</i>”, “<i>audit API calls</i>”</td><td>“<i>Ensure all EBS volumes are encrypted</i>”, “<i>configuration history of a security group</i>”</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Management-Governance.svg" alt="">AWS account – ba góc nhìn trên cùng một môi trường</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">User / role / dịch vụ<small>Console, CLI, SDK</small></div>
+            <span class="arrow">API call</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">CloudTrail<small>ghi event: ai làm gì</small></div>
+            <span class="arrow">thay đổi</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Tài nguyên AWS<small>EC2, SG, S3, RDS…</small></div>
+            <span class="arrow">cấu hình</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Config.svg" alt="">AWS Config<small>CI, rules, tuân thủ</small></div>
+          </div>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">Tài nguyên đang chạy phát ra metric &amp; log</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance-with-CloudWatch.svg" alt="">EC2 + agent<small>metric, log</small></div>
+                <span class="arrow">metric / log</span>
+                <div class="node"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">CloudWatch<small>metric, Logs, dashboard</small></div>
+                <span class="arrow">ngưỡng</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">Alarm<small>OK / ALARM</small></div>
+                <span class="arrow">action</span>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" alt="">SNS / Auto Scaling<small>EC2 action</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Cùng một môi trường được nhìn từ ba góc. <b>CloudTrail</b> ghi lại <i>hành động</i> (lời gọi API) làm thay đổi tài nguyên; <b>AWS Config</b> ghi lại <i>trạng thái cấu hình</i> sau thay đổi và đánh giá tuân thủ; <b>CloudWatch</b> theo dõi <i>hiệu năng</i> của tài nguyên đang chạy và báo động khi vượt ngưỡng. Config còn liên kết configuration item với event CloudTrail để biết <i>ai</i> gây ra thay đổi.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Hãy hình dung một tòa nhà văn phòng. <b>CloudWatch</b> là phòng điều khiển với đồng hồ nhiệt độ, điện năng, camera hành lang (log) và còi báo động (alarm). <b>CloudTrail</b> là <b>sổ ra vào của bảo vệ</b>: ghi ai quẹt thẻ, vào phòng nào, lúc mấy giờ. <b>AWS Config</b> là <b>hồ sơ kỹ thuật tòa nhà</b>: bản vẽ hiện tại của từng phòng, các lần sửa chữa trước đây, và kiểm định viên đối chiếu với quy chuẩn PCCC (Config rules) – phát hiện vi phạm thì gọi thợ đến sửa (remediation).</p></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“<i>Who made this change?</i>” / “<i>which IAM user terminated the instance?</i>” ⇒ <b>CloudTrail</b>, không phải CloudWatch hay Config (Config biết <i>cấu hình đã thay đổi</i>, và liên kết tới event CloudTrail để biết ai).</li>
+          <li>“<i>What did the security group look like last Tuesday?</i>” ⇒ <b>AWS Config</b> (configuration history), không phải CloudTrail.</li>
+          <li>Cả ba đều <b>không chặn</b> hành động. Muốn <b>ngăn</b> ⇒ IAM policy / SCP (Bài 4–6). Config rule chỉ <b>phát hiện</b> (detective) và có thể <b>sửa sau</b> (remediation).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: METRICS ===================== -->
+      <h2 id="metrics"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">CloudWatch Metrics: namespace, dimension, resolution, statistic</h2>
+      <p class="lead"><span class="t" data-vi="Chỉ số">Metric</span> là khái niệm nền tảng của CloudWatch: một <b>tập điểm dữ liệu sắp theo thời gian</b> được publish lên CloudWatch. Hãy coi metric là một <b>biến cần theo dõi</b>, còn các <span class="t" data-vi="Điểm dữ liệu">data point</span> là giá trị của biến đó theo thời gian – ví dụ <code>CPUUtilization</code> của một EC2 instance. Nhiều dịch vụ AWS tự gửi metric cơ bản <b>miễn phí</b>; bạn cũng có thể publish metric của riêng mình.</p>
+
+      <h3>Các khái niệm cốt lõi</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khái niệm</th><th>Ý nghĩa theo tài liệu</th><th>Ghi nhớ cho đề</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Không gian tên">Namespace</span></td><td>Container chứa metric; metric ở namespace khác nhau <b>cách ly</b> nhau để không bị gộp nhầm thống kê. <b>Không có namespace mặc định</b> – phải chỉ định khi publish. AWS dùng quy ước <code>AWS/&lt;service&gt;</code>, vd <code>AWS/EC2</code>.</td><td>Metric của CloudWatch agent mặc định nằm ở namespace <code>CWAgent</code>.</td></tr>
+          <tr><td><span class="t" data-vi="Chiều phân loại">Dimension</span></td><td>Cặp name/value là <b>một phần danh tính</b> của metric. Tối đa <b>30 dimension</b>/metric. Mỗi tổ hợp dimension khác nhau là <b>một metric riêng</b>.</td><td>Lọc theo <code>InstanceId</code>, <code>AutoScalingGroupName</code>… CloudWatch <b>không tự gộp</b> qua dimension cho custom metric.</td></tr>
+          <tr><td><span class="t" data-vi="Độ phân giải">Resolution</span></td><td><b>Standard</b>: độ mịn 1 phút. <b>High resolution</b>: độ mịn <b>1 giây</b> (chỉ custom metric). Metric của dịch vụ AWS mặc định là standard.</td><td>“<i>sub-minute</i>”, “<i>every 10 seconds</i>” ⇒ high-resolution custom metric.</td></tr>
+          <tr><td><span class="t" data-vi="Thống kê">Statistic</span></td><td>Tổng hợp data point trong một period: <b>Average, Minimum, Maximum, Sum, SampleCount</b>, <b>percentile</b> (p95, p99…), trimmed mean.</td><td>Độ trễ ⇒ nên dùng <b>p99/p95</b>: Average che anomaly, Maximum bị một điểm lệch làm méo.</td></tr>
+          <tr><td><span class="t" data-vi="Chu kỳ">Period</span></td><td>Độ dài thời gian của một statistic, tính bằng giây: 1, 5, 10, 30 hoặc bội của 60. Mặc định <b>60 giây</b>. Period dưới 60 giây chỉ có ý nghĩa với metric high-resolution.</td><td>Alarm trên metric EC2 basic monitoring (5 phút) ⇒ period ≥ 300 giây.</td></tr>
+          <tr><td>Unit</td><td>Bytes, Seconds, Count, Percent… Không chỉ định ⇒ <code>None</code>. Data point khác unit được tổng hợp riêng.</td><td>—</td></tr>
+          <tr><td>Time stamp</td><td>Có thể lùi tới <b>2 tuần</b> trong quá khứ và tới <b>2 giờ</b> trong tương lai; khuyến nghị dùng UTC.</td><td>Metric không có data point mới trong 2 tuần sẽ không hiện trên console (vẫn lấy được bằng API).</td></tr>
+        </tbody>
+      </table></div>
+
+      <ul>
+        <li>Metric <b>chỉ tồn tại trong Region</b> nơi nó được tạo; CloudWatch không tự gộp qua Region (dùng <b>metric math</b> để gộp).</li>
+        <li>Metric <b>không xóa được</b>, nhưng tự hết hạn sau <b>15 tháng</b> nếu không có dữ liệu mới.</li>
+        <li>CloudWatch <b>không phân biệt nguồn</b>: nhiều host publish cùng namespace + dimension ⇒ được coi là <b>một</b> metric – tiện để lấy min/max/avg của cả fleet.</li>
+      </ul>
+
+      <h3>Lịch lưu giữ dữ liệu metric (metrics retention)</h3>
+      <div class="stats">
+        <div class="stat"><b>3 giờ</b><span>data point period &lt; 60 giây (high-resolution custom metric)</span></div>
+        <div class="stat"><b>15 ngày</b><span>data point period 60 giây (1 phút)</span></div>
+        <div class="stat"><b>63 ngày</b><span>data point period 300 giây (5 phút)</span></div>
+        <div class="stat"><b>455 ngày (15 tháng)</b><span>data point period 3.600 giây (1 giờ)</span></div>
+      </div>
+      <p>Dữ liệu publish với period ngắn được <b>gộp dần</b> để lưu lâu dài: dữ liệu 1 phút giữ nguyên độ phân giải 15 ngày, sau đó chỉ còn lấy được ở độ phân giải 5 phút; sau 63 ngày tiếp tục gộp thành 1 giờ. Cần giữ metric chi tiết lâu hơn 15 tháng ⇒ phải tự xuất ra nơi khác (vd S3) – <i>suy ra từ chính sách lưu giữ</i>.</p>
+
+      <h3>EC2: basic vs detailed monitoring</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Basic monitoring</h4>
+          <ul>
+            <li>Mặc định, <b>miễn phí</b>.</li>
+            <li>Metric instance mỗi <b>5 phút</b> ⇒ alarm nên dùng period ≥ 300 giây.</li>
+            <li>Gồm CPU, network, disk I/O của instance store, status check… (đo từ <b>hypervisor</b>).</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/Amazon-EC2_Instance-with-CloudWatch.svg" alt="">Detailed monitoring</h4>
+          <ul>
+            <li>Bật thêm, <b>tính phí</b>.</li>
+            <li>Metric mỗi <b>1 phút</b> ⇒ alarm/Auto Scaling phản ứng nhanh hơn.</li>
+            <li>Vẫn <b>không</b> có metric bên trong OS (memory, disk space) – cần <b>CloudWatch agent</b>.</li>
+          </ul></div>
+      </div>
+
+      <h3>Custom metrics – <code>PutMetricData</code></h3>
+      <p>Bạn publish <span class="t" data-vi="Chỉ số tùy chỉnh">custom metric</span> bằng API <code>PutMetricData</code> / AWS CLI (với triển khai mới, AWS khuyến nghị dùng <b>OpenTelemetry</b>). Gọi với tên metric mới thì CloudWatch tự tạo metric. Mọi lời gọi <code>PutMetricData</code> đều <b>tính phí</b>.</p>
+<pre><code>aws cloudwatch put-metric-data --namespace MyService --metric-name PageViewCount \
+  --unit Count --value 2 --dimensions Env=Prod,Page=Home</code></pre>
+      <ul>
+        <li><b>High-resolution</b> (<code>StorageResolution=1</code>): đọc được với period 1, 5, 10, 30 giây hoặc bội 60 giây. Gọi <code>PutMetricData</code> dày hơn ⇒ <b>tốn tiền hơn</b>.</li>
+        <li><span class="t" data-vi="Tập thống kê gộp sẵn">Statistic set</span>: gộp trước (Sum, Minimum, Maximum, SampleCount) rồi gửi <b>một</b> lời gọi – giảm số API call khi có nhiều điểm mỗi phút. Đổi lại <b>mất khả năng tính percentile</b> (trừ khi SampleCount = 1 hoặc Min = Max).</li>
+        <li><b>Publish giá trị 0</b> cho các period không có dữ liệu nếu muốn alarm phát hiện ứng dụng “ngừng gửi metric”.</li>
+        <li>Metric mới có thể mất tới <b>2 phút</b> mới truy vấn được bằng <code>get-metric-statistics</code> và tới <b>15 phút</b> mới xuất hiện trong <code>list-metrics</code>.</li>
+        <li>CloudWatch <b>không kéo (pull)</b> metric từ ứng dụng – chỉ nhận dữ liệu được <b>đẩy (push)</b> lên.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Monitor memory utilization / disk space / swap of EC2</i>” ⇒ cài <b>CloudWatch agent</b> (custom metric). EC2 <b>không</b> có metric memory sẵn – đây là câu kinh điển.</li>
+          <li>“<i>Metric must be collected every second/10 seconds</i>” ⇒ <b>high-resolution custom metric</b> (+ high-resolution alarm 10/20/30 giây).</li>
+          <li>“<i>Business metric (orders per minute, queue depth per worker)</i>” ⇒ <b>custom metric</b> qua <code>PutMetricData</code>, hoặc <b>metric math</b> nếu tính được từ metric có sẵn.</li>
+          <li>“<i>Need 1-minute EC2 metrics for faster scaling</i>” ⇒ bật <b>detailed monitoring</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: ALARMS ===================== -->
+      <h2 id="alarms"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">CloudWatch Alarms: đánh giá ngưỡng và hành động tự động</h2>
+      <p class="lead"><span class="t" data-vi="Cảnh báo">Alarm</span> theo dõi metric so với <b>ngưỡng</b> do bạn đặt, tự cảnh báo khi vượt ngưỡng và có thể <b>tự động phản ứng</b>. Alarm chỉ kích hoạt action khi <b>trạng thái thay đổi</b> và được duy trì đủ số period – không phải chỉ vì “đang ở” một trạng thái. Không giới hạn số alarm trong account; lịch sử alarm được giữ <b>30 ngày</b>.</p>
+
+      <h3>Các loại alarm</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại</th><th>Theo dõi gì</th><th>Action được phép</th></tr></thead>
+        <tbody>
+          <tr><td><b>Metric alarm</b></td><td>Một metric, hoặc kết quả của <b>metric math expression</b> (kể cả anomaly detection band)</td><td>SNS, <b>EC2 action</b>, <b>EC2 Auto Scaling action</b>, CloudWatch investigation, Systems Manager OpsItem / incident</td></tr>
+          <tr><td><span class="t" data-vi="Cảnh báo tổng hợp">Composite alarm</span></td><td>Biểu thức logic (AND/OR/NOT) trên <b>trạng thái của các alarm khác</b></td><td>SNS, investigation, OpsItem/incident – <b>không</b> được EC2 action hay Auto Scaling action</td></tr>
+          <tr><td>Log alarm</td><td>Kết quả một truy vấn <b>Logs Insights</b> chạy theo lịch (M out of N) – không cần metric filter</td><td>Tương tự metric alarm</td></tr>
+          <tr><td>PromQL alarm</td><td>Truy vấn PromQL trên metric OpenTelemetry</td><td>—</td></tr>
+        </tbody>
+      </table></div>
+      <p>Composite alarm giúp <b>giảm nhiễu cảnh báo (alarm noise)</b>: tạo nhiều metric alarm không gửi thông báo, rồi chỉ composite alarm (vd “CPU cao <b>AND</b> latency cao”) mới gửi SNS. Composite alarm <b>không</b> hỗ trợ cross-account.</p>
+
+      <h3>Trạng thái và ba tham số đánh giá</h3>
+      <ul>
+        <li><b>Trạng thái</b>: <code>OK</code> (trong ngưỡng), <code>ALARM</code> (vượt ngưỡng), <code>INSUFFICIENT_DATA</code> (vừa tạo, metric chưa có hoặc chưa đủ dữ liệu).</li>
+        <li><b>Period</b>: độ dài thời gian để tạo <b>một</b> data point của alarm (giây).</li>
+        <li><b>Evaluation Periods (N)</b>: số data point gần nhất được xem xét.</li>
+        <li><b>Datapoints to Alarm (M)</b>: số data point trong N phải vượt ngưỡng để chuyển ALARM – <b>không cần liên tiếp</b>. M ≠ N gọi là alarm “<b>M out of N</b>”. Ví dụ 4 out of 5 với period 1 phút ⇒ cửa sổ đánh giá 5 phút; 3 out of 3 với period 10 phút ⇒ 30 phút.</li>
+        <li>Period ≥ 1 phút ⇒ alarm được đánh giá <b>mỗi phút</b> (cửa sổ trượt). Period 10/20/30 giây (<b>high-resolution alarm</b>, phí cao hơn) ⇒ đánh giá mỗi 10 giây. Period × Evaluation Periods &gt; 1 ngày ⇒ đánh giá mỗi giờ.</li>
+        <li>Giới hạn cửa sổ: tối đa <b>7 ngày</b> nếu period ≥ 1 giờ; tối đa <b>1 ngày</b> với period ngắn hơn.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 300" width="800" role="img" aria-label="Ví dụ đánh giá alarm 3 out of 3">
+          <defs><marker id="a40" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#545B64"/></marker></defs>
+          <image href="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" x="20" y="14" width="36" height="36"/>
+          <text x="64" y="38" font-size="13" font-weight="700">Alarm: CPUUtilization &gt; 70 · Period 5 phút · Datapoints to Alarm 3 / Evaluation Periods 3</text>
+          <path d="M60 230 H780" stroke="#545B64" stroke-width="1.5" marker-end="url(#a40)"/>
+          <path d="M60 230 V70" stroke="#545B64" stroke-width="1.5"/>
+          <path d="M60 130 H780" stroke="#DD344C" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="66" y="124" font-size="11" fill="#DD344C" font-weight="700">ngưỡng 70%</text>
+          <rect x="85" y="170" width="44" height="60" fill="#7AA116" fill-opacity="0.6"/>
+          <rect x="160" y="150" width="44" height="80" fill="#7AA116" fill-opacity="0.6"/>
+          <rect x="235" y="100" width="44" height="130" fill="#DD344C" fill-opacity="0.7"/>
+          <rect x="310" y="90" width="44" height="140" fill="#DD344C" fill-opacity="0.7"/>
+          <rect x="385" y="95" width="44" height="135" fill="#DD344C" fill-opacity="0.7"/>
+          <rect x="460" y="160" width="44" height="70" fill="#7AA116" fill-opacity="0.6"/>
+          <rect x="535" y="165" width="44" height="65" fill="#7AA116" fill-opacity="0.6"/>
+          <rect x="610" y="105" width="44" height="125" fill="#DD344C" fill-opacity="0.7"/>
+          <rect x="685" y="170" width="44" height="60" fill="#7AA116" fill-opacity="0.6"/>
+          <text x="98" y="248" font-size="11">P1</text><text x="173" y="248" font-size="11">P2</text><text x="248" y="248" font-size="11">P3</text>
+          <text x="323" y="248" font-size="11">P4</text><text x="398" y="248" font-size="11">P5</text><text x="473" y="248" font-size="11">P6</text>
+          <text x="548" y="248" font-size="11">P7</text><text x="623" y="248" font-size="11">P8</text><text x="698" y="248" font-size="11">P9</text>
+          <rect x="228" y="62" width="208" height="20" rx="4" fill="#DD344C" fill-opacity="0.12" stroke="#DD344C"/>
+          <text x="236" y="76" font-size="11" font-weight="700">3/3 vượt ngưỡng ⇒ ALARM (cuối P5)</text>
+          <text x="455" y="76" font-size="11" font-weight="700">P6 ⇒ về OK</text>
+          <text x="590" y="76" font-size="11" font-weight="700">P8 vượt 1 lần ⇒ vẫn OK</text>
+          <text x="60" y="272" font-size="11">Nếu đổi thành 2 out of 3: P3–P4 đã đủ 2/3 ⇒ ALARM sớm hơn (cuối P4);</text>
+          <text x="60" y="290" font-size="11">cửa sổ P6–P8 chỉ có 1/3 điểm vượt ⇒ vẫn OK.</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Cách CloudWatch đánh giá alarm theo cửa sổ trượt (dựa trên ví dụ trong tài liệu). Mỗi cột là một data point (một Period). Với 3/3, alarm chỉ chuyển ALARM khi <b>cả 3</b> điểm gần nhất vượt ngưỡng, và về OK ngay khi một điểm trong cửa sổ không vượt. Một “gai” đơn lẻ (P8) không gây báo động – đây là cách chống báo động giả. Giảm M (M out of N) giúp phản ứng nhanh hơn với dữ liệu chập chờn.</figcaption>
+      </figure>
+
+      <h3>Xử lý dữ liệu thiếu (treat missing data)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tùy chọn</th><th>Data point thiếu được coi là</th><th>Khi nào dùng</th></tr></thead>
+        <tbody>
+          <tr><td><code>missing</code> <b>(mặc định)</b></td><td>Thiếu; nếu <b>mọi</b> điểm trong evaluation range đều thiếu ⇒ <code>INSUFFICIENT_DATA</code></td><td>Khuyến nghị cho alarm EC2 có action stop/terminate/reboot/recover</td></tr>
+          <tr><td><code>notBreaching</code></td><td>“Tốt”, trong ngưỡng</td><td>Metric chỉ phát sinh khi có lỗi, vd <code>ThrottledRequests</code> của DynamoDB</td></tr>
+          <tr><td><code>breaching</code></td><td>“Xấu”, vượt ngưỡng</td><td>Metric lẽ ra luôn có dữ liệu; mất dữ liệu = có vấn đề (vd heartbeat, rollback alarm)</td></tr>
+          <tr><td><code>ignore</code></td><td>Giữ nguyên trạng thái hiện tại</td><td>Metric thưa; namespace <code>AWS/DynamoDB</code> mặc định dùng ignore</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Alarm actions</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Action</th><th>Chi tiết theo tài liệu</th></tr></thead>
+        <tbody>
+          <tr><td><b>Amazon SNS</b></td><td>Gửi thông báo (email, SMS, HTTP, Lambda, SQS…) khi alarm đổi trạng thái. Email phải <b>xác nhận subscription</b> mới nhận được.</td></tr>
+          <tr><td><b>EC2 Auto Scaling</b></td><td>Kích hoạt scaling policy (step/simple – Bài 13). <b>Ngoại lệ</b>: alarm có Auto Scaling action tiếp tục gọi action <b>mỗi phút</b> khi vẫn ở trạng thái mới.</td></tr>
+          <tr><td><b>EC2 stop / terminate</b></td><td>Tiết kiệm chi phí cho instance nhàn rỗi, vd CPU trung bình &lt; 10% trong 24 giờ. Instance root là <b>instance store</b> chỉ terminate được, không stop được. Terminate không áp dụng nếu bật termination protection.</td></tr>
+          <tr><td><b>EC2 reboot</b></td><td>Dành cho lỗi <b>instance status check</b> (<code>StatusCheckFailed_Instance</code>) – tương đương reboot OS, giữ nguyên host, public DNS, private IP, dữ liệu instance store.</td></tr>
+          <tr><td><b>EC2 recover</b></td><td>Chỉ dùng với <b><code>StatusCheckFailed_System</code></b> (mất mạng, mất điện, lỗi phần cứng/phần mềm host). Instance được chuyển sang <b>phần cứng mới</b> và <b>giữ nguyên instance ID, private IP, Elastic IP, metadata</b>; dữ liệu trong RAM bị mất. Chỉ một số instance type hỗ trợ.</td></tr>
+          <tr><td>Systems Manager</td><td>Tạo <b>OpsItem</b> (OpsCenter) hoặc <b>incident</b> (Incident Manager).</td></tr>
+          <tr><td>Lambda / EventBridge</td><td>Alarm có thể gọi Lambda; ngoài ra CloudWatch <b>luôn gửi event tới EventBridge</b> khi alarm đổi trạng thái hoặc được tạo/sửa/xóa ⇒ viết EventBridge rule để xử lý.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>Recover</b> ≠ <b>reboot</b>: lỗi <i>system</i> status check (phần cứng AWS) ⇒ <b>recover</b>; lỗi <i>instance</i> status check (OS, cấu hình) ⇒ <b>reboot</b>. Tài liệu khuyến nghị recover alarm 2 evaluation period × 1 phút, reboot alarm 3 × 1 phút để tránh “race condition”.</li>
+          <li>Đặt alarm có period <b>nhỏ hơn</b> độ phân giải metric (vd 60 giây trên metric EC2 basic 5 phút) ⇒ alarm hay rơi vào thiếu dữ liệu.</li>
+          <li>CloudWatch <b>không kiểm tra</b> action có tồn tại không (SNS topic bị xóa…) – phải tự bảo đảm.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Automatically recover an EC2 instance if the underlying hardware fails, keeping the same IP and instance ID</i>” ⇒ CloudWatch alarm trên <b>StatusCheckFailed_System</b> + action <b>Recover this instance</b>.</li>
+          <li>“<i>Stop idle development instances automatically</i>” ⇒ alarm CPU thấp + action <b>Stop</b> (không cần Lambda).</li>
+          <li>“<i>Reduce alert fatigue; notify only when several conditions are true</i>” ⇒ <b>composite alarm</b>.</li>
+          <li>“<i>Alert when a metric deviates from its normal pattern (seasonal)</i>” ⇒ alarm dựa trên <b>anomaly detection</b> band thay vì ngưỡng tĩnh.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: LOGS ===================== -->
+      <h2 id="logs"><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">CloudWatch Logs: lưu trữ, lọc, phân tích và chuyển tiếp log</h2>
+      <p class="lead"><span class="t" data-vi="Nhật ký CloudWatch">CloudWatch Logs</span> thu log từ dịch vụ AWS (Lambda, VPC Flow Logs, CloudTrail, Route 53, API Gateway…) và ứng dụng của bạn (qua CloudWatch agent, CLI <code>put-log-events</code> hoặc API <code>PutLogEvents</code>), lưu tập trung, cho phép tìm kiếm, tạo metric, cảnh báo và chuyển tiếp sang dịch vụ khác.</p>
+
+      <h3>Cấu trúc dữ liệu</h3>
+      <ul>
+        <li><span class="t" data-vi="Sự kiện log">Log event</span>: một bản ghi hoạt động gồm <b>timestamp</b> + <b>message</b> (UTF-8). <code>PutLogEvents</code> từ chối event có timestamp cũ hơn <b>14 ngày</b> hoặc vượt <b>2 giờ</b> trong tương lai.</li>
+        <li><span class="t" data-vi="Luồng log">Log stream</span>: chuỗi log event <b>cùng một nguồn</b> (vd access log Apache của một host).</li>
+        <li><span class="t" data-vi="Nhóm log">Log group</span>: nhóm các log stream có chung <b>retention, monitoring, access control</b>. Không giới hạn số stream trong một group. Log group <b>không đổi tên được</b>. Retention, metric filter, subscription filter, mã hóa KMS, tag (tối đa 50), <b>deletion protection</b> đều đặt ở cấp log group.</li>
+        <li><b>Retention</b>: mặc định log được giữ <b>vô thời hạn (Never Expire)</b>; đặt được thời gian hết hạn cho từng log group (các mốc từ 1 ngày tới 10 năm – <i>danh sách mốc cụ thể: kiến thức phổ biến</i>). Log quá hạn thường bị xóa trong vòng <b>72 giờ</b>.</li>
+      </ul>
+
+      <h3>Log class: Standard vs Essentials</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">Standard</h4>
+          <ul>
+            <li>Đầy đủ tính năng, cho log cần <b>giám sát thời gian thực</b> hoặc truy cập thường xuyên.</li>
+            <li>Có <b>metric filter</b>, <b>subscription filter</b>, Live Tail, anomaly detection, Embedded Metric Format, Container/Lambda Insights.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">Essentials (trước gọi là Infrequent Access)</h4>
+          <ul>
+            <li><b>Giá ingestion/GB thấp hơn</b> (storage và Logs Insights cùng giá với Standard).</li>
+            <li>Dành cho truy vấn ad-hoc, điều tra sau sự cố trên log ít truy cập. Vẫn có KMS, cross-account, Logs Insights, export S3.</li>
+            <li><b>Không</b> có metric filter, subscription filter, Live Tail. <b>Không đổi được log class sau khi tạo</b>.</li>
+          </ul></div>
+      </div>
+
+      <h3>Metric filter – biến log thành metric</h3>
+      <p><span class="t" data-vi="Bộ lọc tạo metric">Metric filter</span> định nghĩa <b>filter pattern</b> để tìm trong log khi log được ingest, rồi biến kết quả thành <b>data point</b> của một CloudWatch metric để vẽ biểu đồ hoặc <b>đặt alarm</b>. Thành phần: filter pattern, metric name, metric namespace, <b>metric value</b> (vd 1 cho mỗi lần gặp “ERROR”, hoặc số byte trích từ log), <b>default value</b> (vd 0 khi có log nhưng không khớp – tránh metric “lỗ chỗ”), dimension, unit.</p>
+      <ul>
+        <li>Metric filter <b>không hồi tố</b>: chỉ tạo data point cho event đến <b>sau</b> khi filter được tạo.</li>
+        <li>Chỉ hỗ trợ log group class <b>Standard</b>.</li>
+        <li>Ví dụ kinh điển: đếm số lần <code>ERROR</code> trong log ứng dụng, số request 404 trong access log, hoặc số lần <code>ConsoleLogin</code> thất bại trong log CloudTrail ⇒ alarm ⇒ SNS.</li>
+        <li>Thay thế mới: <b>log alarm</b> chạy truy vấn Logs Insights theo lịch, không cần metric filter.</li>
+      </ul>
+
+      <h3>Subscription filter – stream log thời gian thực</h3>
+      <p><span class="t" data-vi="Bộ lọc đăng ký chuyển tiếp">Subscription filter</span> cung cấp <b>luồng log gần thời gian thực</b> (thường &lt; 3 phút sau ingest) tới <b>Kinesis Data Streams</b>, <b>Amazon Data Firehose</b>, <b>AWS Lambda</b> hoặc <b>Amazon OpenSearch Service</b>. Dữ liệu được mã hóa base64 và nén gzip.</p>
+      <ul>
+        <li>Mỗi log group tối đa <b>5 subscription filter</b>; mỗi account có <b>1 account-level subscription filter</b>/Region.</li>
+        <li>Hỗ trợ <b>cross-account, cross-Region</b> (gom log về account trung tâm). Ngoài ra có tính năng <b>CloudWatch Logs centralization</b> để nhân bản log group từ nhiều account/Region về một nơi.</li>
+        <li>Đích lỗi có thể thử lại (throttling, 5xx) ⇒ CloudWatch Logs retry tới <b>24 giờ</b>. Delivery “<b>at least once</b>” – có thể trùng.</li>
+        <li>Chỉ hỗ trợ log group class <b>Standard</b>.</li>
+      </ul>
+
+      <h3>Export sang Amazon S3</h3>
+      <ul>
+        <li><code>CreateExportTask</code> xuất log của một khoảng thời gian sang bucket S3 (cùng hoặc khác account), hỗ trợ bucket mã hóa <b>SSE-S3 (AES-256) / SSE-KMS</b> (không hỗ trợ DSSE-KMS), bucket có <b>Object Lock</b>.</li>
+        <li>Log có thể mất tới <b>12 giờ</b> mới sẵn sàng để export; export task timeout sau <b>24 giờ</b>. Đây là <b>batch</b>, không phải thời gian thực.</li>
+        <li>Tài liệu <b>khuyên không</b> dùng export định kỳ để lưu trữ liên tục ⇒ dùng <b>subscription filter → Data Firehose → S3</b>.</li>
+      </ul>
+
+      <h3>CloudWatch Logs Insights</h3>
+      <p><span class="t" data-vi="Phân tích log tương tác">CloudWatch Logs Insights</span> cho phép <b>truy vấn tương tác</b> log trong CloudWatch Logs để điều tra sự cố nhanh, không cần dựng hạ tầng. Hỗ trợ 3 ngôn ngữ: <b>Logs Insights QL</b> (các lệnh <code>fields</code>, <code>filter</code>, <code>stats</code>, <code>sort</code>, <code>limit</code>, <code>parse</code>, <code>dedup</code>, <code>pattern</code>… nối bằng <code>|</code>), <b>OpenSearch PPL</b> và <b>OpenSearch SQL</b> (có JOIN giữa log group).</p>
+<pre><code><span class="c"># 20 khung 5 phút có nhiều lỗi nhất</span>
+fields @timestamp, @message
+| filter @message like /ERROR/
+| stats count(*) as errors by bin(5m)
+| sort errors desc
+| limit 20</code></pre>
+      <div class="stats">
+        <div class="stat"><b>60 phút</b><span>truy vấn chưa xong sẽ timeout</span></div>
+        <div class="stat"><b>7 ngày</b><span>kết quả truy vấn được giữ lại</span></div>
+        <div class="stat"><b>100</b><span>truy vấn Logs Insights QL đồng thời/account (15 với PPL/SQL)</span></div>
+        <div class="stat"><b>Theo GB quét</b><span>tính phí theo lượng log <b>chưa nén</b> được quét – chọn ít log group, khoảng thời gian hẹp</span></div>
+      </div>
+      <ul>
+        <li>Tự <b>phát hiện field</b> của log AWS (Route 53, Lambda, CloudTrail, VPC Flow Logs) và log JSON; tạo <b>field index</b> để quét ít dữ liệu hơn; <b>pattern analysis</b>, so sánh với khoảng thời gian trước, tạo truy vấn bằng <b>ngôn ngữ tự nhiên</b>; lưu truy vấn, đưa vào dashboard.</li>
+        <li>Truy vấn được log group ở <b>nhiều account</b> nếu đăng nhập từ monitoring account của <b>cross-account observability</b>.</li>
+        <li>Không truy cập được log event có timestamp <b>trước</b> thời điểm tạo log group.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">Đường đi của log trong CloudWatch Logs</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance-with-CloudWatch.svg" alt="">EC2 / on-prem<small>CloudWatch agent</small></div>
+            <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda, API GW<small>tự gửi log</small></div>
+            <div class="node"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">CloudTrail trail<small>tùy chọn</small></div>
+            <span class="arrow">ingest</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">Log group<small>retention, KMS, class</small></div>
+          </div>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">Metric filter ⇒ alarm (thời gian thực)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">Metric<small>ErrorCount</small></div>
+                <span class="arrow">ngưỡng</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">Alarm<small>→ SNS</small></div>
+              </div></div>
+            <div class="grp plain"><span class="lbl">Subscription filter (gần thời gian thực, ≤ 5/log group)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" alt="">Kinesis Data Streams</div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">Data Firehose<small>→ S3, OpenSearch…</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda</div>
+              </div></div>
+          </div>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">Logs Insights: truy vấn tương tác (Logs Insights QL / PPL / SQL)</span></div>
+            <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Export task → S3 (batch, tới 12 giờ)</span></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Một log group có bốn “lối ra”: <b>metric filter</b> biến log thành metric để alarm; <b>subscription filter</b> stream log gần thời gian thực sang Kinesis/Firehose/Lambda/OpenSearch; <b>Logs Insights</b> để truy vấn khi điều tra; <b>export task</b> xuất theo lô sang S3. Lưu trữ lâu dài, liên tục ⇒ chọn Firehose → S3 thay vì export task.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Alert when the word ERROR appears more than N times in application logs</i>” ⇒ <b>metric filter</b> + CloudWatch alarm + SNS.</li>
+          <li>“<i>Stream logs in near real time to OpenSearch / S3 / third-party SIEM</i>” ⇒ <b>subscription filter</b> (→ Data Firehose / Kinesis / Lambda). “<i>Centralize logs from many accounts</i>” ⇒ cross-account subscription hoặc Logs centralization.</li>
+          <li>“<i>Ad-hoc query logs to find the top 10 IPs / slowest requests, no infrastructure</i>” ⇒ <b>CloudWatch Logs Insights</b>. Log đã nằm trong S3 ⇒ <b>Athena</b> (Bài 36).</li>
+          <li>“<i>Reduce CloudWatch Logs cost</i>” ⇒ đặt <b>retention</b> hợp lý (mặc định Never Expire!), dùng log class <b>Essentials</b> cho log ít truy cập, archive sang S3.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: AGENT & OBSERVABILITY ===================== -->
+      <h2 id="agent"><img src="../assets/icons/res/Amazon-EC2_Instance-with-CloudWatch.svg" alt="">CloudWatch agent, dashboards và các tính năng quan sát khác</h2>
+      <p class="lead"><span class="t" data-vi="Tác nhân CloudWatch hợp nhất">CloudWatch agent</span> là phần mềm cài trên <b>EC2</b>, <b>máy chủ on-premises</b> và ứng dụng container để thu <b>metric, log và trace</b> chi tiết hơn mức basic monitoring mặc định. Agent chạy trên <b>Linux và Windows Server</b>, mã nguồn mở (MIT).</p>
+
+      <h3>Agent thu được gì?</h3>
+      <ul>
+        <li><b>Metric hệ thống bên trong OS (in-guest)</b>: CPU chi tiết, <b>memory</b>, <b>disk usage</b>, network, process, GPU (NVIDIA)… – kể cả từ server on-premises/hybrid.</li>
+        <li><b>Custom metric</b> từ ứng dụng qua giao thức <b>StatsD</b> (Linux &amp; Windows) và <b>collectd</b> (chỉ Linux).</li>
+        <li><b>Log file</b> từ EC2 và on-premises (Linux/Windows) gửi lên CloudWatch Logs (không hỗ trợ FIFO pipe). Thay thế agent cũ “CloudWatch Logs agent”.</li>
+        <li><b>Trace</b> từ OpenTelemetry/X-Ray SDK gửi lên X-Ray (không cần chạy daemon riêng); bật <b>Application Signals</b>.</li>
+        <li>Metric gửi tới CloudWatch, <b>Amazon Managed Service for Prometheus</b>, hoặc cả hai.</li>
+        <li>Metric do agent publish nằm ở namespace mặc định <code>CWAgent</code> và <b>tính phí như custom metric</b>.</li>
+      </ul>
+      <ol class="steps">
+        <li><b>Tạo IAM role</b> (gắn instance profile cho EC2) hoặc IAM user (cho on-premises) để agent được ghi metric/log – thường dùng managed policy <code>CloudWatchAgentServerPolicy</code> <i>(tên policy: kiến thức phổ biến)</i>; tùy chọn quyền tích hợp Systems Manager.</li>
+        <li><b>Tải gói agent</b> (command line hoặc qua Systems Manager).</li>
+        <li><b>Tạo file cấu hình</b> chỉ định metric/log cần thu (có wizard); có thể lưu cấu hình vào <b>SSM Parameter Store</b> để triển khai hàng loạt <i>(kiến thức phổ biến)</i>.</li>
+        <li><b>Cài và khởi động agent</b>; với fleet lớn dùng Systems Manager để quản lý cấu hình tập trung.</li>
+      </ol>
+
+      <h3>Các tính năng khác cần nhận diện</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tính năng</th><th>Làm gì</th><th>Từ khóa đề</th></tr></thead>
+        <tbody>
+          <tr><td><b>Dashboards</b></td><td>Một nơi xem metric và log dạng biểu đồ; chia sẻ được <b>cross-account, cross-Region</b>; có <b>automatic dashboard</b> cho nhiều dịch vụ</td><td>“<i>single view</i>”, “<i>operational dashboard</i>”</td></tr>
+          <tr><td><b>Cross-account observability</b></td><td>Một <b>monitoring account</b> xem metric, log, trace của các <b>source account</b> (liên kết từng account hoặc qua Organizations); alarm cross-account</td><td>“<i>central monitoring account</i>”</td></tr>
+          <tr><td><b>Container Insights</b></td><td>Metric &amp; log cho ECS, EKS, Kubernetes tự quản trên EC2</td><td>“<i>monitor containers / pods</i>”</td></tr>
+          <tr><td><b>Lambda Insights</b></td><td>Metric hệ thống của Lambda: memory, CPU, phát hiện <b>cold start</b></td><td>“<i>Lambda memory usage</i>”</td></tr>
+          <tr><td><b>Database Insights</b></td><td>Hiệu năng CSDL, phân tích SQL query, tải DB</td><td>“<i>database load</i>”</td></tr>
+          <tr><td><b>Application Signals</b></td><td>APM tự động: latency, error rate, request rate, <b>SLO</b> – không cần instrument thủ công</td><td>“<i>application performance monitoring</i>”</td></tr>
+          <tr><td><b>Synthetics (canary)</b></td><td>Script mô phỏng hành vi người dùng gọi endpoint/API theo lịch, phát hiện lỗi <b>trước khi</b> người dùng thật gặp</td><td>“<i>proactively monitor endpoints</i>”</td></tr>
+          <tr><td><b>RUM</b></td><td>Dữ liệu hiệu năng từ phiên người dùng thật (trình duyệt)</td><td>“<i>real user monitoring</i>”</td></tr>
+          <tr><td><b>Internet Monitor</b></td><td>Phân tích hiệu năng/khả dụng Internet giữa ứng dụng và người dùng cuối</td><td>“<i>internet latency impacting users</i>”</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Collect memory and disk metrics and application log files from hundreds of EC2 instances and on-premises servers with least effort</i>” ⇒ <b>unified CloudWatch agent</b>, cấu hình tập trung qua <b>Systems Manager</b>.</li>
+          <li>“<i>Metrics/logs from 50 accounts in one place</i>” ⇒ <b>CloudWatch cross-account observability</b> (monitoring account).</li>
+          <li>“<i>Detect that the website checkout page is broken before customers report it</i>” ⇒ <b>CloudWatch Synthetics canary</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: CLOUDTRAIL ===================== -->
+      <h2 id="cloudtrail"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">AWS CloudTrail: ghi lại ai đã làm gì trong account</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ kiểm toán hoạt động API">AWS CloudTrail</span> giúp bạn <b>kiểm toán vận hành và rủi ro</b>, quản trị (governance) và tuân thủ (compliance) cho account AWS. Mọi hành động của <b>user, role hoặc dịch vụ AWS</b> qua Console, CLI, SDK, API được ghi thành <span class="t" data-vi="Sự kiện">event</span> (định dạng JSON): <b>ai</b> (userIdentity), làm <b>gì</b> (eventName), trên <b>tài nguyên nào</b>, <b>khi nào</b>, từ <b>IP nào</b>. Log file <b>không</b> phải stack trace sắp theo thứ tự thời gian.</p>
+
+      <h3>Ba cách ghi nhận event</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Cách</th><th>Đặc điểm</th><th>Chi phí</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Lịch sử sự kiện">Event history</span></td><td>Có sẵn khi tạo account; bản ghi <b>chỉ đọc, không đổi được</b> (immutable) của <b>90 ngày</b> <b>management event</b> gần nhất, <b>theo từng Region</b>; tìm kiếm theo một thuộc tính, tải xuống được. <b>Không</b> chứa data event / Insights event.</td><td>Miễn phí</td></tr>
+          <tr><td><span class="t" data-vi="Cấu hình giao log liên tục">Trail</span></td><td>Cấu hình <b>giao event liên tục</b> vào <b>S3 bucket</b> (tùy chọn thêm <b>CloudWatch Logs</b> và <b>EventBridge</b>); chọn loại event, mã hóa <b>KMS</b>, thông báo <b>SNS</b> mỗi lần giao log file; một account hoặc cả Organization. Lưu bao lâu tùy bạn (S3 lifecycle, Glacier).</td><td>Bản sao <b>đầu tiên</b> của management event: miễn phí phía CloudTrail (vẫn trả phí S3); bản sao thêm, data/Insights event tính phí</td></tr>
+          <tr><td><span class="t" data-vi="Kho dữ liệu sự kiện CloudTrail">CloudTrail Lake</span></td><td>Data lake được quản lý: chuyển event sang định dạng cột <b>Apache ORC</b>, gom vào <b>event data store</b> (immutable), truy vấn bằng <b>SQL</b>; giữ tới <b>3.653 ngày (~10 năm)</b> (gói one-year extendable retention) hoặc <b>2.557 ngày (~7 năm)</b> (gói seven-year retention); nhận cả event ngoài AWS; import log cũ từ S3; <b>không cần trail</b>; kết quả query xem được 7 ngày.</td><td>Tính phí ingest/lưu trữ + theo dữ liệu quét khi query</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Bốn loại event</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại</th><th>Ghi gì</th><th>Ví dụ</th><th>Mặc định trên trail?</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Sự kiện quản lý – control plane">Management events</span></td><td>Thao tác <b>quản lý</b> trên tài nguyên (<b>control plane</b>), cả sự kiện không phải API như đăng nhập console. Chia <b>Read</b> (<code>Describe*</code>, <code>Get*</code>) và <b>Write</b> (<code>RunInstances</code>, <code>TerminateInstances</code>).</td><td><code>AttachRolePolicy</code>, <code>CreateSubnet</code>, <code>CreateTrail</code>, <code>ConsoleLogin</code>, <code>DeleteBucket</code></td><td class="yes">Có</td></tr>
+          <tr><td><span class="t" data-vi="Sự kiện dữ liệu – data plane">Data events</span></td><td>Thao tác <b>trên/trong</b> tài nguyên (<b>data plane</b>), thường <b>khối lượng rất lớn</b></td><td>S3 <code>GetObject</code>/<code>PutObject</code>/<code>DeleteObject</code>; Lambda <code>Invoke</code>; DynamoDB <code>PutItem</code>/<code>DeleteItem</code>; SNS <code>Publish</code>…</td><td class="no">Không – bật riêng, tính phí</td></tr>
+          <tr><td><span class="t" data-vi="Sự kiện hoạt động mạng">Network activity events</span></td><td>Lời gọi API đi qua <b>VPC endpoint</b> từ VPC private tới dịch vụ AWS (ghi cho chủ VPC endpoint)</td><td>Gọi S3, KMS, Secrets Manager qua VPC endpoint</td><td class="no">Không – bật riêng, tính phí</td></tr>
+          <tr><td><span class="t" data-vi="Sự kiện bất thường">Insights events</span></td><td>Hoạt động <b>bất thường</b> về <b>tỷ lệ gọi API</b> (API call rate) hoặc <b>tỷ lệ lỗi</b> (API error rate) so với <b>baseline</b></td><td>Bình thường ≤ 20 lần <code>DeleteBucket</code>/phút, đột ngột 100 lần/phút; <code>AccessDeniedException</code> tăng vọt</td><td class="no">Không – bật riêng, tính phí</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li><b>Insights</b>: API call rate trên management event yêu cầu trail log <b>Write</b> management events; API error rate cần Read hoặc Write. Insights cũng phân tích được data event (chỉ trên trail). Insights event được ghi ở <b>đầu</b> và <b>cuối</b> giai đoạn bất thường, trong cùng Region với event gốc.</li>
+        <li>Có thể <b>loại trừ</b> event KMS (<code>Encrypt</code>, <code>Decrypt</code>, <code>GenerateDataKey</code> chiếm &gt; 99% khối lượng event KMS) hoặc RDS Data API khỏi trail để giảm chi phí; <b>advanced event selectors</b> lọc theo <code>eventName</code>, <code>eventSource</code>, <code>userIdentity.arn</code>, <code>readOnly</code>…</li>
+      </ul>
+
+      <h3>Trail: multi-Region, organization trail, bảo vệ log</h3>
+      <ul>
+        <li><b>Multi-Region trail</b> (best practice; mọi trail tạo bằng console đều là multi-Region): ghi event ở <b>mọi Region đã bật</b>, giao về <b>một S3 bucket</b> (và tùy chọn một log group); chỉ sửa được ở <b>home Region</b>. <b>Single-Region trail</b> chỉ tạo được bằng CLI/API. Bucket S3 có thể ở Region bất kỳ.</li>
+        <li>Tối đa <b>5 trail mỗi Region</b> (multi-Region trail tính là 1 trail ở mỗi Region) – vd cho developer, security, auditor mỗi nhóm một bản log riêng.</li>
+        <li><span class="t" data-vi="Trail cấp tổ chức">Organization trail</span>: ghi event của management account và <b>mọi member account</b> vào cùng S3 bucket / CloudWatch Logs / EventBridge. Member account <b>thấy</b> trail nhưng <b>không xóa, không tắt logging, không sửa</b> được.</li>
+        <li><b>Global service events</b> (IAM, STS global endpoint, CloudFront) được ghi ở <b>us-east-1</b> ⇒ trail single-Region ở Region khác sẽ bỏ lỡ chúng – dùng multi-Region trail.</li>
+        <li>Event gửi tới <b>EventBridge</b> được nhận trên event bus <b>của từng Region</b>, không gom về một bus.</li>
+        <li><span class="t" data-vi="Xác thực toàn vẹn file log">Log file integrity validation</span>: CloudTrail băm mỗi log file bằng <b>SHA-256</b>; mỗi <b>giờ</b> giao một <b>digest file</b> (ký số bằng <b>SHA-256 with RSA</b>, chứa hash của các log file trong giờ trước và chữ ký của digest trước) vào thư mục riêng trong cùng bucket. Dùng AWS CLI để xác định log file đã bị <b>sửa, xóa</b> hay còn nguyên – bằng chứng cho điều tra pháp lý.</li>
+        <li>Bảo vệ thêm cho bucket log: <b>SSE-KMS</b>, <b>MFA Delete</b> (tài liệu gợi ý cho digest file), bucket policy chặt, <b>S3 Object Lock</b>, đặt bucket ở <b>account Log Archive</b> riêng <i>(các biện pháp ngoài KMS và MFA Delete: best practice phổ biến)</i>.</li>
+        <li>CloudTrail <b>không</b> phải thời gian thực – event thường xuất hiện trong trail trong vòng khoảng <b>5 phút</b> sau lời gọi API <i>(kiến thức phổ biến, không có trong trang đã đọc)</i>. Cần phản ứng nhanh ⇒ dùng <b>EventBridge</b>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">AWS Organizations – organization trail, multi-Region</span>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">Các account trong Organization (mọi Region đã bật)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/AWS-Organizations_Management-Account.svg" alt="">Management account<small>tạo org trail</small></div>
+                <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account Dev</div>
+                <div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Account Prod</div>
+              </div></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">Organization trail<small>management + data events</small></div>
+            <span class="arrow">log file + digest</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 bucket (Log Archive)<small>SSE-KMS, Object Lock</small></div>
+            <span class="arrow">SQL</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">Athena<small>phân tích lịch sử</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">Trail<small>tùy chọn</small></div>
+            <span class="arrow">deliver</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">CloudWatch Logs<small>metric filter</small></div>
+            <span class="arrow">alarm</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" alt="">SNS<small>email đội bảo mật</small></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-EventBridge_Event.svg" alt="">API call event<small>vd StopLogging, root login</small></div>
+            <span class="arrow">rule</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">EventBridge<small>event bus theo Region</small></div>
+            <span class="arrow">target</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda / SNS<small>phản ứng tự động</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> Kiến trúc audit tập trung phổ biến: <b>organization trail multi-Region</b> giao log (kèm digest file để xác thực toàn vẹn) vào bucket ở account Log Archive; phân tích lịch sử bằng <b>Athena</b>; gửi kèm sang <b>CloudWatch Logs</b> để dùng metric filter + alarm (vd đăng nhập root, đổi security group); và dùng <b>EventBridge</b> rule trên event API để phản ứng tự động gần thời gian thực.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“<i>Who downloaded/deleted objects in the S3 bucket?</i>” ⇒ phải bật <b>data events</b> cho S3 trên trail – management event và event history <b>không</b> có <code>GetObject</code>/<code>DeleteObject</code>.</li>
+          <li>Cần giữ log &gt; 90 ngày ⇒ <b>tạo trail</b> (S3) hoặc CloudTrail Lake; event history chỉ có 90 ngày.</li>
+          <li>Trail single-Region ⇒ bỏ lỡ hoạt động ở Region khác (kẻ tấn công hay tạo tài nguyên ở Region ít dùng) ⇒ luôn chọn <b>multi-Region</b>.</li>
+          <li>CloudTrail ghi <b>lời gọi API</b>, không ghi traffic mạng (đó là VPC Flow Logs – Bài 21) và không ghi log bên trong OS (đó là CloudWatch agent).</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Record all API activity across all accounts and Regions; member accounts must not be able to disable it</i>” ⇒ <b>organization trail, multi-Region</b> (có thể thêm SCP chặn <code>cloudtrail:StopLogging</code>/<code>DeleteTrail</code>).</li>
+          <li>“<i>Prove log files were not modified or deleted</i>” ⇒ bật <b>log file integrity validation</b>.</li>
+          <li>“<i>Notify immediately when someone signs in as root / changes a security group</i>” ⇒ CloudTrail event → <b>EventBridge rule</b> → SNS (hoặc trail → CloudWatch Logs → metric filter → alarm).</li>
+          <li>“<i>Detect unusual spikes in API calls or errors</i>” ⇒ <b>CloudTrail Insights</b>.</li>
+          <li>“<i>Run SQL queries on years of CloudTrail events without managing infrastructure</i>” ⇒ <b>CloudTrail Lake</b> (hoặc trail → S3 → Athena).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: AWS CONFIG ===================== -->
+      <h2 id="config"><img src="../assets/icons/svc/AWS-Config.svg" alt="">AWS Config: ghi nhận cấu hình, lịch sử và quan hệ tài nguyên</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ ghi nhận và đánh giá cấu hình">AWS Config</span> cung cấp cái nhìn chi tiết về <b>cấu hình</b> của tài nguyên AWS trong account: tài nguyên <b>liên quan với nhau</b> thế nào và <b>đã được cấu hình ra sao trong quá khứ</b>, để bạn thấy cấu hình và quan hệ thay đổi theo thời gian. Config thông báo khi tài nguyên được tạo, sửa, xóa <b>mà không cần bạn tự polling</b> từng API.</p>
+
+      <h3>Khái niệm cốt lõi</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khái niệm</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Bộ ghi cấu hình">Configuration recorder</span></td><td>Ghi thay đổi cấu hình của các resource type trong phạm vi thành configuration item. <b>Customer managed recorder</b> mặc định ghi <b>mọi loại tài nguyên được hỗ trợ</b> trong Region nơi Config chạy (bạn chọn được resource type); <b>service-linked recorder</b> do một dịch vụ AWS quản lý. Config là dịch vụ <b>theo Region</b> – phải bật ở từng Region.</td></tr>
+          <tr><td><span class="t" data-vi="Mục cấu hình">Configuration item (CI)</span></td><td>Ảnh chụp <b>tại một thời điểm</b> các thuộc tính của một tài nguyên: metadata, attributes, <b>relationships</b>, cấu hình hiện tại, <b>related events</b> (CloudTrail). Tạo mới mỗi khi phát hiện thay đổi (ghi <b>liên tục – continuous</b>) hoặc theo tần suất định kỳ bạn chọn (<b>daily</b> – <i>tên tùy chọn: kiến thức phổ biến</i>). Config tính phí theo số CI được ghi.</td></tr>
+          <tr><td><span class="t" data-vi="Lịch sử cấu hình">Configuration history</span></td><td>Tập CI của một tài nguyên qua một khoảng thời gian – trả lời “tạo khi nào, tháng trước cấu hình ra sao, hôm qua 9 giờ đổi gì”. Tự giao file history vào <b>S3 bucket</b>; xem bằng <b>timeline</b> trên console.</td></tr>
+          <tr><td><span class="t" data-vi="Ảnh chụp cấu hình">Configuration snapshot</span></td><td>Tập CI của <b>mọi</b> tài nguyên được ghi tại một thời điểm – bức tranh toàn cảnh; giao vào S3 theo yêu cầu.</td></tr>
+          <tr><td><span class="t" data-vi="Luồng cấu hình">Configuration stream</span></td><td>Danh sách CI tự cập nhật, gửi qua <b>SNS topic</b> mỗi khi tài nguyên được tạo/sửa/xóa.</td></tr>
+          <tr><td><span class="t" data-vi="Quan hệ tài nguyên">Resource relationship</span></td><td>Bản đồ quan hệ, vd EBS volume <code>vol-123ab45d</code> gắn vào instance <code>i-a1b2c3d4</code> thuộc security group <code>sg-ef678hk</code> – đánh giá tác động trước khi sửa.</td></tr>
+          <tr><td><span class="t" data-vi="Kênh phân phối">Delivery channel</span></td><td>Nơi Config gửi cập nhật: S3 bucket (snapshot, history) và SNS topic (stream).</td></tr>
+          <tr><td>Advanced query</td><td>Truy vấn <b>trạng thái cấu hình hiện tại</b> bằng cú pháp kiểu SQL (vd liệt kê mọi EC2 theo instance type), kể cả qua aggregator.</td></tr>
+        </tbody>
+      </table></div>
+
+      <p>Các tình huống dùng theo tài liệu: <b>quản trị tài nguyên</b> (phát hiện cấu hình sai), <b>audit &amp; compliance</b> (chứng minh tuân thủ bằng lịch sử cấu hình), <b>xử lý sự cố</b> (xem “last known good configuration”, đánh giá ảnh hưởng tới tài nguyên liên quan), <b>phân tích bảo mật</b> – vd xem IAM policy gắn cho user <i>John Doe</i> vào ngày 1/1/2015, hoặc security group nào đang mở port nào tại một thời điểm.</p>
+
+      <h3>AWS Config rules</h3>
+      <p><span class="t" data-vi="Quy tắc đánh giá tuân thủ">Config rule</span> thể hiện <b>cấu hình mong muốn</b>. Config liên tục đánh giá tài nguyên khi chúng được tạo/sửa/xóa; tài nguyên vi phạm bị gắn cờ <b>NON_COMPLIANT</b> và gửi thông báo. Rule <b>không ngăn</b> thay đổi xảy ra – nó <b>phát hiện</b>.</p>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/AWS-Config.svg" alt="">Managed rules</h4>
+          <ul>
+            <li>Rule <b>dựng sẵn, tùy chỉnh tham số</b> do AWS Config cung cấp (hàng trăm rule).</li>
+            <li>Ví dụ: <code>access-keys-rotated</code> (tham số bắt buộc <code>maxAccessKeyAge</code>), <code>encrypted-volumes</code>, <code>s3-bucket-public-read-prohibited</code>, <code>restricted-ssh</code>, <code>cloudtrail-enabled</code>, <code>rds-multi-az-support</code>… <i>(tên rule ngoài <code>access-keys-rotated</code>: kiến thức phổ biến)</i>.</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Custom rules</h4>
+          <ul>
+            <li>Tự viết từ đầu theo hai cách: <b>Custom Lambda rule</b> (logic trong Lambda function) hoặc <b>Custom policy rule</b> viết bằng <b>Guard</b> (CloudFormation Guard – policy-as-code, không cần Lambda).</li>
+            <li>Nên giới hạn <b>scope</b> resource type để tránh gọi Lambda cho mọi tài nguyên.</li>
+          </ul></div>
+      </div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Lựa chọn</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="3"><b>Trigger type</b></td><td>Configuration changes</td><td>Đánh giá khi tài nguyên trong <b>scope</b> (resource type, type + ID, tag key/value, hoặc mọi tài nguyên được ghi) thay đổi cấu hình.</td></tr>
+          <tr><td>Periodic</td><td>Đánh giá theo tần suất bạn chọn, vd <b>mỗi 24 giờ</b> (các mốc 1, 3, 6, 12, 24 giờ – <i>kiến thức phổ biến</i>). Hợp với kiểm tra cấp account (vd account có bật CloudTrail không).</td></tr>
+          <tr><td>Hybrid</td><td>Vừa khi thay đổi vừa định kỳ.</td></tr>
+          <tr><td rowspan="2"><b>Evaluation mode</b></td><td>Detective</td><td>Đánh giá tài nguyên <b>đã triển khai</b>.</td></tr>
+          <tr><td>Proactive</td><td>Đánh giá bộ thuộc tính tài nguyên <b>trước khi triển khai</b> (vd gọi từ pipeline IaC) xem sẽ COMPLIANT hay không. Proactive rule <b>không remediate và không chặn</b> việc triển khai.</td></tr>
+          <tr><td><b>Evaluation result</b></td><td colspan="2"><code>COMPLIANT</code> · <code>NON_COMPLIANT</code> · <code>ERROR</code> (tham số sai) · <code>NOT_APPLICABLE</code> (tài nguyên không thuộc logic rule, vd rule chỉ cho ALB bỏ qua NLB)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Conformance pack và aggregator – quy mô nhiều account</h3>
+      <ul>
+        <li><span class="t" data-vi="Gói tuân thủ">Conformance pack</span>: tập <b>Config rules + remediation action</b> viết trong một <b>YAML template</b>, triển khai như <b>một thực thể</b> trong một account/Region hoặc <b>toàn bộ Organization</b>. Có sample template (vd theo chuẩn vận hành tốt nhất). <b>Process check</b>: rule theo dõi việc kiểm tra thủ công ngoài AWS trong cùng pack.</li>
+        <li><b>Organization rules</b>: triển khai Config rule đồng loạt cho member account trong AWS Organizations.</li>
+        <li><span class="t" data-vi="Bộ tổng hợp dữ liệu Config">Aggregator</span>: gom dữ liệu cấu hình và tuân thủ từ <b>nhiều account và nhiều Region</b> vào <b>một account + một Region</b>. Đây là <b>chế độ xem chỉ đọc</b> – không deploy rule hay sửa gì qua aggregator. <b>Không tốn thêm phí</b>. Source account thuộc Organizations thì không cần authorization riêng.</li>
+        <li>Kết quả đánh giá Config rule có thể gửi sang <b>Security Hub CSPM</b> (Bài 39 – Security Hub cần Config để chạy phần lớn security control).</li>
+      </ul>
+
+      <!-- ===================== PHẦN 8: REMEDIATION ===================== -->
+      <h2 id="remediation"><img src="../assets/icons/res/AWS-Systems-Manager_Automation.svg" alt="">Remediation: tự động khắc phục tài nguyên không tuân thủ</h2>
+      <p class="lead">AWS Config <span class="t" data-vi="Khắc phục">remediate</span> tài nguyên NON_COMPLIANT bằng <span class="t" data-vi="Tài liệu tự động hóa của Systems Manager">AWS Systems Manager Automation documents</span> (runbook) – định nghĩa các bước cần thực hiện trên tài nguyên. AWS Config cung cấp sẵn một bộ <b>managed automation document</b>; bạn cũng có thể tự viết <b>custom automation document</b> rồi gắn vào rule.</p>
+
+      <div class="compare">
+        <div style="--accent:#545B64"><h4><img src="../assets/icons/res/AWS-Systems-Manager_Documents.svg" alt="">Manual remediation</h4>
+          <ul>
+            <li>Người vận hành xem tài nguyên vi phạm rồi bấm <b>Remediate</b> để chạy runbook.</li>
+            <li>Phù hợp khi thay đổi có rủi ro, cần người duyệt.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Systems-Manager_Automation.svg" alt="">Automatic remediation</h4>
+          <ul>
+            <li>Config tự chạy runbook mỗi khi tài nguyên bị đánh giá NON_COMPLIANT.</li>
+            <li>Cấu hình <b>retries</b> trong khoảng thời gian, vd <b>5 lần trong 300 giây</b> nếu vẫn vi phạm (mỗi lần chạy tính phí SSM Automation).</li>
+            <li>Chọn <b>Resource ID parameter</b> để truyền ID tài nguyên vi phạm vào runbook lúc chạy.</li>
+          </ul></div>
+      </div>
+      <ul>
+        <li>Runbook cần quyền thực thi – thường truyền một IAM role qua tham số <code>AutomationAssumeRole</code> <i>(kiến thức phổ biến)</i>.</li>
+        <li>Không quản lý remediation được cho <b>service-linked Config rule</b>.</li>
+        <li>Auto remediation dựa trên <b>snapshot kết quả tuân thủ định kỳ</b> ⇒ đôi khi có thể chạy trên tài nguyên vừa trở thành compliant (dữ liệu cũ) – runbook nên an toàn khi chạy lại (idempotent).</li>
+        <li>Troubleshoot: <code>describe-remediation-execution-status</code> xem trạng thái, thời điểm từng bước và lỗi.</li>
+        <li>Ví dụ runbook managed hay gặp: tắt public access của S3 bucket, bật mã hóa/versioning bucket, bật CloudTrail, gỡ rule SSH 0.0.0.0/0 khỏi security group <i>(tên runbook cụ thể như <code>AWS-DisableS3BucketPublicReadWrite</code>: kiến thức phổ biến)</i>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 300" width="800" role="img" aria-label="Luồng AWS Config rule và auto remediation">
+          <defs><marker id="b40" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#E7157B"/></marker>
+          <marker id="c40" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#7AA116"/></marker></defs>
+          <image href="../assets/icons/res/Users.svg" x="20" y="30" width="42" height="42"/>
+          <text x="8" y="90" font-size="11" font-weight="700">Dev mở SG</text>
+          <text x="8" y="104" font-size="10">0.0.0.0/0 :22</text>
+          <path d="M66 50 H120" stroke="#E7157B" stroke-width="2" marker-end="url(#b40)"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="126" y="28" width="44" height="44"/>
+          <text x="118" y="90" font-size="11" font-weight="700">Security group</text>
+          <text x="118" y="104" font-size="10">thay đổi cấu hình</text>
+          <path d="M176 50 H240" stroke="#E7157B" stroke-width="2" marker-end="url(#b40)"/>
+          <text x="180" y="42" font-size="10">CI mới</text>
+          <image href="../assets/icons/svc/AWS-Config.svg" x="246" y="26" width="48" height="48"/>
+          <text x="232" y="90" font-size="11" font-weight="700">Recorder + Rule</text>
+          <text x="232" y="104" font-size="10">restricted-ssh</text>
+          <path d="M300 50 H380" stroke="#E7157B" stroke-width="2" marker-end="url(#b40)"/>
+          <rect x="386" y="28" width="150" height="46" rx="6" fill="#DD344C" fill-opacity="0.1" stroke="#DD344C"/>
+          <text x="396" y="48" font-size="12" font-weight="700">NON_COMPLIANT</text>
+          <text x="396" y="64" font-size="10">gửi SNS / EventBridge</text>
+          <path d="M540 50 H600" stroke="#E7157B" stroke-width="2" marker-end="url(#b40)"/>
+          <image href="../assets/icons/res/AWS-Systems-Manager_Automation.svg" x="606" y="26" width="48" height="48"/>
+          <text x="588" y="90" font-size="11" font-weight="700">SSM Automation</text>
+          <text x="588" y="104" font-size="10">runbook gỡ rule SSH</text>
+          <path d="M630 112 V200 H160 V112" stroke="#7AA116" stroke-width="2" fill="none" marker-end="url(#c40)"/>
+          <text x="300" y="192" font-size="11" font-weight="700" fill="#7AA116">remediation sửa tài nguyên ⇒ CI mới ⇒ đánh giá lại ⇒ COMPLIANT</text>
+          <image href="../assets/icons/svc/AWS-CloudTrail.svg" x="246" y="220" width="36" height="36"/>
+          <text x="288" y="236" font-size="11" font-weight="700">CloudTrail</text>
+          <text x="288" y="251" font-size="10">CI liên kết event ⇒ biết AI đã mở port (AuthorizeSecurityGroupIngress)</text>
+          <image href="../assets/icons/svc/AWS-Security-Hub.svg" x="600" y="220" width="36" height="36"/>
+          <text x="642" y="236" font-size="11" font-weight="700">Security Hub</text>
+          <text x="642" y="251" font-size="10">nhận kết quả rule</text>
+          <text x="20" y="288" font-size="11">Retries ví dụ: 5 lần trong 300 giây · Resource ID parameter truyền ID security group vào runbook</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Vòng đời phát hiện – khắc phục với AWS Config. Thay đổi cấu hình sinh <b>configuration item</b> ⇒ rule (trigger: configuration changes) đánh giá ⇒ <b>NON_COMPLIANT</b> ⇒ <b>automatic remediation</b> chạy runbook SSM Automation để sửa ⇒ Config ghi CI mới và đánh giá lại thành COMPLIANT. CloudTrail cho biết <i>ai</i> gây ra vi phạm. Lưu ý: Config <b>không chặn</b> thay đổi ban đầu – có một khoảng thời gian tài nguyên ở trạng thái vi phạm.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Continuously evaluate whether resources comply with company policies (encrypted EBS, no public S3, approved AMIs, required tags)</i>” ⇒ <b>AWS Config rules</b> (managed nếu có sẵn).</li>
+          <li>“<i>Automatically fix noncompliant resources with least operational overhead</i>” ⇒ Config rule + <b>automatic remediation</b> với <b>SSM Automation</b> document.</li>
+          <li>“<i>View configuration history / what changed / when a resource was deleted</i>” ⇒ <b>AWS Config</b> (configuration history, timeline).</li>
+          <li>“<i>Centralized compliance view across all accounts and Regions</i>” ⇒ <b>Config aggregator</b>; “<i>deploy the same set of rules to all accounts</i>” ⇒ <b>conformance pack</b> / organization rules.</li>
+          <li>“<i>Prevent</i>” một hành động ⇒ <b>SCP / IAM policy</b>; Config chỉ phát hiện + sửa sau.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: KẾT HỢP ===================== -->
+      <h2 id="ket-hop"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">Kết hợp ba dịch vụ: chọn đúng công cụ cho đề</h2>
+      <p class="lead">Đề SAA-C03 hiếm khi hỏi định nghĩa; thường đưa <b>tình huống</b> và bắt bạn chọn dịch vụ hoặc chuỗi dịch vụ. Bảng dưới gom các mẫu hay gặp. <span class="t" data-vi="Bus sự kiện">EventBridge</span> (Bài 31) là “keo dán” nhận event từ cả CloudWatch alarm, CloudTrail và Config để kích hoạt Lambda, SNS, SSM.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu trong đề</th><th>Giải pháp</th><th>Vì sao không phải phương án khác</th></tr></thead>
+        <tbody>
+          <tr><td>Cảnh báo khi CPU/latency/5xx vượt ngưỡng</td><td>CloudWatch metric + <b>alarm</b> + SNS</td><td>CloudTrail/Config không đo hiệu năng</td></tr>
+          <tr><td>Theo dõi memory, disk của EC2</td><td><b>CloudWatch agent</b> → custom metric</td><td>Detailed monitoring vẫn không có memory</td></tr>
+          <tr><td>Tìm IAM user đã xóa DynamoDB table</td><td><b>CloudTrail</b> event history (≤ 90 ngày) / trail</td><td>Config chỉ ghi table đã bị xóa, không trực tiếp là “ai” (phải nhìn related CloudTrail event)</td></tr>
+          <tr><td>Ai đã đọc object nhạy cảm trong S3</td><td>CloudTrail <b>data events</b> cho S3</td><td>Management event không có GetObject</td></tr>
+          <tr><td>Cảnh báo tức thì khi có thao tác API nguy hiểm</td><td>CloudTrail → <b>EventBridge rule</b> → SNS/Lambda</td><td>Đọc log trong S3 thì chậm</td></tr>
+          <tr><td>Kiểm tra liên tục mọi bucket có bật mã hóa, tự sửa</td><td><b>Config rule</b> + auto remediation (SSM Automation)</td><td>CloudWatch không đánh giá cấu hình</td></tr>
+          <tr><td>Security group trông thế nào tuần trước</td><td><b>Config</b> configuration history</td><td>CloudTrail chỉ có lời gọi API rời rạc, phải tự dựng lại</td></tr>
+          <tr><td>Đếm lỗi trong log ứng dụng rồi cảnh báo</td><td>Logs <b>metric filter</b> + alarm</td><td>Logs Insights là truy vấn tương tác, không tự cảnh báo (trừ log alarm)</td></tr>
+          <tr><td>Lưu log lâu dài, rẻ, phân tích bằng SQL</td><td>Subscription → <b>Data Firehose → S3</b> → Athena</td><td>Export task là batch, có độ trễ tới 12 giờ</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout analogy"><span class="ttl">Cách nhớ nhanh</span>
+        <p><b>CloudWatch = “Performance”</b> (con số &amp; log đang chạy). <b>CloudTrail = “Who”</b> (ai gọi API). <b>Config = “What / Compliance”</b> (cấu hình là gì, có đúng luật không). Câu hỏi có chữ <i>who</i> ⇒ Trail; có chữ <i>compliant / configuration history</i> ⇒ Config; có chữ <i>metric / threshold / utilization / logs</i> ⇒ CloudWatch.</p></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>CloudWatch metric</b> = namespace + name + tối đa 30 dimension; standard 1 phút, <b>high-resolution 1 giây</b> (custom). Retention: &lt;60 s ⇒ 3 giờ; 1 phút ⇒ 15 ngày; 5 phút ⇒ 63 ngày; 1 giờ ⇒ 15 tháng. EC2 basic 5 phút, detailed 1 phút; <b>memory/disk cần CloudWatch agent</b>.</li>
+          <li><b>Alarm</b>: OK / ALARM / INSUFFICIENT_DATA; Period, Evaluation Periods (N), Datapoints to Alarm (M); missing data mặc định <code>missing</code>; action SNS, Auto Scaling, EC2 stop/terminate/reboot/<b>recover</b> (StatusCheckFailed_System, giữ IP &amp; instance ID), OpsItem. <b>Composite alarm</b> giảm nhiễu, không có EC2/ASG action.</li>
+          <li><b>CloudWatch Logs</b>: log group (retention mặc định Never Expire, KMS, class Standard/Essentials không đổi được) → <b>metric filter</b> (không hồi tố) → alarm; <b>subscription filter</b> (≤ 5/log group) → Kinesis / Firehose / Lambda / OpenSearch; export S3 (batch, tới 12 giờ); <b>Logs Insights</b> truy vấn tương tác, tính phí theo GB quét.</li>
+          <li><b>CloudTrail</b>: event history 90 ngày management events, miễn phí; <b>trail</b> giao S3 (+ CloudWatch Logs, EventBridge), nên <b>multi-Region</b> + <b>organization trail</b>; <b>data events</b> (S3 object, Lambda Invoke, DynamoDB item) phải bật riêng; Insights phát hiện bất thường; <b>log file integrity validation</b> (SHA-256, digest mỗi giờ); <b>Lake</b> SQL, giữ tới ~10 năm.</li>
+          <li><b>AWS Config</b>: recorder → configuration item → history/snapshot/stream; <b>rules</b> managed/custom (Lambda, Guard), trigger configuration change/periodic/hybrid, detective/proactive; <b>conformance pack</b> (YAML, cả Organization); <b>aggregator</b> chỉ đọc, miễn phí; <b>remediation</b> bằng <b>SSM Automation</b>, manual hoặc automatic (retries).</li>
+          <li>Không dịch vụ nào trong ba <b>chặn</b> hành động – muốn ngăn dùng IAM/SCP; muốn phản ứng nhanh dùng <b>EventBridge</b>.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Amazon CloudWatch</dt><dd><b>Dịch vụ giám sát hiệu năng &amp; vận hành</b> – metric, alarm, log, dashboard.</dd></div>
+        <div><dt>Metric / Data point</dt><dd><b>Chỉ số / Điểm dữ liệu</b> – chuỗi giá trị theo thời gian.</dd></div>
+        <div><dt>Namespace</dt><dd><b>Không gian tên</b> chứa metric, vd <code>AWS/EC2</code>, <code>CWAgent</code>.</dd></div>
+        <div><dt>Dimension</dt><dd><b>Chiều phân loại</b> (name/value) – một phần danh tính metric, tối đa 30.</dd></div>
+        <div><dt>Statistic / Period / Percentile</dt><dd><b>Thống kê / Chu kỳ tổng hợp / Bách phân vị</b> (p95, p99).</dd></div>
+        <div><dt>Standard / High-resolution metric</dt><dd><b>Metric độ phân giải 1 phút / 1 giây</b>.</dd></div>
+        <div><dt>Basic / Detailed monitoring</dt><dd><b>Giám sát cơ bản 5 phút (miễn phí) / chi tiết 1 phút (trả phí)</b> cho EC2.</dd></div>
+        <div><dt>Custom metric / PutMetricData</dt><dd><b>Chỉ số tùy chỉnh</b> do bạn publish / API để publish.</dd></div>
+        <div><dt>Statistic set</dt><dd><b>Tập thống kê gộp sẵn</b> (Sum, Min, Max, SampleCount) gửi một lần.</dd></div>
+        <div><dt>Metric math</dt><dd><b>Phép toán trên metric</b> tạo chuỗi thời gian mới.</dd></div>
+        <div><dt>Alarm / Metric alarm / Composite alarm</dt><dd><b>Cảnh báo / Cảnh báo theo metric / Cảnh báo tổng hợp</b> từ trạng thái nhiều alarm.</dd></div>
+        <div><dt>OK / ALARM / INSUFFICIENT_DATA</dt><dd><b>Ba trạng thái</b> của alarm.</dd></div>
+        <div><dt>Evaluation Periods / Datapoints to Alarm (M out of N)</dt><dd><b>Số chu kỳ đánh giá / Số điểm vượt ngưỡng cần có</b> để báo động.</dd></div>
+        <div><dt>Treat missing data</dt><dd><b>Cách xử lý dữ liệu thiếu</b>: missing, notBreaching, breaching, ignore.</dd></div>
+        <div><dt>Anomaly detection</dt><dd><b>Phát hiện bất thường</b> bằng dải giá trị kỳ vọng học từ lịch sử.</dd></div>
+        <div><dt>EC2 recover action / StatusCheckFailed_System</dt><dd><b>Hành động khôi phục instance sang phần cứng mới / Lỗi kiểm tra trạng thái hệ thống</b>.</dd></div>
+        <div><dt>Log event / Log stream / Log group</dt><dd><b>Sự kiện log / Luồng log cùng nguồn / Nhóm log</b> chung retention &amp; quyền.</dd></div>
+        <div><dt>Retention setting</dt><dd><b>Thời gian lưu giữ log</b> – mặc định Never Expire.</dd></div>
+        <div><dt>Log class (Standard / Essentials)</dt><dd><b>Hạng log group</b> – đầy đủ tính năng / rẻ hơn, ít tính năng.</dd></div>
+        <div><dt>Metric filter</dt><dd><b>Bộ lọc biến log thành metric</b>; không hồi tố.</dd></div>
+        <div><dt>Subscription filter</dt><dd><b>Bộ lọc chuyển tiếp log</b> gần thời gian thực tới Kinesis/Firehose/Lambda/OpenSearch.</dd></div>
+        <div><dt>Export task</dt><dd><b>Tác vụ xuất log theo lô</b> sang S3.</dd></div>
+        <div><dt>CloudWatch Logs Insights</dt><dd><b>Truy vấn &amp; phân tích log tương tác</b>.</dd></div>
+        <div><dt>CloudWatch agent (unified)</dt><dd><b>Tác nhân thu metric/log/trace</b> trên EC2 và on-premises.</dd></div>
+        <div><dt>Cross-account observability / Monitoring account</dt><dd><b>Quan sát xuyên account / Account giám sát trung tâm</b>.</dd></div>
+        <div><dt>Synthetics canary / RUM</dt><dd><b>Script giám sát chủ động / Giám sát người dùng thật</b>.</dd></div>
+        <div><dt>AWS CloudTrail</dt><dd><b>Dịch vụ kiểm toán hoạt động API</b> – ai làm gì, khi nào.</dd></div>
+        <div><dt>Event history</dt><dd><b>Lịch sử sự kiện</b> 90 ngày management events, miễn phí.</dd></div>
+        <div><dt>Trail / Multi-Region trail / Organization trail</dt><dd><b>Cấu hình giao log liên tục / cho mọi Region / cho mọi account trong Organization</b>.</dd></div>
+        <div><dt>Management event (control plane)</dt><dd><b>Sự kiện quản lý</b> – tạo/sửa/xóa cấu hình; mặc định được ghi.</dd></div>
+        <div><dt>Data event (data plane)</dt><dd><b>Sự kiện dữ liệu</b> – S3 object, Lambda Invoke, DynamoDB item; bật riêng.</dd></div>
+        <div><dt>Network activity event</dt><dd><b>Sự kiện hoạt động mạng</b> qua VPC endpoint.</dd></div>
+        <div><dt>CloudTrail Insights</dt><dd><b>Phát hiện bất thường</b> về tỷ lệ gọi API / tỷ lệ lỗi so với baseline.</dd></div>
+        <div><dt>Log file integrity validation / Digest file</dt><dd><b>Xác thực toàn vẹn file log / File tóm lược chứa hash</b> giao mỗi giờ.</dd></div>
+        <div><dt>CloudTrail Lake / Event data store</dt><dd><b>Kho dữ liệu sự kiện</b> truy vấn SQL, giữ tới ~10 năm.</dd></div>
+        <div><dt>Event selector (basic / advanced)</dt><dd><b>Bộ chọn sự kiện</b> quyết định trail ghi event nào.</dd></div>
+        <div><dt>AWS Config</dt><dd><b>Dịch vụ ghi nhận cấu hình &amp; đánh giá tuân thủ</b>.</dd></div>
+        <div><dt>Configuration recorder / Configuration item (CI)</dt><dd><b>Bộ ghi cấu hình / Mục cấu hình</b> – ảnh chụp tài nguyên tại một thời điểm.</dd></div>
+        <div><dt>Configuration history / snapshot / stream</dt><dd><b>Lịch sử / Ảnh chụp toàn cảnh / Luồng thông báo (SNS)</b> cấu hình.</dd></div>
+        <div><dt>Delivery channel</dt><dd><b>Kênh phân phối</b> của Config (S3, SNS).</dd></div>
+        <div><dt>Config rule (managed / custom Lambda / custom Guard)</dt><dd><b>Quy tắc đánh giá tuân thủ</b> dựng sẵn / tự viết bằng Lambda / bằng Guard.</dd></div>
+        <div><dt>Trigger type (configuration changes / periodic / hybrid)</dt><dd><b>Kiểu kích hoạt đánh giá</b> rule.</dd></div>
+        <div><dt>Detective / Proactive evaluation</dt><dd><b>Đánh giá sau khi / trước khi triển khai</b>.</dd></div>
+        <div><dt>COMPLIANT / NON_COMPLIANT / NOT_APPLICABLE</dt><dd><b>Tuân thủ / Không tuân thủ / Không áp dụng</b>.</dd></div>
+        <div><dt>Conformance pack</dt><dd><b>Gói tuân thủ</b> – tập rule + remediation (YAML) triển khai như một khối.</dd></div>
+        <div><dt>Aggregator</dt><dd><b>Bộ tổng hợp</b> dữ liệu Config nhiều account/Region – chỉ đọc, miễn phí.</dd></div>
+        <div><dt>Remediation (manual / automatic)</dt><dd><b>Khắc phục thủ công / tự động</b> bằng SSM Automation document.</dd></div>
+        <div><dt>SSM Automation document (runbook)</dt><dd><b>Tài liệu tự động hóa</b> định nghĩa các bước sửa tài nguyên.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a memory-intensive application on a fleet of Amazon EC2 instances in an Auto Scaling group. The operations team needs to monitor memory utilization and free disk space on every instance and receive an alert when memory utilization exceeds 85%. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Enable detailed monitoring on the instances and create a CloudWatch alarm on the MemoryUtilization metric in the AWS/EC2 namespace.</li>
+            <li data-k="B">Enable AWS CloudTrail data events for Amazon EC2 and create a metric filter on the memory values.</li>
+            <li data-k="C">Install the unified CloudWatch agent on the instances by using AWS Systems Manager, collect memory and disk metrics, and create a CloudWatch alarm on the memory metric that notifies an Amazon SNS topic.</li>
+            <li data-k="D">Write a cron job on each instance that calls PutMetricData every second as a high-resolution metric, and poll the metric with an AWS Lambda function.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Memory và disk space là metric <b>bên trong OS</b>; hypervisor không thấy nên EC2 không gửi sẵn. <b>CloudWatch agent</b> thu các metric này (namespace <code>CWAgent</code>), triển khai hàng loạt qua Systems Manager, rồi đặt alarm + SNS. <b>A sai</b>: detailed monitoring chỉ đổi tần suất từ 5 phút xuống 1 phút, <code>AWS/EC2</code> không có metric memory. <b>B sai</b>: CloudTrail ghi lời gọi API, không ghi số liệu hiệu năng. <b>D sai</b>: tự viết script, tốn phí <code>PutMetricData</code> mỗi giây và Lambda polling thừa – alarm đã làm được việc đó.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng tiêu tốn nhiều bộ nhớ trên một nhóm Amazon EC2 instance trong một Auto Scaling group. Đội vận hành cần giám sát mức sử dụng bộ nhớ và dung lượng đĩa trống trên mọi instance, và nhận cảnh báo khi mức sử dụng bộ nhớ vượt quá 85%. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật detailed monitoring trên các instance và tạo một CloudWatch alarm trên metric MemoryUtilization trong namespace AWS/EC2.</span><span class="why">Sai: detailed monitoring chỉ tăng tần suất lên 1 phút; namespace AWS/EC2 không có metric bộ nhớ vì hypervisor không thấy được bên trong OS.</span></li>
+              <li data-k="B"><span class="tv">Bật AWS CloudTrail data events cho Amazon EC2 và tạo metric filter trên các giá trị bộ nhớ.</span><span class="why">Sai: CloudTrail ghi lại lời gọi API, không ghi số liệu hiệu năng như bộ nhớ hay đĩa.</span></li>
+              <li data-k="C"><span class="tv">Cài unified CloudWatch agent lên các instance bằng AWS Systems Manager, thu thập metric bộ nhớ và đĩa, và tạo một CloudWatch alarm trên metric bộ nhớ để thông báo tới một Amazon SNS topic.</span><span class="why">Đúng: bộ nhớ và dung lượng đĩa là metric bên trong OS chỉ CloudWatch agent thu được; Systems Manager giúp cài hàng loạt, alarm + SNS gửi cảnh báo – ít vận hành nhất.</span></li>
+              <li data-k="D"><span class="tv">Viết cron job trên mỗi instance gọi PutMetricData mỗi giây dưới dạng high-resolution metric, và dùng AWS Lambda function để poll metric đó.</span><span class="why">Sai: phải tự viết và duy trì script, tốn phí PutMetricData mỗi giây, và Lambda polling là thừa vì alarm đã làm việc đó.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">An Amazon EC2 instance that runs a legacy licensing server must keep its private IP address, Elastic IP address, and instance ID. The company wants the instance to be automatically moved to healthy hardware if an underlying AWS hardware problem occurs. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create a CloudWatch alarm on the StatusCheckFailed_Instance metric with the Reboot this instance action.</li>
+            <li data-k="B">Create a CloudWatch alarm on the StatusCheckFailed_System metric with the Recover this instance action.</li>
+            <li data-k="C">Place the instance in an Auto Scaling group with a minimum and maximum capacity of 1.</li>
+            <li data-k="D">Create an AWS Config rule that terminates and relaunches the instance when it becomes impaired.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Action <b>Recover</b> chỉ dùng với <b><code>StatusCheckFailed_System</code></b> (mất điện, mất mạng, lỗi phần cứng host); instance được chuyển sang phần cứng mới và <b>giữ nguyên instance ID, private IP, Elastic IP, metadata</b>. <b>A sai</b>: reboot dành cho lỗi <i>instance</i> status check (OS), vẫn ở host lỗi. <b>C sai</b>: Auto Scaling thay bằng instance <b>mới</b> – đổi instance ID và private IP. <b>D sai</b>: Config đánh giá cấu hình, không theo dõi status check, và terminate thì mất instance ID.</div>
+          <div class="trans">
+            <div class="tq">Một Amazon EC2 instance chạy một license server cũ phải giữ nguyên private IP address, Elastic IP address và instance ID. Công ty muốn instance được tự động chuyển sang phần cứng khỏe mạnh nếu xảy ra sự cố phần cứng của AWS bên dưới. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một CloudWatch alarm trên metric StatusCheckFailed_Instance với action Reboot this instance.</span><span class="why">Sai: instance status check phản ánh lỗi trong OS; reboot vẫn giữ instance trên host lỗi nên không xử lý được sự cố phần cứng.</span></li>
+              <li data-k="B"><span class="tv">Tạo một CloudWatch alarm trên metric StatusCheckFailed_System với action Recover this instance.</span><span class="why">Đúng: system status check bắt lỗi phần cứng/hạ tầng host; action Recover chuyển instance sang phần cứng mới mà vẫn giữ instance ID, private IP và Elastic IP.</span></li>
+              <li data-k="C"><span class="tv">Đặt instance vào một Auto Scaling group với minimum và maximum capacity bằng 1.</span><span class="why">Sai: Auto Scaling thay bằng một instance mới, nên instance ID và private IP thay đổi.</span></li>
+              <li data-k="D"><span class="tv">Tạo một AWS Config rule để terminate rồi launch lại instance khi nó bị suy giảm.</span><span class="why">Sai: Config đánh giá cấu hình, không theo dõi status check; terminate rồi launch lại làm mất instance ID.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A security team discovered that several objects were deleted from an Amazon S3 bucket that stores financial reports. The team needs to identify which IAM principal deleted the objects for any future incident, and must keep this audit record for 7 years. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Use the CloudTrail Event history to search for DeleteObject events.</li>
+            <li data-k="B">Enable AWS Config recording for the AWS::S3::Bucket resource type and review the configuration timeline.</li>
+            <li data-k="C">Create a CloudWatch Logs metric filter for DeleteObject on the default CloudTrail log group.</li>
+            <li data-k="D">Create a CloudTrail trail that logs S3 data events for the bucket, deliver the logs to a separate S3 bucket with an S3 Lifecycle policy that retains them for 7 years, and enable log file integrity validation.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <code>DeleteObject</code> là <b>data event</b> – chỉ được ghi khi trail bật data event cho S3. Trail giao log vào S3 nên giữ được bao lâu tùy lifecycle; integrity validation chứng minh log không bị sửa. <b>A sai</b>: event history chỉ có <b>management event</b> trong <b>90 ngày</b>. <b>B sai</b>: Config ghi cấu hình bucket (policy, encryption…), không ghi từng thao tác object. <b>C sai</b>: không có “log group CloudTrail mặc định”; trail phải được cấu hình gửi CloudWatch Logs và vẫn phải bật data event; metric filter chỉ đếm, không lưu bằng chứng 7 năm.</div>
+          <div class="trans">
+            <div class="tq">Một đội bảo mật phát hiện một số object đã bị xóa khỏi một Amazon S3 bucket lưu báo cáo tài chính. Đội cần xác định được IAM principal nào đã xóa object trong mọi sự cố về sau, và phải giữ bản ghi audit này trong 7 năm. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng CloudTrail Event history để tìm các sự kiện DeleteObject.</span><span class="why">Sai: Event history chỉ chứa management event trong 90 ngày; DeleteObject là data event nên không có ở đó, và cũng không giữ được 7 năm.</span></li>
+              <li data-k="B"><span class="tv">Bật AWS Config recording cho resource type AWS::S3::Bucket và xem lại configuration timeline.</span><span class="why">Sai: Config ghi thay đổi cấu hình của bucket (policy, encryption…), không ghi từng thao tác trên object hay ai thực hiện.</span></li>
+              <li data-k="C"><span class="tv">Tạo một CloudWatch Logs metric filter cho DeleteObject trên log group CloudTrail mặc định.</span><span class="why">Sai: không có log group CloudTrail mặc định, data event vẫn phải được bật trên trail, và metric filter chỉ đếm chứ không lưu bằng chứng 7 năm.</span></li>
+              <li data-k="D"><span class="tv">Tạo một CloudTrail trail ghi S3 data events cho bucket, gửi log tới một S3 bucket riêng có S3 Lifecycle policy giữ log trong 7 năm, và bật log file integrity validation.</span><span class="why">Đúng: DeleteObject là data event nên phải bật trên trail; log lưu trong S3 giữ được 7 năm nhờ lifecycle, và integrity validation chứng minh log không bị chỉnh sửa.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company has 120 AWS accounts in AWS Organizations. The compliance team requires that all API activity in every account and every AWS Region is recorded to a central Amazon S3 bucket, including in accounts that will be created in the future. Administrators in member accounts must not be able to stop or modify this logging. Which solution requires the LEAST operational effort?</div>
+          <ol class="opts">
+            <li data-k="A">Create a multi-Region organization trail from the management account that delivers logs to an S3 bucket in a dedicated log archive account.</li>
+            <li data-k="B">Use AWS CloudFormation StackSets to create a single-Region trail in each account and each Region.</li>
+            <li data-k="C">Rely on the CloudTrail Event history in each account and export it monthly.</li>
+            <li data-k="D">Create an AWS Config aggregator in the management account to collect API activity from all accounts.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Organization trail</b> tự ghi event của mọi member account (kể cả account mới) vào một bucket; <b>multi-Region</b> bao phủ mọi Region đã bật; member account thấy trail nhưng <b>không xóa/tắt/sửa</b> được. <b>B sai</b>: nhiều trail phải quản lý, member có thể tự sửa, single-Region còn có thể bỏ lỡ global service event. <b>C sai</b>: event history chỉ 90 ngày, chỉ management event, thủ công. <b>D sai</b>: aggregator gom dữ liệu <b>cấu hình/tuân thủ</b> của Config, không phải log API.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 120 AWS account trong AWS Organizations. Đội tuân thủ yêu cầu mọi hoạt động API trong mọi account và mọi AWS Region phải được ghi vào một Amazon S3 bucket trung tâm, bao gồm cả các account sẽ được tạo trong tương lai. Quản trị viên trong các member account không được phép dừng hay sửa việc ghi log này. Giải pháp nào cần LEAST operational effort (ít công vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một multi-Region organization trail từ management account, gửi log tới một S3 bucket trong một log archive account chuyên dụng.</span><span class="why">Đúng: organization trail tự áp cho mọi member account kể cả account mới, multi-Region bao phủ mọi Region, và member account không thể xóa/tắt/sửa trail.</span></li>
+              <li data-k="B"><span class="tv">Dùng AWS CloudFormation StackSets để tạo một trail single-Region trong mỗi account và mỗi Region.</span><span class="why">Sai: phải quản lý rất nhiều trail, admin của member account vẫn có thể sửa/tắt trail của mình, và single-Region dễ bỏ lỡ global service event.</span></li>
+              <li data-k="C"><span class="tv">Dựa vào CloudTrail Event history trong mỗi account và export hằng tháng.</span><span class="why">Sai: Event history chỉ có management event trong 90 ngày, phải export thủ công và không tập trung, không chống bị can thiệp.</span></li>
+              <li data-k="D"><span class="tv">Tạo một AWS Config aggregator trong management account để thu thập hoạt động API từ tất cả account.</span><span class="why">Sai: Config aggregator gom dữ liệu cấu hình/tuân thủ của AWS Config, không thu thập log hoạt động API.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,D">
+          <div class="qh">A company wants to be alerted within minutes whenever the AWS account root user signs in to the AWS Management Console, and also wants to count the number of HTTP 500 errors written by its application to Amazon CloudWatch Logs and alarm if more than 50 occur in 5 minutes. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Enable AWS Config and create a managed rule that detects root user sign-ins.</li>
+            <li data-k="B">Create an Amazon EventBridge rule that matches the CloudTrail ConsoleLogin event for the root user and sends a notification to an Amazon SNS topic.</li>
+            <li data-k="C">Create a CloudWatch Logs subscription filter that sends all application logs to Amazon S3 and query them with Amazon Athena every 5 minutes.</li>
+            <li data-k="D">Create a CloudWatch Logs metric filter on the application log group that matches HTTP 500 entries, and create a CloudWatch alarm on the resulting metric with a threshold of 50 over a 5-minute period.</li>
+            <li data-k="E">Use CloudWatch Logs Insights to run a saved query manually whenever the team suspects errors.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, D.</b> <code>ConsoleLogin</code> là management event (non-API) của CloudTrail; <b>EventBridge</b> nhận event này và gửi SNS gần thời gian thực (B). <b>Metric filter</b> biến mỗi dòng lỗi 500 thành data point, rồi alarm với Period 5 phút, ngưỡng 50 (D). <b>A sai</b>: Config ghi cấu hình tài nguyên, không ghi sự kiện đăng nhập. <b>C sai</b>: phức tạp, trễ và không phải cảnh báo native. <b>E sai</b>: truy vấn thủ công, không tự cảnh báo.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn được cảnh báo trong vòng vài phút mỗi khi root user của AWS account đăng nhập vào AWS Management Console, đồng thời muốn đếm số lỗi HTTP 500 mà ứng dụng ghi vào Amazon CloudWatch Logs và báo động nếu có hơn 50 lỗi trong 5 phút. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật AWS Config và tạo một managed rule phát hiện việc root user đăng nhập.</span><span class="why">Sai: Config ghi lại cấu hình tài nguyên, không ghi sự kiện đăng nhập console.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Amazon EventBridge rule khớp với sự kiện CloudTrail ConsoleLogin của root user và gửi thông báo tới một Amazon SNS topic.</span><span class="why">Đúng: ConsoleLogin là management event của CloudTrail được chuyển tới EventBridge; rule lọc root user và gửi SNS gần thời gian thực.</span></li>
+              <li data-k="C"><span class="tv">Tạo một CloudWatch Logs subscription filter gửi toàn bộ log ứng dụng tới Amazon S3 và truy vấn bằng Amazon Athena mỗi 5 phút.</span><span class="why">Sai: phức tạp, có độ trễ, phải tự dựng lịch truy vấn và không phải cơ chế cảnh báo native.</span></li>
+              <li data-k="D"><span class="tv">Tạo một CloudWatch Logs metric filter trên log group của ứng dụng khớp các dòng HTTP 500, và tạo một CloudWatch alarm trên metric thu được với ngưỡng 50 trong chu kỳ 5 phút.</span><span class="why">Đúng: metric filter biến mỗi dòng lỗi 500 thành data point, alarm với Period 5 phút (statistic Sum) và ngưỡng 50 đáp ứng đúng yêu cầu.</span></li>
+              <li data-k="E"><span class="tv">Dùng CloudWatch Logs Insights để chạy thủ công một saved query mỗi khi đội nghi ngờ có lỗi.</span><span class="why">Sai: truy vấn thủ công, không tự động cảnh báo khi vượt ngưỡng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company must ensure that all Amazon EBS volumes in its account are encrypted. If an unencrypted volume is found, the security team must be notified, and the company wants a record that shows when each volume became noncompliant. The company does not want to write custom code. Which service should the solutions architect use?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon CloudWatch with an alarm on the VolumeReadOps metric</li>
+            <li data-k="B">AWS CloudTrail Insights</li>
+            <li data-k="C">AWS Config with the encrypted-volumes managed rule and an Amazon SNS notification</li>
+            <li data-k="D">Amazon Inspector</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Kiểm tra <b>cấu hình</b> liên tục và lưu <b>lịch sử tuân thủ</b> là việc của <b>AWS Config rules</b>; managed rule kiểm tra EBS encryption có sẵn, không cần code; kết quả NON_COMPLIANT gửi thông báo qua SNS/EventBridge. <b>A sai</b>: metric hiệu năng không cho biết volume có mã hóa. <b>B sai</b>: Insights phát hiện tỷ lệ gọi API/lỗi bất thường. <b>D sai</b>: Inspector quét lỗ hổng phần mềm (CVE), không đánh giá cấu hình mã hóa EBS.</div>
+          <div class="trans">
+            <div class="tq">Một công ty phải bảo đảm mọi Amazon EBS volume trong account đều được mã hóa. Nếu phát hiện volume chưa mã hóa, đội bảo mật phải được thông báo, và công ty muốn có bản ghi cho thấy thời điểm mỗi volume trở nên không tuân thủ. Công ty không muốn viết code tùy chỉnh. Solutions architect nên dùng dịch vụ nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon CloudWatch với một alarm trên metric VolumeReadOps</span><span class="why">Sai: VolumeReadOps là metric hiệu năng, không cho biết volume có được mã hóa hay không.</span></li>
+              <li data-k="B"><span class="tv">AWS CloudTrail Insights</span><span class="why">Sai: CloudTrail Insights phát hiện tỷ lệ gọi API hoặc lỗi API bất thường, không đánh giá cấu hình mã hóa.</span></li>
+              <li data-k="C"><span class="tv">AWS Config với managed rule encrypted-volumes và thông báo Amazon SNS</span><span class="why">Đúng: AWS Config liên tục đánh giá cấu hình, lưu lịch sử tuân thủ (thời điểm NON_COMPLIANT), managed rule có sẵn không cần code, và gửi thông báo qua SNS.</span></li>
+              <li data-k="D"><span class="tv">Amazon Inspector</span><span class="why">Sai: Inspector quét lỗ hổng phần mềm (CVE), không kiểm tra cấu hình mã hóa EBS.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company uses AWS Config rules to detect security groups that allow unrestricted inbound SSH access (0.0.0.0/0 on port 22). The company now wants these rules to be removed automatically within minutes of detection, without building or maintaining custom infrastructure. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Configure automatic remediation on the AWS Config rule that runs an AWS Systems Manager Automation document to remove the offending ingress rule, passing the security group ID as the resource ID parameter.</li>
+            <li data-k="B">Create a CloudWatch alarm on the NetworkIn metric of each instance that triggers when SSH traffic is detected.</li>
+            <li data-k="C">Schedule an Amazon EC2 instance that runs a script every hour to scan and fix all security groups.</li>
+            <li data-k="D">Enable CloudTrail log file integrity validation to prevent unauthorized security group changes.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Config <b>remediation</b> dùng <b>SSM Automation document</b>; chế độ <b>automatic</b> chạy ngay khi tài nguyên bị đánh giá NON_COMPLIANT, có thể đặt retries, truyền <b>resource ID</b> vào runbook – không cần hạ tầng riêng. <b>B sai</b>: metric mạng không biết rule SG là gì, và alarm không sửa SG. <b>C sai</b>: tự dựng và vận hành, chậm (mỗi giờ). <b>D sai</b>: integrity validation chỉ chứng minh log không bị sửa, không ngăn hay sửa thay đổi.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng AWS Config rules để phát hiện các security group cho phép truy cập SSH inbound không giới hạn (0.0.0.0/0 trên port 22). Giờ công ty muốn các rule này được tự động gỡ bỏ trong vòng vài phút sau khi phát hiện, mà không phải xây dựng hay duy trì hạ tầng tùy chỉnh. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình automatic remediation trên AWS Config rule để chạy một AWS Systems Manager Automation document gỡ bỏ ingress rule vi phạm, truyền security group ID làm tham số resource ID.</span><span class="why">Đúng: Config remediation tự động chạy SSM Automation ngay khi tài nguyên bị đánh giá NON_COMPLIANT, truyền resource ID vào runbook – không cần hạ tầng riêng.</span></li>
+              <li data-k="B"><span class="tv">Tạo một CloudWatch alarm trên metric NetworkIn của mỗi instance, kích hoạt khi phát hiện traffic SSH.</span><span class="why">Sai: metric mạng không phân biệt được traffic SSH hay rule của security group, và alarm không tự sửa security group.</span></li>
+              <li data-k="C"><span class="tv">Lên lịch một Amazon EC2 instance chạy script mỗi giờ để quét và sửa tất cả security group.</span><span class="why">Sai: phải tự dựng và vận hành hạ tầng, và chu kỳ mỗi giờ không đáp ứng "trong vòng vài phút".</span></li>
+              <li data-k="D"><span class="tv">Bật CloudTrail log file integrity validation để ngăn các thay đổi security group trái phép.</span><span class="why">Sai: integrity validation chỉ chứng minh log CloudTrail không bị sửa, không ngăn hay khắc phục thay đổi security group.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An application writes logs to Amazon CloudWatch Logs. The company must deliver these logs in near real time to an Amazon OpenSearch Service domain for search, and also keep a copy in Amazon S3 for long-term, low-cost retention. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Create a CloudWatch Logs export task every hour to Amazon S3 and load the files into OpenSearch with a script.</li>
+            <li data-k="B">Use CloudWatch Logs Insights to run a scheduled query every minute and copy the results to OpenSearch.</li>
+            <li data-k="C">Create a metric filter for every log line and stream the metric to OpenSearch.</li>
+            <li data-k="D">Create CloudWatch Logs subscription filters on the log group that deliver to Amazon OpenSearch Service and to an Amazon Data Firehose stream that writes to Amazon S3.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Subscription filter</b> cung cấp luồng log gần thời gian thực tới OpenSearch, Kinesis, Firehose, Lambda; một log group có tới <b>5</b> subscription filter nên gửi được cả hai đích. Firehose → S3 là cách tài liệu khuyến nghị để lưu trữ liên tục. <b>A sai</b>: export task là batch, log có thể mất tới 12 giờ mới export được; tài liệu khuyên không dùng để archive liên tục. <b>B sai</b>: tự dựng, không phải cơ chế streaming. <b>C sai</b>: metric filter tạo số liệu, không chuyển nội dung log.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng ghi log vào Amazon CloudWatch Logs. Công ty phải chuyển các log này gần thời gian thực tới một Amazon OpenSearch Service domain để tìm kiếm, đồng thời giữ một bản sao trong Amazon S3 để lưu trữ dài hạn với chi phí thấp. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo CloudWatch Logs export task mỗi giờ sang Amazon S3 và nạp các file vào OpenSearch bằng script.</span><span class="why">Sai: export task là xử lý batch (log có thể mất tới 12 giờ mới export được), không gần thời gian thực, lại phải tự viết script nạp vào OpenSearch.</span></li>
+              <li data-k="B"><span class="tv">Dùng CloudWatch Logs Insights chạy truy vấn theo lịch mỗi phút và copy kết quả sang OpenSearch.</span><span class="why">Sai: phải tự dựng cơ chế copy, không phải streaming, và không giải quyết phần lưu trữ trong S3.</span></li>
+              <li data-k="C"><span class="tv">Tạo metric filter cho mọi dòng log và stream metric sang OpenSearch.</span><span class="why">Sai: metric filter chỉ tạo số liệu đếm, không chuyển nội dung log nên không tìm kiếm được.</span></li>
+              <li data-k="D"><span class="tv">Tạo các CloudWatch Logs subscription filter trên log group, gửi tới Amazon OpenSearch Service và tới một Amazon Data Firehose stream ghi vào Amazon S3.</span><span class="why">Đúng: subscription filter stream log gần thời gian thực; một log group có tới 5 filter nên gửi được cả OpenSearch và Firehose → S3 để lưu dài hạn, đều là dịch vụ được quản lý.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,E">
+          <div class="qh">A company has 30 AWS accounts across 4 AWS Regions in AWS Organizations. The compliance team needs a single read-only view of configuration compliance for all accounts and Regions, and wants to deploy the same set of AWS Config rules and remediation actions to every account as a single unit. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Create an AWS Config aggregator in a central account that uses AWS Organizations as the source for all accounts and Regions.</li>
+            <li data-k="B">Create a CloudWatch dashboard that displays the CPUUtilization metric for each account.</li>
+            <li data-k="C">Use CloudTrail Lake to query compliance status of resources.</li>
+            <li data-k="D">Use the aggregator to deploy rules to the member accounts.</li>
+            <li data-k="E">Deploy an organization conformance pack that contains the required Config rules and remediation actions.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, E.</b> <b>Aggregator</b> gom dữ liệu cấu hình &amp; tuân thủ của nhiều account/Region vào một account, không tốn thêm phí, không cần authorization riêng khi dùng Organizations (A). <b>Conformance pack</b> đóng gói rule + remediation trong YAML, triển khai như một thực thể cho cả Organization (E). <b>B sai</b>: metric hiệu năng, không phải tuân thủ. <b>C sai</b>: CloudTrail Lake chứa event API, không có đánh giá Config rule. <b>D sai</b>: aggregator là <b>chế độ xem chỉ đọc</b>, không deploy rule được.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 30 AWS account trên 4 AWS Region trong AWS Organizations. Đội tuân thủ cần một chế độ xem chỉ đọc duy nhất về tình trạng tuân thủ cấu hình cho mọi account và Region, và muốn triển khai cùng một bộ AWS Config rule cùng các remediation action tới mọi account như một đơn vị duy nhất. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một AWS Config aggregator trong một account trung tâm, dùng AWS Organizations làm nguồn cho mọi account và Region.</span><span class="why">Đúng: aggregator gom dữ liệu cấu hình và tuân thủ của nhiều account/Region vào một chế độ xem chỉ đọc, dùng Organizations thì không cần authorization từng account.</span></li>
+              <li data-k="B"><span class="tv">Tạo một CloudWatch dashboard hiển thị metric CPUUtilization của từng account.</span><span class="why">Sai: CPUUtilization là metric hiệu năng, không thể hiện tình trạng tuân thủ cấu hình.</span></li>
+              <li data-k="C"><span class="tv">Dùng CloudTrail Lake để truy vấn trạng thái tuân thủ của tài nguyên.</span><span class="why">Sai: CloudTrail Lake lưu event API, không chứa kết quả đánh giá của Config rule.</span></li>
+              <li data-k="D"><span class="tv">Dùng aggregator để triển khai rule tới các member account.</span><span class="why">Sai: aggregator chỉ là chế độ xem chỉ đọc, không thể triển khai rule.</span></li>
+              <li data-k="E"><span class="tv">Triển khai một organization conformance pack chứa các Config rule và remediation action cần thiết.</span><span class="why">Đúng: conformance pack đóng gói rule và remediation trong một template YAML và triển khai như một thực thể duy nhất cho cả Organization.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A web application publishes a custom metric for checkout latency. The operations team receives many false alerts because the alarm transitions to ALARM whenever a single 1-minute data point exceeds the threshold. The team wants the alarm to fire only if at least 3 of the last 5 data points breach the threshold. Which change should the solutions architect make?</div>
+          <ol class="opts">
+            <li data-k="A">Change the metric to high resolution and set the alarm period to 10 seconds.</li>
+            <li data-k="B">Set Evaluation Periods to 5 and Datapoints to Alarm to 3 on the CloudWatch alarm.</li>
+            <li data-k="C">Set the treat missing data option to breaching.</li>
+            <li data-k="D">Replace the metric alarm with a composite alarm that has the EC2 reboot action.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Alarm “<b>M out of N</b>”: <b>Evaluation Periods</b> (N = 5) là số data point gần nhất xem xét, <b>Datapoints to Alarm</b> (M = 3) là số điểm phải vượt ngưỡng – không cần liên tiếp. <b>A sai</b>: chu kỳ ngắn hơn còn nhạy và báo nhiều hơn. <b>C sai</b>: coi dữ liệu thiếu là vượt ngưỡng làm tăng báo động. <b>D sai</b>: composite alarm không có EC2 action, và vấn đề không phải gộp nhiều alarm.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng web publish một custom metric cho độ trễ thanh toán (checkout latency). Đội vận hành nhận nhiều cảnh báo giả vì alarm chuyển sang ALARM mỗi khi chỉ một data point 1 phút vượt ngưỡng. Đội muốn alarm chỉ kích hoạt nếu ít nhất 3 trong 5 data point gần nhất vượt ngưỡng. Solutions architect nên thay đổi gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển metric sang high resolution và đặt alarm period là 10 giây.</span><span class="why">Sai: chu kỳ ngắn hơn khiến alarm nhạy hơn và báo giả nhiều hơn, ngược với mục tiêu.</span></li>
+              <li data-k="B"><span class="tv">Đặt Evaluation Periods là 5 và Datapoints to Alarm là 3 trên CloudWatch alarm.</span><span class="why">Đúng: đây là alarm "M out of N" – xét 5 data point gần nhất (N) và chỉ ALARM khi ít nhất 3 điểm (M) vượt ngưỡng, không cần liên tiếp.</span></li>
+              <li data-k="C"><span class="tv">Đặt tùy chọn treat missing data thành breaching.</span><span class="why">Sai: coi dữ liệu thiếu là vượt ngưỡng chỉ làm tăng số lần báo động.</span></li>
+              <li data-k="D"><span class="tv">Thay metric alarm bằng một composite alarm có action EC2 reboot.</span><span class="why">Sai: composite alarm không hỗ trợ EC2 action, và vấn đề ở đây không phải gộp nhiều alarm mà là cách đánh giá data point.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/cloudwatch_concepts.html" target="_blank" rel="noopener">CloudWatch metrics concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/publishingMetrics.html" target="_blank" rel="noopener">Publish custom metrics (PutMetricData)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Alarms.html" target="_blank" rel="noopener">Using Amazon CloudWatch alarms</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/alarm-evaluation.html" target="_blank" rel="noopener">Alarm evaluation</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/alarms-and-missing-data.html" target="_blank" rel="noopener">Configuring how CloudWatch alarms treat missing data</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Acting_Alarm_Changes.html" target="_blank" rel="noopener">Acting on alarm changes</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/UsingAlarmActions.html" target="_blank" rel="noopener">Stop, terminate, reboot, or recover an EC2 instance</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Install-CloudWatch-Agent.html" target="_blank" rel="noopener">Collect metrics, logs, and traces using the CloudWatch agent</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CloudWatchLogsConcepts.html" target="_blank" rel="noopener">Amazon CloudWatch Logs concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/Working-with-log-groups-and-streams.html" target="_blank" rel="noopener">Working with log groups and log streams</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CloudWatch_Logs_Log_Classes.html" target="_blank" rel="noopener">CloudWatch Logs log classes</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/MonitoringLogData.html" target="_blank" rel="noopener">Creating metrics from log events using filters</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/Subscriptions.html" target="_blank" rel="noopener">Real-time processing of log data with subscriptions</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/S3Export.html" target="_blank" rel="noopener">Exporting log data to Amazon S3</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/AnalyzingLogData.html" target="_blank" rel="noopener">Analyzing log data with CloudWatch Logs Insights</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_QuerySyntax.html" target="_blank" rel="noopener">CloudWatch Logs Insights query syntax</a></li>
+        <li><a href="https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-concepts.html" target="_blank" rel="noopener">CloudTrail concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/awscloudtrail/latest/userguide/logging-management-events-with-cloudtrail.html" target="_blank" rel="noopener">Logging management events</a></li>
+        <li><a href="https://docs.aws.amazon.com/awscloudtrail/latest/userguide/logging-insights-events-with-cloudtrail.html" target="_blank" rel="noopener">Working with CloudTrail Insights</a></li>
+        <li><a href="https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-log-file-validation-intro.html" target="_blank" rel="noopener">Validating CloudTrail log file integrity</a></li>
+        <li><a href="https://docs.aws.amazon.com/config/latest/developerguide/config-concepts.html" target="_blank" rel="noopener">AWS Config terminology and concepts</a></li>
+        <li><a href="https://docs.aws.amazon.com/config/latest/developerguide/evaluate-config.html" target="_blank" rel="noopener">Evaluating resources with AWS Config rules</a></li>
+        <li><a href="https://docs.aws.amazon.com/config/latest/developerguide/evaluate-config_components.html" target="_blank" rel="noopener">Components of an AWS Config rule</a></li>
+        <li><a href="https://docs.aws.amazon.com/config/latest/developerguide/remediation.html" target="_blank" rel="noopener">Remediating noncompliant resources with AWS Config</a></li>
+        <li><a href="https://docs.aws.amazon.com/config/latest/developerguide/setup-autoremediation.html" target="_blank" rel="noopener">Setting up auto remediation for AWS Config</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>
+

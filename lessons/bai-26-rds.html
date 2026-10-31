@@ -1,0 +1,902 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 26 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-RDS.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="26" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Giải thích <span class="t" data-vi="Dịch vụ CSDL quan hệ được quản lý">Amazon RDS</span> là gì, AWS lo phần nào và bạn lo phần nào; nhận diện 6 <b>DB engine</b>, các họ <b>DB instance class</b> và loại storage.</li>
+          <li>Phân biệt <b>Multi-AZ DB instance</b> (1 standby, đồng bộ, không phục vụ đọc, failover 60–120 s) với <b>Multi-AZ DB cluster</b> (writer + 2 reader, bán đồng bộ, đọc được, failover thường &lt; 35 s).</li>
+          <li>Dùng <b>read replica</b> (bất đồng bộ, tối đa 15/primary, cùng hoặc khác Region, promote được) để <b>scale đọc</b> và làm <b>DR</b>; biết vì sao read replica <b>không phải</b> giải pháp high availability.</li>
+          <li>Nắm <b>automated backup</b> (retention 0–35 ngày, PITR, log 5 phút/lần), <b>manual snapshot</b>, <b>storage autoscaling</b> và giới hạn “không bao giờ thu nhỏ storage”.</li>
+          <li>Biết khi nào đặt <b>RDS Proxy</b> trước database (Lambda, nhiều kết nối ngắn, failover nhanh) và kết hợp với <b>AWS Secrets Manager</b>, <b>IAM DB authentication</b>.</li>
+          <li>Thiết kế <b>encryption at rest</b> bằng KMS – đặc biệt quy trình “mã hóa một DB đang chạy không mã hóa” mà đề rất hay hỏi.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 5 – Databases</span>
+        <p>Đây là bài mở đầu module Databases. <b>Bài 3</b> đã nói về shared responsibility (RDS là dịch vụ managed); <b>Bài 11</b> dạy EBS (gp3, io2 – nền storage của RDS); <b>Bài 19</b> dạy AWS Backup (backup plan, vault, PITR cho RDS); <b>Bài 20–21</b> dạy subnet, Security Group. Bài này tập trung vào <b>RDS (MySQL, PostgreSQL, MariaDB, Oracle, SQL Server, Db2)</b>. <b>Amazon Aurora</b> (cluster volume 6 bản sao, Aurora Replicas, Serverless v2, Global Database) học ở <b>Bài 27</b>; <b>DynamoDB</b> ở Bài 28; <b>ElastiCache</b> và các CSDL chuyên dụng ở Bài 29; chi tiết <b>KMS</b> và <b>Secrets Manager</b> ở module Security.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">Tổng quan: Amazon RDS là gì?</h2>
+      <p class="lead">Theo tài liệu AWS, <b>Amazon Relational Database Service (Amazon RDS)</b> là web service giúp <b>dựng, vận hành và mở rộng một CSDL quan hệ</b> trên AWS Cloud dễ hơn. Nó cung cấp năng lực <b>có thể thay đổi kích thước</b> với chi phí hợp lý cho các CSDL chuẩn công nghiệp và <b>tự quản lý các tác vụ quản trị CSDL thông thường</b>. AWS khuyến nghị RDS là <b>lựa chọn mặc định</b> cho hầu hết workload CSDL quan hệ.</p>
+
+      <p>Các lợi ích tài liệu nêu: dùng <span class="t" data-vi="Phần mềm CSDL">DB engine</span> quen thuộc; RDS lo <b>backup, vá phần mềm, phát hiện lỗi và tự phục hồi</b>; bật <b>automated backup</b> hoặc tự tạo <b>snapshot</b>; đạt <span class="t" data-vi="Tính sẵn sàng cao">high availability</span> nhờ instance chính + instance phụ <b>đồng bộ</b> để failover; dùng <span class="t" data-vi="Bản sao chỉ đọc">read replica</span> để <b>scale đọc</b>; kiểm soát truy cập bằng IAM và đặt DB trong VPC.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">
+          <div><h4>Amazon RDS</h4><span class="vi">CSDL quan hệ được quản lý</span><p>Db2, MariaDB, SQL Server, MySQL, Oracle, PostgreSQL. AWS lo cài đặt, vá OS/DB, backup, HA, scaling.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" alt="">
+          <div><h4>DB instance</h4><span class="vi">Môi trường CSDL cô lập</span><p>Khối xây dựng cơ bản của RDS; chứa một hoặc nhiều database do bạn tạo; truy cập qua <b>endpoint DNS</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance-Aternate.svg" alt="">
+          <div><h4>Multi-AZ &amp; Read replica</h4><span class="vi">Sẵn sàng cao &amp; mở rộng đọc</span><p>Standby đồng bộ ở AZ khác để failover; replica bất đồng bộ để chia tải đọc / DR.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-RDS-Proxy-Instance.svg" alt="">
+          <div><h4>Amazon RDS Proxy</h4><span class="vi">Proxy gom kết nối</span><p>Connection pooling serverless, failover nhanh, ép IAM authentication, lấy mật khẩu từ Secrets Manager.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Secrets-Manager.svg" alt="">
+          <div><h4>AWS Secrets Manager</h4><span class="vi">Quản lý bí mật</span><p>RDS tự sinh, lưu và <b>xoay vòng mật khẩu master user</b> (mặc định 7 ngày/lần).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">
+          <div><h4>AWS KMS</h4><span class="vi">Quản lý khóa mã hóa</span><p>Mã hóa at rest (AES-256) storage, log, backup, snapshot, read replica.</p></div></div>
+      </div>
+
+      <h3>Ai chịu trách nhiệm gì? (bảng từ tài liệu RDS)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Hạng mục</th><th>On-premises</th><th>DB tự cài trên Amazon EC2</th><th>Amazon RDS</th></tr></thead>
+        <tbody>
+          <tr><td>Tối ưu ứng dụng, query tuning</td><td>Khách hàng</td><td>Khách hàng</td><td><b>Khách hàng</b></td></tr>
+          <tr><td>Scaling</td><td>Khách hàng</td><td>Khách hàng</td><td class="yes">AWS</td></tr>
+          <tr><td>High availability</td><td>Khách hàng</td><td>Khách hàng</td><td class="yes">AWS</td></tr>
+          <tr><td>Database backups</td><td>Khách hàng</td><td>Khách hàng</td><td class="yes">AWS</td></tr>
+          <tr><td>Vá &amp; cài phần mềm DB</td><td>Khách hàng</td><td>Khách hàng</td><td class="yes">AWS</td></tr>
+          <tr><td>Vá &amp; cài hệ điều hành</td><td>Khách hàng</td><td>Khách hàng</td><td class="yes">AWS</td></tr>
+          <tr><td>Bảo trì server, vòng đời phần cứng</td><td>Khách hàng</td><td>AWS</td><td class="yes">AWS</td></tr>
+          <tr><td>Điện, mạng, làm mát</td><td>Khách hàng</td><td>AWS</td><td class="yes">AWS</td></tr>
+        </tbody>
+      </table></div>
+      <p>Theo <b>shared responsibility model</b> của RDS: AWS host phần mềm và hạ tầng của DB instance; <b>bạn</b> chịu trách nhiệm <b>query tuning</b>, thiết kế schema, giám sát hiệu năng (dùng Performance Insights), cấu hình Security Group, quyết định bật Multi-AZ, backup retention, mã hóa… Bạn <b>không SSH</b> được vào host RDS.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Đề nói “<i>migrate an on-premises MySQL/PostgreSQL/Oracle/SQL Server database… <b>least operational overhead</b></i>” ⇒ <b>Amazon RDS</b> (hoặc Aurora nếu MySQL/PostgreSQL và cần hiệu năng/khả năng mở rộng cao hơn – Bài 27), <b>không</b> phải tự cài DB trên EC2.</li>
+          <li>Đề yêu cầu “<i>access to the underlying operating system</i>” hoặc tính năng DB cần quyền OS ⇒ RDS thường <b>không đáp ứng</b>; chọn DB trên EC2 hoặc <b>RDS Custom</b> (cho Oracle / SQL Server – kiến thức thi phổ biến).</li>
+        </ul></div>
+
+      <h3>DB engine, instance class và storage</h3>
+      <ul>
+        <li><b>6 DB engine</b> của RDS: <b>IBM Db2, MariaDB, Microsoft SQL Server, MySQL, Oracle Database, PostgreSQL</b>. (Amazon Aurora có User Guide riêng – Bài 27.) Mỗi engine có tập tính năng khác nhau và hành vi điều khiển bởi <span class="t" data-vi="Nhóm tham số">DB parameter group</span>.</li>
+        <li><span class="t" data-vi="Lớp instance CSDL">DB instance class</span> quyết định CPU và bộ nhớ: <b>General purpose</b> <code>db.m*</code> · <b>Memory optimized</b> <code>db.z*</code>, <code>db.x*</code>, <code>db.r*</code> · <b>Compute optimized</b> <code>db.c*</code> · <b>Burstable</b> <code>db.t*</code>. Ví dụ <code>db.m7g.2xlarge</code> = thế hệ 7, Graviton3, size 2xlarge. Đổi class (scale up/down) bất cứ lúc nào – <b>scale dọc</b>.</li>
+        <li><b>Storage</b> dựa trên Amazon EBS (Bài 11): <b>General Purpose SSD</b> (gp2/gp3 – rẻ, đa dụng, dev/test và workload vừa) · <b>Provisioned IOPS SSD</b> (io1/io2 Block Express – I/O-intensive, độ trễ thấp và ổn định, <b>khuyến nghị cho production</b>) · <b>Magnetic</b> đã <b>deprecated</b>, không còn cho instance mới.</li>
+        <li>Thanh toán: <b>On-Demand</b> hoặc <b>Reserved DB instances</b> (cam kết 1/3 năm, giảm giá – đề hỏi “<i>steady-state database running 24/7, reduce cost</i>” ⇒ Reserved).</li>
+      </ul>
+
+      <h3>RDS trong VPC</h3>
+      <p>DB instance chạy trong VPC của bạn (không tốn thêm phí). Khi tạo, bạn chọn một <span class="t" data-vi="Nhóm subnet của CSDL">DB subnet group</span> – tập subnet (thường là <b>private subnet ở ≥ 2 AZ</b>) mà RDS được phép đặt instance và standby. Truy cập được kiểm soát bằng <b>VPC Security Group</b>: mẫu kinh điển trong tài liệu là SG của DB chỉ cho phép inbound từ <b>SG của tầng ứng dụng</b> (tham chiếu SG, không dùng dải IP). Tùy chọn <i>Publicly accessible</i> nên để <b>No</b> cho production.</p>
+
+      <div class="stats">
+        <div class="stat"><b>6</b><span>DB engine của RDS (không tính Aurora)</span></div>
+        <div class="stat"><b>40</b><span>DB instance mặc định / Region / account (adjustable)</span></div>
+        <div class="stat"><b>64 TiB</b><span>storage tối đa của một DB instance (MySQL, PostgreSQL… với SSD)</span></div>
+        <div class="stat"><b>100.000 GB</b><span>tổng storage mọi DB instance / Region (quota mặc định)</span></div>
+        <div class="stat"><b>1 phút</b><span>RDS gửi metric lên CloudWatch, không tính phí</span></div>
+        <div class="stat"><b>20</b><span>subnet tối đa trong một DB subnet group</span></div>
+      </div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – thuê căn hộ dịch vụ</span>
+        <p>Tự cài DB trên EC2 giống <b>thuê nhà trống</b>: bạn tự sửa điện nước, tự khóa cửa, tự dọn dẹp. RDS giống <b>căn hộ dịch vụ</b>: ban quản lý lo bảo trì, bảo vệ, dọn phòng định kỳ (patch, backup), có máy phát điện dự phòng (Multi-AZ). Bạn chỉ lo <b>đồ đạc của mình</b> – schema, query, quyền người dùng – và <b>không được đục tường</b> (không có quyền OS).</p></div>
+
+      <!-- ===================== PHẦN 2: MULTI-AZ ===================== -->
+      <h2 id="multi-az"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance-Aternate.svg" alt="">Multi-AZ deployment – tính sẵn sàng cao</h2>
+      <p class="lead">Một <span class="t" data-vi="Triển khai đa vùng sẵn sàng">Multi-AZ deployment</span> là tùy chọn chạy DB trên nhiều <span class="t" data-vi="Vùng sẵn sàng">Availability Zone</span>: AWS tự tạo và duy trì <b>một hoặc nhiều standby</b> ở AZ khác và sao chép dữ liệu từ primary sang. Tài liệu chia làm hai kiểu: <b>Multi-AZ DB instance deployment</b> (1 standby) và <b>Multi-AZ DB cluster deployment</b> (2 standby đọc được).</p>
+
+      <p>Lợi ích tài liệu nêu: <b>dư thừa dữ liệu và hỗ trợ failover</b>; <b>loại bỏ I/O freeze</b>; <b>giảm latency spike khi backup</b> (backup lấy từ standby); và – chỉ với Multi-AZ DB cluster – <b>phục vụ traffic đọc trên các instance phụ</b>.</p>
+
+      <h3>Kiểu 1 – Multi-AZ DB instance (một standby)</h3>
+      <ul>
+        <li>RDS tự tạo một <span class="t" data-vi="Bản sao dự phòng">standby replica</span> ở <b>AZ khác</b> và sao chép <span class="t" data-vi="Sao chép đồng bộ">synchronous replication</span> – mỗi lần ghi được xác nhận khi đã ghi ở cả hai nơi ⇒ <b>RPO gần bằng 0</b> khi một AZ hỏng.</li>
+        <li><b>Standby KHÔNG phục vụ đọc.</b> Tài liệu nhấn mạnh: “<i>The high availability option isn't a scaling solution for read-only scenarios</i>”. Muốn đọc thêm ⇒ dùng read replica hoặc Multi-AZ DB cluster.</li>
+        <li>Đổi lại, <b>write và commit latency có thể cao hơn</b> Single-AZ do phải chờ sao chép đồng bộ; AWS khuyến nghị dùng <b>Provisioned IOPS</b> cho production.</li>
+        <li>MariaDB, MySQL, Oracle, PostgreSQL dùng công nghệ failover của Amazon; <b>SQL Server</b> dùng <b>Database Mirroring (DBM)</b> hoặc <b>Always On Availability Groups</b>.</li>
+        <li>Bật khi tạo DB, hoặc <b>Modify</b> một Single-AZ instance và chọn Multi-AZ – không cần tạo lại DB, không cần sửa ứng dụng vì <b>endpoint giữ nguyên</b>.</li>
+      </ul>
+
+      <h3>Failover diễn ra thế nào?</h3>
+      <ol class="steps">
+        <li>RDS phát hiện sự cố trên primary (xem bảng nguyên nhân bên dưới) hoặc bạn chọn <b>Reboot with failover</b>.</li>
+        <li>Standby được <b>promote</b> thành primary mới.</li>
+        <li>RDS <b>đổi bản ghi DNS (CNAME) của endpoint</b> để trỏ sang instance mới. Ứng dụng phải <b>kết nối lại</b> – các kết nối cũ bị ngắt.</li>
+        <li>RDS dựng lại standby mới ở AZ khác. Thời gian failover <b>thường 60–120 giây</b>; transaction lớn hoặc recovery dài có thể lâu hơn.</li>
+      </ol>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nguyên nhân failover tự động (theo tài liệu)</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td>OS của DB instance được vá offline trong maintenance window</td><td>Bản vá OS / bảo mật</td></tr>
+          <tr><td>Host primary <b>unhealthy</b></td><td>Instance bị suy giảm</td></tr>
+          <tr><td>Host primary <b>mất kết nối mạng</b></td><td>Bao gồm sự cố cả AZ</td></tr>
+          <tr><td>Khách hàng <b>modify</b> DB instance (vd đổi instance class)</td><td>Thay đổi được áp dụng kèm failover</td></tr>
+          <tr><td>Primary <b>busy, không phản hồi</b></td><td>Kiểm tra CPU/memory/swap, cân nhắc class lớn hơn</td></tr>
+          <tr><td><b>Storage volume</b> của primary hỏng</td><td></td></tr>
+          <tr><td>Người dùng chọn <b>Reboot with failover</b></td><td>Cách <b>test failover</b> chủ động</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Database.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+              <div class="row center"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB<small>public subnets</small></div></div>
+              <div class="row">
+                <div class="grp az"><span class="lbl">Availability Zone A</span>
+                  <div class="grp pub"><span class="lbl">App subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 app</div></div></div>
+                  <div class="grp priv"><span class="lbl">Private DB subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" alt="">Primary<small>đọc + ghi</small></div></div></div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone B</span>
+                  <div class="grp pub"><span class="lbl">App subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 app</div></div></div>
+                  <div class="grp priv"><span class="lbl">Private DB subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance-Aternate.svg" alt="">Standby<small>không nhận kết nối</small></div></div></div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone C</span>
+                  <div class="grp priv"><span class="lbl">Private DB subnet</span>
+                    <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" alt="">Read replica<small>chỉ đọc</small></div></div></div>
+                </div>
+              </div>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" alt="">Primary (AZ A)</div>
+                <span class="arrow">synchronous</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance-Aternate.svg" alt="">Standby (AZ B)</div>
+              </div>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" alt="">Primary (AZ A)</div>
+                <span class="arrow dashed">asynchronous</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" alt="">Read replica (AZ C)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Kiến trúc 3 tầng điển hình (theo tài liệu RDS): DB nằm trong <b>private subnet</b>; primary sao chép <b>đồng bộ</b> sang standby ở AZ B (chỉ để failover) và <b>bất đồng bộ</b> sang read replica ở AZ C (phục vụ đọc). Ứng dụng luôn kết nối bằng <b>endpoint DNS</b>; khi failover, DNS tự trỏ sang standby đã được promote.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“Dùng standby của Multi-AZ để chạy báo cáo” – <b>sai</b> với Multi-AZ DB instance: standby không nhận kết nối.</li>
+          <li>“Multi-AZ giúp chống xóa nhầm dữ liệu” – <b>sai</b>: lệnh <code>DROP TABLE</code> được sao chép đồng bộ sang standby ngay. Chống lỗi logic ⇒ <b>automated backup / PITR / snapshot</b>.</li>
+          <li>“Multi-AZ bảo vệ khi cả Region sập” – <b>sai</b>: mọi AZ cùng Region. DR xuyên Region ⇒ <b>cross-Region read replica</b>, sao chép snapshot/automated backup sang Region khác.</li>
+          <li>Ứng dụng Java cache DNS mãi mãi ⇒ sau failover vẫn gọi IP cũ. Tài liệu khuyên đặt <b>JVM DNS TTL ≤ 60 giây</b> (<code>networkaddress.cache.ttl=60</code>) – hoặc dùng <b>RDS Proxy</b> để tránh hoàn toàn vấn đề DNS.</li>
+        </ul></div>
+
+      <h3>Kiểu 2 – Multi-AZ DB cluster (một writer + hai reader)</h3>
+      <p>Theo tài liệu, <span class="t" data-vi="Cụm CSDL đa AZ">Multi-AZ DB cluster</span> là chế độ triển khai high availability <b>bán đồng bộ</b> (<span class="t" data-vi="Sao chép bán đồng bộ">semisynchronous</span>) với <b>hai reader DB instance đọc được</b>: 1 writer + 2 reader ở <b>3 AZ khác nhau</b> trong cùng Region.</p>
+      <ul>
+        <li><b>Semisynchronous replication</b>: một thay đổi được commit khi có <b>ít nhất một reader</b> xác nhận đã nhận – không cần đợi mọi replica áp dụng xong ⇒ <b>write latency thấp hơn</b> Multi-AZ DB instance.</li>
+        <li>Reader vừa là <b>đích failover tự động</b>, vừa <b>phục vụ đọc</b> (qua reader endpoint). Khi writer gặp sự cố, RDS chọn reader có bản ghi thay đổi mới nhất.</li>
+        <li>Failover <b>thường dưới 35 giây</b>; hoàn tất khi cả hai reader đã áp dụng hết transaction còn tồn. Vì vậy <span class="t" data-vi="Độ trễ sao chép">replica lag</span> (metric <code>ReplicaLag</code>) ảnh hưởng thời gian failover; RDS có <b>flow control</b> làm chậm ghi khi lag vượt ngưỡng (mặc định 120 s với MySQL).</li>
+        <li>Chỉ hỗ trợ <b>RDS for MySQL và RDS for PostgreSQL</b> (kiến thức phổ biến) trên các instance class có NVMe SSD cục bộ: <code>db.c6gd</code>, <code>db.m5d</code>, <code>db.m6gd</code>, <code>db.r6gd</code>, <code>db.r8gd</code>, <code>db.x2iedn</code>…</li>
+        <li>Backup là snapshot <b>của cả cluster</b>; retention 1–35 ngày; có thể restore cluster snapshot thành Single-AZ hoặc Multi-AZ DB instance.</li>
+        <li><b>Không phải Aurora</b> – tài liệu cảnh báo “Multi-AZ DB clusters aren't the same as Aurora DB clusters”.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 300" width="800" role="img" aria-label="Multi-AZ DB cluster: writer và hai reader ở 3 AZ">
+          <defs><marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="10" y="10" width="780" height="280" rx="8" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+          <text x="22" y="30" font-size="12" font-weight="700" style="fill:#147EBA">Region – Multi-AZ DB cluster (RDS for MySQL / PostgreSQL)</text>
+          <image href="../assets/icons/svc/AWS-Lambda.svg" x="40" y="70" width="44" height="44"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="40" y="170" width="44" height="44"/>
+          <text x="62" y="236" font-size="11" text-anchor="middle" font-weight="600">Ứng dụng</text>
+          <text x="210" y="80" font-size="11" text-anchor="middle" font-weight="600">Cluster (writer) endpoint</text>
+          <text x="210" y="200" font-size="11" text-anchor="middle" font-weight="600">Reader endpoint</text>
+          <path class="line-o" d="M90 92 L330 92" marker-end="url(#ah1)"/>
+          <text x="210" y="108" font-size="10" text-anchor="middle" class="muted">đọc + ghi</text>
+          <path class="line-o" d="M90 192 L330 222" marker-end="url(#ah1)"/>
+          <path class="line-o" d="M90 192 L560 222" marker-end="url(#ah1)"/>
+          <text x="210" y="216" font-size="10" text-anchor="middle" class="muted">chỉ đọc, cân bằng giữa reader</text>
+          <rect x="300" y="45" width="160" height="90" rx="6" fill="rgba(20,126,186,.06)" stroke="#147EBA" stroke-dasharray="6 4"/>
+          <text x="312" y="62" font-size="11" font-weight="700" style="fill:#147EBA">AZ A</text>
+          <image href="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" x="360" y="66" width="44" height="44"/>
+          <text x="382" y="126" font-size="11" text-anchor="middle" font-weight="700">Writer</text>
+          <rect x="300" y="185" width="160" height="90" rx="6" fill="rgba(20,126,186,.06)" stroke="#147EBA" stroke-dasharray="6 4"/>
+          <text x="312" y="202" font-size="11" font-weight="700" style="fill:#147EBA">AZ B</text>
+          <image href="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance-Aternate.svg" x="360" y="206" width="44" height="44"/>
+          <text x="382" y="266" font-size="11" text-anchor="middle" font-weight="700">Reader 1</text>
+          <rect x="530" y="185" width="160" height="90" rx="6" fill="rgba(20,126,186,.06)" stroke="#147EBA" stroke-dasharray="6 4"/>
+          <text x="542" y="202" font-size="11" font-weight="700" style="fill:#147EBA">AZ C</text>
+          <image href="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance-Aternate.svg" x="590" y="206" width="44" height="44"/>
+          <text x="612" y="266" font-size="11" text-anchor="middle" font-weight="700">Reader 2</text>
+          <path class="line-o" d="M405 112 L405 182" marker-end="url(#ah1)"/>
+          <path class="line-o" d="M462 100 C 560 100, 610 140, 612 182" marker-end="url(#ah1)"/>
+          <text x="600" y="92" font-size="11" text-anchor="middle">semisynchronous</text>
+          <text x="600" y="108" font-size="10" text-anchor="middle" class="muted">commit khi ≥ 1 reader xác nhận</text>
+          <text x="720" y="150" font-size="10" text-anchor="middle" class="muted">failover thường</text>
+          <text x="720" y="164" font-size="10" text-anchor="middle" class="muted">&lt; 35 giây</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Multi-AZ DB cluster: writer ở AZ A sao chép <b>bán đồng bộ</b> sang hai reader ở AZ B và C. Ứng dụng ghi qua <b>cluster endpoint</b>, đọc qua <b>reader endpoint</b>. Khi writer hỏng, reader có dữ liệu mới nhất được promote.</figcaption>
+      </figure>
+
+      <h3>So sánh Single-AZ, Multi-AZ DB instance, Multi-AZ DB cluster</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Single-AZ</th><th>Multi-AZ DB instance</th><th>Multi-AZ DB cluster</th></tr></thead>
+        <tbody>
+          <tr><td>Số instance</td><td>1</td><td>1 primary + 1 standby</td><td>1 writer + 2 reader (3 AZ)</td></tr>
+          <tr><td>Kiểu sao chép</td><td>–</td><td><b>Synchronous</b></td><td><b>Semisynchronous</b></td></tr>
+          <tr><td>Standby phục vụ đọc?</td><td>–</td><td class="no">Không</td><td class="yes">Có (reader endpoint)</td></tr>
+          <tr><td>Failover điển hình</td><td>Không có – phải khôi phục</td><td>60–120 giây</td><td class="yes">&lt; 35 giây</td></tr>
+          <tr><td>Write latency</td><td>Thấp nhất</td><td>Cao hơn Single-AZ</td><td>Thấp hơn Multi-AZ DB instance</td></tr>
+          <tr><td>Engine</td><td>Mọi engine</td><td>Mọi engine (SQL Server dùng DBM/AG)</td><td>MySQL, PostgreSQL</td></tr>
+          <tr><td>Endpoint</td><td>Instance endpoint</td><td>Instance endpoint (không đổi khi failover)</td><td>Cluster (writer) + reader + instance endpoint</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>highly available</i>”, “<i>automatic failover</i>”, “<i>survive the loss of an Availability Zone</i>” cho RDS ⇒ <b>Multi-AZ</b>.</li>
+          <li>“<i>failover in under 35 seconds</i>”, “<i>standby instances should also serve read traffic</i>”, “<i>lower write latency than Multi-AZ</i>” ⇒ <b>Multi-AZ DB cluster</b>.</li>
+          <li>“<i>Test how the application handles a failover</i>” ⇒ <b>Reboot with failover</b> (Multi-AZ DB instance) hoặc <b>Failover</b> action (Multi-AZ DB cluster).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: READ REPLICA ===================== -->
+      <h2 id="read-replica"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" alt="">Read replica – mở rộng đọc và DR xuyên Region</h2>
+      <p class="lead">Theo tài liệu, <span class="t" data-vi="Bản sao chỉ đọc">read replica</span> là <b>bản sao chỉ đọc của một DB instance</b>. Bạn giảm tải cho primary bằng cách chuyển query đọc sang replica, nhờ đó <b>scale out vượt giới hạn năng lực của một instance</b> cho workload đọc nhiều.</p>
+
+      <h3>Cách hoạt động</h3>
+      <ol class="steps">
+        <li>Bạn chỉ định DB instance nguồn. RDS chụp <b>snapshot</b> của nguồn (nguồn Single-AZ bị <b>I/O suspension khoảng 1 giây</b>; nguồn Multi-AZ thì snapshot lấy từ standby nên <b>không bị</b>).</li>
+        <li>RDS tạo instance chỉ đọc từ snapshot, rồi dùng cơ chế <b>sao chép bất đồng bộ</b> (<span class="t" data-vi="Sao chép bất đồng bộ">asynchronous replication</span>) gốc của engine để cập nhật mỗi khi primary thay đổi.</li>
+        <li>Replica có <b>endpoint DNS riêng</b>; ứng dụng phải tự chỉ định endpoint replica cho query đọc (RDS không tự chia tải đọc/ghi).</li>
+        <li>Do bất đồng bộ nên replica có thể <b>trễ</b> (replica lag) – đọc từ replica là <span class="t" data-vi="Nhất quán cuối cùng">eventually consistent</span>.</li>
+      </ol>
+
+      <h3>Các quy tắc quan trọng (theo tài liệu)</h3>
+      <ul>
+        <li><b>Bắt buộc bật automated backup</b> trên nguồn (backup retention ≠ 0) – kể cả khi replica làm nguồn cho replica khác.</li>
+        <li>Tối đa <b>15 read replica / primary</b> (quota “Read replicas per primary”). Với RDS for Oracle AWS khuyên giữ ≤ 5 để giảm lag.</li>
+        <li><b>Replica của replica</b>: được với MariaDB, MySQL và một số phiên bản PostgreSQL; <b>không</b> được với Db2, Oracle, SQL Server. Không hỗ trợ <b>circular replication</b>.</li>
+        <li><b>Không có auto scaling</b> cho read replica – phải tự thêm/xóa (khác Aurora Replicas ở Bài 27).</li>
+        <li>Replica tính tiền như một DB instance bình thường. <b>Không tính phí data transfer</b> sao chép giữa nguồn và replica <b>trong cùng Region</b>; cross-Region thì <b>có</b> phí truyền dữ liệu.</li>
+        <li>Replica có thể dùng <b>instance class / storage type khác</b> nguồn (AWS khuyên bằng hoặc lớn hơn), và bản thân replica có thể bật <b>Multi-AZ</b> (độc lập với nguồn).</li>
+        <li><b>Writable</b>: chỉ MySQL/MariaDB cho phép bật replica ghi được; PostgreSQL, Oracle, SQL Server, Db2 là bản sao vật lý, <b>không ghi được</b> trừ khi promote.</li>
+        <li>Oracle (<i>mounted</i>) và Db2 (<i>standby</i>) có chế độ replica không nhận kết nối – dùng cho <b>DR cross-Region</b>.</li>
+        <li>Xóa nguồn mà không xóa replica cùng Region ⇒ mỗi replica được <b>promote</b> thành standalone.</li>
+      </ul>
+
+      <h3>Promote read replica</h3>
+      <p>Bạn có thể <span class="t" data-vi="Nâng cấp bản sao thành độc lập">promote</span> một read replica thành <b>DB instance độc lập</b> (đọc + ghi). Sau khi promote, quan hệ sao chép bị cắt vĩnh viễn – instance mới có dữ liệu tới thời điểm yêu cầu promote. Ứng dụng: <b>disaster recovery</b> khi primary/Region hỏng, tách DB để làm việc khác (vd chạy DDL dài trên bản sao rồi chuyển sang). Đây là thao tác <b>thủ công</b> – không phải failover tự động như Multi-AZ.</p>
+
+      <h3>Cross-Region read replica</h3>
+      <p>Tài liệu nêu ba mục đích: <b>cải thiện disaster recovery</b>, <b>scale đọc tới Region gần người dùng</b>, và <b>di chuyển</b> giữa các Region dễ hơn. Lưu ý:</p>
+      <ul>
+        <li>Lag thường <b>cao hơn</b> do đường truyền giữa Region dài.</li>
+        <li>RDS chỉ đảm bảo <b>tối đa 5 cross-Region read replica</b> cho một nguồn (giới hạn ACL của VPC nguồn).</li>
+        <li>Muốn replica <b>mã hóa</b> ở Region khác ⇒ nguồn phải mã hóa, và chỉ định <b>KMS key của Region đích</b> (KMS key gắn với Region).</li>
+        <li>Mẹo giảm chi phí (MySQL/MariaDB): tạo 1 replica sang Region đích, rồi tạo các replica còn lại <b>từ replica đó</b> – chỉ trả phí truyền dữ liệu liên Region một lần.</li>
+        <li>Xóa nguồn của cross-Region replica: MySQL, MariaDB, Oracle, SQL Server, Db2 ⇒ replica được promote; <b>PostgreSQL</b> ⇒ replica chuyển trạng thái <code>terminated</code>, phải tự promote hoặc xóa.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 280" width="800" role="img" aria-label="Cross-Region read replica cho DR và đọc gần người dùng">
+          <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="15" y="20" width="350" height="240" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="28" y="42" font-size="12" font-weight="700" style="fill:#147EBA">Region chính: us-east-1</text>
+          <image href="../assets/icons/res/Users.svg" x="40" y="80" width="44" height="44"/>
+          <text x="62" y="140" font-size="10" text-anchor="middle">Người dùng Mỹ</text>
+          <image href="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" x="170" y="70" width="56" height="56"/>
+          <text x="198" y="142" font-size="11" text-anchor="middle" font-weight="700">Primary (Multi-AZ)</text>
+          <text x="198" y="157" font-size="10" text-anchor="middle" class="muted">đọc + ghi, mã hóa KMS key A</text>
+          <path class="line-o" d="M88 100 L166 100" marker-end="url(#ah2)"/>
+          <image href="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" x="170" y="180" width="44" height="44"/>
+          <text x="192" y="240" font-size="10" text-anchor="middle">Read replica (cùng Region)</text>
+          <path class="line-o" d="M198 160 L194 176" marker-end="url(#ah2)"/>
+          <text x="290" y="200" font-size="10" text-anchor="middle" class="muted">async, không</text>
+          <text x="290" y="213" font-size="10" text-anchor="middle" class="muted">phí transfer</text>
+          <rect x="435" y="20" width="350" height="240" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="448" y="42" font-size="12" font-weight="700" style="fill:#7AA116">Region DR: eu-west-1</text>
+          <image href="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance-Aternate.svg" x="560" y="70" width="56" height="56"/>
+          <text x="588" y="142" font-size="11" text-anchor="middle" font-weight="700">Cross-Region read replica</text>
+          <text x="588" y="157" font-size="10" text-anchor="middle" class="muted">mã hóa bằng KMS key B (Region đích)</text>
+          <image href="../assets/icons/res/Users.svg" x="700" y="80" width="44" height="44"/>
+          <text x="722" y="140" font-size="10" text-anchor="middle">Người dùng EU</text>
+          <path class="line-o" d="M698 100 L620 100" marker-end="url(#ah2)"/>
+          <text x="660" y="92" font-size="10" text-anchor="middle">đọc</text>
+          <path class="line-o" d="M230 98 L556 98" marker-end="url(#ah2)"/>
+          <text x="398" y="88" font-size="11" text-anchor="middle">asynchronous (có phí inter-Region)</text>
+          <text x="588" y="200" font-size="11" text-anchor="middle" font-weight="600">Region chính sập ⇒ <tspan style="fill:#DD344C">Promote</tspan> replica</text>
+          <text x="588" y="216" font-size="10" text-anchor="middle" class="muted">thành DB độc lập (thủ công) + đổi endpoint</text>
+          <text x="588" y="232" font-size="10" text-anchor="middle" class="muted">(vd bằng Route 53 – Bài 24)</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Cross-Region read replica: vừa phục vụ đọc cho người dùng ở Region thứ hai, vừa là phương án <b>DR</b> – khi Region chính gặp sự cố, promote replica thành DB đọc/ghi. RPO phụ thuộc replica lag (thường giây – phút), RTO phụ thuộc thời gian promote và chuyển endpoint.</figcaption>
+      </figure>
+
+      <h3>Multi-AZ vs Read replica – bảng đề thi hay hỏi</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance-Aternate.svg" alt="">Multi-AZ (DB instance)</h4>
+          <ul>
+            <li>Mục đích: <b>high availability</b>, failover tự động.</li>
+            <li>Sao chép <b>đồng bộ</b>; luôn khác AZ, cùng Region.</li>
+            <li>Standby <b>không đọc được</b>.</li>
+            <li>Failover tự động, <b>endpoint giữ nguyên</b> (DNS đổi).</li>
+            <li>Bật/tắt bằng Modify; engine upgrade áp dụng cho cả hai.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" alt="">Read replica</h4>
+          <ul>
+            <li>Mục đích: <b>scale đọc</b>, báo cáo/analytics, <b>DR</b>.</li>
+            <li>Sao chép <b>bất đồng bộ</b>; cùng AZ, khác AZ hoặc <b>khác Region</b>.</li>
+            <li>Đọc được qua <b>endpoint riêng</b>; tối đa 15.</li>
+            <li>Không tự failover – <b>promote thủ công</b>.</li>
+            <li>Yêu cầu bật automated backup trên nguồn.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Read-heavy workload</i>”, “<i>reporting queries slow down the production database</i>”, “<i>offload read traffic</i>” ⇒ <b>read replica</b> (nếu đọc lặp lại cùng dữ liệu và cần độ trễ micro-giây ⇒ cân nhắc <b>ElastiCache</b> – Bài 29).</li>
+          <li>“<i>Disaster recovery in another Region with RPO of minutes and read access in that Region</i>” ⇒ <b>cross-Region read replica</b> (promote khi cần).</li>
+          <li>“<i>RPO of seconds/near zero, RTO &lt; 1 minute, cross-Region</i>” thường là dấu hiệu của <b>Aurora Global Database</b> (Bài 27), không phải RDS replica.</li>
+          <li>Đáp án “dùng read replica để đạt high availability / automatic failover” ⇒ <b>sai</b> với RDS (read replica không tự failover).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: BACKUP & SNAPSHOT ===================== -->
+      <h2 id="backup"><img src="../assets/icons/res/AWS-Backup_Backup-Restore.svg" alt="">Automated backup, snapshot và point-in-time recovery</h2>
+      <p class="lead">RDS có hai cơ chế sao lưu: <span class="t" data-vi="Sao lưu tự động">automated backup</span> (RDS tự làm trong <b>backup window</b>, cho phép khôi phục về <b>bất kỳ thời điểm nào</b> trong retention period) và <span class="t" data-vi="Bản chụp thủ công">manual DB snapshot</span> (bạn chủ động tạo, giữ tới khi tự xóa). Cả hai là <b>storage volume snapshot</b> của toàn bộ DB instance (không phải từng database), lưu trong <b>Amazon S3</b>.</p>
+
+      <h3>Automated backup</h3>
+      <ul>
+        <li>RDS tạo snapshot hằng ngày trong <span class="t" data-vi="Khung giờ sao lưu">backup window</span> bạn chọn (hoặc RDS chọn) và <b>upload transaction log lên S3 mỗi 5 phút</b> ⇒ thời điểm khôi phục mới nhất (<code>LatestRestorableTime</code>) thường chỉ cách hiện tại vài phút.</li>
+        <li><span class="t" data-vi="Thời gian lưu giữ bản sao lưu">Backup retention period</span>: <b>0–35 ngày</b> cho DB instance (<b>0 = tắt</b> automated backup); <b>1–35 ngày</b> cho Multi-AZ DB cluster. Mặc định <b>7 ngày</b> khi tạo bằng console, <b>1 ngày</b> khi tạo bằng CLI/API.</li>
+        <li>Đổi retention từ 0 sang khác 0 (hoặc ngược lại) gây <b>outage</b>.</li>
+        <li>Snapshot đầu tiên là <b>full</b>, các lần sau <b>incremental</b> (chỉ phần thay đổi).</li>
+        <li>Backup chỉ chạy khi instance ở trạng thái <code>available</code> (vd không chạy khi <code>storage_full</code>); thời gian ở trạng thái <code>stopped</code> không tính vào retention.</li>
+        <li>Single-AZ có thể bị <b>I/O suspension ngắn</b> khi bắt đầu snapshot; Multi-AZ thì backup lấy từ <b>standby</b> nên tránh được latency spike.</li>
+        <li><b>Miễn phí backup storage</b> bằng <b>100% tổng storage đã cấp phát</b> trong Region; vượt mới tính phí.</li>
+      </ul>
+
+      <h3>Point-in-time recovery (PITR)</h3>
+      <p>Bạn có thể khôi phục về <b>bất kỳ giây nào</b> từ <i>earliest restorable time</i> tới <i>latest restorable time</i>. Điểm cực kỳ quan trọng: <b>restore luôn tạo DB instance MỚI</b> (với endpoint mới) – instance nguồn không bị thay đổi. Instance mới dùng default parameter group / option group (đổi sau), và <b>không thể giảm storage</b> khi restore. Sau khi khôi phục, volume tiếp tục <b>nạp block từ S3 ở nền</b> nên hiệu năng có thể chưa tối đa ngay.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 230" width="800" role="img" aria-label="Dòng thời gian automated backup và PITR">
+          <defs><marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <text x="20" y="28" font-size="12" font-weight="700">Retention period = 7 ngày</text>
+          <line x1="40" y1="110" x2="740" y2="110" stroke="#8C8C8C" stroke-width="3"/>
+          <path class="line-o" d="M730 110 L760 110" marker-end="url(#ah4)"/>
+          <text x="770" y="114" font-size="11">now</text>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" x="45" y="60" width="32" height="32"/>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" x="145" y="60" width="32" height="32"/>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" x="245" y="60" width="32" height="32"/>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" x="345" y="60" width="32" height="32"/>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" x="445" y="60" width="32" height="32"/>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" x="545" y="60" width="32" height="32"/>
+          <image href="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" x="645" y="60" width="32" height="32"/>
+          <text x="61" y="52" font-size="10" text-anchor="middle">full</text>
+          <text x="161" y="52" font-size="10" text-anchor="middle">incr.</text>
+          <text x="361" y="52" font-size="10" text-anchor="middle" class="muted">snapshot hằng ngày (backup window)</text>
+          <g stroke="#7AA116" stroke-width="2">
+            <line x1="80" y1="122" x2="80" y2="132"/><line x1="120" y1="122" x2="120" y2="132"/><line x1="200" y1="122" x2="200" y2="132"/><line x1="300" y1="122" x2="300" y2="132"/><line x1="400" y1="122" x2="400" y2="132"/><line x1="500" y1="122" x2="500" y2="132"/><line x1="600" y1="122" x2="600" y2="132"/><line x1="700" y1="122" x2="700" y2="132"/><line x1="720" y1="122" x2="720" y2="132"/>
+          </g>
+          <text x="400" y="150" font-size="10" text-anchor="middle" style="fill:#7AA116">transaction log upload lên S3 mỗi 5 phút</text>
+          <path d="M520 110 L520 175" stroke="#DD344C" stroke-width="2" stroke-dasharray="5 3"/>
+          <text x="520" y="192" font-size="11" text-anchor="middle" style="fill:#DD344C" font-weight="700">Restore tới 14:32:05 hôm qua</text>
+          <text x="520" y="208" font-size="10" text-anchor="middle" class="muted">= snapshot gần nhất trước đó + replay log ⇒ DB instance MỚI</text>
+          <text x="40" y="190" font-size="10" class="muted">earliest restorable time</text>
+          <text x="720" y="190" font-size="10" text-anchor="end" class="muted">latest restorable time (~5 phút trước)</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> Automated backup = snapshot hằng ngày + transaction log mỗi 5 phút. PITR lấy snapshot gần nhất trước thời điểm cần khôi phục rồi áp dụng log tới đúng giây đó, tạo ra một DB instance mới.</figcaption>
+      </figure>
+
+      <h3>Manual DB snapshot</h3>
+      <ul>
+        <li>Do bạn tạo, <b>không hết hạn</b>; <b>không bị xóa khi xóa DB instance</b>. Quota: <b>100 manual snapshot / Region</b> (adjustable; quota này không áp cho automated backup; backup do AWS Backup quản lý cũng không tính vào).</li>
+        <li>Khi <b>xóa DB instance</b>: nên tạo <b>final snapshot</b>; nếu không chọn <i>Retain automated backups</i> thì <b>automated backup bị xóa theo</b> instance.</li>
+        <li><b>Copy</b> snapshot (automated hoặc manual) – kể cả sang <b>Region khác</b> (DR) và đổi KMS key khi copy; <b>share</b> manual snapshot cho account khác (snapshot mã hóa bằng <b>AWS managed key</b> thì <b>không share được</b> – phải dùng customer managed key).</li>
+        <li>Muốn lưu rất lâu ⇒ <b>export snapshot sang S3</b> (định dạng Apache Parquet – kiến thức phổ biến) hoặc dùng <b>AWS Backup</b> với retention dài (Bài 19).</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Automated backup</th><th>Manual snapshot</th></tr></thead>
+        <tbody>
+          <tr><td>Ai tạo</td><td>RDS, trong backup window</td><td>Bạn (console/CLI/API, AWS Backup)</td></tr>
+          <tr><td>Thời gian giữ</td><td>1–35 ngày (0 = tắt)</td><td>Tới khi bạn xóa</td></tr>
+          <tr><td>Point-in-time recovery</td><td class="yes">Có (tới từng giây)</td><td class="no">Không – chỉ đúng thời điểm chụp</td></tr>
+          <tr><td>Xóa DB instance</td><td class="no">Bị xóa (trừ khi chọn Retain automated backups)</td><td class="yes">Vẫn còn</td></tr>
+          <tr><td>Copy sang Region khác</td><td>Có (copy snapshot / cross-Region automated backup replication)</td><td>Có</td></tr>
+          <tr><td>Share cho account khác</td><td>Không trực tiếp (copy thành manual trước)</td><td class="yes">Có</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>0–35 ngày</b><span>backup retention của DB instance (0 = tắt)</span></div>
+        <div class="stat"><b>7 / 1 ngày</b><span>retention mặc định: console / CLI-API</span></div>
+        <div class="stat"><b>5 phút</b><span>chu kỳ upload transaction log lên S3</span></div>
+        <div class="stat"><b>100</b><span>manual snapshot / Region (mặc định)</span></div>
+        <div class="stat"><b>100%</b><span>backup storage miễn phí = tổng storage đã cấp phát</span></div>
+        <div class="stat"><b>~1 giây</b><span>I/O suspension khi chụp snapshot nguồn Single-AZ</span></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Restore the database to the state it was in 10 minutes before an accidental DELETE</i>” ⇒ <b>point-in-time restore</b> ⇒ tạo instance mới, rồi trỏ ứng dụng sang endpoint mới (hoặc copy dữ liệu về).</li>
+          <li>“<i>Keep backups for 7 years for compliance</i>” ⇒ automated backup tối đa <b>35 ngày</b> không đủ ⇒ <b>manual snapshot</b> định kỳ, <b>AWS Backup</b> backup plan (có thể kèm Vault Lock) hoặc <b>export to S3</b> + lifecycle sang Glacier.</li>
+          <li>“<i>Database is only used during business hours / dev-test, reduce cost</i>” ⇒ <b>stop</b> DB instance (RDS tự khởi động lại sau tối đa 7 ngày – kiến thức phổ biến) hoặc <b>snapshot rồi xóa</b>, restore khi cần.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: STORAGE & SCALING ===================== -->
+      <h2 id="storage"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume-gp3.svg" alt="">Storage auto scaling và các cách mở rộng RDS</h2>
+      <p class="lead">Với workload khó dự đoán (ví dụ tài liệu: game mobile mới tăng người dùng rất nhanh), bật <span class="t" data-vi="Tự động mở rộng dung lượng lưu trữ">storage autoscaling</span> để RDS <b>tự tăng dung lượng</b> khi sắp hết chỗ, không cần thao tác thủ công, <b>không cần reboot, không downtime</b>.</p>
+
+      <h3>Khi nào RDS tự tăng storage? (cả 3 điều kiện)</h3>
+      <ol class="steps">
+        <li>Dung lượng trống <b>≤ 10%</b> storage đã cấp phát.</li>
+        <li>Tình trạng thiếu chỗ kéo dài <b>ít nhất 5 phút</b>.</li>
+        <li>Đợt storage modification trước đã <b>tối ưu xong</b> và có <b>ít hơn 4 lần</b> sửa storage trong 24 giờ qua.</li>
+      </ol>
+      <p>Mỗi lần tăng thêm <b>giá trị lớn nhất</b> trong: <b>10 GiB</b> · <b>10%</b> storage hiện tại · mức tăng dự đoán cho <b>7 giờ tới</b> (dựa trên metric <code>FreeStorageSpace</code> 1 giờ qua). Bạn đặt <span class="t" data-vi="Ngưỡng dung lượng tối đa">maximum storage threshold</span> (tham số <code>MaxAllocatedStorage</code>) – phải lớn hơn storage hiện tại ít nhất <b>10%</b> (khuyên ≥ 26% để tránh cảnh báo sắp chạm ngưỡng).</p>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>RDS không bao giờ tự giảm storage</b>, và bạn cũng <b>không thể giảm</b> allocated storage bằng Modify. Muốn nhỏ lại ⇒ tạo instance mới nhỏ hơn rồi migrate dữ liệu, hoặc dùng <b>Blue/Green Deployment</b>.</li>
+          <li>Autoscaling <b>không ngăn hoàn toàn storage-full</b> khi nạp dữ liệu cực lớn (giới hạn 4 lần/24 giờ) – vẫn nên cấp phát ban đầu hợp lý.</li>
+          <li>Tăng storage thủ công (hoặc khi restore) phải tăng <b>ít nhất 10%</b>; không dùng autoscaling với magnetic storage.</li>
+        </ul></div>
+
+      <h3>Bốn hướng mở rộng RDS – chọn đúng theo triệu chứng</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Triệu chứng trong đề</th><th>Giải pháp</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td>Sắp hết dung lượng, tăng trưởng khó đoán</td><td><b>Storage autoscaling</b></td><td>Không downtime; chỉ tăng</td></tr>
+          <tr><td>CPU/RAM cao cho cả đọc lẫn ghi</td><td><b>Scale up</b> instance class (vd r6g.large → r6g.2xlarge)</td><td>Scale dọc; Multi-AZ giảm downtime khi đổi class</td></tr>
+          <tr><td>Đọc nhiều, query báo cáo nặng</td><td><b>Read replica</b> (≤ 15)</td><td>Ứng dụng tự trỏ endpoint replica</td></tr>
+          <tr><td>IOPS không đủ, latency I/O cao</td><td>Chuyển sang <b>Provisioned IOPS</b> (io1/io2) hoặc tăng IOPS gp3</td><td>Kiến thức EBS – Bài 11</td></tr>
+          <tr><td>Quá nhiều kết nối (Lambda, “too many connections”)</td><td><b>RDS Proxy</b></td><td>Phần tiếp theo</td></tr>
+          <tr><td>Ghi rất lớn, cần scale ghi ngang/serverless</td><td>Cân nhắc <b>Aurora</b> / <b>DynamoDB</b></td><td>Bài 27–28</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>The database storage is filling up unpredictably; the company wants to avoid manual intervention with the LEAST operational overhead</i>” ⇒ <b>Enable RDS storage autoscaling</b> và đặt <b>maximum storage threshold</b>. Đáp án “tạo CloudWatch alarm + Lambda để tăng storage” chạy được nhưng nhiều công vận hành hơn.</p></div>
+
+      <!-- ===================== PHẦN 6: RDS PROXY ===================== -->
+      <h2 id="rds-proxy"><img src="../assets/icons/res/Amazon-RDS-Proxy-Instance.svg" alt="">Amazon RDS Proxy</h2>
+      <p class="lead">Theo tài liệu, <span class="t" data-vi="Proxy CSDL được quản lý">Amazon RDS Proxy</span> cho phép ứng dụng <b>gom và chia sẻ kết nối DB</b> (<span class="t" data-vi="Gom kết nối">connection pooling</span>) để scale tốt hơn; giúp ứng dụng <b>chịu lỗi tốt hơn khi DB failover</b> (tự kết nối tới standby mà vẫn giữ kết nối của ứng dụng); và cho phép <b>ép xác thực IAM</b> với client, trong khi proxy kết nối tới DB bằng IAM DB authentication hoặc thông tin lưu trong <b>AWS Secrets Manager</b>.</p>
+
+      <h3>Vì sao cần proxy?</h3>
+      <p>Mỗi kết nối DB tốn <b>bộ nhớ và CPU</b> (TLS handshake, xác thực, khởi tạo phiên…). Số kết nối tối đa phụ thuộc bộ nhớ của instance class – ví dụ MySQL trên <code>db.t3.micro</code> chỉ khoảng <b>60 kết nối</b> mặc định. Ứng dụng <b>mở/đóng kết nối liên tục</b> (đặc biệt <b>AWS Lambda</b>: mỗi execution environment mở kết nối riêng, scale lên hàng trăm/hàng nghìn bản) dễ gây lỗi <i>too many connections</i>, hết RAM, DB quá tải.</p>
+
+      <ul>
+        <li><b>Connection pooling</b>: proxy giữ sẵn một pool kết nối tới DB và tái sử dụng ⇒ tránh overhead mở kết nối mới.</li>
+        <li><span class="t" data-vi="Ghép kênh kết nối">Multiplexing</span>: tái sử dụng kết nối <b>sau mỗi transaction</b> – nhiều kết nối client dùng chung ít kết nối DB hơn.</li>
+        <li><span class="t" data-vi="Ghim phiên">Pinning</span>: khi proxy không chắc tái sử dụng an toàn (vd thay đổi biến phiên, câu lệnh &gt; 16 KB), nó giữ phiên trên một kết nối cố định tới hết phiên – giảm hiệu quả pooling.</li>
+        <li><b>Queue / throttle</b>: kết nối chưa phục vụ được thì xếp hàng; vượt giới hạn bạn đặt thì từ chối (shed load) ⇒ DB không bị quá tải đột ngột.</li>
+        <li><b>Failover</b>: proxy giữ <b>cùng IP/endpoint</b>, tự chuyển kết nối sang primary mới; client <b>không bị ảnh hưởng bởi DNS propagation, DNS cache cục bộ, connection timeout</b>. Chỉ các kết nối đang giữa transaction bị hủy. Với Multi-AZ DB cluster, proxy giúp giảm downtime khi minor version upgrade xuống <b>≤ 1 giây</b>.</li>
+        <li><b>Serverless, high availability</b>: hạ tầng proxy trải trên nhiều AZ, tự scale theo workload, tách biệt tài nguyên khỏi DB.</li>
+        <li>Hầu hết ứng dụng <b>không cần sửa code</b> – chỉ đổi endpoint sang endpoint của proxy.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp region"><span class="lbl">Region – VPC (proxy và DB phải cùng VPC)</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda × 1.000<small>IAM role, token</small></div>
+            <span class="arrow">nhiều kết nối ngắn</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-RDS-Proxy-Instance.svg" alt="">RDS Proxy<small>pool + multiplexing</small></div>
+            <span class="arrow">ít kết nối lâu dài</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" alt="">RDS primary<small>Multi-AZ</small></div>
+            <span class="arrow dashed">failover</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance-Aternate.svg" alt="">Standby</div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">IAM<small>xác thực client → proxy</small></div>
+            <span class="arrow dashed">proxy đọc secret</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Secrets-Manager.svg" alt="">Secrets Manager<small>user/password DB</small></div>
+            <span class="arrow dashed">mã hóa secret</span>
+            <div class="node"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">AWS KMS</div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> Lambda kết nối tới <b>RDS Proxy</b> (xác thực IAM); proxy lấy thông tin đăng nhập DB từ <b>Secrets Manager</b>, duy trì pool nhỏ kết nối tới DB và tự chuyển sang primary mới khi failover – ứng dụng không phải xử lý DNS hay mở lại hàng nghìn kết nối.</figcaption>
+      </figure>
+
+      <h3>Giới hạn &amp; lưu ý (theo tài liệu)</h3>
+      <ul>
+        <li>Tối đa <b>20 proxy / account / Region</b> (adjustable); mỗi proxy tối đa <b>200 secret</b> Secrets Manager (≈ 200 user DB khác nhau); tối đa <b>20 endpoint bổ sung</b> / proxy.</li>
+        <li>Proxy phải ở <b>cùng VPC</b> với DB và <b>không thể publicly accessible</b> (kể cả khi DB public). Không dùng được với VPC tenancy <code>dedicated</code>.</li>
+        <li>Với RDS DB instance có replication: proxy chỉ gắn với <b>writer</b>, không gắn vào read replica. Mỗi proxy gắn <b>một</b> DB instance đích; một DB có thể có nhiều proxy.</li>
+        <li>Engine: RDS for MySQL, MariaDB, PostgreSQL, SQL Server (và Aurora); proxy MySQL/MariaDB lắng nghe port <b>3306</b>, PostgreSQL port <b>5432</b>. Không dùng cho DB tự cài trên EC2.</li>
+        <li>TLS: proxy hỗ trợ TLS 1.0–1.3, dùng chứng chỉ <b>ACM</b>; có thể bật <i>Require Transport Layer Security</i>.</li>
+        <li>Hai kiểu IAM: <b>Standard IAM auth</b> (client → proxy bằng IAM, proxy → DB bằng secret) và <b>End-to-end IAM auth</b> (IAM tới tận DB, không cần secret).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>AWS Lambda functions connect to Amazon RDS; during traffic spikes the database runs out of connections / 'too many connections' errors</i>” ⇒ <b>RDS Proxy</b>.</li>
+          <li>“<i>Reduce application failover time</i>” / “<i>application should not depend on DNS propagation during failover</i>” ⇒ <b>RDS Proxy</b>.</li>
+          <li>“<i>Enforce IAM authentication for database access without changing the database's native password authentication</i>” ⇒ <b>RDS Proxy</b> + Secrets Manager (standard IAM auth).</li>
+          <li>Tăng <code>max_connections</code> hay scale up instance chỉ là <b>chữa triệu chứng</b>, tốn tiền hơn và vẫn tốn RAM cho mỗi kết nối.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: BẢO MẬT ===================== -->
+      <h2 id="bao-mat"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">Bảo mật: mạng, xác thực, mã hóa</h2>
+      <p class="lead">Bảo mật RDS gồm bốn lớp: <b>mạng</b> (VPC, private subnet, Security Group), <b>xác thực</b> (mật khẩu DB, Secrets Manager, IAM DB authentication, Kerberos), <b>mã hóa khi truyền</b> (SSL/TLS) và <span class="t" data-vi="Mã hóa khi lưu trữ">encryption at rest</span> (AWS KMS). Quyền <b>quản trị</b> RDS (tạo, xóa, modify instance) do <b>IAM policy</b> kiểm soát; quyền <b>trong</b> database (SELECT, INSERT…) do engine kiểm soát.</p>
+
+      <h3>IAM database authentication</h3>
+      <ul>
+        <li>Hỗ trợ <b>MariaDB, MySQL, PostgreSQL</b>. Thay vì mật khẩu, client dùng <span class="t" data-vi="Mã xác thực tạm thời">authentication token</span> sinh bằng AWS Signature Version 4 (<code>generate-db-auth-token</code>).</li>
+        <li>Mỗi token có <b>thời hạn 15 phút</b>; chỉ dùng để xác thực lúc kết nối, không ảnh hưởng phiên đã thiết lập.</li>
+        <li>Lợi ích: traffic <b>bắt buộc mã hóa SSL/TLS</b>; quản lý truy cập <b>tập trung bằng IAM</b>; ứng dụng trên EC2 dùng <b>instance profile (IAM role)</b> thay vì lưu mật khẩu. IAM policy cần action <code>rds-db:connect</code>.</li>
+        <li>Lưu ý: cần thêm <b>300–1000 MiB</b> bộ nhớ trên DB; không dùng custom Route 53 DNS để sinh token; CloudTrail/CloudWatch không log việc sinh token. Kết nối tần suất rất cao ⇒ cân nhắc RDS Proxy.</li>
+      </ul>
+
+      <h3>Quản lý mật khẩu master bằng Secrets Manager</h3>
+      <ul>
+        <li>Chọn <i>Manage master credentials in AWS Secrets Manager</i> khi tạo/modify: RDS <b>tự sinh mật khẩu</b>, lưu vào Secrets Manager và <b>tự xoay vòng mỗi 7 ngày</b> (mặc định, đổi được) – <b>không cần sửa ứng dụng</b>.</li>
+        <li>Secret được mã hóa bằng KMS key của Secrets Manager hoặc customer managed key (có thể tách khỏi key mã hóa DB). Truy cập secret kiểm soát bằng IAM, audit bằng CloudTrail.</li>
+        <li>Có thể ép bằng IAM condition key <code>rds:ManageMasterUserPassword</code>. Hạn chế: không hỗ trợ khi tạo read replica từ nguồn dùng tính năng này (trừ SQL Server, Db2), Blue/Green Deployments, RDS Custom.</li>
+      </ul>
+
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/svc/AWS-Secrets-Manager.svg" alt="">Secrets Manager</h4>
+          <ul><li>Vẫn là <b>mật khẩu DB</b>, nhưng không hard-code.</li><li><b>Tự rotate</b> (RDS-managed: 7 ngày).</li><li>Mọi engine.</li><li>Đề: “<i>rotate database credentials automatically</i>”.</li></ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">IAM DB authentication</h4>
+          <ul><li><b>Không mật khẩu</b>, token 15 phút.</li><li>Dùng IAM role của EC2/Lambda.</li><li>MariaDB, MySQL, PostgreSQL.</li><li>Đề: “<i>no passwords stored, use IAM roles to connect</i>”.</li></ul></div>
+      </div>
+
+      <h3>Encryption at rest với AWS KMS</h3>
+      <ul>
+        <li>Khi bật, RDS mã hóa <b>AES-256</b>: storage của instance, <b>log, automated backup, read replica, snapshot</b>. Giải mã trong suốt, ảnh hưởng hiệu năng tối thiểu, <b>không cần sửa ứng dụng</b>.</li>
+        <li>Chọn <b>AWS managed key</b> (<code>aws/rds</code>, mỗi Region một key) hoặc <b>customer managed key</b>. Sau khi tạo <b>không đổi được KMS key</b> của instance.</li>
+        <li>Oracle / SQL Server còn hỗ trợ <b>Transparent Data Encryption (TDE)</b>, dùng được cùng RDS encryption.</li>
+        <li>Disable KMS key ⇒ DB mất quyền truy cập key, chuyển trạng thái <code>inaccessible-encryption-credentials-recoverable</code> (7 ngày để bật lại key), quá hạn thì không dùng được nữa.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Các giới hạn mã hóa đề rất hay bẫy</span>
+        <ul>
+          <li>Chỉ bật mã hóa được <b>khi tạo</b> DB instance – <b>không</b> bật trên instance đang chạy; cũng <b>không tắt</b> được mã hóa.</li>
+          <li><b>Không</b> tạo được snapshot mã hóa trực tiếp từ instance không mã hóa; <b>không</b> restore backup/snapshot không mã hóa thành instance mã hóa (trực tiếp).</li>
+          <li><b>Không</b> có replica mã hóa của nguồn không mã hóa (và ngược lại).</li>
+          <li>Copy snapshot mã hóa sang Region khác ⇒ chỉ định <b>KMS key ở Region đích</b>.</li>
+          <li>Snapshot mã hóa bằng <b>AWS managed key</b> không share được cho account khác ⇒ dùng <b>customer managed key</b> và cấp quyền key cho account đích.</li>
+        </ul></div>
+
+      <h3>Quy trình mã hóa một DB đang chạy không mã hóa</h3>
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance.svg" alt="">DB không mã hóa</div>
+          <span class="arrow">① take snapshot</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">Snapshot<small>không mã hóa</small></div>
+          <span class="arrow">② copy + Enable encryption (KMS key)</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">Snapshot copy<small>đã mã hóa</small></div>
+          <span class="arrow">③ restore</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Aurora_Amazon-RDS-Instance-Aternate.svg" alt="">DB mới<small>đã mã hóa</small></div>
+          <span class="arrow dashed">④ đổi endpoint ứng dụng</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Ứng dụng</div>
+        </div>
+        <figcaption><b>Hình 6.</b> Cách “thêm” mã hóa cho DB đang chạy (theo tài liệu): snapshot → <b>copy snapshot với mã hóa bật</b> → restore thành instance mới → chuyển ứng dụng. Cách khác giảm downtime: <b>Blue/Green Deployment</b> với green environment mã hóa bằng KMS key khác.</figcaption>
+      </figure>
+
+      <h3>Mã hóa khi truyền (in transit)</h3>
+      <p>Client kết nối bằng <b>SSL/TLS</b> tới endpoint RDS (có thể ép bằng tham số như <code>rds.force_ssl</code> cho PostgreSQL/SQL Server hoặc <code>require_secure_transport</code> cho MySQL – kiến thức phổ biến). Dữ liệu sao chép giữa nguồn và read replica <b>luôn được mã hóa</b>, kể cả cross-Region, dù instance có mã hóa at rest hay không.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>An existing unencrypted RDS DB instance must be encrypted</i>” ⇒ <b>snapshot → copy snapshot with encryption → restore</b>. Đáp án “Modify the DB instance and enable encryption” là <b>sai</b>.</li>
+          <li>“<i>Application on EC2 must connect to RDS MySQL without storing credentials</i>” ⇒ <b>IAM database authentication</b> + IAM role của EC2.</li>
+          <li>“<i>Rotate the database password automatically every 30 days</i>” ⇒ <b>AWS Secrets Manager</b> (RDS-managed secret hoặc rotation Lambda), không phải Systems Manager Parameter Store (không tự rotate).</li>
+          <li>“<i>Only the application tier can reach the database</i>” ⇒ DB trong <b>private subnet</b>, <b>Security Group</b> của DB chỉ cho phép inbound từ SG của app tier.</li>
+        </ul></div>
+
+      <h3>Giám sát và bảo trì (điểm nhanh)</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">
+          <div><h4>CloudWatch metrics &amp; alarms</h4><span class="vi">Chỉ số cấp instance</span><p>RDS gửi metric mỗi phút, miễn phí (CPUUtilization, FreeStorageSpace, DatabaseConnections, ReplicaLag…).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">
+          <div><h4>Enhanced Monitoring</h4><span class="vi">Giám sát hệ điều hành thời gian thực</span><p>Metric <b>OS</b> (process, memory, swap) – khi cần nhìn sâu hơn metric hypervisor.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">
+          <div><h4>Performance Insights / Database Insights</h4><span class="vi">Phân tích tải CSDL</span><p>Tìm query/wait event gây tải – phục vụ phần <b>query tuning</b> là trách nhiệm của bạn.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">
+          <div><h4>RDS events</h4><span class="vi">Sự kiện CSDL</span><p>Event subscription (SNS email/SMS) hoặc EventBridge: failover, backup, storage sắp đầy…</p></div></div>
+      </div>
+      <ul>
+        <li><b>Maintenance window</b>: khung giờ hằng tuần RDS áp dụng bản vá OS/engine. Với Multi-AZ, việc vá thường làm trên standby trước rồi failover để giảm downtime (kiến thức phổ biến).</li>
+        <li><b>Blue/Green Deployments</b>: tạo môi trường “green” đồng bộ với production “blue” để nâng cấp engine, đổi schema/tham số, đổi storage, rồi <b>switchover</b> nhanh – cách an toàn cho thay đổi lớn.</li>
+      </ul>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>RDS</b> = CSDL quan hệ managed cho <b>Db2, MariaDB, SQL Server, MySQL, Oracle, PostgreSQL</b>. AWS lo OS, patch, backup, HA, scaling; bạn lo query tuning, schema, Security Group, cấu hình. Không có quyền OS (cần thì EC2 / RDS Custom).</li>
+          <li><b>Multi-AZ DB instance</b>: 1 standby, <b>synchronous</b>, <b>không đọc được</b>, failover tự động <b>60–120 s</b> bằng đổi DNS; endpoint giữ nguyên. <b>Multi-AZ DB cluster</b>: writer + 2 reader / 3 AZ, <b>semisynchronous</b>, reader đọc được, failover <b>&lt; 35 s</b>, MySQL/PostgreSQL.</li>
+          <li><b>Read replica</b>: <b>asynchronous</b>, tối đa <b>15</b>, cùng/khác AZ/Region, endpoint riêng, cần automated backup bật, không auto scaling, <b>promote thủ công</b> cho DR. Cùng Region không phí transfer; cross-Region có phí, KMS key ở Region đích.</li>
+          <li><b>Automated backup</b>: retention <b>0–35 ngày</b> (console 7, CLI 1), log lên S3 <b>mỗi 5 phút</b>, <b>PITR tạo instance mới</b>. <b>Manual snapshot</b>: giữ tới khi xóa, còn lại sau khi xóa DB, copy/share được, 100/Region.</li>
+          <li><b>Storage autoscaling</b>: free ≤ 10%, ≥ 5 phút, &lt; 4 lần/24 h; tăng max(10 GiB, 10%, dự đoán 7 h) tới <b>maximum storage threshold</b>. <b>Không bao giờ giảm storage.</b></li>
+          <li><b>RDS Proxy</b>: connection pooling + multiplexing serverless, failover nhanh không phụ thuộc DNS, IAM auth + Secrets Manager; cùng VPC, không public, chỉ gắn writer – đáp án chuẩn cho <b>Lambda + RDS</b>.</li>
+          <li><b>Bảo mật</b>: IAM DB auth (MariaDB/MySQL/PostgreSQL, token 15 phút, SSL); Secrets Manager rotate master password (mặc định 7 ngày); <b>encryption at rest chỉ bật khi tạo</b> ⇒ DB đang chạy: snapshot → copy có mã hóa → restore.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Amazon RDS (Relational Database Service)</dt><dd><b>Dịch vụ CSDL quan hệ được quản lý</b> – AWS lo cài đặt, vá, backup, HA cho DB engine phổ biến.</dd></div>
+        <div><dt>DB instance</dt><dd><b>Phiên bản CSDL</b> – môi trường CSDL cô lập, khối xây dựng cơ bản của RDS.</dd></div>
+        <div><dt>DB engine</dt><dd><b>Phần mềm CSDL</b> – Db2, MariaDB, SQL Server, MySQL, Oracle, PostgreSQL.</dd></div>
+        <div><dt>DB instance class</dt><dd><b>Lớp instance CSDL</b> – CPU/RAM: db.m*, db.r*/x*/z*, db.c*, db.t*.</dd></div>
+        <div><dt>DB parameter group / DB cluster parameter group</dt><dd><b>Nhóm tham số CSDL</b> – tập cấu hình engine áp cho instance / cả cluster.</dd></div>
+        <div><dt>DB subnet group</dt><dd><b>Nhóm subnet của CSDL</b> – các subnet (≥ 2 AZ) RDS được đặt instance.</dd></div>
+        <div><dt>Multi-AZ DB instance deployment</dt><dd><b>Triển khai đa AZ một standby</b> – sao chép đồng bộ, standby không đọc được, failover 60–120 s.</dd></div>
+        <div><dt>Multi-AZ DB cluster deployment</dt><dd><b>Cụm CSDL đa AZ</b> – 1 writer + 2 reader ở 3 AZ, bán đồng bộ, failover &lt; 35 s.</dd></div>
+        <div><dt>Standby replica</dt><dd><b>Bản sao dự phòng</b> – instance ở AZ khác chờ failover.</dd></div>
+        <div><dt>Semisynchronous replication</dt><dd><b>Sao chép bán đồng bộ</b> – commit khi ít nhất một replica xác nhận.</dd></div>
+        <div><dt>Asynchronous replication</dt><dd><b>Sao chép bất đồng bộ</b> – primary không chờ replica; replica có thể trễ.</dd></div>
+        <div><dt>Failover / Reboot with failover</dt><dd><b>Chuyển đổi dự phòng / Khởi động lại kèm chuyển dự phòng</b> – promote standby, đổi DNS endpoint.</dd></div>
+        <div><dt>Read replica</dt><dd><b>Bản sao chỉ đọc</b> – scale đọc, báo cáo, DR; tối đa 15 / primary.</dd></div>
+        <div><dt>Cross-Region read replica</dt><dd><b>Bản sao đọc xuyên Region</b> – DR và đọc gần người dùng; có phí truyền dữ liệu.</dd></div>
+        <div><dt>Promote (read replica)</dt><dd><b>Nâng bản sao thành độc lập</b> – replica thành DB đọc/ghi, cắt sao chép.</dd></div>
+        <div><dt>Replica lag</dt><dd><b>Độ trễ sao chép</b> – chênh lệch thời gian giữa primary và replica (metric ReplicaLag).</dd></div>
+        <div><dt>Automated backup / Backup window</dt><dd><b>Sao lưu tự động / Khung giờ sao lưu</b> – snapshot hằng ngày + log mỗi 5 phút.</dd></div>
+        <div><dt>Backup retention period</dt><dd><b>Thời gian lưu giữ bản sao lưu</b> – 0–35 ngày (0 = tắt).</dd></div>
+        <div><dt>Manual DB snapshot / Final snapshot</dt><dd><b>Bản chụp thủ công / Bản chụp cuối</b> – giữ tới khi xóa; final snapshot tạo lúc xóa DB.</dd></div>
+        <div><dt>Latest restorable time</dt><dd><b>Thời điểm khôi phục mới nhất</b> – thường cách hiện tại khoảng 5 phút.</dd></div>
+        <div><dt>Storage autoscaling / Maximum storage threshold</dt><dd><b>Tự động mở rộng lưu trữ / Ngưỡng dung lượng tối đa</b> – RDS tự tăng storage tới ngưỡng đặt trước.</dd></div>
+        <div><dt>Amazon RDS Proxy</dt><dd><b>Proxy CSDL được quản lý</b> – connection pooling, failover nhanh, IAM auth.</dd></div>
+        <div><dt>Connection pooling / Multiplexing</dt><dd><b>Gom kết nối / Ghép kênh kết nối</b> – tái sử dụng kết nối DB sau mỗi transaction.</dd></div>
+        <div><dt>Pinning (RDS Proxy)</dt><dd><b>Ghim phiên</b> – giữ phiên trên một kết nối cố định khi không thể tái sử dụng an toàn.</dd></div>
+        <div><dt>IAM database authentication</dt><dd><b>Xác thực CSDL bằng IAM</b> – token SigV4 15 phút thay mật khẩu; MariaDB/MySQL/PostgreSQL.</dd></div>
+        <div><dt>Authentication token</dt><dd><b>Mã xác thực tạm thời</b> – chuỗi do RDS sinh, sống 15 phút.</dd></div>
+        <div><dt>Managed master user password (Secrets Manager)</dt><dd><b>Mật khẩu master do RDS quản lý</b> – RDS sinh, lưu, xoay vòng (mặc định 7 ngày).</dd></div>
+        <div><dt>Encryption at rest (RDS)</dt><dd><b>Mã hóa khi lưu trữ</b> – AES-256 qua KMS; chỉ bật khi tạo DB.</dd></div>
+        <div><dt>Transparent Data Encryption (TDE)</dt><dd><b>Mã hóa dữ liệu trong suốt</b> – mã hóa cấp engine của Oracle / SQL Server.</dd></div>
+        <div><dt>RDS Custom</dt><dd><b>RDS tùy biến</b> – RDS cho Oracle/SQL Server có quyền truy cập OS.</dd></div>
+        <div><dt>Blue/Green Deployment</dt><dd><b>Triển khai xanh/lam</b> – môi trường green đồng bộ để nâng cấp rồi switchover.</dd></div>
+        <div><dt>Enhanced Monitoring / Performance Insights</dt><dd><b>Giám sát OS thời gian thực / Phân tích tải CSDL</b>.</dd></div>
+        <div><dt>Maintenance window</dt><dd><b>Khung giờ bảo trì</b> – thời điểm hằng tuần RDS áp bản vá.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs its production order-processing application on an Amazon RDS for MySQL Single-AZ DB instance. The company requires the database to remain available with automatic failover if an Availability Zone becomes unavailable. The solution must require the LEAST operational overhead and no application code changes. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Create a read replica in another Availability Zone and configure a Lambda function to promote it when the primary fails.</li>
+            <li data-k="B">Modify the DB instance to be a Multi-AZ DB instance deployment.</li>
+            <li data-k="C">Take hourly manual snapshots and restore the latest snapshot in another Availability Zone during an outage.</li>
+            <li data-k="D">Migrate the database to MySQL installed on two Amazon EC2 instances in different Availability Zones with native replication.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Multi-AZ</b> tạo standby <b>đồng bộ</b> ở AZ khác và <b>tự failover</b> bằng cách đổi DNS của endpoint – ứng dụng giữ nguyên endpoint, chỉ cần Modify instance. <b>A sai</b>: read replica bất đồng bộ (có thể mất dữ liệu), promote là thủ công/tự viết script, endpoint thay đổi ⇒ nhiều công vận hành. <b>C sai</b>: restore snapshot mất nhiều thời gian và mất tới 1 giờ dữ liệu, không phải failover tự động. <b>D sai</b>: tự quản lý DB trên EC2 tăng gánh nặng vận hành.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng xử lý đơn hàng production trên một Amazon RDS for MySQL Single-AZ DB instance. Công ty yêu cầu cơ sở dữ liệu phải luôn sẵn sàng với cơ chế failover tự động nếu một Availability Zone không khả dụng. Giải pháp phải có LEAST operational overhead (ít công vận hành nhất) và không thay đổi mã nguồn ứng dụng. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một read replica ở Availability Zone khác và cấu hình một Lambda function để promote nó khi primary gặp sự cố.</span><span class="why">Sai: read replica sao chép bất đồng bộ (có thể mất dữ liệu), phải tự viết logic promote và endpoint thay đổi ⇒ tốn công vận hành và phải sửa cấu hình ứng dụng.</span></li>
+              <li data-k="B"><span class="tv">Sửa (modify) DB instance thành triển khai Multi-AZ DB instance.</span><span class="why">Đúng: Multi-AZ tạo standby đồng bộ ở AZ khác và tự failover bằng cách trỏ lại DNS của cùng endpoint – chỉ cần Modify, không sửa code.</span></li>
+              <li data-k="C"><span class="tv">Chụp snapshot thủ công mỗi giờ và restore snapshot mới nhất ở Availability Zone khác khi có sự cố.</span><span class="why">Sai: restore mất nhiều thời gian, có thể mất tới 1 giờ dữ liệu và tạo endpoint mới – không phải failover tự động.</span></li>
+              <li data-k="D"><span class="tv">Di chuyển cơ sở dữ liệu sang MySQL cài trên hai Amazon EC2 instance ở các Availability Zone khác nhau với cơ chế replication gốc.</span><span class="why">Sai: tự quản lý DB trên EC2 (cài đặt, vá lỗi, replication, failover) làm tăng mạnh gánh nặng vận hành.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">An e-commerce company uses an Amazon RDS for PostgreSQL Multi-AZ DB instance. The business intelligence team runs long reporting queries during business hours, which increases CPU utilization and slows down customer transactions. The reports can tolerate data that is a few seconds old. What is the MOST cost-effective solution?</div>
+          <ol class="opts">
+            <li data-k="A">Direct the reporting queries to the Multi-AZ standby instance.</li>
+            <li data-k="B">Scale the DB instance up to the largest instance class.</li>
+            <li data-k="C">Create a read replica and configure the reporting tool to use the read replica endpoint.</li>
+            <li data-k="D">Enable storage autoscaling on the DB instance.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Read replica</b> sao chép bất đồng bộ (dữ liệu trễ vài giây – chấp nhận được) và có <b>endpoint riêng</b> để tách tải báo cáo khỏi primary – đúng use case tài liệu nêu (business reporting). <b>A sai</b>: standby của <b>Multi-AZ DB instance không phục vụ đọc</b>. <b>B sai</b>: scale up đắt hơn và báo cáo vẫn tranh tài nguyên với giao dịch. <b>D sai</b>: storage autoscaling chỉ tăng dung lượng, không giảm tải CPU.</div>
+          <div class="trans">
+            <div class="tq">Một công ty thương mại điện tử dùng Amazon RDS for PostgreSQL Multi-AZ DB instance. Nhóm business intelligence chạy các truy vấn báo cáo dài trong giờ làm việc, làm tăng mức sử dụng CPU và khiến giao dịch của khách hàng chậm lại. Báo cáo chấp nhận dữ liệu cũ vài giây. Giải pháp nào là MOST cost-effective (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chuyển các truy vấn báo cáo sang standby instance của Multi-AZ.</span><span class="why">Sai: standby của Multi-AZ DB instance không phục vụ lưu lượng đọc, chỉ dùng để failover.</span></li>
+              <li data-k="B"><span class="tv">Scale up DB instance lên instance class lớn nhất.</span><span class="why">Sai: tốn kém hơn nhiều và báo cáo vẫn tranh tài nguyên với giao dịch trên cùng instance.</span></li>
+              <li data-k="C"><span class="tv">Tạo một read replica và cấu hình công cụ báo cáo dùng endpoint của read replica.</span><span class="why">Đúng: read replica sao chép bất đồng bộ (trễ vài giây – chấp nhận được) và có endpoint riêng, tách tải báo cáo khỏi primary với chi phí hợp lý.</span></li>
+              <li data-k="D"><span class="tv">Bật storage autoscaling trên DB instance.</span><span class="why">Sai: storage autoscaling chỉ tăng dung lượng lưu trữ, không giảm tải CPU do truy vấn báo cáo.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company has a serverless application in which AWS Lambda functions query an Amazon RDS for MySQL DB instance. During traffic spikes, thousands of concurrent Lambda invocations cause "too many connections" errors and high memory usage on the database. The company also wants to stop storing database credentials in the Lambda environment variables. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Create an Amazon RDS Proxy for the DB instance and update the Lambda functions to connect to the proxy endpoint.</li>
+            <li data-k="B">Increase the max_connections parameter in the DB parameter group to the maximum allowed value.</li>
+            <li data-k="C">Convert the DB instance to a Multi-AZ deployment.</li>
+            <li data-k="D">Store the database credentials in AWS Secrets Manager, have the proxy retrieve them, and use IAM authentication from the Lambda execution role to the proxy.</li>
+            <li data-k="E">Create five read replicas and distribute the Lambda connections across them.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> <b>RDS Proxy</b> gom và tái sử dụng kết nối (pooling + multiplexing), xếp hàng request khi quá tải ⇒ hết lỗi “too many connections” (A). Proxy lấy thông tin đăng nhập từ <b>Secrets Manager</b>, Lambda xác thực tới proxy bằng <b>IAM</b> ⇒ không còn credential trong biến môi trường (D). <b>B sai</b>: mỗi kết nối vẫn tốn RAM, chỉ đẩy vấn đề lên ngưỡng cao hơn. <b>C sai</b>: Multi-AZ cho HA, không tăng số kết nối. <b>E sai</b>: replica chỉ đọc, không xử lý ghi, và Lambda phải tự phân phối kết nối.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có ứng dụng serverless trong đó các AWS Lambda function truy vấn một Amazon RDS for MySQL DB instance. Khi lưu lượng tăng đột biến, hàng nghìn lượt gọi Lambda đồng thời gây lỗi "too many connections" và mức dùng bộ nhớ cao trên cơ sở dữ liệu. Công ty cũng muốn ngừng lưu thông tin đăng nhập cơ sở dữ liệu trong biến môi trường của Lambda. Solutions architect nên thực hiện HAI hành động nào? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Amazon RDS Proxy cho DB instance và cập nhật các Lambda function để kết nối tới endpoint của proxy.</span><span class="why">Đúng: RDS Proxy gom và tái sử dụng kết nối (pooling, multiplexing), xếp hàng request khi quá tải ⇒ hết lỗi "too many connections".</span></li>
+              <li data-k="B"><span class="tv">Tăng tham số max_connections trong DB parameter group lên giá trị tối đa cho phép.</span><span class="why">Sai: mỗi kết nối vẫn tốn RAM, chỉ đẩy vấn đề lên ngưỡng cao hơn và không giải quyết chuyện lưu credential.</span></li>
+              <li data-k="C"><span class="tv">Chuyển DB instance sang triển khai Multi-AZ.</span><span class="why">Sai: Multi-AZ phục vụ high availability, không tăng số kết nối xử lý được.</span></li>
+              <li data-k="D"><span class="tv">Lưu thông tin đăng nhập cơ sở dữ liệu trong AWS Secrets Manager, để proxy lấy chúng, và dùng xác thực IAM từ Lambda execution role tới proxy.</span><span class="why">Đúng: proxy lấy credential từ Secrets Manager, Lambda xác thực tới proxy bằng IAM ⇒ không còn mật khẩu trong biến môi trường.</span></li>
+              <li data-k="E"><span class="tv">Tạo năm read replica và phân phối các kết nối Lambda lên chúng.</span><span class="why">Sai: read replica chỉ đọc nên không xử lý ghi, Lambda phải tự phân phối kết nối, và vấn đề credential vẫn còn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A security audit finds that an Amazon RDS for PostgreSQL DB instance that was created two years ago is not encrypted at rest. The company must encrypt the database by using an AWS KMS customer managed key. Which approach meets this requirement?</div>
+          <ol class="opts">
+            <li data-k="A">Modify the DB instance, select Enable encryption, and choose the customer managed key with Apply immediately.</li>
+            <li data-k="B">Create an encrypted read replica of the DB instance and promote the read replica.</li>
+            <li data-k="C">Enable default EBS encryption in the Region and reboot the DB instance.</li>
+            <li data-k="D">Take a snapshot of the DB instance, copy the snapshot with encryption enabled using the customer managed key, and restore a new DB instance from the encrypted snapshot.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Tài liệu: chỉ mã hóa được khi <b>tạo</b> DB instance; cách “thêm” mã hóa là tạo snapshot, <b>copy snapshot và bật mã hóa</b>, rồi <b>restore</b> thành instance mới (sau đó chuyển ứng dụng sang endpoint mới). <b>A sai</b>: không thể bật mã hóa trên instance đã tồn tại. <b>B sai</b>: không thể tạo replica mã hóa từ nguồn không mã hóa. <b>C sai</b>: EBS encryption by default áp cho EBS volume mới của EC2, không áp cho RDS instance hiện có.</div>
+          <div class="trans">
+            <div class="tq">Một đợt kiểm toán bảo mật phát hiện một Amazon RDS for PostgreSQL DB instance được tạo cách đây hai năm không được mã hóa at rest. Công ty phải mã hóa cơ sở dữ liệu bằng một AWS KMS customer managed key. Cách tiếp cận nào đáp ứng yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Modify DB instance, chọn Enable encryption, chọn customer managed key và Apply immediately.</span><span class="why">Sai: RDS không cho bật mã hóa trên DB instance đã tồn tại; mã hóa chỉ chọn được lúc tạo.</span></li>
+              <li data-k="B"><span class="tv">Tạo một read replica được mã hóa của DB instance rồi promote read replica đó.</span><span class="why">Sai: không thể tạo read replica mã hóa từ một nguồn không mã hóa.</span></li>
+              <li data-k="C"><span class="tv">Bật mã hóa EBS mặc định (default EBS encryption) trong Region và reboot DB instance.</span><span class="why">Sai: EBS encryption by default áp cho EBS volume mới của EC2, không ảnh hưởng tới RDS instance hiện có.</span></li>
+              <li data-k="D"><span class="tv">Chụp snapshot của DB instance, copy snapshot với tùy chọn mã hóa bằng customer managed key, rồi restore một DB instance mới từ snapshot đã mã hóa.</span><span class="why">Đúng: đây là cách chuẩn để "thêm" mã hóa – copy snapshot có mã hóa bằng KMS key rồi restore thành instance mới và chuyển ứng dụng sang.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company runs an Amazon RDS for MySQL database in us-east-1. For disaster recovery, the company needs a copy of the database in eu-west-1 with an RPO of a few minutes. The copy should also serve read-only traffic for European users. The company accepts a manual process to make the copy writable during a disaster. Which solution meets these requirements MOST cost-effectively?</div>
+          <ol class="opts">
+            <li data-k="A">Create a cross-Region read replica in eu-west-1 and promote it to a standalone DB instance during a disaster.</li>
+            <li data-k="B">Copy automated snapshots to eu-west-1 every 24 hours and restore them during a disaster.</li>
+            <li data-k="C">Enable Multi-AZ on the DB instance and choose an Availability Zone in eu-west-1 for the standby.</li>
+            <li data-k="D">Use AWS Backup to create weekly backups and copy them to eu-west-1.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Cross-Region read replica</b> sao chép bất đồng bộ liên tục (RPO thường giây–phút), <b>phục vụ đọc</b> cho người dùng châu Âu, và có thể <b>promote</b> thủ công thành DB đọc/ghi khi Region chính sập – đúng ba mục đích tài liệu nêu (DR, đọc gần người dùng, migration). <b>B sai</b>: RPO tới 24 giờ và không phục vụ đọc. <b>C sai</b>: standby Multi-AZ luôn ở <b>cùng Region</b>. <b>D sai</b>: RPO một tuần, không đọc được.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy cơ sở dữ liệu Amazon RDS for MySQL ở us-east-1. Để phục vụ disaster recovery, công ty cần một bản sao cơ sở dữ liệu ở eu-west-1 với RPO vài phút. Bản sao cũng nên phục vụ lưu lượng chỉ đọc cho người dùng châu Âu. Công ty chấp nhận quy trình thủ công để biến bản sao thành có thể ghi khi có thảm họa. Giải pháp nào đáp ứng các yêu cầu này MOST cost-effectively (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một cross-Region read replica ở eu-west-1 và promote nó thành DB instance độc lập khi có thảm họa.</span><span class="why">Đúng: cross-Region read replica sao chép bất đồng bộ liên tục (RPO giây–phút), phục vụ đọc cho người dùng châu Âu và promote thủ công được khi Region chính sập.</span></li>
+              <li data-k="B"><span class="tv">Copy automated snapshot sang eu-west-1 mỗi 24 giờ và restore khi có thảm họa.</span><span class="why">Sai: RPO lên tới 24 giờ và snapshot không phục vụ được lưu lượng đọc.</span></li>
+              <li data-k="C"><span class="tv">Bật Multi-AZ trên DB instance và chọn một Availability Zone ở eu-west-1 cho standby.</span><span class="why">Sai: standby của Multi-AZ luôn nằm trong cùng Region với primary.</span></li>
+              <li data-k="D"><span class="tv">Dùng AWS Backup tạo bản backup hằng tuần và copy sang eu-west-1.</span><span class="why">Sai: RPO tới một tuần và bản backup không phục vụ đọc.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A financial company uses Amazon RDS for Oracle. Regulations require that the company can restore the database to any point in time within the last 30 days, and that the company retains a monthly backup of the database for 7 years. Which TWO actions will meet these requirements with the LEAST operational overhead? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Set the automated backup retention period to 7 years.</li>
+            <li data-k="B">Set the automated backup retention period to 30 days.</li>
+            <li data-k="C">Create a cross-Region read replica and keep it for 7 years.</li>
+            <li data-k="D">Convert the DB instance to a Multi-AZ deployment.</li>
+            <li data-k="E">Create an AWS Backup backup plan with a monthly rule that retains recovery points for 7 years.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Automated backup với retention <b>30 ngày</b> cho phép <b>point-in-time recovery</b> tới từng giây trong 30 ngày (B). Retention tối đa chỉ <b>35 ngày</b>, nên lưu 7 năm cần <b>AWS Backup</b> backup plan với rule hằng tháng và retention 7 năm – tự động hoàn toàn (E; chi tiết ở Bài 19). <b>A sai</b>: vượt giới hạn 35 ngày. <b>C sai</b>: replica phản ánh dữ liệu hiện tại, không phải bản backup lịch sử; lỗi logic cũng bị sao chép. <b>D sai</b>: Multi-AZ là HA, không phải backup.</div>
+          <div class="trans">
+            <div class="tq">Một công ty tài chính dùng Amazon RDS for Oracle. Quy định yêu cầu công ty có thể khôi phục cơ sở dữ liệu về bất kỳ thời điểm nào trong 30 ngày gần nhất, và giữ một bản backup hằng tháng của cơ sở dữ liệu trong 7 năm. HAI hành động nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công vận hành nhất)? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt thời gian lưu giữ (retention period) của automated backup là 7 năm.</span><span class="why">Sai: retention của automated backup tối đa chỉ 35 ngày.</span></li>
+              <li data-k="B"><span class="tv">Đặt thời gian lưu giữ của automated backup là 30 ngày.</span><span class="why">Đúng: automated backup với retention 30 ngày cho phép point-in-time recovery tới từng giây trong 30 ngày gần nhất.</span></li>
+              <li data-k="C"><span class="tv">Tạo một cross-Region read replica và giữ nó trong 7 năm.</span><span class="why">Sai: replica chỉ phản ánh dữ liệu hiện tại, không lưu các bản backup lịch sử; lỗi logic cũng bị sao chép sang.</span></li>
+              <li data-k="D"><span class="tv">Chuyển DB instance sang triển khai Multi-AZ.</span><span class="why">Sai: Multi-AZ là giải pháp high availability, không phải backup dài hạn.</span></li>
+              <li data-k="E"><span class="tv">Tạo một AWS Backup backup plan với rule hằng tháng giữ các recovery point trong 7 năm.</span><span class="why">Đúng: AWS Backup tự động tạo và lưu backup hằng tháng với retention 7 năm, vượt giới hạn 35 ngày mà không cần thao tác thủ công.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A startup launched a mobile game that uses Amazon RDS for PostgreSQL. User adoption is growing rapidly and unpredictably, and the database has nearly run out of storage twice in the past month. The operations team wants to prevent storage-full outages without manual intervention while capping storage costs. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Create an Amazon CloudWatch alarm on FreeStorageSpace that triggers an AWS Lambda function to modify the allocated storage.</li>
+            <li data-k="B">Add a read replica to offload storage from the primary DB instance.</li>
+            <li data-k="C">Enable RDS storage autoscaling and set a maximum storage threshold.</li>
+            <li data-k="D">Migrate the storage type to Magnetic to reduce costs and increase capacity.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Storage autoscaling</b> tự tăng dung lượng khi trống ≤ 10% trong ≥ 5 phút, không downtime; <b>maximum storage threshold</b> giới hạn chi phí – đúng ví dụ “mobile gaming application” trong tài liệu. <b>A sai</b>: chạy được nhưng phải tự xây và duy trì ⇒ nhiều công vận hành hơn tính năng có sẵn. <b>B sai</b>: replica chứa toàn bộ dữ liệu, không giảm storage của primary. <b>D sai</b>: Magnetic đã deprecated, không dùng cho instance mới và không hỗ trợ autoscaling.</div>
+          <div class="trans">
+            <div class="tq">Một startup ra mắt game di động dùng Amazon RDS for PostgreSQL. Lượng người dùng tăng nhanh và khó dự đoán, và cơ sở dữ liệu đã hai lần gần hết dung lượng lưu trữ trong tháng qua. Nhóm vận hành muốn ngăn sự cố đầy dung lượng mà không cần can thiệp thủ công, đồng thời giới hạn chi phí lưu trữ. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo Amazon CloudWatch alarm trên FreeStorageSpace kích hoạt một AWS Lambda function để sửa dung lượng được cấp phát.</span><span class="why">Sai: chạy được nhưng phải tự xây và duy trì giải pháp ⇒ nhiều công vận hành hơn tính năng có sẵn.</span></li>
+              <li data-k="B"><span class="tv">Thêm một read replica để giảm tải lưu trữ cho primary DB instance.</span><span class="why">Sai: read replica chứa toàn bộ dữ liệu, không làm giảm dung lượng lưu trữ của primary.</span></li>
+              <li data-k="C"><span class="tv">Bật RDS storage autoscaling và đặt maximum storage threshold.</span><span class="why">Đúng: storage autoscaling tự tăng dung lượng khi gần đầy mà không downtime, và maximum storage threshold giới hạn chi phí.</span></li>
+              <li data-k="D"><span class="tv">Chuyển loại lưu trữ sang Magnetic để giảm chi phí và tăng dung lượng.</span><span class="why">Sai: Magnetic là loại lưu trữ cũ, không dùng cho instance mới và không hỗ trợ storage autoscaling.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An application that runs on Amazon EC2 instances connects to an Amazon RDS for MySQL DB instance. The security team requires that no database passwords are stored on the instances or in application configuration, that access is managed centrally through IAM, and that all connections are encrypted in transit. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Store the database password in an encrypted file on an Amazon EBS volume attached to each instance.</li>
+            <li data-k="B">Enable Kerberos authentication with AWS Managed Microsoft AD and store the passwords in the user data.</li>
+            <li data-k="C">Store the password in AWS Systems Manager Parameter Store as a plaintext String parameter.</li>
+            <li data-k="D">Enable IAM database authentication, grant the EC2 instance role the rds-db:connect permission, and connect with an authentication token over SSL.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>IAM database authentication</b> (hỗ trợ MySQL) dùng <b>authentication token</b> 15 phút sinh từ <b>IAM role của EC2</b> ⇒ không lưu mật khẩu, quản lý tập trung bằng IAM, và traffic <b>bắt buộc SSL/TLS</b>. <b>A sai</b>: vẫn lưu mật khẩu trên instance. <b>B sai</b>: lưu mật khẩu trong user data là thực hành xấu. <b>C sai</b>: vẫn là mật khẩu (lại ở dạng plaintext), không phải quản lý truy cập bằng IAM.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng chạy trên các Amazon EC2 instance kết nối tới một Amazon RDS for MySQL DB instance. Nhóm bảo mật yêu cầu không lưu mật khẩu cơ sở dữ liệu trên instance hay trong cấu hình ứng dụng, quyền truy cập được quản lý tập trung qua IAM, và mọi kết nối đều được mã hóa khi truyền (in transit). Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Lưu mật khẩu cơ sở dữ liệu trong một file được mã hóa trên Amazon EBS volume gắn vào mỗi instance.</span><span class="why">Sai: vẫn lưu mật khẩu trên instance và không quản lý truy cập qua IAM.</span></li>
+              <li data-k="B"><span class="tv">Bật xác thực Kerberos với AWS Managed Microsoft AD và lưu mật khẩu trong user data.</span><span class="why">Sai: lưu mật khẩu trong user data là thực hành xấu và vi phạm yêu cầu không lưu mật khẩu trên instance.</span></li>
+              <li data-k="C"><span class="tv">Lưu mật khẩu trong AWS Systems Manager Parameter Store dưới dạng String parameter plaintext.</span><span class="why">Sai: vẫn là mật khẩu (lại ở dạng plaintext), không phải quản lý truy cập DB bằng IAM.</span></li>
+              <li data-k="D"><span class="tv">Bật IAM database authentication, cấp quyền rds-db:connect cho IAM role của EC2 instance, và kết nối bằng authentication token qua SSL.</span><span class="why">Đúng: IAM database authentication dùng token ngắn hạn (15 phút) sinh từ IAM role ⇒ không lưu mật khẩu, quản lý tập trung bằng IAM và bắt buộc SSL/TLS.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company runs a write-intensive OLTP application on Amazon RDS for PostgreSQL. The company needs high availability across three Availability Zones, failover that typically completes in under 35 seconds, lower write latency than a Multi-AZ DB instance deployment, and the ability to serve read traffic from the standby instances. Which deployment option should the company choose?</div>
+          <ol class="opts">
+            <li data-k="A">A Multi-AZ DB cluster deployment.</li>
+            <li data-k="B">A Multi-AZ DB instance deployment with two read replicas.</li>
+            <li data-k="C">A Single-AZ DB instance with automated backups and storage autoscaling.</li>
+            <li data-k="D">A Single-AZ DB instance with a cross-Region read replica.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Multi-AZ DB cluster</b>: 1 writer + 2 reader ở <b>3 AZ</b>, sao chép <b>semisynchronous</b> (write latency thấp hơn Multi-AZ DB instance), reader <b>đọc được</b> và failover <b>thường &lt; 35 giây</b>. <b>B sai</b>: failover thường 60–120 giây, write latency cao hơn, standby không đọc được (chỉ replica đọc). <b>C sai</b>: không có HA. <b>D sai</b>: không failover tự động, replica ở Region khác.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng OLTP ghi nhiều trên Amazon RDS for PostgreSQL. Công ty cần high availability trên ba Availability Zone, failover thường hoàn tất dưới 35 giây, độ trễ ghi thấp hơn triển khai Multi-AZ DB instance, và khả năng phục vụ lưu lượng đọc từ các standby instance. Công ty nên chọn phương án triển khai nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Triển khai Multi-AZ DB cluster.</span><span class="why">Đúng: Multi-AZ DB cluster có 1 writer + 2 reader ở 3 AZ, sao chép semisynchronous (độ trễ ghi thấp hơn), reader đọc được và failover thường dưới 35 giây.</span></li>
+              <li data-k="B"><span class="tv">Triển khai Multi-AZ DB instance kèm hai read replica.</span><span class="why">Sai: failover thường 60–120 giây, độ trễ ghi cao hơn và standby không phục vụ đọc.</span></li>
+              <li data-k="C"><span class="tv">Một Single-AZ DB instance với automated backup và storage autoscaling.</span><span class="why">Sai: Single-AZ không có high availability hay failover tự động.</span></li>
+              <li data-k="D"><span class="tv">Một Single-AZ DB instance với một cross-Region read replica.</span><span class="why">Sai: không có failover tự động và replica nằm ở Region khác, không đáp ứng HA trên 3 AZ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A Java application connects to an Amazon RDS for MySQL Multi-AZ DB instance. During a recent Multi-AZ failover, the database became available in about 2 minutes, but the application kept failing for much longer because it continued to use cached DNS results and had to re-establish thousands of connections. The company wants to minimize application downtime during future failovers without major code changes. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the DB instance class to reduce failover time.</li>
+            <li data-k="B">Place an Amazon RDS Proxy in front of the DB instance and change the application to connect to the proxy endpoint.</li>
+            <li data-k="C">Create a read replica and configure the application to retry writes against the read replica.</li>
+            <li data-k="D">Create an Amazon Route 53 failover routing policy that points to the primary and standby IP addresses.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Khi failover, <b>RDS Proxy</b> giữ nguyên endpoint/IP, tự chuyển kết nối sang primary mới, giữ các kết nối nhàn rỗi của ứng dụng ⇒ client <b>không bị ảnh hưởng bởi DNS propagation hay DNS cache cục bộ</b>; chỉ cần đổi endpoint. (Đặt JVM DNS TTL ≤ 60 s cũng giúp, nhưng không có trong lựa chọn.) <b>A sai</b>: class lớn hơn không sửa vấn đề cache DNS. <b>C sai</b>: read replica mặc định chỉ đọc, không nhận ghi; và replica bất đồng bộ nên có thể thiếu dữ liệu mới nhất. <b>D sai</b>: standby không có IP cố định để trỏ, không nhận kết nối, và RDS đã tự đổi DNS – thêm Route 53 không giải quyết cache ở client.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng Java kết nối tới một Amazon RDS for MySQL Multi-AZ DB instance. Trong lần Multi-AZ failover gần đây, cơ sở dữ liệu sẵn sàng trở lại sau khoảng 2 phút, nhưng ứng dụng tiếp tục lỗi lâu hơn nhiều vì vẫn dùng kết quả DNS đã cache và phải thiết lập lại hàng nghìn kết nối. Công ty muốn giảm thiểu thời gian ngừng của ứng dụng trong các lần failover sau mà không thay đổi lớn về mã nguồn. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng DB instance class để giảm thời gian failover.</span><span class="why">Sai: instance class lớn hơn không giải quyết vấn đề DNS bị cache và việc tạo lại kết nối ở client.</span></li>
+              <li data-k="B"><span class="tv">Đặt một Amazon RDS Proxy trước DB instance và đổi ứng dụng sang kết nối tới endpoint của proxy.</span><span class="why">Đúng: RDS Proxy giữ nguyên endpoint, tự chuyển kết nối sang primary mới và giữ kết nối của ứng dụng ⇒ không bị ảnh hưởng bởi DNS cache; chỉ cần đổi endpoint.</span></li>
+              <li data-k="C"><span class="tv">Tạo một read replica và cấu hình ứng dụng thử ghi lại vào read replica.</span><span class="why">Sai: read replica mặc định chỉ đọc, không nhận ghi, và sao chép bất đồng bộ nên có thể thiếu dữ liệu mới nhất.</span></li>
+              <li data-k="D"><span class="tv">Tạo một chính sách định tuyến failover của Amazon Route 53 trỏ tới địa chỉ IP của primary và standby.</span><span class="why">Sai: standby không có IP cố định để trỏ và không nhận kết nối; RDS đã tự đổi DNS – thêm Route 53 không giải quyết cache ở client.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZSingleStandby.html" target="_blank" rel="noopener">Multi-AZ DB instance deployments</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZ.Failover.html" target="_blank" rel="noopener">Failing over a Multi-AZ DB instance</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/multi-az-db-clusters-concepts.html" target="_blank" rel="noopener">Multi-AZ DB cluster deployments</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/multi-az-db-clusters-concepts-failover.html" target="_blank" rel="noopener">Failing over a Multi-AZ DB cluster</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_ReadRepl.Create.html" target="_blank" rel="noopener">Creating a read replica</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_ReadRepl.Overview.Differences.html" target="_blank" rel="noopener">Differences between read replicas for DB engines</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_ReadRepl.XRgn.html" target="_blank" rel="noopener">Creating a read replica in a different AWS Region</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_WorkingWithAutomatedBackups.html" target="_blank" rel="noopener">Introduction to backups</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_WorkingWithAutomatedBackups.BackupRetention.html" target="_blank" rel="noopener">Backup retention period</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PIT.html" target="_blank" rel="noopener">Restoring a DB instance to a specified time</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PIOPS.Autoscaling.html" target="_blank" rel="noopener">Amazon RDS storage autoscaling</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-proxy.howitworks.html" target="_blank" rel="noopener">RDS Proxy concepts and terminology</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.html" target="_blank" rel="noopener">IAM database authentication</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-secrets-manager.html" target="_blank" rel="noopener">Password management with Amazon RDS and AWS Secrets Manager</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html" target="_blank" rel="noopener">Encrypting Amazon RDS resources</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_Limits.html" target="_blank" rel="noopener">Quotas and constraints for Amazon RDS</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

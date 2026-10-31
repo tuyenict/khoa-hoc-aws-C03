@@ -1,0 +1,949 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 15 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Replication.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="15" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Thiết kế <span class="t" data-vi="Cấu hình vòng đời S3">S3 Lifecycle configuration</span> với <b>transition</b>, <b>expiration</b>, noncurrent version actions, <code>AbortIncompleteMultipartUpload</code>; nắm mô hình <b>waterfall</b> và các ràng buộc 128 KB / minimum storage duration.</li>
+          <li>Phân biệt <span class="t" data-vi="Sao chép xuyên Region">Cross-Region Replication (CRR)</span>, <span class="t" data-vi="Sao chép cùng Region">Same-Region Replication (SRR)</span>, <b>S3 Batch Replication</b> và <b>S3 Replication Time Control</b>; biết cái gì <b>được</b> và <b>không được</b> replicate.</li>
+          <li>Tối ưu hiệu năng S3: con số <b>3.500 / 5.500 request mỗi giây mỗi prefix</b>, lỗi <b>503 Slow Down</b>, <b>multipart upload</b>, <b>byte-range fetch</b>, caching với CloudFront/ElastiCache.</li>
+          <li>Biết khi nào dùng <b>S3 Transfer Acceleration</b> và khi nào không; điều kiện tên bucket và endpoint <code>s3-accelerate</code>.</li>
+          <li>Cấu hình <span class="t" data-vi="Thông báo sự kiện S3">S3 Event Notifications</span> tới SNS, SQS, Lambda, EventBridge; hiểu giới hạn (không SQS FIFO trực tiếp, at-least-once, vòng lặp Lambda).</li>
+          <li>Hiểu <b>S3 Select</b> (và trạng thái hiện tại) cùng <b>Requester Pays</b> – ai trả tiền gì.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 3 – Storage</span>
+        <p><b>Bài 14</b> đã dạy bucket, object, storage classes, Glacier restore và Versioning – bài này <b>không lặp lại</b> bảng storage class hay cơ chế delete marker mà dùng chúng làm nền. Bài này tập trung vào <b>vận hành dữ liệu ở quy mô lớn</b>: tự động chuyển lớp/xóa, sao chép, hiệu năng, sự kiện. Các nội dung bảo mật (bucket policy, mã hóa SSE-*, Object Lock, presigned URL, Access Points, CORS) dành cho <b>Bài 16</b>; ở đây chỉ nhắc khi liên quan (vd replication object mã hóa KMS).</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Bức tranh tổng thể: S3 “nâng cao” giải quyết bài toán gì?</h2>
+      <p class="lead">Khi dữ liệu trong S3 lên tới hàng triệu – hàng tỉ object, câu hỏi không còn là “lưu ở đâu” mà là: <b>làm sao tự động giảm chi phí theo tuổi dữ liệu</b>, <b>làm sao có bản sao ở Region/account khác</b>, <b>làm sao upload/download thật nhanh</b>, và <b>làm sao phản ứng ngay khi có object mới</b>. Đề SAA-C03 hỏi rất nhiều về các tính năng này trong Domain 2 (resilient), Domain 3 (high-performing) và Domain 4 (cost-optimized).</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier.svg" alt="">
+          <div><h4>S3 Lifecycle</h4><span class="vi">Vòng đời object</span><p>Rule tự động <b>transition</b> sang lớp rẻ hơn hoặc <b>expire</b> (xóa) object, version cũ, multipart dở dang. Domain 4 – cost.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Replication.svg" alt="">
+          <div><h4>S3 Replication</h4><span class="vi">Sao chép object</span><p>CRR / SRR (live), Batch Replication (on-demand), RTC 15 phút. Domain 2 – DR, compliance, độ trễ.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Standard.svg" alt="">
+          <div><h4>Performance</h4><span class="vi">Hiệu năng</span><p>3.500 ghi / 5.500 đọc mỗi giây <b>mỗi prefix</b>, song song hóa, multipart upload, byte-range fetch. Domain 3.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" alt="">
+          <div><h4>Transfer Acceleration</h4><span class="vi">Tăng tốc truyền tải</span><p>Đi qua edge location của CloudFront rồi theo đường mạng tối ưu của AWS về bucket. Upload xuyên lục địa.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">
+          <div><h4>Event Notifications</h4><span class="vi">Thông báo sự kiện</span><p>Object created/removed/restore/replication… gửi tới SNS, SQS, Lambda hoặc EventBridge – nền tảng kiến trúc <b>event-driven, decoupled</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">
+          <div><h4>S3 Select / Requester Pays</h4><span class="vi">Truy vấn tại chỗ / Người yêu cầu trả phí</span><p>Lọc dữ liệu bằng SQL trên một object; cho phép người tải dữ liệu trả phí request và data transfer.</p></div></div>
+      </div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – nhà kho có quản lý</span>
+        <p>Nếu Bài 14 là “kho gửi đồ”, thì bài này là <b>đội quản lý kho</b>: <b>Lifecycle</b> là nội quy “hàng để quá 30 ngày chuyển ra kho phụ, quá 1 năm chuyển kho lạnh, quá 10 năm tiêu hủy”. <b>Replication</b> là xe tải tự chở bản sao mọi gói hàng mới sang kho ở thành phố khác. <b>Transfer Acceleration</b> là dịch vụ gửi hàng qua bưu cục gần nhà rồi đi đường cao tốc riêng. <b>Event Notifications</b> là chuông báo kêu mỗi khi có hàng mới nhập kho để nhân viên xử lý ngay.</p></div>
+
+      <!-- ===================== PHẦN 2: LIFECYCLE ===================== -->
+      <h2 id="lifecycle"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier-Deep-Archive.svg" alt="">S3 Lifecycle – tự động chuyển lớp và xóa object</h2>
+      <p class="lead"><span class="t" data-vi="Vòng đời S3">S3 Lifecycle</span> giúp lưu object tiết kiệm chi phí trong suốt vòng đời của nó bằng cách <b>chuyển sang storage class rẻ hơn</b> hoặc <b>xóa object hết hạn</b> thay bạn. Bạn tạo một <span class="t" data-vi="Cấu hình vòng đời">Lifecycle configuration</span> cho bucket – tập hợp các <span class="t" data-vi="Quy tắc vòng đời">lifecycle rule</span> định nghĩa hành động S3 áp dụng cho một nhóm object.</p>
+
+      <div class="stats">
+        <div class="stat"><b>1</b><span>lifecycle configuration mỗi bucket</span></div>
+        <div class="stat"><b>1.000</b><span>rule tối đa mỗi configuration – <b>không</b> tăng được</span></div>
+        <div class="stat"><b>128 KB</b><span>object nhỏ hơn mặc định <b>không</b> được transition (từ 09/2024)</span></div>
+        <div class="stat"><b>1 – 100</b><span>số noncurrent version giữ lại (<code>NewerNoncurrentVersions</code>)</span></div>
+        <div class="stat"><b>00:00 UTC</b><span>thời điểm tính: ngày tạo + N ngày, làm tròn lên nửa đêm UTC kế tiếp</span></div>
+        <div class="stat"><b>1</b><span>hành động lifecycle tối đa cho mỗi object mỗi ngày</span></div>
+      </div>
+
+      <h3>Hai loại hành động chính</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Standard-IA.svg" alt="">Transition actions</h4>
+          <ul>
+            <li>Định nghĩa <b>khi nào</b> object chuyển sang storage class khác. Ví dụ: sang S3 Standard-IA <b>30 ngày</b> sau khi tạo; sang S3 Glacier Flexible Retrieval <b>1 năm</b> sau khi tạo.</li>
+            <li>Có <b>phí transition request</b> cho mỗi object (giống phí PUT vào lớp đích). <b>Không</b> có phí retrieval khi lifecycle transition.</li>
+            <li>Object đã mã hóa vẫn được mã hóa suốt quá trình transition.</li>
+          </ul></div>
+        <div style="--accent:#D13212"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Object.svg" alt="">Expiration actions</h4>
+          <ul>
+            <li>Định nghĩa <b>khi nào</b> object hết hạn; S3 <b>xóa thay bạn</b> (bất đồng bộ).</li>
+            <li>Chỉ tốn phí khi expire object ở lớp có <b>minimum storage duration</b> mà chưa đủ hạn (vd IA &lt; 30 ngày vẫn tính đủ 30 ngày).</li>
+            <li>Ví dụ: xóa log sau 1 tuần/1 tháng; xóa hồ sơ sau thời hạn lưu theo quy định.</li>
+          </ul></div>
+      </div>
+
+      <h3>Cấu trúc một rule: ID, Status, Filter, Actions</h3>
+      <ul>
+        <li><b>ID</b>: định danh duy nhất của rule trong bucket (≤ 255 ký tự). <b>Status</b>: <code>Enabled</code> / <code>Disabled</code> – rule disabled thì không làm gì.</li>
+        <li><b>Filter</b> chọn object áp dụng:
+          <ul>
+            <li><b>Prefix</b> (vd <code>logs/</code>) – mỗi filter chỉ <b>một prefix</b>; muốn nhiều prefix thì viết nhiều rule.</li>
+            <li><b>Tag</b> (một hoặc nhiều tag, phải khớp cả key và value).</li>
+            <li><b>Object size</b>: <code>ObjectSizeGreaterThan</code> / <code>ObjectSizeLessThan</code> (tính bằng byte, <b>không bao gồm</b> giá trị biên; trên console từ &gt; 0 tới 50 TB).</li>
+            <li>Kết hợp nhiều điều kiện ⇒ bọc trong <code>&lt;And&gt;</code> (logical AND). <b>Filter rỗng</b> ⇒ áp dụng cho <b>mọi object</b> trong bucket.</li>
+          </ul></li>
+        <li><b>Thời điểm</b>: theo <b>số ngày</b> kể từ khi tạo (thực chất là <i>Last modified</i>) hoặc theo <b>ngày cụ thể</b> (ISO 8601, nửa đêm UTC). Ví dụ trong tài liệu: object tạo 15/01 lúc 10:30 UTC, rule 3 ngày ⇒ transition ngày <b>19/01 00:00 UTC</b>.</li>
+        <li>Rule <b>theo ngày cụ thể không phải chạy một lần</b>: sau ngày đó S3 tiếp tục áp dụng cho object mới chừng nào rule còn Enabled.</li>
+        <li>Rule mới áp dụng cho <b>cả object đã có</b> lẫn object thêm sau – thêm rule “expire sau 30 ngày” hôm nay thì object cũ hơn 30 ngày bị đưa vào hàng đợi xóa ngay.</li>
+      </ul>
+
+      <h3>Mô hình waterfall – các transition được hỗ trợ</h3>
+      <p>S3 hỗ trợ mô hình <span class="t" data-vi="Thác nước – chỉ chảy xuống">waterfall</span>: object chỉ đi <b>“xuống”</b> tới lớp lạnh hơn, không đi ngược lên bằng lifecycle.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 380" width="800" role="img" aria-label="Mô hình waterfall của S3 Lifecycle">
+          <defs><marker id="ah15a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <text x="20" y="24" font-size="13" font-weight="700">Lifecycle transition – chỉ chảy từ trên xuống (nóng ⇒ lạnh)</text>
+          <!-- row 1 -->
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Standard.svg" x="40" y="44" width="36" height="36"/>
+          <rect x="20" y="40" width="160" height="62" rx="8" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="84" y="64" font-size="12.5" font-weight="700">S3 Standard</text>
+          <text x="84" y="82" font-size="10.5" class="muted">điểm xuất phát</text>
+          <!-- row 2 -->
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Standard-IA.svg" x="40" y="128" width="36" height="36"/>
+          <rect x="20" y="124" width="160" height="62" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="84" y="148" font-size="12.5" font-weight="700">Standard-IA</text>
+          <text x="84" y="166" font-size="10.5" class="muted">min 30 ngày</text>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Intelligent-Tiering.svg" x="230" y="128" width="36" height="36"/>
+          <rect x="210" y="124" width="170" height="62" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="274" y="148" font-size="12.5" font-weight="700">Intelligent-Tiering</text>
+          <text x="274" y="166" font-size="10.5" class="muted">tùy tier hiện tại</text>
+          <!-- row 3 -->
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_S3-One-Zone-IA.svg" x="230" y="212" width="36" height="36"/>
+          <rect x="210" y="208" width="170" height="62" rx="8" fill="none" stroke="#D13212" stroke-width="2"/>
+          <text x="274" y="232" font-size="12.5" font-weight="700">One Zone-IA</text>
+          <text x="274" y="250" font-size="10.5" class="muted">⇒ chỉ Flexible / Deep</text>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier.svg" x="430" y="128" width="36" height="36"/>
+          <rect x="410" y="124" width="180" height="62" rx="8" fill="none" stroke="#8C4FFF" stroke-width="2"/>
+          <text x="474" y="148" font-size="12.5" font-weight="700">Glacier Instant</text>
+          <text x="474" y="166" font-size="10.5" class="muted">min 90 ngày</text>
+          <!-- row 4 -->
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier.svg" x="430" y="212" width="36" height="36"/>
+          <rect x="410" y="208" width="180" height="62" rx="8" fill="none" stroke="#8C4FFF" stroke-width="2"/>
+          <text x="474" y="232" font-size="12.5" font-weight="700">Glacier Flexible</text>
+          <text x="474" y="250" font-size="10.5" class="muted">min 90 ngày</text>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier-Deep-Archive.svg" x="620" y="292" width="36" height="36"/>
+          <rect x="600" y="288" width="180" height="62" rx="8" fill="none" stroke="#232F3E" stroke-width="2"/>
+          <text x="664" y="312" font-size="12.5" font-weight="700">Deep Archive</text>
+          <text x="664" y="330" font-size="10.5" class="muted">đích cuối – một chiều</text>
+          <!-- arrows -->
+          <path class="line-o" d="M100 102 L100 122" marker-end="url(#ah15a)"/>
+          <path class="line-o" d="M180 80 L290 122" marker-end="url(#ah15a)"/>
+          <path class="line-o" d="M180 70 L500 122" marker-end="url(#ah15a)"/>
+          <path class="line-o" d="M180 155 L208 155" marker-end="url(#ah15a)"/>
+          <path class="line-o" d="M295 186 L295 206" marker-end="url(#ah15a)"/>
+          <path class="line-o" d="M380 155 L408 155" marker-end="url(#ah15a)"/>
+          <path class="line-o" d="M500 186 L500 206" marker-end="url(#ah15a)"/>
+          <path class="line-o" d="M380 239 L408 239" marker-end="url(#ah15a)"/>
+          <path class="line-o" d="M590 250 L650 286" marker-end="url(#ah15a)"/>
+          <path class="line-o" d="M590 170 L690 286" marker-end="url(#ah15a)"/>
+          <text x="20" y="300" font-size="11" font-weight="700">Không có mũi tên ngược lên:</text>
+          <text x="20" y="318" font-size="10.5" class="muted">muốn đưa object Glacier Flexible / Deep Archive về lớp “nóng”</text>
+          <text x="20" y="334" font-size="10.5" class="muted">⇒ restore bản tạm rồi CopyObject ghi đè với storage class mới</text>
+          <text x="20" y="350" font-size="10.5" class="muted">(console không hỗ trợ copy này – dùng CLI/SDK/API).</text>
+        </svg>
+        <figcaption><b>Hình 1.</b> Mô hình waterfall theo tài liệu “Transitioning objects using Amazon S3 Lifecycle”. Standard ⇒ mọi lớp thấp hơn; Standard-IA ⇒ Intelligent-Tiering, One Zone-IA, Glacier IR / Flexible / Deep Archive; One Zone-IA ⇒ chỉ Glacier Flexible / Deep Archive; Glacier IR ⇒ Flexible / Deep Archive; Flexible ⇒ chỉ Deep Archive; Deep Archive là <b>điểm cuối một chiều</b>. Intelligent-Tiering đi tiếp tùy tier hiện tại của object.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Từ lớp</th><th>Lifecycle chuyển được sang</th><th>Không chuyển được sang</th></tr></thead>
+        <tbody>
+          <tr><td><b>S3 Standard</b></td><td>Standard-IA, Intelligent-Tiering, One Zone-IA, Glacier IR, Glacier Flexible, Deep Archive</td><td>–</td></tr>
+          <tr><td><b>S3 Standard-IA</b></td><td>Intelligent-Tiering, One Zone-IA, Glacier IR, Glacier Flexible, Deep Archive</td><td class="no">Standard</td></tr>
+          <tr><td><b>Intelligent-Tiering</b></td><td>Frequent/Infrequent tier ⇒ One Zone-IA, Glacier IR/Flexible/Deep; Archive Instant ⇒ Glacier IR/Flexible/Deep; Archive Access ⇒ Flexible/Deep; Deep Archive Access ⇒ Deep Archive</td><td class="no">Standard, Standard-IA</td></tr>
+          <tr><td><b>S3 One Zone-IA</b></td><td>Glacier Flexible, Deep Archive</td><td class="no">Standard, Standard-IA, IT, Glacier IR</td></tr>
+          <tr><td><b>Glacier Instant Retrieval</b></td><td>Glacier Flexible, Deep Archive</td><td class="no">Mọi lớp “nóng” hơn</td></tr>
+          <tr><td><b>Glacier Flexible Retrieval</b></td><td>Chỉ Deep Archive</td><td class="no">Mọi lớp khác (phải restore + copy)</td></tr>
+          <tr><td><b>Glacier Deep Archive</b></td><td>–</td><td class="no">Tất cả (phải restore + copy)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Ràng buộc và chi phí cần nhớ</h3>
+      <ul>
+        <li><b>Object &lt; 128 KB không được transition mặc định</b> sang bất kỳ lớp nào (thay đổi từ <b>09/2024</b>; trước đó object nhỏ chỉ được chuyển sang Glacier Flexible / Deep Archive). Lý do: mỗi object tốn một <b>transition request</b> – với object nhỏ, phí transition có thể vượt khoản tiết kiệm. Muốn chuyển object nhỏ ⇒ thêm filter <code>ObjectSizeGreaterThan</code>/<code>ObjectSizeLessThan</code> tùy chỉnh.</li>
+        <li><b>Minimum storage duration</b>: chuyển object <b>ra khỏi</b> lớp có thời hạn tối thiểu trước hạn ⇒ vẫn trả phí phần còn lại. Bạn <b>không thể tạo một rule</b> chuyển trước khi đủ hạn: vd chuyển sang Glacier IR ở ngày 4 thì transition sang Deep Archive phải <b>≥ ngày 94</b> (4 + 90). Dùng hai rule thì được nhưng trả phí minimum duration.</li>
+        <li>Quy tắc kinh điển trong đề: object phải nằm ở lớp hiện tại <b>ít nhất 30 ngày</b> trước khi lifecycle chuyển sang <b>Standard-IA hoặc One Zone-IA</b> (console không cho đặt &lt; 30 ngày cho hai lớp này). Glacier thì có thể transition ngay ngày 0.</li>
+        <li><b>Glacier Flexible / Deep Archive</b>: mỗi object thêm <b>40 KB</b> overhead (8 KB tính giá S3 Standard cho tên + metadata, 32 KB tính giá Glacier cho index). ⇒ Gom nhiều file nhỏ thành file lớn trước khi archive.</li>
+        <li><b>Billing thay đổi ngay khi object đủ điều kiện</b>, dù S3 thực hiện chậm (có thể vài ngày tới vài tuần): object đã hết hạn thì <b>không tính phí</b> lưu trữ nữa; object đến hạn sang Glacier thì tính giá Glacier từ lúc đó. <b>Ngoại lệ</b>: transition sang <b>Intelligent-Tiering</b> chỉ đổi giá sau khi chuyển xong.</li>
+        <li>Không nên dựa riêng vào Lifecycle cho <b>xóa có hạn chót pháp lý</b> – dùng S3 Inventory (trường Lifecycle Expiration Date) để kiểm tra rồi tự xóa phần còn sót.</li>
+        <li><b>Bucket policy không chặn được</b> lifecycle: dù policy deny mọi action với mọi principal, lifecycle vẫn transition/xóa bình thường.</li>
+        <li>Cấu hình mới/sửa cần <b>vài phút</b> để lan truyền; tắt hoặc xóa rule thì object đã được lên lịch sẽ bị hủy lịch.</li>
+      </ul>
+
+      <h3>Lifecycle và Versioning</h3>
+      <p>Bài 14 đã dạy versioning; ở đây là cách lifecycle tác động lên từng trạng thái bucket:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Action</th><th>Bucket không versioning</th><th>Bucket versioning-enabled</th><th>Bucket versioning-suspended</th></tr></thead>
+        <tbody>
+          <tr><td><code>Transition</code></td><td>Chuyển object</td><td>Chuyển <b>current version</b></td><td>Như enabled</td></tr>
+          <tr><td><code>Expiration</code></td><td><b>Xóa vĩnh viễn</b>, không khôi phục được</td><td>Chèn <b>delete marker</b>; current cũ thành noncurrent (dữ liệu vẫn còn, vẫn tính tiền)</td><td>Chèn delete marker version <code>null</code>; nếu current có ID <code>null</code> thì xóa vĩnh viễn nó</td></tr>
+          <tr><td><code>NoncurrentVersionTransition</code></td><td>Không tác dụng</td><td>Chuyển version cũ sau <code>NoncurrentDays</code> (và vượt <code>NewerNoncurrentVersions</code>)</td><td>Như enabled</td></tr>
+          <tr><td><code>NoncurrentVersionExpiration</code></td><td>Không tác dụng</td><td><b>Xóa vĩnh viễn</b> version cũ – không khôi phục được</td><td>Như enabled</td></tr>
+          <tr><td><code>ExpiredObjectDeleteMarker</code></td><td>–</td><td>Xóa <span class="t" data-vi="Dấu xóa hết hạn">expired object delete marker</span> (marker không còn version nào phía sau)</td><td>–</td></tr>
+          <tr><td><code>AbortIncompleteMultipartUpload</code></td><td colspan="3">Dừng và dọn các multipart upload chưa hoàn tất sau N ngày kể từ khi khởi tạo (<code>DaysAfterInitiation</code>) – mọi trạng thái bucket</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li><b>Số ngày noncurrent</b> tính từ lúc <b>version kế tiếp (successor)</b> được tạo – tức lúc object bị ghi đè hoặc bị xóa.</li>
+        <li><code>NewerNoncurrentVersions</code> (1–100) = số version cũ <b>mới nhất được giữ lại</b>; phải có <code>&lt;Filter&gt;</code>, thiếu sẽ lỗi <code>InvalidRequest</code>. Version chỉ bị xử lý khi vượt <b>cả hai</b> điều kiện (số ngày <b>và</b> số version).</li>
+        <li><code>ExpiredObjectDeleteMarker</code> và <code>AbortIncompleteMultipartUpload</code> <b>không dùng được</b> trong rule có filter theo <b>tag</b>.</li>
+        <li><b>Expiration không xóa multipart upload dở dang</b> – phải dùng riêng <code>AbortIncompleteMultipartUpload</code>.</li>
+        <li>Lifecycle bỏ qua object có trạng thái replication <code>Pending</code>/<code>Failed</code> và noncurrent version đang chịu <b>Object Lock</b>.</li>
+        <li>Khôi phục version cũ trong bucket có lifecycle: AWS khuyên <b>copy version cũ lên làm current</b> thay vì xóa current version, vì lifecycle hoạt động theo mô hình eventually consistent và có thể kịp xóa vĩnh viễn noncurrent version bạn định khôi phục.</li>
+      </ul>
+
+      <h3>Khi nhiều rule xung đột</h3>
+      <ul class="steps">
+        <li><b>Xóa vĩnh viễn thắng transition</b> – object vừa đến hạn expire vừa đến hạn chuyển lớp cùng ngày ⇒ bị xóa.</li>
+        <li><b>Transition thắng việc tạo delete marker.</b></li>
+        <li>Đủ điều kiện cả <b>Glacier Flexible Retrieval</b> và <b>Standard-IA/One Zone-IA</b> ⇒ S3 chọn <b>Glacier Flexible Retrieval</b>.</li>
+        <li>Mỗi object chỉ nhận <b>một</b> lifecycle action mỗi ngày; khi nhiều rule khớp, S3 áp dụng hành động <b>ít tốn kém nhất</b>.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Lifecycle</span>
+        <ul>
+          <li>“<i>Data is accessed frequently for 30 days, rarely afterwards, must be kept for 7 years and then deleted</i>” ⇒ <b>một lifecycle rule</b>: Standard ⇒ (30 ngày) Standard-IA ⇒ (vd 90/365 ngày) Glacier Flexible/Deep Archive ⇒ <b>Expiration</b> sau 7 năm.</li>
+          <li>“<i>Access pattern unknown / changes</i>” ⇒ không viết lifecycle đoán mò mà dùng <b>Intelligent-Tiering</b> (có thể lifecycle Standard ⇒ Intelligent-Tiering ngay).</li>
+          <li>“<i>Storage costs keep growing after enabling versioning</i>” ⇒ <b>NoncurrentVersionExpiration</b> (+ <code>NewerNoncurrentVersions</code> để giữ N bản gần nhất).</li>
+          <li>“<i>Bucket is billed for storage that doesn't appear in object listings</i>” ⇒ <b>multipart upload dở dang</b> ⇒ rule <b>AbortIncompleteMultipartUpload</b>.</li>
+          <li>“<i>Millions of small files (&lt; 128 KB) moved to Glacier; costs increased</i>” ⇒ phí transition request + 40 KB overhead; gom file hoặc lọc theo size.</li>
+          <li>“<i>Least operational overhead to delete objects after N days</i>” ⇒ <b>Lifecycle expiration</b>, không phải Lambda + cron.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – Lifecycle</span>
+        <ul>
+          <li>Phương án “lifecycle chuyển object từ Glacier Deep Archive về S3 Standard” ⇒ <b>sai</b>; lifecycle chỉ đi xuống. Phải restore + copy.</li>
+          <li>Phương án “transition sang Standard-IA sau 7 ngày” ⇒ không hợp lệ (tối thiểu 30 ngày); và kể cả hợp lệ, dữ liệu mới thường còn nóng.</li>
+          <li>Trong bucket có versioning, <b>Expiration</b> không giải phóng dung lượng – chỉ tạo delete marker. Phải thêm <b>NoncurrentVersionExpiration</b>.</li>
+          <li>Đặt lifecycle chỉ ở bucket nguồn khi có replication ⇒ hành động lifecycle <b>không được replicate</b>; muốn hai bên giống nhau thì cấu hình lifecycle ở <b>cả hai</b> bucket.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: REPLICATION ===================== -->
+      <h2 id="replication"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Replication.svg" alt="">S3 Replication – CRR, SRR, Batch Replication, RTC</h2>
+      <p class="lead"><span class="t" data-vi="Sao chép S3">S3 Replication</span> tự động sao chép object giữa các bucket một cách <b>bất đồng bộ (asynchronous)</b>. Bucket nguồn và đích có thể <b>cùng hoặc khác AWS account</b>, cùng hoặc khác Region; một bucket nguồn có thể replicate tới <b>một hoặc nhiều</b> bucket đích.</p>
+
+      <h3>Hai kiểu replication</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Replication.svg" alt="">Live replication</h4>
+          <ul>
+            <li>Tự động replicate object <b>mới và được cập nhật</b> khi chúng được ghi vào bucket nguồn.</li>
+            <li><b>Không</b> replicate object đã tồn tại trước khi bật replication.</li>
+            <li>Hai dạng: <b><span class="t" data-vi="Sao chép xuyên Region">Cross-Region Replication (CRR)</span></b> và <b><span class="t" data-vi="Sao chép cùng Region">Same-Region Replication (SRR)</span></b>.</li>
+          </ul></div>
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/svc/AWS-Batch.svg" alt="">On-demand: S3 Batch Replication</h4>
+          <ul>
+            <li>Replicate <b>object đã có sẵn</b> theo yêu cầu (chạy như một job S3 Batch Operations).</li>
+            <li>Replicate lại object <b>FAILED</b>; replicate object đã replicate sang <b>đích mới</b>; replicate <b>replica</b> (object do rule khác tạo ra).</li>
+            <li>S3 RTC <b>không</b> áp dụng cho Batch Replication.</li>
+          </ul></div>
+      </div>
+
+      <h3>CRR hay SRR? (theo tài liệu “When to use…”)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th></th><th>Cross-Region Replication (CRR)</th><th>Same-Region Replication (SRR)</th></tr></thead>
+        <tbody>
+          <tr><td>Vị trí bucket</td><td>Khác Region</td><td>Cùng Region</td></tr>
+          <tr><td>Use case trong tài liệu</td><td>
+            <ul>
+              <li><b>Compliance</b> yêu cầu lưu ở khoảng cách xa hơn mặc định (S3 vốn đã lưu nhiều AZ).</li>
+              <li><b>Giảm độ trễ</b> cho người dùng ở hai vùng địa lý.</li>
+              <li><b>Hiệu quả vận hành</b>: cluster compute ở hai Region cùng phân tích một tập object.</li>
+              <li>(Kèm two-way replication) <b>DR / failover</b> giữa Region với Multi-Region Access Points.</li>
+            </ul></td><td>
+            <ul>
+              <li><b>Gom log</b> từ nhiều bucket/account về một bucket.</li>
+              <li><b>Replicate giữa account production và test</b> mà vẫn giữ metadata.</li>
+              <li><b>Data sovereignty</b>: cần nhiều bản sao ở các account khác nhau nhưng dữ liệu không được rời quốc gia/Region.</li>
+            </ul></td></tr>
+          <tr><td>Phí data transfer</td><td>Có phí <b>inter-Region</b> (tùy cặp Region, vd us-east-1 ⇒ us-west-2 đắt hơn ⇒ us-east-2)</td><td class="yes">Không có phí data transfer</td></tr>
+          <tr><td>Thời gian (không RTC)</td><td colspan="2">Phần lớn trong vài giây–phút nhưng <b>không có SLA</b> (bảng “Workload requirements” ghi “within 24–48 hours, not SLA backed”); object lớn có thể mất vài giờ</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Storage.svg" alt="">AWS Cloud</span>
+          <div class="row">
+            <div class="grp region"><span class="lbl">Region nguồn: ap-southeast-1</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Ứng dụng<small>PUT object</small></div>
+                <span class="arrow">PutObject</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">Bucket nguồn<small>Versioning: Enabled</small></div>
+              </div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/svc/AWS-Identity-and-Access-Management.svg" alt="">IAM role<small>S3 assume để replicate</small></div>
+                <span class="arrow dashed">SRR</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Bucket đích SRR<small>account test, cùng Region</small></div>
+              </div>
+            </div>
+            <div class="grp region"><span class="lbl">Region đích: eu-west-1</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Replication-Time-Control.svg" alt="">CRR + RTC<small>99.99% trong 15 phút</small></div>
+                <span class="arrow">replica</span>
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Bucket đích CRR<small>Versioning: Enabled · lớp tùy chọn</small></div>
+              </div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">Replication metrics<small>bytes / operations pending, latency</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> Một bucket nguồn có thể có nhiều đích: CRR sang Region khác (thêm <b>S3 RTC</b> nếu cần thời gian có SLA) và SRR sang account khác trong cùng Region. Điều kiện bắt buộc: <b>versioning bật ở cả nguồn và đích</b>, và một <b>IAM role</b> cho phép S3 đọc từ nguồn, ghi vào đích. Replica có thể đặt thẳng vào lớp rẻ hơn (vd One Zone-IA, Glacier Deep Archive).</figcaption>
+      </figure>
+
+      <h3>Điều kiện bắt buộc</h3>
+      <ol class="steps">
+        <li><b>Versioning bật ở cả bucket nguồn và đích.</b> Khi replication đang chạy: không thể tắt (suspend) versioning ở nguồn (S3 trả lỗi – phải gỡ replication config trước); suspend versioning ở đích ⇒ replication <b>FAILED</b>.</li>
+        <li><b>S3 phải có quyền</b> replicate thay bạn – qua một <b>IAM role</b> bạn chỉ định trong replication configuration.</li>
+        <li>Chủ bucket nguồn phải bật cả Region nguồn và đích cho account; chủ bucket đích bật Region đích.</li>
+        <li>Nếu chủ bucket nguồn <b>không sở hữu object</b>, chủ object phải cấp <code>READ</code> và <code>READ_ACP</code> qua ACL.</li>
+        <li><b>Cross-account</b>: chủ bucket đích phải cấp quyền bằng <b>bucket policy</b>; bucket đích <b>không được là Requester Pays</b>.</li>
+        <li>Bucket nguồn bật <b>Object Lock</b> ⇒ bucket đích cũng phải bật Object Lock (cấu hình qua CLI/API/SDK; role cần thêm <code>s3:GetObjectRetention</code>, <code>s3:GetObjectLegalHold</code>).</li>
+      </ol>
+
+      <h3>Cái gì được replicate – cái gì không?</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Object.svg" alt="">Mặc định ĐƯỢC replicate</h4>
+          <ul>
+            <li>Object tạo <b>sau</b> khi thêm replication configuration.</li>
+            <li>Object không mã hóa; object mã hóa <b>SSE-S3, SSE-KMS</b> (cần cấu hình thêm cho KMS), <b>SSE-C</b> (tài liệu hiện tại đã hỗ trợ).</li>
+            <li><b>Metadata</b> (giữ nguyên thời điểm tạo và <b>version ID</b> gốc), <b>object tags</b>, cập nhật ACL (trừ khi dùng owner override).</li>
+            <li>Thông tin <b>Object Lock retention</b>.</li>
+          </ul></div>
+        <div style="--accent:#D13212"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Mặc định KHÔNG replicate</h4>
+          <ul>
+            <li><b>Object đã có trước</b> khi bật replication ⇒ dùng <b>Batch Replication</b>.</li>
+            <li><b>Replica</b> do rule khác tạo (không “chuyền tiếp” A ⇒ B ⇒ C – <i>no chaining</i>).</li>
+            <li><b>Delete marker</b> (với config bản mới có <code>Filter</code>) – trừ khi bật <span class="t" data-vi="Sao chép dấu xóa">delete marker replication</span> (không hỗ trợ rule theo tag).</li>
+            <li><b>DELETE kèm version ID</b> – <b>không bao giờ</b> replicate, để chống xóa có chủ đích/độc hại.</li>
+            <li>Hành động <b>lifecycle</b>; thay đổi <b>cấu hình cấp bucket</b> (lifecycle, notification…).</li>
+            <li>Object ở <b>Glacier Flexible / Deep Archive</b> hoặc tier Archive / Deep Archive Access của Intelligent-Tiering.</li>
+            <li>Object gắn tag <b>sau</b> PutObject khi dùng rule theo tag.</li>
+          </ul></div>
+      </div>
+
+      <h3>Các tùy chọn nâng cao</h3>
+      <ul>
+        <li><b>Replica vào lớp khác</b>: đặt thẳng replica vào Glacier Flexible, Deep Archive hoặc lớp khác; hoặc giữ cùng lớp rồi dùng lifecycle ở đích. Lifecycle ở đích tính tuổi theo <b>thời điểm tạo gốc</b> của object, không phải lúc replica xuất hiện.</li>
+        <li><span class="t" data-vi="Ghi đè chủ sở hữu">Owner override</span>: đổi quyền sở hữu replica sang <b>account sở hữu bucket đích</b> – hạn chế truy cập replica (hay dùng khi backup sang account riêng).</li>
+        <li><span class="t" data-vi="Kiểm soát thời gian sao chép">S3 Replication Time Control (S3 RTC)</span>: replicate phần lớn object trong vài giây và <b>99.99% object mới trong 15 phút</b>, <b>có SLA</b>. Tự bật <b>replication metrics</b> (CloudWatch, tính phí như custom metric) và sự kiện <code>OperationMissedThreshold</code> / <code>OperationReplicatedAfterThreshold</code>. Giá trị thời gian chỉ được là <b>15</b> phút. SLA không áp dụng khi vượt hướng dẫn request rate hoặc quota truyền tải mặc định <b>1 Gbps</b>.</li>
+        <li><b>Two-way replication</b> + <span class="t" data-vi="Đồng bộ thay đổi trên bản sao">replica modification sync</span>: đồng bộ thay đổi metadata (ACL, tag, Object Lock) theo cả hai chiều; dùng cùng <b>Multi-Region Access Points</b> để failover giữa Region mà dữ liệu ghi ở Region dự phòng vẫn chảy ngược về.</li>
+        <li>Replication object <b>SSE-KMS</b> tiêu tốn quota request của AWS KMS (vd 1.000 object/giây ⇒ trừ ~2.000 request KMS/giây).</li>
+        <li>Mỗi object replicate, S3 thực hiện tới 5 GET/HEAD + 1 PUT ở nguồn và 1 PUT ở mỗi đích – tính vào giới hạn request rate theo prefix; bạn chỉ trả phí 1 PUT mỗi object.</li>
+      </ul>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – sao lưu hồ sơ</span>
+        <p>Replication giống nhân viên văn thư được dặn “mỗi hồ sơ <b>mới</b> nộp vào, photo một bản gửi chi nhánh Hà Nội”. Hồ sơ đã nằm trong tủ từ trước thì nhân viên không tự photo – bạn phải giao một <b>đợt photo riêng</b> (Batch Replication). Nếu ai đó <b>rút hẳn một bản hồ sơ cụ thể</b> ra hủy (DELETE kèm version ID), chi nhánh <b>không hủy theo</b> – lớp bảo vệ khỏi xóa có chủ đích. Chi nhánh Hà Nội cũng không tự photo tiếp sang Đà Nẵng (không chaining).</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Replication</span>
+        <ul>
+          <li>“<i>Disaster recovery copy in another Region</i>”, “<i>lower latency for users in another continent</i>” ⇒ <b>CRR</b>. “<i>Aggregate logs from multiple buckets/accounts in the same Region</i>”, “<i>data must not leave the country</i>” ⇒ <b>SRR</b>.</li>
+          <li>“<i>Replicate objects that already exist in the bucket</i>” / “<i>re-replicate failed objects</i>” ⇒ <b>S3 Batch Replication</b>.</li>
+          <li>“<i>Replicate within 15 minutes, SLA, compliance</i>” ⇒ <b>S3 Replication Time Control</b>.</li>
+          <li>“<i>Replication is not working</i>” ⇒ kiểm tra <b>versioning ở cả hai bucket</b>, IAM role, bucket policy đích (cross-account), quyền KMS.</li>
+          <li>“<i>Backup copy must be owned by a separate account</i>” ⇒ replication cross-account + <b>owner override</b> (thường kết hợp Object Lock – Bài 16).</li>
+          <li>“<i>Cheapest storage for the replica</i>” ⇒ chọn storage class rẻ (One Zone-IA / Glacier) cho đích ngay trong rule.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – Replication</span>
+        <ul>
+          <li>Replication là <b>bất đồng bộ</b> – không phải synchronous replication. Đề yêu cầu RPO bằng 0 tuyệt đối thì S3 replication không bảo đảm.</li>
+          <li>Bật CRR rồi nghĩ dữ liệu cũ đã sang Region kia ⇒ <b>sai</b>; chỉ object mới.</li>
+          <li>DELETE kèm version ID ở nguồn không lan sang đích – đó là tính năng. Ngược lại, nếu bật delete marker replication thì “xóa mềm” <b>có</b> lan sang đích.</li>
+          <li>Chain A ⇒ B ⇒ C không tự chạy với replica; muốn có bản ở C hãy cấu hình A ⇒ C trực tiếp (nhiều đích).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: PERFORMANCE ===================== -->
+      <h2 id="performance"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Standard.svg" alt="">Hiệu năng S3: prefix, multipart upload, byte-range fetch</h2>
+      <p class="lead">S3 tự động scale tới tốc độ request cao. Theo tài liệu “Best practices design patterns”, ứng dụng đạt <b>ít nhất 3.500</b> request <code>PUT/COPY/POST/DELETE</code> hoặc <b>5.500</b> request <code>GET/HEAD</code> <b>mỗi giây cho mỗi <span class="t" data-vi="Tiền tố đã phân vùng">partitioned prefix</span></b>. Số prefix trong bucket <b>không giới hạn</b> ⇒ muốn nhanh hơn thì <b>song song hóa qua nhiều prefix</b>.</p>
+
+      <div class="stats">
+        <div class="stat"><b>3.500</b><span>PUT/COPY/POST/DELETE mỗi giây mỗi prefix</span></div>
+        <div class="stat"><b>5.500</b><span>GET/HEAD mỗi giây mỗi prefix</span></div>
+        <div class="stat"><b>55.000</b><span>GET/giây – ví dụ khi đọc song song 10 prefix</span></div>
+        <div class="stat"><b>503</b><span>Slow Down – tạm thời trong lúc S3 scale</span></div>
+        <div class="stat"><b>100 MB</b><span>ngưỡng khuyến nghị bắt đầu dùng multipart upload</span></div>
+        <div class="stat"><b>100 Gb/s</b><span>tốc độ tối đa một EC2 instance (ứng dụng data lake)</span></div>
+      </div>
+
+      <h3>Request rate theo prefix và lỗi 503</h3>
+      <ul>
+        <li>Ví dụ trong tài liệu: tạo <b>10 prefix</b> để đọc song song ⇒ tới <b>55.000</b> read request/giây. Ghi cũng scale tương tự khi ghi vào nhiều prefix.</li>
+        <li>Scale diễn ra <b>dần dần</b>, không tức thì. Trong lúc S3 tối ưu cho tốc độ mới, bạn có thể nhận <b>HTTP 503 (Slow Down)</b> – lỗi biến mất khi scale xong.</li>
+        <li>Xử lý 503: <b>retry với exponential backoff</b> (AWS SDK tự làm); phân tán key qua nhiều prefix (vd <code>a1b2/log-2024-01-01.txt</code> thay vì tên tuần tự); tăng tải từ từ; theo dõi metric 5xx bằng CloudWatch request metrics, S3 Storage Lens (advanced) hoặc server access logs.</li>
+        <li>Ứng dụng nhạy độ trễ: request nhỏ (&lt; 512 KB) nên <b>retry sau 2 giây</b>, lần sau thêm 4 giây; request lớn (&gt; 128 MB) theo dõi throughput và retry <b>5% chậm nhất</b>. Retry nên dùng kết nối mới + DNS lookup mới.</li>
+        <li>Dùng <b>SSE-KMS</b> ⇒ request S3 còn bị giới hạn bởi <b>quota request/giây của AWS KMS</b> (chi tiết Bài 16).</li>
+        <li>Cần <b>single-digit millisecond</b> và hàng trăm nghìn request/giây ⇒ <b>S3 Express One Zone</b> (directory bucket – Bài 14).</li>
+      </ul>
+
+      <h3>Multipart upload – cách hoạt động</h3>
+      <p>Bài 14 đã nêu giới hạn (single PUT ≤ 5 GB; multipart tới 10.000 part). Ở đây là <b>cơ chế</b> và lý do nó tăng hiệu năng. <span class="t" data-vi="Tải lên nhiều phần">Multipart upload</span> chia một object thành nhiều <b>part</b> – mỗi part là một đoạn dữ liệu liên tục – upload <b>độc lập, theo thứ tự bất kỳ</b>; part lỗi chỉ cần gửi lại part đó. AWS khuyên dùng cho object <b>từ 100 MB</b> trở lên.</p>
+      <ol class="steps">
+        <li><b>Initiate</b> – <code>CreateMultipartUpload</code>: S3 trả về <b>upload ID</b>. Metadata của object phải khai báo ở bước này. Người dùng ẩn danh không khởi tạo được.</li>
+        <li><b>Upload parts</b> – <code>UploadPart</code> với upload ID + <b>part number 1–10.000</b> (không cần liên tiếp; trùng số thì ghi đè part cũ). Mỗi part trả về <b>ETag</b> – ứng dụng phải tự lưu cặp (part number, ETag).</li>
+        <li><b>Complete</b> – <code>CompleteMultipartUpload</code> với danh sách part + ETag: S3 ghép part theo thứ tự tăng dần thành object. Hoặc <b>Abort</b> để hủy và giải phóng dung lượng.</li>
+      </ol>
+      <ul>
+        <li>Lợi ích theo tài liệu: <b>tăng throughput</b> (upload song song), <b>phục hồi nhanh</b> khi lỗi mạng, <b>tạm dừng / tiếp tục</b> (upload ID không hết hạn), <b>bắt đầu upload khi chưa biết kích thước cuối</b>.</li>
+        <li>Ví dụ: file 100 GB, part 100 MB ⇒ 1 Create + 1.000 UploadPart + 1 Complete = <b>1.002 API call</b>.</li>
+        <li>Part đã upload <b>bị tính phí lưu trữ</b> tới khi complete hoặc abort – và <b>không hiện trong danh sách object</b> ⇒ dùng lifecycle <b>AbortIncompleteMultipartUpload</b>. Abort không có phí xóa sớm dù storage class nào.</li>
+        <li>AWS CLI (<code>aws s3 cp</code>) và SDK <b>Transfer Manager</b> tự động dùng multipart upload và byte-range khi phù hợp.</li>
+        <li>Multipart upload với SSE-KMS cần quyền <code>kms:GenerateDataKey</code> và <code>kms:Decrypt</code> trên key.</li>
+      </ul>
+
+      <h3>Byte-range fetch – tải song song khi đọc</h3>
+      <p><span class="t" data-vi="Tải theo dải byte">Byte-range fetch</span> dùng HTTP header <code>Range</code> trong <code>GetObject</code> để lấy <b>chỉ một đoạn byte</b> của object. Nhiều kết nối đồng thời lấy các đoạn khác nhau của cùng object ⇒ <b>throughput tổng cao hơn</b> một request lấy cả object; đoạn nhỏ hơn cũng giúp <b>retry nhanh</b> khi bị gián đoạn. Object upload bằng multipart nên GET theo <b>cùng kích thước part</b> (hoặc <code>GET ?partNumber=N</code>).</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 300" width="800" role="img" aria-label="Multipart upload và byte-range fetch">
+          <defs><marker id="ah15b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <text x="20" y="22" font-size="13" font-weight="700">Ghi: multipart upload</text>
+          <image href="../assets/icons/res/Client.svg" x="20" y="40" width="40" height="40"/>
+          <text x="20" y="98" font-size="11">File 1 GB</text>
+          <rect x="90" y="40" width="60" height="22" rx="4" fill="none" stroke="#147EBA" stroke-width="1.5"/><text x="120" y="56" font-size="10.5" text-anchor="middle">part 1</text>
+          <rect x="90" y="66" width="60" height="22" rx="4" fill="none" stroke="#147EBA" stroke-width="1.5"/><text x="120" y="82" font-size="10.5" text-anchor="middle">part 2</text>
+          <rect x="90" y="92" width="60" height="22" rx="4" fill="none" stroke="#D13212" stroke-width="1.5"/><text x="120" y="108" font-size="10.5" text-anchor="middle">part 3 ✕</text>
+          <rect x="90" y="118" width="60" height="22" rx="4" fill="none" stroke="#147EBA" stroke-width="1.5"/><text x="120" y="134" font-size="10.5" text-anchor="middle">part … N</text>
+          <path class="line-o" d="M152 51 L300 80" marker-end="url(#ah15b)"/>
+          <path class="line-o" d="M152 77 L300 86" marker-end="url(#ah15b)"/>
+          <path class="line-o" d="M152 103 L300 92" marker-end="url(#ah15b)"/>
+          <path class="line-o" d="M152 129 L300 98" marker-end="url(#ah15b)"/>
+          <text x="160" y="154" font-size="10.5" class="muted">song song · part 3 lỗi ⇒ chỉ gửi lại part 3</text>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" x="304" y="66" width="44" height="44"/>
+          <text x="356" y="80" font-size="11.5" font-weight="700">1. CreateMultipartUpload ⇒ upload ID</text>
+          <text x="356" y="98" font-size="11.5">2. UploadPart (1–10.000) ⇒ ETag mỗi part</text>
+          <text x="356" y="116" font-size="11.5">3. CompleteMultipartUpload ⇒ ghép thành 1 object</text>
+          <text x="356" y="134" font-size="10.5" class="muted">hoặc AbortMultipartUpload; lifecycle dọn upload dở dang</text>
+          <line x1="20" y1="170" x2="780" y2="170" stroke="#AAB7B8" stroke-dasharray="4 4"/>
+          <text x="20" y="194" font-size="13" font-weight="700">Đọc: byte-range fetch</text>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Object.svg" x="20" y="206" width="40" height="40"/>
+          <rect x="70" y="214" width="300" height="26" rx="4" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <line x1="145" y1="214" x2="145" y2="240" stroke="#7AA116"/><line x1="220" y1="214" x2="220" y2="240" stroke="#7AA116"/><line x1="295" y1="214" x2="295" y2="240" stroke="#7AA116"/>
+          <text x="107" y="231" font-size="10" text-anchor="middle">0–N</text><text x="182" y="231" font-size="10" text-anchor="middle">N–2N</text><text x="257" y="231" font-size="10" text-anchor="middle">2N–3N</text><text x="332" y="231" font-size="10" text-anchor="middle">…</text>
+          <path class="line-o" d="M372 222 L520 210" marker-end="url(#ah15b)"/>
+          <path class="line-o" d="M372 228 L520 228" marker-end="url(#ah15b)"/>
+          <path class="line-o" d="M372 234 L520 248" marker-end="url(#ah15b)"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="526" y="208" width="40" height="40"/>
+          <text x="576" y="222" font-size="11.5" font-weight="700">GET + header Range: bytes=…</text>
+          <text x="576" y="240" font-size="10.5" class="muted">nhiều kết nối đồng thời ⇒ throughput cao</text>
+          <text x="576" y="256" font-size="10.5" class="muted">chỉ lấy phần đầu file (header) cũng được</text>
+          <text x="20" y="286" font-size="10.5" class="muted">Mẹo: đặt EC2 và bucket trong cùng Region để giảm độ trễ và phí data transfer.</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Song song hóa cả chiều ghi (multipart upload: Create ⇒ UploadPart ⇒ Complete) và chiều đọc (byte-range fetch: nhiều GET với header <code>Range</code>). Đây là câu trả lời chuẩn cho “<i>maximize throughput for large objects</i>”.</figcaption>
+      </figure>
+
+      <h3>Các hướng dẫn hiệu năng khác (Performance guidelines)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Hướng dẫn</th><th>Nội dung chính</th><th>Từ khóa trong đề</th></tr></thead>
+        <tbody>
+          <tr><td><b>Measure performance</b></td><td>Xem network throughput, CPU, DRAM; cân nhắc instance type khác; theo dõi số lỗi 503.</td><td>“bottleneck”</td></tr>
+          <tr><td><b>Scale connections horizontally</b></td><td>Coi S3 là hệ thống phân tán khổng lồ, gửi nhiều request đồng thời trên nhiều kết nối; S3 <b>không giới hạn</b> số kết nối tới bucket.</td><td>“parallel”, “concurrent”</td></tr>
+          <tr><td><b>Byte-range fetches</b></td><td>Header <code>Range</code>, tải song song các đoạn.</td><td>“download large objects faster”, “only part of a file”</td></tr>
+          <tr><td><b>Retry requests</b></td><td>Timeout và retry “mạnh tay”; request retry thường đi đường khác và nhanh.</td><td>“latency-sensitive”</td></tr>
+          <tr><td><b>Same Region</b></td><td>Đặt EC2 và bucket cùng Region – giảm độ trễ và <b>phí data transfer</b>.</td><td>“reduce data transfer cost”</td></tr>
+          <tr><td><b>Caching</b></td><td>Nội dung đọc lặp lại ⇒ <b>CloudFront</b> (cache ở edge gần user) hoặc <b>ElastiCache</b> (cache in-memory, giảm GET latency nhiều bậc, phải sửa code); giảm cả chi phí request.</td><td>“frequently accessed”, “global users”</td></tr>
+          <tr><td><b>Transfer Acceleration</b></td><td>Client ở xa Region của bucket (phần tiếp theo).</td><td>“upload from around the world”</td></tr>
+          <tr><td><b>Latest AWS SDK</b></td><td>SDK có sẵn retry khi 503, Transfer Manager tự song song hóa và byte-range.</td><td>“least development effort”</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – hiệu năng</span>
+        <ul>
+          <li>“<i>Application receives HTTP 503 Slow Down errors</i>” ⇒ <b>phân tán object qua nhiều prefix</b> + <b>exponential backoff</b>. Không phải “tăng quota” hay “đổi storage class”.</li>
+          <li>“<i>Upload large files faster / resiliently</i>” ⇒ <b>multipart upload</b> (song song). “<i>Download large files faster</i>” ⇒ <b>byte-range fetch</b> song song.</li>
+          <li>“<i>Read only the first bytes (header) of many large files</i>” ⇒ <b>byte-range GET</b>.</li>
+          <li>“<i>Static content requested repeatedly by users worldwide</i>” ⇒ <b>CloudFront</b> trước S3 (không phải CRR tới mọi Region).</li>
+          <li>Tài liệu ôn cũ hay nói “thêm ký tự ngẫu nhiên đầu key” – S3 ngày nay tự scale, nhưng <b>nhiều prefix vẫn tăng tổng throughput</b> vì giới hạn tính theo prefix.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: TRANSFER ACCELERATION ===================== -->
+      <h2 id="transfer-acceleration"><img src="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" alt="">S3 Transfer Acceleration</h2>
+      <p class="lead"><span class="t" data-vi="Tăng tốc truyền tải S3">Amazon S3 Transfer Acceleration</span> là tính năng <b>cấp bucket</b> giúp truyền file <b>nhanh, dễ, an toàn qua khoảng cách địa lý xa</b> giữa client và một general purpose bucket. Nó tận dụng các <span class="t" data-vi="Vị trí biên">edge location</span> phân bố toàn cầu của Amazon CloudFront: dữ liệu đi vào edge location gần client nhất, rồi được định tuyến về S3 qua <b>đường mạng tối ưu</b> của AWS thay vì Internet công cộng.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Client ở São Paulo<small>upload video 5 GB</small></div>
+          <span class="arrow">Internet chặng ngắn</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" alt="">Edge location gần nhất<small>bucket.s3-accelerate.amazonaws.com</small></div>
+          <span class="arrow">AWS backbone tối ưu</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Bucket ở ap-southeast-1<small>Transfer Acceleration: Enabled</small></div>
+        </div>
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Client ở São Paulo<small>không tăng tốc</small></div>
+          <span class="arrow dashed">Internet công cộng, nhiều hop, xuyên lục địa</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Cùng bucket<small>bucket.s3.ap-southeast-1.amazonaws.com</small></div>
+        </div>
+        <figcaption><b>Hình 4.</b> Hai đường đi của cùng một upload. Với Transfer Acceleration, client chỉ đổi <b>hostname</b> sang endpoint <code>s3-accelerate</code>; endpoint thường vẫn dùng được song song cho truyền tải bình thường. Càng ở xa Region của bucket thì càng tăng tốc nhiều.</figcaption>
+      </figure>
+
+      <h3>Khi nào nên dùng (theo tài liệu)</h3>
+      <ul>
+        <li>Khách hàng ở <b>khắp thế giới upload về một bucket tập trung</b>.</li>
+        <li>Thường xuyên truyền <b>gigabyte tới terabyte</b> dữ liệu <b>xuyên lục địa</b>.</li>
+        <li>Không tận dụng hết băng thông Internet sẵn có khi upload lên S3.</li>
+        <li>Tài liệu design patterns: lý tưởng cho ứng dụng có <b>kết nối Internet nhanh</b>, <b>object lớn</b>, nhiều nội dung cần upload. Kiểm tra lợi ích bằng <b>Speed Comparison tool</b> (dùng multipart upload so sánh tốc độ có/không tăng tốc tới các Region).</li>
+      </ul>
+
+      <h3>Yêu cầu và giới hạn</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu</th><th>Chi tiết</th></tr></thead>
+        <tbody>
+          <tr><td>Tên bucket</td><td>Phải <b>DNS-compliant</b> và <b>không chứa dấu chấm</b> (<code>.</code>)</td></tr>
+          <tr><td>Kiểu request</td><td>Chỉ <b>virtual-hosted style</b></td></tr>
+          <tr><td>Bật trên bucket</td><td>Console, API <code>PutBucketAccelerateConfiguration</code>, CLI/SDK; trạng thái <code>Enabled</code> hoặc <code>Suspended</code>. Chỉ <b>bucket owner</b> (hoặc principal có <code>s3:PutAccelerateConfiguration</code>) bật được</td></tr>
+          <tr><td>Endpoint</td><td><code>&lt;bucket&gt;.s3-accelerate.amazonaws.com</code> hoặc dual-stack IPv6 <code>&lt;bucket&gt;.s3-accelerate.dualstack.amazonaws.com</code></td></tr>
+          <tr><td>Thời gian có hiệu lực</td><td>Endpoint dùng được <b>ngay</b>, nhưng có thể mất tới <b>20 phút</b> mới thấy tốc độ tăng</td></tr>
+          <tr><td>Thao tác không hỗ trợ</td><td><code>ListBuckets</code>, <code>CreateBucket</code>, <code>DeleteBucket</code>; <b>CopyObject cross-Region</b></td></tr>
+          <tr><td>Region</td><td>Chỉ một số Region hỗ trợ (danh sách trong tài liệu gồm us-east-1/2, us-west-1/2, ca-central-1, eu-west-1/2/3, eu-central-1, ap-northeast-1/2, ap-south-1, ap-southeast-1/2, sa-east-1)</td></tr>
+          <tr><td>Chi phí</td><td>Có thể phát sinh <b>phí data transfer bổ sung</b>; bạn chỉ bị tính phí cho những lần truyền mà Transfer Acceleration <b>có khả năng cải thiện</b> tốc độ</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Chọn công cụ tăng tốc nào?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tình huống</th><th>Lựa chọn</th><th>Lý do</th></tr></thead>
+        <tbody>
+          <tr><td>Người dùng toàn cầu <b>upload</b> file lớn về một bucket</td><td><b>S3 Transfer Acceleration</b> (+ multipart)</td><td>Vào edge gần nhất, đi backbone AWS</td></tr>
+          <tr><td>Người dùng toàn cầu <b>tải/xem</b> nội dung tĩnh lặp lại</td><td><b>Amazon CloudFront</b></td><td>Cache ở edge; giảm request tới S3</td></tr>
+          <tr><td>Một file rất lớn, mạng ổn định băng thông cao</td><td><b>Multipart upload</b> song song</td><td>Tận dụng hết băng thông</td></tr>
+          <tr><td>Ứng dụng muốn bản sao dữ liệu ở gần người dùng Region khác</td><td><b>CRR</b></td><td>Dữ liệu nằm sẵn ở Region đích</td></tr>
+          <tr><td>Hàng chục–hàng trăm TB, đường truyền chậm/không có</td><td>Thiết bị <b>AWS Snow Family</b> / AWS DataSync (Bài 18)</td><td>Truyền offline / tác tử truyền dữ liệu</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Transfer Acceleration</span>
+        <ul>
+          <li>“<i>Users across multiple continents upload large files to a single S3 bucket; uploads are slow</i>” ⇒ <b>S3 Transfer Acceleration</b> + <b>multipart upload</b>. Đây là cặp đáp án rất hay gặp.</li>
+          <li>“<i>Least operational overhead / no code change except the endpoint</i>” ⇒ Transfer Acceleration chỉ cần đổi hostname, không cần dựng hạ tầng.</li>
+          <li>Đáp án “tạo bucket ở mỗi Region rồi CRR về bucket trung tâm” có thể đúng nhưng <b>phức tạp hơn</b>; nếu đề nhấn mạnh <i>simplest</i> thì chọn Transfer Acceleration.</li>
+          <li>Bucket có dấu chấm trong tên (vd <code>media.example.com</code>) ⇒ <b>không bật được</b> Transfer Acceleration.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: S3 SELECT ===================== -->
+      <h2 id="s3-select"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">S3 Select – truy vấn dữ liệu tại chỗ</h2>
+      <p class="lead">Với <span class="t" data-vi="Chọn lọc nội dung S3 bằng SQL">Amazon S3 Select</span>, bạn dùng câu lệnh <b>SQL</b> để lọc nội dung <b>một object</b> và chỉ lấy về phần dữ liệu cần thiết. S3 lọc phía server nên giảm lượng dữ liệu truyền ⇒ giảm <b>chi phí và độ trễ</b> lấy dữ liệu.</p>
+
+      <div class="callout warn"><span class="ttl">Trạng thái hiện tại – quan trọng</span>
+        <p>Tài liệu AWS ghi rõ: <b>Amazon S3 Select không còn mở cho khách hàng mới</b> (existing customers vẫn dùng bình thường). Với tài khoản mới, AWS hướng dẫn dùng các cách khác như <b>Amazon Athena</b> (SQL serverless trên dữ liệu S3, truy vấn nhiều object), <b>S3 Object Lambda</b> hoặc lọc phía client. Đề SAA-C03 cũ vẫn có thể nhắc S3 Select / Glacier Select; hãy hiểu khái niệm “<b>server-side filtering</b>” và nhận ra rằng trong thiết kế mới, <b>Athena</b> là lựa chọn hay được kỳ vọng.</p></div>
+
+      <ul>
+        <li>Chỉ truy vấn <b>một object mỗi request</b>; định dạng <b>CSV, JSON, Apache Parquet</b>; CSV/JSON có thể nén <b>GZIP</b> hoặc <b>BZIP2</b>; hỗ trợ object mã hóa server-side. Kết quả xuất ra CSV hoặc JSON.</li>
+        <li>Giới hạn: object tới <b>5 TB</b>; biểu thức SQL tối đa <b>256 KB</b>; một record tối đa <b>1 MB</b>. Không truy vấn được object ở <b>Glacier Flexible / Deep Archive / RRS</b> hoặc tier Archive của Intelligent-Tiering.</li>
+        <li>Cần quyền <code>s3:GetObject</code>; object SSE-C phải dùng HTTPS và gửi kèm key. Console giới hạn kết quả 40 MB.</li>
+        <li>Tham số <b>ScanRange</b> cho phép quét song song các dải byte khác nhau của cùng object – ý tưởng tương tự byte-range fetch.</li>
+      </ul>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Object.svg" alt="">S3 Select</h4>
+          <ul>
+            <li>SQL đơn giản trên <b>một</b> object; trả về tập con dữ liệu.</li>
+            <li>Không cần hạ tầng; tích hợp trong API GetObject-like (<code>SelectObjectContent</code>).</li>
+            <li>Không còn cho khách hàng mới.</li>
+          </ul></div>
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">Amazon Athena</h4>
+          <ul>
+            <li>SQL <b>serverless</b> trên <b>nhiều</b> object/toàn bộ data lake; trả phí theo dữ liệu quét.</li>
+            <li>Join, aggregate, dùng Glue Data Catalog; phân tích log S3/CloudTrail/ALB.</li>
+            <li>Chi tiết ở module Analytics.</li>
+          </ul></div>
+      </div>
+
+      <!-- ===================== PHẦN 7: EVENT NOTIFICATIONS ===================== -->
+      <h2 id="events"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">S3 Event Notifications và Amazon EventBridge</h2>
+      <p class="lead"><span class="t" data-vi="Thông báo sự kiện S3">S3 Event Notifications</span> cho phép nhận thông báo khi có sự kiện nhất định xảy ra trong bucket. Bạn thêm một <b>notification configuration</b> (lưu trong subresource <code>notification</code> của bucket) xác định <b>loại sự kiện</b> và <b>đích</b> nhận. Thông báo được thiết kế để giao <span class="t" data-vi="Ít nhất một lần">at least once</span>, thường trong <b>vài giây</b> nhưng đôi khi <b>một phút hoặc lâu hơn</b>.</p>
+
+      <h3>Các loại sự kiện chính (cho SQS, SNS, Lambda)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Event type</th><th>Khi nào</th></tr></thead>
+        <tbody>
+          <tr><td><code>s3:ObjectCreated:*</code> (<code>Put</code>, <code>Post</code>, <code>Copy</code>, <code>CompleteMultipartUpload</code>)</td><td>Object được tạo – theo từng API hoặc mọi API</td></tr>
+          <tr><td><code>s3:ObjectRemoved:*</code> (<code>Delete</code>, <code>DeleteMarkerCreated</code>)</td><td>Object bị xóa / version bị xóa vĩnh viễn / delete marker được tạo. <b>Không</b> báo xóa tự động bởi lifecycle</td></tr>
+          <tr><td><code>s3:ObjectRestore:*</code> (<code>Post</code>, <code>Completed</code>, <code>Delete</code>)</td><td>Bắt đầu / hoàn tất restore từ Glacier Flexible, Deep Archive, tier Archive của IT; bản tạm hết hạn</td></tr>
+          <tr><td><code>s3:Replication:*</code></td><td>Replication thất bại, vượt ngưỡng 15 phút (RTC), replicate sau ngưỡng, không còn theo dõi</td></tr>
+          <tr><td><code>s3:LifecycleExpiration:*</code>, <code>s3:LifecycleTransition</code></td><td>Lifecycle xóa object / tạo delete marker / chuyển lớp</td></tr>
+          <tr><td><code>s3:IntelligentTiering</code></td><td>Object IT chuyển vào tier Archive Access / Deep Archive Access</td></tr>
+          <tr><td><code>s3:ObjectTagging:*</code>, <code>s3:ObjectAcl:Put</code>, <code>s3:ObjectRetention:Put</code></td><td>Thêm/xóa tag, đổi ACL, đổi Object Lock retention</td></tr>
+          <tr><td><code>s3:ReducedRedundancyLostObject</code></td><td>S3 phát hiện mất object lớp RRS</td></tr>
+          <tr><td><code>s3:TestEvent</code></td><td>S3 gửi khi bật notification để kiểm tra đích và quyền</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Bốn đích nhận sự kiện</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" alt="">
+          <div><h4>Amazon SNS topic</h4><span class="vi">Chủ đề thông báo (pub/sub)</span><p>Đẩy một message tới nhiều subscriber (<b>fan-out</b>: email, nhiều SQS queue, Lambda…). Chỉ <b>SNS Standard</b>, <b>không</b> SNS FIFO. Topic phải cùng Region với bucket.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Simple-Queue-Service.svg" alt="">
+          <div><h4>Amazon SQS queue</h4><span class="vi">Hàng đợi</span><p>Đệm sự kiện để worker xử lý theo tốc độ của mình (<b>decouple</b>). <b>Không hỗ trợ SQS FIFO</b> trực tiếp. Message S3 tới <b>64 KB</b> – đặt <code>MaximumMessageSize</code> ≥ 64 KB. Cùng Region.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">
+          <div><h4>AWS Lambda function</h4><span class="vi">Hàm serverless</span><p>Chạy code ngay khi có sự kiện (tạo thumbnail, quét virus, ghi metadata vào DynamoDB). Cùng Region. Lambda durable functions không được hỗ trợ.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EventBridge_Default-Event-Bus.svg" alt="">
+          <div><h4>Amazon EventBridge</h4><span class="vi">Bus sự kiện serverless</span><p>Bật/tắt ở cấp bucket; khi bật, <b>mọi</b> sự kiện được gửi tới default event bus. Dùng <b>rule</b> để lọc và route tới nhiều target (kể cả <b>SQS FIFO</b>, Step Functions, HTTP endpoint…).</p></div></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">User<small>upload ảnh</small></div>
+          <span class="arrow">PutObject uploads/</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" alt="">Bucket ảnh<small>prefix uploads/ · suffix .jpg</small></div>
+          <span class="arrow">s3:ObjectCreated:*</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Notification-Service_Topic.svg" alt="">SNS topic<small>fan-out</small></div>
+        </div>
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">SQS queue A<small>worker tạo thumbnail</small></div>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">SQS queue B<small>worker phân tích ảnh</small></div>
+          <div class="node"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lambda<small>ghi thumbnails/ (prefix khác!)</small></div>
+        </div>
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Cùng bucket<small>EventBridge: On</small></div>
+          <span class="arrow">mọi sự kiện</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-EventBridge_Rule.svg" alt="">EventBridge rule<small>lọc theo key, size, reason…</small></div>
+          <span class="arrow">nhiều target</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">SQS FIFO / Step Functions<small>đích S3 không gửi trực tiếp được</small></div>
+        </div>
+        <figcaption><b>Hình 5.</b> Kiến trúc <b>event-driven</b> với S3. Hàng 1–2: một notification gửi tới <b>SNS</b> rồi fan-out sang nhiều <b>SQS</b> queue và Lambda – mỗi notification chỉ có <b>một</b> đích, nên muốn nhiều consumer thì dùng SNS fan-out hoặc EventBridge. Lambda ghi kết quả vào <b>prefix khác</b> (<code>thumbnails/</code>) để tránh vòng lặp vô hạn. Hàng 3: bật <b>EventBridge</b> để lọc nâng cao và gửi tới đích như SQS FIFO.</figcaption>
+      </figure>
+
+      <h3>Quy tắc và giới hạn cần nhớ</h3>
+      <ul>
+        <li><b>Mỗi event notification chỉ có một đích</b>; mỗi message chứa một event entry. Có thể lọc theo <b>prefix</b> và <b>suffix</b> của key (vd <code>images/</code> + <code>.jpg</code>).</li>
+        <li><b>Phải cấp quyền</b> cho S3: resource policy của SNS topic / SQS queue cho phép S3 publish/send; Lambda resource-based policy cho phép S3 invoke.</li>
+        <li><b>At least once, không bảo đảm thứ tự</b>: hiếm khi có sự kiện trùng lặp ⇒ consumer nên <b>idempotent</b>.</li>
+        <li><b>Vòng lặp</b>: Lambda được trigger bởi upload rồi lại upload vào chính bucket đó ⇒ tự gọi lại vô hạn. Tránh bằng <b>hai bucket</b> hoặc trigger chỉ trên <b>prefix đầu vào</b>.</li>
+        <li><code>s3:ObjectRemoved</code> không báo xóa do lifecycle – dùng <code>s3:LifecycleExpiration:*</code>.</li>
+        <li><b>EventBridge</b>: không chọn loại sự kiện ở S3 – bật là gửi tất cả, lọc bằng rule. Các ưu điểm thường được nêu: <b>lọc nâng cao</b> (theo metadata, size, nhiều trường), <b>nhiều target</b> cho cùng sự kiện, <b>archive và replay</b> sự kiện, gửi sang account/Region khác.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Event Notifications</span>
+        <ul>
+          <li>“<i>Process each uploaded image automatically, serverless</i>” ⇒ <b>S3 event notification ⇒ Lambda</b>.</li>
+          <li>“<i>Uploads arrive in bursts; processing must not lose events; decouple</i>” ⇒ <b>S3 ⇒ SQS ⇒ worker (EC2 ASG/Lambda)</b>.</li>
+          <li>“<i>Several applications must each receive every new-object event</i>” ⇒ <b>S3 ⇒ SNS ⇒ nhiều SQS (fan-out)</b> hoặc <b>EventBridge</b> với nhiều target.</li>
+          <li>“<i>Send S3 events to an SQS FIFO queue</i>” / “<i>advanced filtering on object metadata</i>” / “<i>replay events</i>” ⇒ <b>Amazon EventBridge</b>.</li>
+          <li>“<i>Notify when an object restore from Glacier completes</i>” ⇒ <code>s3:ObjectRestore:Completed</code>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: REQUESTER PAYS ===================== -->
+      <h2 id="requester-pays"><img src="../assets/icons/res/Client.svg" alt="">Requester Pays – người tải trả phí</h2>
+      <p class="lead">Thông thường <b>bucket owner</b> trả mọi chi phí lưu trữ và data transfer của bucket. Với <span class="t" data-vi="Bucket người yêu cầu trả phí">Requester Pays bucket</span>, <b>người yêu cầu (requester)</b> trả chi phí <b>request</b> và <b>tải dữ liệu</b> từ bucket; <b>bucket owner luôn trả phí lưu trữ</b>.</p>
+
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Users.svg" alt="">Requester trả</h4>
+          <ul>
+            <li>Phí <b>request</b> (GET, PUT, DELETE…).</li>
+            <li>Phí <b>data transfer</b> khi tải dữ liệu ra.</li>
+            <li>Requester assume IAM role ⇒ <b>account sở hữu role</b> bị tính phí.</li>
+            <li>RestoreObject: requester chỉ trả phí request; <b>owner trả phí retrieval</b>.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Bucket owner trả</h4>
+          <ul>
+            <li>Phí <b>lưu trữ</b> – luôn luôn.</li>
+            <li>Request bị lỗi <b>403 AccessDenied</b> khởi tạo từ trong account/organization của owner.</li>
+            <li>Request SOAP.</li>
+          </ul></div>
+      </div>
+      <ul>
+        <li>Use case tài liệu nêu: <b>chia sẻ dataset lớn</b> (danh mục mã bưu chính, dữ liệu tham chiếu, dữ liệu địa không gian, dữ liệu web crawl) mà không muốn chịu chi phí người khác truy cập.</li>
+        <li>Bật Requester Pays ⇒ <b>không cho phép truy cập ẩn danh (anonymous)</b>; mọi request phải <b>authenticated</b> để S3 biết tính tiền ai.</li>
+        <li>Requester phải xác nhận chấp nhận phí: header <code>x-amz-request-payer</code> (hoặc tham số <code>RequestPayer</code>; CLI: <code>--request-payer</code>).</li>
+        <li>Không hỗ trợ: anonymous request, SOAP, dùng làm <b>target bucket của server access logging</b> (và ngược lại). Bucket Requester Pays cũng <b>không được làm đích replication cross-account</b>.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Requester Pays</span>
+        <ul>
+          <li>“<i>Share a large dataset with other AWS accounts; the company must not pay for data transfer when partners download it</i>” ⇒ <b>Requester Pays</b>.</li>
+          <li>“<i>Make the dataset publicly available to anyone without AWS credentials, and requesters pay</i>” ⇒ mâu thuẫn: Requester Pays <b>không</b> cho anonymous.</li>
+          <li>Requester Pays không làm giảm <b>phí lưu trữ</b> của owner – muốn giảm phần đó thì dùng storage class / lifecycle.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải nhớ</span>
+        <ul>
+          <li><b>Lifecycle</b>: 1 config/bucket, ≤ 1.000 rule (không tăng); filter prefix/tag/size (AND); action Transition, Expiration, NoncurrentVersionTransition/Expiration (NoncurrentDays + NewerNoncurrentVersions 1–100), ExpiredObjectDeleteMarker, AbortIncompleteMultipartUpload. Ngày tính làm tròn tới 00:00 UTC; áp dụng cả object cũ; bucket policy không chặn được lifecycle.</li>
+          <li><b>Waterfall</b>: chỉ đi xuống; Flexible ⇒ chỉ Deep Archive; Deep Archive là điểm cuối; muốn đi lên phải restore + copy. Object &lt; 128 KB không transition mặc định; IA cần ≥ 30 ngày; tính phí minimum duration khi chuyển/xóa sớm; Glacier +40 KB/object.</li>
+          <li><b>Versioning + lifecycle</b>: Expiration chỉ tạo delete marker – muốn giải phóng dung lượng thì NoncurrentVersionExpiration. Billing đổi ngay khi đủ điều kiện (trừ chuyển sang Intelligent-Tiering).</li>
+          <li><b>Replication</b>: bất đồng bộ; versioning cả 2 bucket + IAM role (+ bucket policy đích nếu cross-account). CRR (khác Region: compliance, độ trễ, DR) / SRR (cùng Region: gom log, prod–test, data sovereignty, không phí transfer). Không replicate object cũ (⇒ Batch Replication), replica (no chaining), delete marker (mặc định), DELETE kèm version ID (không bao giờ), lifecycle action, object ở Glacier Flexible/Deep Archive. RTC: 99.99% trong 15 phút, có SLA, kèm metrics.</li>
+          <li><b>Performance</b>: ≥ 3.500 ghi / 5.500 đọc mỗi giây <b>mỗi prefix</b>, prefix không giới hạn; 503 Slow Down ⇒ nhiều prefix + exponential backoff. Multipart (khuyên từ 100 MB, bắt buộc &gt; 5 GB): Create ⇒ UploadPart ⇒ Complete/Abort; part dở dang vẫn tính tiền. Byte-range fetch để đọc song song/đọc một phần. Cache bằng CloudFront/ElastiCache; EC2 và bucket cùng Region.</li>
+          <li><b>Transfer Acceleration</b>: edge location CloudFront + backbone AWS; endpoint <code>bucket.s3-accelerate.amazonaws.com</code>; tên bucket không có dấu chấm; tới 20 phút để có hiệu quả; chỉ trả phí khi có khả năng nhanh hơn. Upload toàn cầu ⇒ TA; download nội dung tĩnh ⇒ CloudFront.</li>
+          <li><b>S3 Select</b>: SQL trên một object (CSV/JSON/Parquet) – không còn cho khách hàng mới ⇒ dùng Athena.</li>
+          <li><b>Event Notifications</b>: SNS (Standard), SQS (Standard, không FIFO), Lambda, EventBridge; mỗi notification một đích; at least once, không bảo đảm thứ tự; cần resource policy; tránh vòng lặp Lambda. EventBridge: mọi sự kiện, lọc nâng cao, nhiều target, SQS FIFO.</li>
+          <li><b>Requester Pays</b>: requester trả request + data transfer, owner trả lưu trữ; không anonymous; header <code>x-amz-request-payer</code>.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>S3 Lifecycle configuration / Lifecycle rule</dt><dd><b>Cấu hình vòng đời / Quy tắc vòng đời</b> – tối đa 1.000 rule mỗi bucket.</dd></div>
+        <div><dt>Transition action</dt><dd><b>Hành động chuyển lớp lưu trữ</b> – theo số ngày hoặc ngày cụ thể.</dd></div>
+        <div><dt>Expiration action</dt><dd><b>Hành động hết hạn (xóa)</b> – S3 xóa object thay bạn.</dd></div>
+        <div><dt>NoncurrentVersionTransition / NoncurrentVersionExpiration</dt><dd><b>Chuyển lớp / xóa vĩnh viễn phiên bản không hiện hành</b> – NoncurrentDays, NewerNoncurrentVersions.</dd></div>
+        <div><dt>Expired object delete marker</dt><dd><b>Dấu xóa hết hạn</b> – delete marker không còn version nào phía sau.</dd></div>
+        <div><dt>AbortIncompleteMultipartUpload</dt><dd><b>Hủy multipart upload dở dang</b> sau N ngày kể từ khi khởi tạo.</dd></div>
+        <div><dt>Waterfall model</dt><dd><b>Mô hình thác nước</b> – transition chỉ từ lớp nóng xuống lớp lạnh.</dd></div>
+        <div><dt>Object size filter</dt><dd><b>Bộ lọc theo kích thước object</b> – ObjectSizeGreaterThan / ObjectSizeLessThan.</dd></div>
+        <div><dt>Live replication / On-demand replication</dt><dd><b>Sao chép trực tiếp / theo yêu cầu</b> – CRR, SRR / Batch Replication.</dd></div>
+        <div><dt>Cross-Region Replication (CRR)</dt><dd><b>Sao chép xuyên Region</b>.</dd></div>
+        <div><dt>Same-Region Replication (SRR)</dt><dd><b>Sao chép cùng Region</b> – không phí data transfer.</dd></div>
+        <div><dt>S3 Batch Replication</dt><dd><b>Sao chép hàng loạt</b> object đã có / FAILED / replica.</dd></div>
+        <div><dt>S3 Replication Time Control (RTC)</dt><dd><b>Kiểm soát thời gian sao chép</b> – 99.99% trong 15 phút, có SLA.</dd></div>
+        <div><dt>Replica / Owner override</dt><dd><b>Bản sao / Ghi đè chủ sở hữu bản sao</b> sang account đích.</dd></div>
+        <div><dt>Delete marker replication</dt><dd><b>Sao chép dấu xóa</b> – tùy chọn, mặc định tắt.</dd></div>
+        <div><dt>Replica modification sync / Two-way replication</dt><dd><b>Đồng bộ thay đổi trên bản sao / Sao chép hai chiều</b>.</dd></div>
+        <div><dt>Partitioned prefix</dt><dd><b>Tiền tố đã phân vùng</b> – đơn vị tính 3.500/5.500 request/giây.</dd></div>
+        <div><dt>503 Slow Down</dt><dd><b>Lỗi yêu cầu giảm tốc</b> – xử lý bằng exponential backoff.</dd></div>
+        <div><dt>Exponential backoff</dt><dd><b>Thử lại với thời gian chờ tăng theo cấp số nhân</b>.</dd></div>
+        <div><dt>Upload ID / Part number / ETag</dt><dd><b>Mã phiên upload / Số thứ tự phần / Thẻ định danh nội dung</b> trong multipart upload.</dd></div>
+        <div><dt>Byte-range fetch</dt><dd><b>Tải theo dải byte</b> – header Range, đọc song song.</dd></div>
+        <div><dt>S3 Transfer Acceleration</dt><dd><b>Tăng tốc truyền tải S3</b> qua edge location CloudFront.</dd></div>
+        <div><dt>Amazon S3 Select</dt><dd><b>Truy vấn SQL lọc nội dung một object</b> – không còn cho khách hàng mới.</dd></div>
+        <div><dt>S3 Event Notifications</dt><dd><b>Thông báo sự kiện S3</b> tới SNS, SQS, Lambda, EventBridge.</dd></div>
+        <div><dt>At-least-once delivery</dt><dd><b>Giao ít nhất một lần</b> – có thể trùng lặp, consumer nên idempotent.</dd></div>
+        <div><dt>Fan-out</dt><dd><b>Phát tán một sự kiện tới nhiều consumer</b> (SNS ⇒ nhiều SQS).</dd></div>
+        <div><dt>Requester Pays bucket</dt><dd><b>Bucket người yêu cầu trả phí</b> – request + data transfer.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="C">
+          <div class="qh">A company stores application logs in Amazon S3. Logs are queried frequently for the first 30 days, occasionally for the next 60 days, and must then be archived for 5 years for compliance before being deleted. Archived logs are rarely retrieved, and a retrieval time of up to 12 hours is acceptable. Which solution is the MOST cost-effective with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Write a scheduled AWS Lambda function that copies objects to cheaper storage classes and deletes them after 5 years.</li>
+            <li data-k="B">Store all logs in S3 Intelligent-Tiering and enable the Archive Access tier.</li>
+            <li data-k="C">Create an S3 Lifecycle rule that transitions objects to S3 Standard-IA after 30 days, to S3 Glacier Deep Archive after 90 days, and expires them after 5 years and 90 days.</li>
+            <li data-k="D">Create an S3 Lifecycle rule that transitions objects to S3 One Zone-IA after 7 days and to S3 Glacier Flexible Retrieval after 30 days.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Mẫu truy cập <b>biết trước theo tuổi dữ liệu</b> ⇒ một <b>lifecycle rule</b> gồm nhiều transition + expiration là cách rẻ và ít vận hành nhất. Deep Archive rẻ nhất, restore Standard trong ≤ 12 giờ – khớp yêu cầu; IA sau 30 ngày thỏa ràng buộc tối thiểu 30 ngày; Deep Archive sau 90 ngày (IA đã ở 60 ngày, không bị phạt minimum duration quá nhiều). <b>A sai</b>: tự viết Lambda tốn công vận hành, lifecycle làm sẵn. <b>B sai</b>: Intelligent-Tiering hợp với mẫu truy cập <b>không biết trước</b>, có phí monitoring và không tự xóa sau 5 năm. <b>D sai</b>: 7 ngày &lt; 30 ngày tối thiểu cho One Zone-IA, logs còn đang dùng nhiều, One Zone không chịu mất AZ với dữ liệu compliance, và không có expiration.</div>
+          <div class="trans">
+            <div class="tq">Một công ty lưu log ứng dụng trong Amazon S3. Log được truy vấn thường xuyên trong 30 ngày đầu, thỉnh thoảng trong 60 ngày tiếp theo, rồi phải được lưu trữ (archive) 5 năm để tuân thủ trước khi bị xóa. Log đã archive hiếm khi được truy xuất, và thời gian truy xuất tới 12 giờ là chấp nhận được. Giải pháp nào MOST cost-effective (tiết kiệm chi phí nhất) với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Viết một hàm AWS Lambda chạy theo lịch để copy object sang các storage class rẻ hơn và xóa chúng sau 5 năm.</span><span class="why">Sai: tự viết và bảo trì Lambda tốn công vận hành, trong khi S3 Lifecycle làm sẵn việc chuyển lớp và xóa.</span></li>
+              <li data-k="B"><span class="tv">Lưu tất cả log trong S3 Intelligent-Tiering và bật tầng Archive Access.</span><span class="why">Sai: Intelligent-Tiering hợp với mẫu truy cập không biết trước; ở đây mẫu truy cập đã rõ theo tuổi dữ liệu, lại có phí monitoring và không tự xóa sau 5 năm.</span></li>
+              <li data-k="C"><span class="tv">Tạo một S3 Lifecycle rule chuyển object sang S3 Standard-IA sau 30 ngày, sang S3 Glacier Deep Archive sau 90 ngày và cho hết hạn (expire) sau 5 năm 90 ngày.</span><span class="why">Đúng: một lifecycle rule với nhiều transition + expiration khớp đúng mẫu truy cập theo tuổi; Deep Archive rẻ nhất và restore Standard trong ≤ 12 giờ đáp ứng yêu cầu.</span></li>
+              <li data-k="D"><span class="tv">Tạo một S3 Lifecycle rule chuyển object sang S3 One Zone-IA sau 7 ngày và sang S3 Glacier Flexible Retrieval sau 30 ngày.</span><span class="why">Sai: lifecycle không cho chuyển sang IA trước 30 ngày, log còn đang dùng nhiều, One Zone không chịu mất AZ cho dữ liệu compliance và rule thiếu expiration.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company enabled S3 Versioning on a bucket and added a lifecycle rule that expires objects 30 days after creation. Several months later, storage costs for the bucket keep increasing even though users report that old objects are no longer visible. What should a solutions architect do to reduce costs?</div>
+          <ol class="opts">
+            <li data-k="A">Add a NoncurrentVersionExpiration action to the lifecycle rule, and add an ExpiredObjectDeleteMarker action to clean up delete markers.</li>
+            <li data-k="B">Suspend versioning on the bucket so that previous versions are deleted automatically.</li>
+            <li data-k="C">Add a bucket policy that denies s3:PutObject for objects older than 30 days.</li>
+            <li data-k="D">Change the expiration action to use a specific date instead of a number of days.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Trong bucket <b>versioning-enabled</b>, action <code>Expiration</code> chỉ <b>chèn delete marker</b>; version cũ trở thành <b>noncurrent</b> và vẫn bị tính phí đầy đủ ⇒ người dùng “không thấy” nhưng chi phí tăng. Cần <code>NoncurrentVersionExpiration</code> để xóa vĩnh viễn version cũ và <code>ExpiredObjectDeleteMarker</code> để dọn marker còn trơ trọi. <b>B sai</b>: suspend không xóa version cũ nào. <b>C sai</b>: bucket policy không xóa dữ liệu (và không chặn lifecycle). <b>D sai</b>: đổi kiểu ngày không thay đổi hành vi tạo delete marker.</div>
+          <div class="trans">
+            <div class="tq">Một công ty bật S3 Versioning trên một bucket và thêm một lifecycle rule cho object hết hạn 30 ngày sau khi tạo. Vài tháng sau, chi phí lưu trữ của bucket vẫn tiếp tục tăng dù người dùng báo rằng các object cũ không còn hiển thị nữa. Solutions architect nên làm gì để giảm chi phí?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm action NoncurrentVersionExpiration vào lifecycle rule, và thêm action ExpiredObjectDeleteMarker để dọn các delete marker.</span><span class="why">Đúng: trong bucket bật versioning, Expiration chỉ chèn delete marker, version cũ thành noncurrent và vẫn bị tính phí; NoncurrentVersionExpiration xóa vĩnh viễn chúng, ExpiredObjectDeleteMarker dọn marker còn sót.</span></li>
+              <li data-k="B"><span class="tv">Tạm ngưng (suspend) versioning trên bucket để các version trước bị xóa tự động.</span><span class="why">Sai: suspend versioning không xóa bất kỳ version cũ nào đã tồn tại, chi phí vẫn giữ nguyên.</span></li>
+              <li data-k="C"><span class="tv">Thêm một bucket policy từ chối s3:PutObject cho các object cũ hơn 30 ngày.</span><span class="why">Sai: bucket policy chỉ kiểm soát quyền truy cập, không xóa dữ liệu nên không giảm dung lượng đang bị tính phí.</span></li>
+              <li data-k="D"><span class="tv">Đổi action expiration sang dùng một ngày cụ thể thay vì số ngày.</span><span class="why">Sai: đổi cách chỉ định thời điểm không thay đổi việc Expiration chỉ tạo delete marker trong bucket có versioning.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company has 500 TB of existing objects in an S3 bucket in us-east-1. For disaster recovery, the company configures S3 Cross-Region Replication to a bucket in us-west-2. After a week, the team notices that only objects uploaded after the configuration are present in the destination bucket. What should the solutions architect do to copy the existing objects with the LEAST effort?</div>
+          <ol class="opts">
+            <li data-k="A">Enable S3 Replication Time Control on the replication rule.</li>
+            <li data-k="B">Enable delete marker replication on the replication rule.</li>
+            <li data-k="C">Disable and re-enable versioning on the source bucket to trigger replication.</li>
+            <li data-k="D">Create an S3 Batch Replication job for the existing objects.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Live replication (CRR/SRR) <b>không replicate object đã tồn tại</b> trước khi bật. Tài liệu chỉ rõ dùng <b>S3 Batch Replication</b> (on-demand) để replicate object có sẵn, object FAILED hoặc sang đích mới. <b>A sai</b>: RTC chỉ đặt SLA 15 phút cho object <b>mới</b> và không áp dụng cho Batch Replication. <b>B sai</b>: chỉ liên quan delete marker. <b>C sai</b>: không thể suspend versioning ở nguồn khi đang có replication (S3 trả lỗi), và việc đó không replicate dữ liệu cũ.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 500 TB object hiện có trong một S3 bucket ở us-east-1. Để phục hồi sau thảm họa (disaster recovery), công ty cấu hình S3 Cross-Region Replication sang một bucket ở us-west-2. Sau một tuần, nhóm nhận thấy chỉ những object được tải lên sau khi cấu hình mới có mặt trong bucket đích. Solutions architect nên làm gì để copy các object hiện có với ít công sức nhất?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật S3 Replication Time Control trên replication rule.</span><span class="why">Sai: RTC chỉ đảm bảo SLA replicate trong 15 phút cho object mới, không replicate các object đã tồn tại.</span></li>
+              <li data-k="B"><span class="tv">Bật delete marker replication trên replication rule.</span><span class="why">Sai: tùy chọn này chỉ quyết định có replicate delete marker hay không, không liên quan tới object cũ.</span></li>
+              <li data-k="C"><span class="tv">Tắt rồi bật lại versioning trên bucket nguồn để kích hoạt replication.</span><span class="why">Sai: không thể suspend versioning ở bucket nguồn khi đang có replication, và thao tác đó cũng không replicate dữ liệu cũ.</span></li>
+              <li data-k="D"><span class="tv">Tạo một job S3 Batch Replication cho các object hiện có.</span><span class="why">Đúng: live replication (CRR/SRR) không replicate object có sẵn trước khi bật; S3 Batch Replication là cách AWS cung cấp để replicate object hiện có theo yêu cầu.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company replicates objects from a production bucket in Account A to a backup bucket in Account B in another Region. The security team wants to ensure that (1) objects permanently deleted from the source bucket by a compromised user are not deleted from the backup, and (2) the backup copies are owned by Account B. Which TWO statements or configurations meet these requirements? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Enable delete marker replication so that deletions are synchronized.</li>
+            <li data-k="B">Rely on the default behavior: DELETE requests that specify a version ID are not replicated to the destination bucket.</li>
+            <li data-k="C">Configure the destination bucket as a Requester Pays bucket.</li>
+            <li data-k="D">Use Same-Region Replication instead of Cross-Region Replication.</li>
+            <li data-k="E">Enable the owner override option to change replica ownership to Account B.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Tài liệu “What does Amazon S3 replicate?” nêu: DELETE <b>kèm version ID</b> xóa version ở nguồn nhưng <b>không được replicate</b> sang đích – “protects data from malicious deletions”. <b>Owner override</b> đổi quyền sở hữu replica sang account sở hữu bucket đích. <b>A sai</b>: delete marker replication làm “xóa mềm” lan sang đích – ngược mục tiêu (dù không ảnh hưởng xóa vĩnh viễn). <b>C sai</b>: bucket đích replication <b>không được</b> là Requester Pays. <b>D sai</b>: kiểu Region không liên quan yêu cầu; DR thường cần khác Region.</div>
+          <div class="trans">
+            <div class="tq">Một công ty replicate object từ một bucket production ở Account A sang một bucket backup ở Account B tại một Region khác. Nhóm bảo mật muốn đảm bảo rằng (1) các object bị một user đã bị xâm nhập xóa vĩnh viễn khỏi bucket nguồn sẽ không bị xóa khỏi bản backup, và (2) các bản backup thuộc sở hữu của Account B. HAI phát biểu hoặc cấu hình nào đáp ứng các yêu cầu này? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật delete marker replication để các thao tác xóa được đồng bộ.</span><span class="why">Sai: đồng bộ việc xóa sang đích đi ngược mục tiêu bảo vệ bản backup (dù nó chỉ áp dụng cho delete marker, không phải xóa vĩnh viễn).</span></li>
+              <li data-k="B"><span class="tv">Dựa vào hành vi mặc định: các request DELETE có chỉ định version ID không được replicate sang bucket đích.</span><span class="why">Đúng: DELETE kèm version ID (xóa vĩnh viễn) chỉ xóa ở nguồn và không được replicate – giúp bảo vệ dữ liệu khỏi việc xóa có chủ đích xấu.</span></li>
+              <li data-k="C"><span class="tv">Cấu hình bucket đích là một bucket Requester Pays.</span><span class="why">Sai: bucket đích của replication không được bật Requester Pays, và tùy chọn này không liên quan tới quyền sở hữu hay chống xóa.</span></li>
+              <li data-k="D"><span class="tv">Dùng Same-Region Replication thay vì Cross-Region Replication.</span><span class="why">Sai: loại replication theo Region không ảnh hưởng tới hai yêu cầu, và DR thường cần Region khác.</span></li>
+              <li data-k="E"><span class="tv">Bật tùy chọn owner override để chuyển quyền sở hữu bản replica sang Account B.</span><span class="why">Đúng: owner override đổi quyền sở hữu replica sang account sở hữu bucket đích (Account B), đáp ứng yêu cầu thứ hai.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A financial services company must replicate trade records from one S3 bucket to another Region. A regulator requires proof that 99.99% of new objects are replicated within 15 minutes, and the operations team must be alerted when an object takes longer. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Configure Cross-Region Replication and use S3 Transfer Acceleration on the destination bucket.</li>
+            <li data-k="B">Configure an S3 event notification that invokes a Lambda function to copy each object to the destination bucket.</li>
+            <li data-k="C">Configure Cross-Region Replication with S3 Replication Time Control and subscribe to the s3:Replication:OperationMissedThreshold event.</li>
+            <li data-k="D">Run an S3 Batch Replication job every 15 minutes.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>S3 RTC</b> replicate 99.99% object mới trong 15 phút, <b>có SLA</b>, tự bật replication metrics và sự kiện <code>OperationMissedThreshold</code> khi object vượt ngưỡng 15 phút – đáp ứng cả bằng chứng và cảnh báo. <b>A sai</b>: Transfer Acceleration dành cho client upload từ xa, không tăng tốc hay bảo đảm replication. <b>B sai</b>: tự xây, không có SLA, nhiều vận hành. <b>D sai</b>: Batch Replication là job on-demand, RTC không áp dụng, không có SLA.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dịch vụ tài chính phải replicate hồ sơ giao dịch từ một S3 bucket sang một Region khác. Cơ quan quản lý yêu cầu bằng chứng rằng 99,99% object mới được replicate trong vòng 15 phút, và nhóm vận hành phải được cảnh báo khi có object mất nhiều thời gian hơn. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình Cross-Region Replication và dùng S3 Transfer Acceleration trên bucket đích.</span><span class="why">Sai: Transfer Acceleration dành cho client upload từ xa, không tăng tốc hay cam kết thời gian replication.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình một S3 event notification gọi một hàm Lambda để copy từng object sang bucket đích.</span><span class="why">Sai: giải pháp tự xây, không có SLA 15 phút để làm bằng chứng và tốn công vận hành.</span></li>
+              <li data-k="C"><span class="tv">Cấu hình Cross-Region Replication với S3 Replication Time Control và đăng ký sự kiện s3:Replication:OperationMissedThreshold.</span><span class="why">Đúng: S3 RTC cam kết (có SLA) replicate 99,99% object mới trong 15 phút kèm replication metrics, và sự kiện OperationMissedThreshold báo khi object vượt ngưỡng.</span></li>
+              <li data-k="D"><span class="tv">Chạy một job S3 Batch Replication mỗi 15 phút.</span><span class="why">Sai: Batch Replication là job chạy theo yêu cầu, không có SLA và không áp dụng RTC.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">An analytics application writes millions of small objects per hour to a single S3 prefix (for example, data/2026-10-31-12-00-01.json). During peak hours, the application receives HTTP 503 Slow Down errors on PUT requests. What should a solutions architect recommend to resolve the issue?</div>
+          <ol class="opts">
+            <li data-k="A">Distribute the objects across multiple prefixes and implement retries with exponential backoff.</li>
+            <li data-k="B">Enable S3 Transfer Acceleration on the bucket.</li>
+            <li data-k="C">Request a service quota increase for the number of PUT requests per bucket.</li>
+            <li data-k="D">Change the storage class of the objects to S3 Standard-IA.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> S3 hỗ trợ ít nhất <b>3.500 PUT/COPY/POST/DELETE mỗi giây cho mỗi prefix</b>, số prefix không giới hạn ⇒ ghi vào <b>nhiều prefix</b> để nhân throughput; 503 trong lúc S3 scale được xử lý bằng <b>exponential backoff</b> (SDK có sẵn). <b>B sai</b>: TA giảm độ trễ do khoảng cách, không tăng giới hạn request theo prefix. <b>C sai</b>: đây không phải quota tăng được qua Service Quotas. <b>D sai</b>: storage class không ảnh hưởng request rate, lại thêm phí 128 KB tối thiểu cho object nhỏ.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng phân tích ghi hàng triệu object nhỏ mỗi giờ vào một S3 prefix duy nhất (ví dụ data/2026-10-31-12-00-01.json). Trong giờ cao điểm, ứng dụng nhận lỗi HTTP 503 Slow Down cho các request PUT. Solutions architect nên đề xuất gì để giải quyết vấn đề?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Phân bố các object ra nhiều prefix và triển khai cơ chế thử lại (retry) với exponential backoff.</span><span class="why">Đúng: S3 hỗ trợ ít nhất 3.500 PUT/giây cho mỗi prefix và không giới hạn số prefix, nên chia ra nhiều prefix nhân throughput; exponential backoff xử lý 503 trong lúc S3 scale.</span></li>
+              <li data-k="B"><span class="tv">Bật S3 Transfer Acceleration trên bucket.</span><span class="why">Sai: Transfer Acceleration giảm độ trễ do khoảng cách địa lý, không tăng giới hạn request theo prefix.</span></li>
+              <li data-k="C"><span class="tv">Yêu cầu tăng service quota cho số request PUT trên mỗi bucket.</span><span class="why">Sai: tốc độ request theo prefix không phải quota có thể tăng qua Service Quotas.</span></li>
+              <li data-k="D"><span class="tv">Đổi storage class của các object sang S3 Standard-IA.</span><span class="why">Sai: storage class không ảnh hưởng tới tốc độ request, lại bị tính tối thiểu 128 KB cho mỗi object nhỏ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,D">
+          <div class="qh">A media company has photographers on several continents who upload RAW image archives of 2–20 GB each to a single S3 bucket in eu-central-1. Uploads from Asia and South America are slow and often fail midway. Which TWO actions will MOST improve upload speed and reliability? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Create an Amazon CloudFront distribution with the bucket as the origin and enable caching for PUT requests.</li>
+            <li data-k="B">Enable S3 Transfer Acceleration on the bucket and use the s3-accelerate endpoint.</li>
+            <li data-k="C">Configure Cross-Region Replication from eu-central-1 to buckets in Asia and South America.</li>
+            <li data-k="D">Use multipart upload so that parts are uploaded in parallel and failed parts can be retried individually.</li>
+            <li data-k="E">Move the objects to the S3 Express One Zone storage class.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, D.</b> Client ở xa Region upload file lớn ⇒ <b>Transfer Acceleration</b> (vào edge location gần nhất rồi đi backbone AWS) + <b>multipart upload</b> (song song, part lỗi chỉ gửi lại part đó). <b>A sai</b>: CloudFront tối ưu cho <b>phân phối/cache nội dung đọc</b>, không “cache PUT”; với upload, TA là đáp án chuẩn. <b>C sai</b>: CRR copy dữ liệu <b>từ</b> bucket nguồn sang nơi khác, không giúp người dùng upload <b>vào</b> eu-central-1. <b>E sai</b>: Express One Zone tối ưu độ trễ cho compute cùng AZ, không giải quyết khoảng cách mạng xuyên lục địa.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền thông có các nhiếp ảnh gia ở nhiều châu lục, họ tải các gói ảnh RAW dung lượng 2–20 GB mỗi gói lên một S3 bucket duy nhất ở eu-central-1. Việc tải lên từ châu Á và Nam Mỹ chậm và thường thất bại giữa chừng. HAI hành động nào sẽ cải thiện tốc độ và độ tin cậy của việc tải lên NHIỀU NHẤT (MOST)? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Amazon CloudFront distribution với bucket làm origin và bật caching cho các request PUT.</span><span class="why">Sai: CloudFront tối ưu cho phân phối và cache nội dung đọc, không có khái niệm "cache PUT"; với upload vào S3, Transfer Acceleration là lựa chọn chuẩn.</span></li>
+              <li data-k="B"><span class="tv">Bật S3 Transfer Acceleration trên bucket và dùng endpoint s3-accelerate.</span><span class="why">Đúng: dữ liệu đi vào edge location gần người dùng nhất rồi chạy trên backbone của AWS tới eu-central-1, giúp upload xuyên lục địa nhanh và ổn định hơn.</span></li>
+              <li data-k="C"><span class="tv">Cấu hình Cross-Region Replication từ eu-central-1 sang các bucket ở châu Á và Nam Mỹ.</span><span class="why">Sai: CRR copy dữ liệu từ bucket nguồn đi nơi khác, không giúp người dùng tải dữ liệu vào bucket ở eu-central-1.</span></li>
+              <li data-k="D"><span class="tv">Dùng multipart upload để các part được tải lên song song và part lỗi có thể được thử lại riêng lẻ.</span><span class="why">Đúng: multipart upload tải các part song song (tăng tốc) và chỉ gửi lại part bị lỗi thay vì cả file 2–20 GB (tăng độ tin cậy).</span></li>
+              <li data-k="E"><span class="tv">Chuyển các object sang storage class S3 Express One Zone.</span><span class="why">Sai: Express One Zone tối ưu độ trễ cho compute trong cùng AZ, không giải quyết khoảng cách mạng xuyên lục địa.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company wants to generate thumbnails whenever a user uploads an image to the uploads/ prefix of an S3 bucket. Three independent applications (thumbnail generation, content moderation, and analytics) must each receive a notification for every new image. The solution must be serverless and loosely coupled. Which design meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Configure three S3 event notifications for s3:ObjectCreated:* on the uploads/ prefix, each targeting a different SQS queue.</li>
+            <li data-k="B">Configure an S3 event notification that sends events directly to an Amazon SQS FIFO queue shared by the three applications.</li>
+            <li data-k="C">Have each application poll the bucket with ListObjectsV2 every minute to detect new images.</li>
+            <li data-k="D">Configure an S3 event notification for s3:ObjectCreated:* on the uploads/ prefix that publishes to an Amazon SNS topic, and subscribe one SQS queue per application to the topic.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Mẫu <b>fan-out</b> kinh điển: S3 ⇒ <b>SNS</b> ⇒ nhiều <b>SQS</b> queue, mỗi ứng dụng một queue – serverless, decoupled, mỗi consumer nhận mọi sự kiện. (EventBridge với 3 target cũng là cách hợp lệ.) <b>A sai</b>: S3 không cho nhiều notification có cùng event type với prefix/suffix chồng lấn nhau (cấu hình bị từ chối) – vì vậy cần SNS hoặc EventBridge. <b>B sai</b>: S3 event notification <b>không hỗ trợ SQS FIFO</b> làm đích, và một queue dùng chung thì mỗi message chỉ do một consumer xử lý. <b>C sai</b>: polling tốn chi phí LIST, chậm, không phải event-driven.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn tạo thumbnail mỗi khi người dùng tải một ảnh lên prefix uploads/ của một S3 bucket. Ba ứng dụng độc lập (tạo thumbnail, kiểm duyệt nội dung và phân tích) đều phải nhận được thông báo cho mỗi ảnh mới. Giải pháp phải serverless và loosely coupled (liên kết lỏng). Thiết kế nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình ba S3 event notification cho s3:ObjectCreated:* trên prefix uploads/, mỗi notification gửi tới một hàng đợi SQS khác nhau.</span><span class="why">Sai: S3 không cho phép nhiều notification có cùng event type với prefix chồng lấn nhau (cấu hình bị từ chối), nên cần SNS hoặc EventBridge để fan-out.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình một S3 event notification gửi sự kiện trực tiếp tới một hàng đợi Amazon SQS FIFO dùng chung cho ba ứng dụng.</span><span class="why">Sai: S3 event notification không hỗ trợ SQS FIFO làm đích, và với một queue dùng chung thì mỗi message chỉ được một consumer xử lý.</span></li>
+              <li data-k="C"><span class="tv">Cho mỗi ứng dụng poll bucket bằng ListObjectsV2 mỗi phút để phát hiện ảnh mới.</span><span class="why">Sai: polling tốn chi phí request LIST, chậm và không phải kiến trúc hướng sự kiện, liên kết lỏng.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình một S3 event notification cho s3:ObjectCreated:* trên prefix uploads/ để publish tới một Amazon SNS topic, và cho mỗi ứng dụng một hàng đợi SQS subscribe vào topic.</span><span class="why">Đúng: mẫu fan-out S3 ⇒ SNS ⇒ nhiều SQS queue là serverless, decoupled, và mỗi ứng dụng đều nhận được mọi sự kiện ảnh mới.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A research institute publishes a 300 TB genomics dataset in Amazon S3 for other research organizations, all of which have AWS accounts. The institute wants to continue paying for storage but does not want to pay for the data transfer and request costs when other organizations download the data. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Make the bucket public and enable S3 Transfer Acceleration.</li>
+            <li data-k="B">Enable Requester Pays on the bucket and require requesters to include the x-amz-request-payer header.</li>
+            <li data-k="C">Replicate the dataset to a bucket in each organization's account by using Same-Region Replication.</li>
+            <li data-k="D">Move the dataset to S3 Glacier Deep Archive to reduce costs.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Requester Pays</b>: requester trả phí <b>request và data download</b>, bucket owner <b>vẫn trả phí lưu trữ</b> – đúng yêu cầu; use case tài liệu nêu chính là chia sẻ dataset lớn. Requester phải authenticated và gửi <code>x-amz-request-payer</code>. <b>A sai</b>: bucket public thì owner trả data transfer; TA còn thêm phí. <b>C sai</b>: owner phải trả phí replication và các tổ chức phải lưu bản sao 300 TB. <b>D sai</b>: Deep Archive không làm requester trả phí, lại cần restore hàng giờ.</div>
+          <div class="trans">
+            <div class="tq">Một viện nghiên cứu công bố một bộ dữ liệu gen (genomics) 300 TB trong Amazon S3 cho các tổ chức nghiên cứu khác, tất cả đều có AWS account. Viện muốn tiếp tục trả phí lưu trữ nhưng không muốn trả phí truyền dữ liệu và phí request khi các tổ chức khác tải dữ liệu về. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt bucket ở chế độ public và bật S3 Transfer Acceleration.</span><span class="why">Sai: với bucket public, chủ bucket vẫn trả phí data transfer khi người khác tải về; Transfer Acceleration còn phát sinh thêm phí.</span></li>
+              <li data-k="B"><span class="tv">Bật Requester Pays trên bucket và yêu cầu người tải gửi kèm header x-amz-request-payer.</span><span class="why">Đúng: với Requester Pays, bên yêu cầu trả phí request và tải dữ liệu, chủ bucket chỉ trả phí lưu trữ – đúng use case chia sẻ dataset lớn cho các AWS account.</span></li>
+              <li data-k="C"><span class="tv">Replicate bộ dữ liệu sang một bucket trong account của từng tổ chức bằng Same-Region Replication.</span><span class="why">Sai: chủ bucket phải trả phí replication, và mỗi tổ chức phải lưu một bản sao 300 TB – tốn kém hơn nhiều.</span></li>
+              <li data-k="D"><span class="tv">Chuyển bộ dữ liệu sang S3 Glacier Deep Archive để giảm chi phí.</span><span class="why">Sai: Deep Archive không chuyển phí tải dữ liệu sang bên yêu cầu, lại cần restore hàng giờ trước khi tải.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">An S3 bucket receives large database backups through multipart uploads from on-premises servers. The finance team notices that the bucket's storage bill is significantly higher than the total size of objects shown in the S3 console. What is the MOST likely cause, and how should it be fixed with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Delete markers are consuming storage; enable MFA Delete.</li>
+            <li data-k="B">Objects are stored in S3 Standard; add a lifecycle rule to transition them to S3 Standard-IA immediately.</li>
+            <li data-k="C">Incomplete multipart uploads are retaining uploaded parts; add a lifecycle rule with the AbortIncompleteMultipartUpload action.</li>
+            <li data-k="D">S3 Transfer Acceleration charges are billed as storage; disable Transfer Acceleration.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Part của multipart upload chưa complete/abort <b>vẫn bị tính phí lưu trữ</b> nhưng <b>không hiện</b> như object trong danh sách. Tài liệu khuyến nghị lifecycle rule <b>AbortIncompleteMultipartUpload</b> (DaysAfterInitiation) – tự động, không phí xóa sớm. <b>A sai</b>: delete marker gần như không tốn dung lượng, MFA Delete không dọn gì. <b>B sai</b>: không giải thích chênh lệch “ẩn”, và IA cần ≥ 30 ngày. <b>D sai</b>: phí TA là phí data transfer, không phải storage.</div>
+          <div class="trans">
+            <div class="tq">Một S3 bucket nhận các bản backup cơ sở dữ liệu lớn qua multipart upload từ các server on-premises. Nhóm tài chính nhận thấy hóa đơn lưu trữ của bucket cao hơn đáng kể so với tổng dung lượng các object hiển thị trên S3 console. Nguyên nhân MOST likely (có khả năng nhất) là gì, và nên khắc phục thế nào với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Các delete marker đang chiếm dung lượng; bật MFA Delete.</span><span class="why">Sai: delete marker gần như không chiếm dung lượng, và MFA Delete chỉ bảo vệ việc xóa chứ không dọn dữ liệu nào.</span></li>
+              <li data-k="B"><span class="tv">Các object đang được lưu ở S3 Standard; thêm lifecycle rule chuyển chúng sang S3 Standard-IA ngay lập tức.</span><span class="why">Sai: không giải thích được phần dung lượng "ẩn" không hiển thị trên console, và lifecycle không chuyển sang Standard-IA trước 30 ngày.</span></li>
+              <li data-k="C"><span class="tv">Các multipart upload chưa hoàn tất đang giữ lại các part đã tải lên; thêm lifecycle rule với action AbortIncompleteMultipartUpload.</span><span class="why">Đúng: part của multipart upload chưa complete/abort vẫn bị tính phí lưu trữ nhưng không hiện như object; lifecycle rule AbortIncompleteMultipartUpload tự động dọn chúng.</span></li>
+              <li data-k="D"><span class="tv">Phí S3 Transfer Acceleration được tính như phí lưu trữ; tắt Transfer Acceleration.</span><span class="why">Sai: phí Transfer Acceleration là phí truyền dữ liệu, không được tính vào phí lưu trữ.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-transition-general-considerations.html" target="_blank" rel="noopener">Transitioning objects using Amazon S3 Lifecycle</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-expire-general-considerations.html" target="_blank" rel="noopener">Expiring objects</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/intro-lifecycle-rules.html" target="_blank" rel="noopener">Lifecycle configuration elements</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/how-to-set-lifecycle-configuration-intro.html" target="_blank" rel="noopener">Setting an S3 Lifecycle configuration on a bucket</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/replication-what-is-isnot-replicated.html" target="_blank" rel="noopener">What does Amazon S3 replicate?</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/replication-requirements.html" target="_blank" rel="noopener">Requirements and considerations for replication</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/replication-time-control.html" target="_blank" rel="noopener">Meeting compliance requirements with S3 Replication Time Control</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/optimizing-performance-guidelines.html" target="_blank" rel="noopener">Performance guidelines for Amazon S3</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/optimizing-performance-design-patterns.html" target="_blank" rel="noopener">Performance design patterns for Amazon S3</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html" target="_blank" rel="noopener">Uploading and copying objects using multipart upload</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/transfer-acceleration-getting-started.html" target="_blank" rel="noopener">Getting started with Amazon S3 Transfer Acceleration</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/selecting-content-from-objects.html" target="_blank" rel="noopener">Querying data in place with Amazon S3 Select</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-event-types-and-destinations.html" target="_blank" rel="noopener">Event notification types and destinations</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventBridge.html" target="_blank" rel="noopener">Using EventBridge with Amazon S3</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/RequesterPaysBuckets.html" target="_blank" rel="noopener">Using Requester Pays general purpose buckets</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>
+

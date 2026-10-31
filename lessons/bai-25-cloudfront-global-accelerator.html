@@ -1,0 +1,1000 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 25 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-CloudFront.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="25" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Giải thích cách <span class="t" data-vi="Mạng phân phối nội dung của AWS">Amazon CloudFront</span> phân phối nội dung qua <b>edge location (POP)</b>, <b>regional edge cache</b> và <b>Origin Shield</b>; cấu hình <b>distribution</b>, <b>origin</b>, <b>origin group</b> (origin failover).</li>
+          <li>Khóa chặt origin để người dùng <b>chỉ đi qua CloudFront</b>: <b>Origin Access Control (OAC)</b> cho S3, custom header cho ALB/EC2, <b>VPC origins</b> cho tài nguyên trong private subnet.</li>
+          <li>Điều khiển cache bằng <b>cache behavior</b>, <b>cache policy / cache key</b>, <b>Minimum / Default / Maximum TTL</b>, header <code>Cache-Control</code>; chọn giữa <b>invalidation</b> và <b>versioned file name</b>.</li>
+          <li>Phục vụ nội dung riêng tư bằng <b>signed URL</b> / <b>signed cookie</b> (trusted key group, canned vs custom policy) và chặn theo quốc gia bằng <b>geo restriction</b>.</li>
+          <li>Chọn đúng giữa <b>CloudFront Functions</b> và <b>Lambda@Edge</b> theo sự kiện, thời gian chạy, khả năng truy cập mạng.</li>
+          <li>Hiểu <span class="t" data-vi="Bộ tăng tốc toàn cầu">AWS Global Accelerator</span>: 2 <b>anycast static IP</b>, listener, endpoint group, traffic dial, endpoint weight; và phân biệt <b>CloudFront vs Global Accelerator</b> – câu hỏi rất hay gặp.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 4 – Networking</span>
+        <p><b>Bài 1</b> đã giới thiệu khái niệm edge location / regional edge cache; <b>Bài 15</b> dạy S3 Transfer Acceleration; <b>Bài 16</b> nhắc OAC trong bucket policy và hẹn chi tiết ở bài này; <b>Bài 24</b> dạy Route 53 (alias record tới CloudFront/Global Accelerator, DNS failover). Bài này đi sâu vào <b>CloudFront</b> và <b>Global Accelerator</b>. <b>AWS WAF, Shield Advanced</b> (web ACL, rate-based rule gắn vào CloudFront) học ở <b>bài Threat Protection</b>; <b>ACM</b> và mã hóa học ở module Security.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">Tổng quan: CloudFront hoạt động thế nào?</h2>
+      <p class="lead">Theo tài liệu AWS, <b>Amazon CloudFront</b> là web service <b>tăng tốc phân phối nội dung web tĩnh và động</b> (<code>.html</code>, <code>.css</code>, <code>.js</code>, ảnh, video, API…) tới người dùng thông qua mạng lưới data center toàn cầu gọi là <span class="t" data-vi="Vị trí biên">edge location</span>. Request của người dùng được định tuyến tới edge location có <b>độ trễ thấp nhất</b>; nếu nội dung đã có trong cache thì trả ngay, nếu chưa thì CloudFront lấy từ <span class="t" data-vi="Nguồn gốc nội dung">origin</span> – nơi lưu bản gốc chính thức (S3 bucket, MediaPackage, HTTP server…).</p>
+
+      <p>Lợi ích tài liệu nêu rõ: request đi qua <b>AWS backbone network</b> thay vì nhảy qua hàng loạt mạng internet ⇒ <b>giảm độ trễ</b> (thời gian tới byte đầu tiên) và <b>tăng tốc độ truyền</b>; bản sao (object) được cache ở nhiều edge location ⇒ <b>tăng reliability và availability</b>; origin nhận ít request hơn ⇒ <b>giảm tải origin</b>.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">
+          <div><h4>Amazon CloudFront</h4><span class="vi">Mạng phân phối nội dung (CDN)</span><p>Cache và phân phối nội dung tĩnh/động, video, API qua HTTP/HTTPS (cả WebSocket, gRPC) tại edge gần người dùng.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" alt="">
+          <div><h4>Edge location (POP)</h4><span class="vi">Điểm hiện diện</span><p>Cụm máy chủ ở data center phân tán toàn cầu; cache nội dung <b>phổ biến</b> và trả lời người dùng trực tiếp.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-CloudFront_Download-Distribution.svg" alt="">
+          <div><h4>Regional edge cache</h4><span class="vi">Bộ đệm biên khu vực</span><p>Tầng giữa POP và origin, <b>cache lớn hơn</b>, giữ object kém phổ biến lâu hơn ⇒ ít phải quay về origin.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-CloudFront_Functions.svg" alt="">
+          <div><h4>CloudFront Functions &amp; Lambda@Edge</h4><span class="vi">Chạy code tại biên</span><p>Sửa request/response, redirect, xác thực token, chuẩn hóa cache key… ngay tại edge.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Global-Accelerator.svg" alt="">
+          <div><h4>AWS Global Accelerator</h4><span class="vi">Bộ tăng tốc toàn cầu</span><p>2 <b>static anycast IP</b> đưa traffic TCP/UDP vào mạng AWS tại edge gần nhất rồi tới endpoint tối ưu ở các Region. <b>Không cache.</b></p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Shield.svg" alt="">
+          <div><h4>AWS Shield &amp; AWS WAF</h4><span class="vi">Chống DDoS &amp; tường lửa web</span><p>CloudFront và Global Accelerator được Shield Standard bảo vệ mặc định; gắn web ACL của WAF vào distribution (chi tiết ở bài Threat Protection).</p></div></div>
+      </div>
+
+      <h3>Luồng xử lý một request</h3>
+      <p>Theo trang “How CloudFront delivers content” và “How CloudFront works with regional edge caches”:</p>
+      <ol class="steps">
+        <li>Người dùng gửi request một object (ảnh, file HTML…). <b>DNS</b> định tuyến request tới <b>POP</b> phục vụ tốt nhất – thường là POP gần nhất về độ trễ.</li>
+        <li>POP kiểm tra cache. <b>Cache hit</b> ⇒ trả object ngay.</li>
+        <li><b>Cache miss</b> ⇒ POP thường hỏi tiếp <b>regional edge cache</b> gần nhất. Có thì regional edge cache chuyển về POP; ngay khi byte đầu tiên tới, CloudFront bắt đầu chuyển cho người dùng và lưu vào cache POP.</li>
+        <li>Không có ở cả hai tầng ⇒ CloudFront so request với cấu hình distribution, gửi tới <b>origin</b> (qua kết nối <i>persistent</i>). Object trả về được cache ở <b>cả</b> regional edge cache và POP – mọi POP trong khu vực dùng chung cache khu vực, tránh gọi origin nhiều lần.</li>
+      </ol>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 300" width="800" role="img" aria-label="Luồng request qua POP, regional edge cache, Origin Shield tới origin">
+          <defs><marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Users.svg" x="14" y="40" width="48" height="48"/>
+          <text x="38" y="104" font-size="11" text-anchor="middle" font-weight="600">Viewer Hà Nội</text>
+          <image href="../assets/icons/res/Users.svg" x="14" y="190" width="48" height="48"/>
+          <text x="38" y="254" font-size="11" text-anchor="middle" font-weight="600">Viewer Tokyo</text>
+          <image href="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" x="150" y="40" width="48" height="48"/>
+          <text x="174" y="104" font-size="11" text-anchor="middle" font-weight="600">POP Hà Nội</text>
+          <image href="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" x="150" y="190" width="48" height="48"/>
+          <text x="174" y="254" font-size="11" text-anchor="middle" font-weight="600">POP Tokyo</text>
+          <path class="line-o" d="M66 64 L146 64" marker-end="url(#ah1)"/>
+          <path class="line-o" d="M66 214 L146 214" marker-end="url(#ah1)"/>
+          <text x="106" y="56" font-size="10" text-anchor="middle">①</text>
+          <rect x="280" y="30" width="130" height="80" rx="6" fill="rgba(140,79,255,.06)" stroke="#8C4FFF"/>
+          <image href="../assets/icons/res/Amazon-CloudFront_Download-Distribution.svg" x="325" y="38" width="40" height="40"/>
+          <text x="345" y="96" font-size="11" text-anchor="middle" font-weight="600">Regional edge cache</text>
+          <rect x="280" y="180" width="130" height="80" rx="6" fill="rgba(140,79,255,.06)" stroke="#8C4FFF"/>
+          <image href="../assets/icons/res/Amazon-CloudFront_Download-Distribution.svg" x="325" y="188" width="40" height="40"/>
+          <text x="345" y="246" font-size="11" text-anchor="middle" font-weight="600">Regional edge cache</text>
+          <path class="line-o" d="M202 64 L276 68" marker-end="url(#ah1)"/>
+          <path class="line-o" d="M202 214 L276 218" marker-end="url(#ah1)"/>
+          <text x="240" y="56" font-size="10" text-anchor="middle">② miss</text>
+          <rect x="470" y="100" width="130" height="90" rx="6" fill="rgba(236,114,17,.06)" stroke="#EC7211" stroke-dasharray="5 3"/>
+          <image href="../assets/icons/svc/Amazon-CloudFront.svg" x="515" y="108" width="40" height="40"/>
+          <text x="535" y="164" font-size="11" text-anchor="middle" font-weight="700">Origin Shield</text>
+          <text x="535" y="180" font-size="10" text-anchor="middle" class="muted">(tùy chọn, có phí)</text>
+          <path class="line-o" d="M414 76 L466 128" marker-end="url(#ah1)"/>
+          <path class="line-o" d="M414 214 L466 166" marker-end="url(#ah1)"/>
+          <text x="440" y="96" font-size="10" text-anchor="middle">③</text>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" x="690" y="116" width="56" height="56"/>
+          <text x="718" y="188" font-size="11" text-anchor="middle" font-weight="600">Origin</text>
+          <text x="718" y="204" font-size="10" text-anchor="middle" class="muted">S3 / ALB / HTTP</text>
+          <path class="line-o" d="M604 145 L686 145" marker-end="url(#ah1)"/>
+          <text x="645" y="137" font-size="10" text-anchor="middle">④ 1 request</text>
+          <text x="400" y="290" font-size="11" text-anchor="middle" class="muted">PUT/POST/PATCH/OPTIONS/DELETE &amp; request động: đi thẳng POP → origin, bỏ qua regional edge cache</text>
+        </svg>
+        <figcaption><b>Hình 1.</b> Các tầng cache của CloudFront: POP → regional edge cache → (tùy chọn) Origin Shield → origin. Khi bật Origin Shield, mọi regional edge cache đều đi qua một tầng cache chung trước origin, nên các request trùng nhau được gộp lại – có thể chỉ còn <b>một</b> request tới origin.</figcaption>
+      </figure>
+
+      <div class="callout note"><span class="ttl">Khi nào bỏ qua regional edge cache? (theo tài liệu)</span>
+        <ul>
+          <li>Các <b>proxy HTTP method</b> <code>PUT</code>, <code>POST</code>, <code>PATCH</code>, <code>OPTIONS</code>, <code>DELETE</code> đi thẳng từ POP tới origin.</li>
+          <li><b>Request động</b> (xác định lúc nhận request) đi thẳng tới origin.</li>
+          <li>Origin là <b>S3</b> và regional edge cache tối ưu nằm <b>cùng Region</b> với bucket ⇒ POP gọi thẳng S3.</li>
+          <li>Regional edge cache có tính năng tương đương POP: <b>invalidation</b> xóa object ở cả hai tầng.</li>
+        </ul></div>
+
+      <h3>Origin Shield – tầng cache thứ ba</h3>
+      <p><span class="t" data-vi="Lá chắn origin">Origin Shield</span> là tầng cache bổ sung, bật riêng cho <b>từng origin</b> và chọn <b>một Region</b> (nên chọn Region có độ trễ thấp nhất tới origin). Lợi ích: <b>tăng cache hit ratio</b>, <b>giảm tải origin</b> (gộp request trùng thành ít nhất một request), cải thiện hiệu năng mạng. Hữu ích khi viewer phân tán nhiều vùng địa lý, origin làm <i>just-in-time packaging</i> video live hay xử lý ảnh on-the-fly, origin on-premises bị giới hạn băng thông, hoặc dùng nhiều CDN. Không phù hợp với nội dung động/ít cache được. Origin Shield chạy trên hạ tầng regional edge cache, mỗi nơi dựng trên <b>ít nhất 3 AZ</b>, tự chuyển sang vị trí Origin Shield dự phòng khi vị trí chính lỗi. Có <b>phí thêm</b>.</p>
+
+      <div class="stats">
+        <div class="stat"><b>24 giờ</b><span>thời gian object ở edge mặc định nếu không có cache policy / header (Default TTL = 86.400 s)</span></div>
+        <div class="stat"><b>0 s</b><span>thời gian hết hạn tối thiểu; không có giới hạn tối đa (Max TTL mặc định 1 năm)</span></div>
+        <div class="stat"><b>$0</b><span>phí truyền dữ liệu từ AWS origin (S3, ELB, API Gateway) tới CloudFront</span></div>
+        <div class="stat"><b>1.000</b><span>invalidation path miễn phí mỗi tháng / account</span></div>
+        <div class="stat"><b>us-east-1</b><span>Region bắt buộc của chứng chỉ ACM dùng cho viewer HTTPS</span></div>
+        <div class="stat"><b>403</b><span>mã lỗi CloudFront trả khi geo restriction chặn</span></div>
+      </div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – chuỗi cửa hàng tiện lợi</span>
+        <p>Nhà máy (origin) ở một tỉnh. Nếu ai cũng phải tới tận nhà máy mua hàng thì xa và nhà máy quá tải. CloudFront giống chuỗi <b>cửa hàng tiện lợi ở từng phường</b> (POP) bày sẵn hàng bán chạy; phía sau có <b>kho tổng khu vực</b> (regional edge cache) chứa nhiều mặt hàng hơn; <b>Origin Shield</b> là <b>một kho trung chuyển duy nhất</b> trước cổng nhà máy – mọi kho khu vực thiếu hàng đều lấy qua đây, nhà máy chỉ phải xuất mỗi mặt hàng một lần. <b>TTL</b> là hạn sử dụng ghi trên bao bì: hết hạn thì cửa hàng phải hỏi lại nhà máy xem có lô mới không.</p></div>
+
+      <h3>Định giá – các yếu tố đề hay khai thác</h3>
+      <ul>
+        <li>CloudFront tính phí <b>data transfer out từ edge tới viewer</b> và <b>số HTTP/HTTPS request</b>; giá khác nhau theo khu vực địa lý.</li>
+        <li><b>Data transfer từ AWS origin (S3, ELB, API Gateway) tới CloudFront luôn miễn phí</b> ⇒ đặt CloudFront trước S3 thường <b>rẻ hơn</b> phục vụ trực tiếp từ S3 cho người dùng internet, và giảm số GET request tới S3.</li>
+        <li><span class="t" data-vi="Hạng giá">Price class</span> (kiến thức thi phổ biến): <b>Price Class All</b> (mọi edge, hiệu năng tốt nhất), <b>Price Class 200</b> (bỏ bớt các vùng đắt nhất), <b>Price Class 100</b> (chỉ các vùng rẻ nhất – Bắc Mỹ, châu Âu…) ⇒ đề hỏi “<i>reduce CloudFront cost, users mainly in US/Europe</i>” ⇒ chọn price class thấp hơn.</li>
+      </ul>
+
+      <!-- ===================== PHẦN 2: DISTRIBUTION & ORIGIN ===================== -->
+      <h2 id="distribution"><img src="../assets/icons/res/Amazon-CloudFront_Download-Distribution.svg" alt="">Distribution và Origin</h2>
+      <p class="lead">Một <span class="t" data-vi="Bản phân phối – cấu hình CloudFront">distribution</span> cho CloudFront biết <b>lấy file từ origin nào</b> và <b>phân phối thế nào</b> (log, HTTPS, cache, bảo mật…). CloudFront gán cho distribution một tên miền dạng <code>d111111abcdef8.cloudfront.net</code> và gửi <b>cấu hình (không phải nội dung)</b> tới tất cả edge location.</p>
+
+      <h3>Các bước thiết lập (theo tài liệu)</h3>
+      <ol class="steps">
+        <li>Chỉ định <b>origin server</b> – S3 bucket hoặc HTTP server của bạn (EC2, server tự quản lý… gọi là <b>custom origin</b>).</li>
+        <li>Upload file (gọi là <b>object</b>) lên origin. Object S3 có thể public hoặc giữ private và kiểm soát truy cập.</li>
+        <li>Tạo <b>distribution</b>: chọn origin, bật log, bật ngay khi tạo…</li>
+        <li>CloudFront gán tên miền; bạn có thể thêm <span class="t" data-vi="Tên miền thay thế">alternate domain name (CNAME)</span> như <code>www.example.com</code> – trỏ bằng <b>Route 53 alias record</b> (Bài 24).</li>
+        <li>CloudFront đẩy cấu hình tới mọi edge location/POP.</li>
+      </ol>
+
+      <h3>Các loại origin</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Origin</th><th>Kiểu</th><th>Cách khóa truy cập trực tiếp</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><b>S3 bucket</b> (REST endpoint)</td><td>S3 origin</td><td class="yes"><b>OAC</b> + bucket policy</td><td>Cách được khuyến nghị cho nội dung tĩnh</td></tr>
+          <tr><td><b>S3 static website endpoint</b></td><td><b>Custom origin</b></td><td class="no">Không dùng được OAC/OAI</td><td>Cần khi dùng tính năng website (redirect, index document theo thư mục); bucket phải public</td></tr>
+          <tr><td><b>ALB / NLB / EC2</b> public</td><td>Custom origin</td><td>Custom header + managed prefix list trong Security Group</td><td>Nội dung động, API</td></tr>
+          <tr><td><b>ALB / NLB / EC2 trong private subnet</b></td><td><b>VPC origin</b></td><td class="yes">Không có đường vào từ internet</td><td>CloudFront là điểm vào duy nhất</td></tr>
+          <tr><td>HTTP server on-premises</td><td>Custom origin</td><td>Custom header, firewall</td><td>Có thể kèm Origin Shield</td></tr>
+          <tr><td>MediaPackage, MediaStore, Lambda function URL, S3 Multi-Region Access Point</td><td>AWS origin</td><td>OAC (với loại hỗ trợ)</td><td>Video streaming, serverless</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>HTTPS: viewer protocol policy, origin protocol policy và chứng chỉ</h3>
+      <ul>
+        <li><b>Viewer protocol policy</b> (trên cache behavior): <i>HTTP and HTTPS</i> · <i>Redirect HTTP to HTTPS</i> · <i>HTTPS Only</i>.</li>
+        <li><b>Origin protocol policy</b> (chỉ custom origin): HTTP only · HTTPS only · <i>Match viewer</i>.</li>
+        <li>Muốn dùng chứng chỉ <b>ACM</b> cho HTTPS giữa <b>viewer và CloudFront</b> (alternate domain name) ⇒ phải <b>request hoặc import chứng chỉ ở us-east-1 (N. Virginia)</b>. Chứng chỉ cho HTTPS giữa CloudFront và <b>ELB origin</b> thì ở Region nào cũng được (Region của load balancer).</li>
+        <li>Chứng chỉ phải bao phủ alternate domain name trong trường SAN (khớp chính xác hoặc wildcard cùng cấp). Chứng chỉ của origin không khớp origin domain ⇒ CloudFront trả <b>502 Bad Gateway</b>.</li>
+        <li>Field-level encryption: mã hóa riêng từng trường nhạy cảm (vd số thẻ) ngay tại edge bằng public key, chỉ ứng dụng giữ private key mới giải mã được.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Tạo chứng chỉ ACM ở <b>ap-southeast-1</b> rồi không thấy trong danh sách khi gắn vào CloudFront ⇒ chứng chỉ cho CloudFront phải ở <b>us-east-1</b>.</li>
+          <li>Origin là <b>S3 website endpoint</b> thì <b>không dùng được OAC</b> – đề yêu cầu “bucket không public” + “dùng CloudFront” ⇒ origin phải là <b>REST endpoint</b> của bucket + OAC (dùng <i>default root object</i> hoặc CloudFront Function để xử lý index.html).</li>
+        </ul></div>
+
+      <h3>Origin group – origin failover</h3>
+      <p>Cho kịch bản cần <b>high availability</b>, tạo <span class="t" data-vi="Nhóm origin">origin group</span> gồm <b>hai origin: primary và secondary</b>, rồi gán origin group cho cache behavior. Theo tài liệu:</p>
+      <ul>
+        <li>Cache hit ⇒ trả object. Cache miss ⇒ gửi tới <b>primary</b>.</li>
+        <li>Primary trả mã lỗi bạn chọn làm tiêu chí failover – tổ hợp bất kỳ của <b>400, 403, 404, 416, 429, 500, 502, 503, 504</b> – hoặc không kết nối được (khi chọn 503) / timeout (khi chọn 504) ⇒ CloudFront gửi lại <b>request đó</b> tới <b>secondary</b>.</li>
+        <li>Mỗi request mới vẫn tới primary trước (không “dính” sang secondary).</li>
+        <li><b>Chỉ failover với GET, HEAD, OPTIONS</b>; <code>POST</code>, <code>PUT</code>… không failover.</li>
+        <li>Mặc định CloudFront thử kết nối primary tối đa <b>30 giây</b> (<b>3 lần × 10 giây</b>) rồi mới chuyển. Có thể giảm: <i>connection timeout</i> 1–10 s, <i>connection attempts</i> 1–3, <i>origin response timeout</i> 1–120 s (mặc định 30 s).</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="row">
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Viewers<small>www.example.com</small></div>
+            <span class="arrow">HTTPS</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">Distribution<small>ACM cert (us-east-1)</small></div>
+          </div>
+          <div class="grp plain"><span class="lbl">Cache behaviors (xét theo thứ tự, khớp đầu tiên thắng)</span>
+            <div class="row">
+              <div class="grp plain"><span class="lbl">① /api/* – CachingDisabled, mọi method</span>
+                <div class="grp region"><span class="lbl">Region us-east-1</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB<small>custom header bí mật</small></div></div></div></div>
+              <div class="grp plain"><span class="lbl">② Default (*) – CachingOptimized, GET/HEAD</span>
+                <div class="grp plain"><span class="lbl">Origin group</span>
+                  <div class="row center">
+                    <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 primary<small>us-east-1 + OAC</small></div>
+                    <span class="arrow dashed">failover 5xx/403/404</span>
+                    <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 secondary<small>us-west-2 (CRR) + OAC</small></div>
+                  </div></div></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> Một distribution, nhiều origin: behavior <code>/api/*</code> chuyển tiếp tới ALB không cache; behavior mặc định phục vụ nội dung tĩnh từ <b>origin group</b> hai S3 bucket (được nhân bản bằng S3 Cross-Region Replication – Bài 15). Primary lỗi ⇒ CloudFront tự lấy từ secondary cho request GET/HEAD/OPTIONS.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Static website on S3 must be highly available across Regions</i>” với CloudFront ⇒ <b>origin group</b> (primary S3 + secondary S3 ở Region khác, đồng bộ bằng <b>CRR</b>).</li>
+          <li>“<i>Serve static and dynamic content from one domain</i>” ⇒ một distribution, <b>nhiều origin + nhiều cache behavior</b> theo path pattern (vd <code>/api/*</code> → ALB, <code>*</code> → S3).</li>
+          <li>“<i>Reduce load on the origin / improve cache hit ratio for global viewers</i>” ⇒ tăng TTL, thu gọn cache key, bật <b>Origin Shield</b>.</li>
+          <li>Origin failover của CloudFront ở <b>tầng HTTP</b> (từng request); DNS failover của Route 53 ở <b>tầng DNS</b> (phụ thuộc TTL) – hai cơ chế khác nhau, có thể dùng cùng nhau.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: OAC ===================== -->
+      <h2 id="oac"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Khóa origin: Origin Access Control (OAC), custom header, VPC origins</h2>
+      <p class="lead">Dùng signed URL hay geo restriction ở CloudFront sẽ vô nghĩa nếu người dùng <b>vòng qua CloudFront</b> và gọi thẳng URL của S3 hoặc ALB. Vì vậy AWS khuyến nghị: <b>bắt buộc người dùng truy cập qua CloudFront</b>. Với S3 dùng <span class="t" data-vi="Kiểm soát truy cập origin">Origin Access Control (OAC)</span>; với custom origin dùng <b>custom header</b>; với tài nguyên trong private subnet dùng <b>VPC origins</b>.</p>
+
+      <h3>OAC vs OAI</h3>
+      <p>CloudFront có hai cách gửi request <b>đã xác thực</b> tới S3: <b>OAC</b> (mới, khuyến nghị) và <span class="t" data-vi="Danh tính truy cập origin (cũ)">origin access identity (OAI)</span> – cách cũ (legacy).</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>OAC (khuyến nghị)</th><th>OAI (legacy)</th></tr></thead>
+        <tbody>
+          <tr><td>S3 bucket ở mọi Region, kể cả opt-in Region mới</td><td class="yes">Có</td><td class="no">Không (không hỗ trợ Region mới sau 01/2023)</td></tr>
+          <tr><td>Object mã hóa <b>SSE-KMS</b></td><td class="yes">Có (thêm statement vào KMS key policy)</td><td class="no">Không / cần workaround</td></tr>
+          <tr><td>Request động <code>PUT</code>, <code>DELETE</code> (upload qua CloudFront)</td><td class="yes">Có</td><td class="no">Không (POST, PUT, DELETE)</td></tr>
+          <tr><td>Principal trong bucket policy</td><td><b>Service principal</b> <code>cloudfront.amazonaws.com</code> + điều kiện <code>AWS:SourceArn</code> = ARN distribution</td><td>User đặc biệt <code>arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity …</code></td></tr>
+          <tr><td>Ký request</td><td><b>SigV4</b>; chọn <i>Sign requests</i> ⇒ luôn HTTPS tới S3</td><td>–</td></tr>
+          <tr><td>S3 website endpoint</td><td class="no">Không</td><td class="no">Không</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Bucket policy cho OAC</h3>
+      <p>Cho phép service principal CloudFront đọc bucket, nhưng <b>chỉ khi request thay mặt đúng distribution</b> (điều kiện <code>AWS:SourceArn</code>) – ví dụ từ tài liệu:</p>
+<pre>{
+  <span class="k">"Version"</span>: <span class="s">"2012-10-17"</span>,
+  <span class="k">"Statement"</span>: [{
+    <span class="k">"Sid"</span>: <span class="s">"AllowCloudFrontServicePrincipalReadOnly"</span>,
+    <span class="k">"Effect"</span>: <span class="s">"Allow"</span>,
+    <span class="k">"Principal"</span>: { <span class="k">"Service"</span>: <span class="s">"cloudfront.amazonaws.com"</span> },
+    <span class="k">"Action"</span>: <span class="s">"s3:GetObject"</span>,
+    <span class="k">"Resource"</span>: <span class="s">"arn:aws:s3:::amzn-s3-demo-bucket/*"</span>,
+    <span class="k">"Condition"</span>: { <span class="k">"StringEquals"</span>: {
+      <span class="k">"AWS:SourceArn"</span>: <span class="s">"arn:aws:cloudfront::111122223333:distribution/EDFDVBD6EXAMPLE"</span>
+    } }
+  }]
+}</pre>
+      <ul>
+        <li>Cho phép upload qua CloudFront ⇒ thêm <code>s3:PutObject</code> (OAC hỗ trợ request động).</li>
+        <li>Object mã hóa <b>SSE-KMS</b> ⇒ thêm vào <b>KMS key policy</b> statement cho principal <code>cloudfront.amazonaws.com</code> với <code>kms:Decrypt</code> (và <code>kms:Encrypt</code>, <code>kms:GenerateDataKey*</code> nếu ghi), cùng điều kiện <code>AWS:SourceArn</code>.</li>
+        <li>Dùng OAC thì <b>S3 Object Ownership</b> phải là <b>Bucket owner enforced</b> (mặc định của bucket mới); cần ACL thì dùng <i>Bucket owner preferred</i>.</li>
+        <li><b>Signing behavior</b>: <i>Sign requests (recommended)</i> = <code>always</code>; <i>Do not sign requests</i> = <code>never</code> (bucket phải public – dùng để tắt OAC hàng loạt); <i>Do not override authorization header</i> = <code>no-override</code> (chỉ ký khi viewer không gửi header <code>Authorization</code>).</li>
+        <li>Giữ <b>S3 Block Public Access bật</b> – bucket hoàn toàn private, chỉ CloudFront đọc được (đã học ở Bài 16).</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 260" width="780" role="img" aria-label="OAC: viewer chỉ truy cập S3 qua CloudFront">
+          <defs>
+            <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker>
+            <marker id="ah3r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#DD344C"/></marker>
+          </defs>
+          <image href="../assets/icons/res/Users.svg" x="20" y="70" width="56" height="56"/>
+          <text x="48" y="144" font-size="12" text-anchor="middle" font-weight="600">Viewer</text>
+          <image href="../assets/icons/svc/Amazon-CloudFront.svg" x="260" y="70" width="56" height="56"/>
+          <text x="288" y="144" font-size="12" text-anchor="middle" font-weight="600">CloudFront</text>
+          <text x="288" y="160" font-size="10" text-anchor="middle" class="muted">OAC: ký SigV4, HTTPS</text>
+          <path class="line-o" d="M80 98 L256 98" marker-end="url(#ah3)"/>
+          <text x="168" y="88" font-size="11" text-anchor="middle">https://dxxxx.cloudfront.net/a.jpg</text>
+          <rect x="500" y="30" width="250" height="150" rx="6" fill="rgba(122,161,22,.06)" stroke="#7AA116" stroke-width="2"/>
+          <text x="512" y="50" font-size="12" font-weight="700" style="fill:#7AA116">S3 bucket – Block Public Access: ON</text>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg" x="540" y="66" width="56" height="56"/>
+          <text x="610" y="84" font-size="10">Bucket policy:</text>
+          <text x="610" y="100" font-size="10">Principal cloudfront.amazonaws.com</text>
+          <text x="610" y="116" font-size="10">SourceArn = distribution này</text>
+          <image href="../assets/icons/svc/AWS-Key-Management-Service.svg" x="540" y="128" width="36" height="36"/>
+          <text x="584" y="150" font-size="10">SSE-KMS: key policy cho CloudFront</text>
+          <path class="line-o" d="M320 98 L536 96" marker-end="url(#ah3)"/>
+          <text x="428" y="88" font-size="11" text-anchor="middle">GetObject (signed)</text>
+          <path d="M48 150 C 100 240, 450 250, 560 184" fill="none" stroke="#DD344C" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#ah3r)"/>
+          <text x="300" y="236" font-size="11" text-anchor="middle" style="fill:#DD344C">https://bucket.s3.amazonaws.com/a.jpg ⇒ 403 Access Denied (không vòng qua CloudFront được)</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> OAC: bucket private hoàn toàn, chỉ distribution cụ thể (khớp <code>AWS:SourceArn</code>) đọc được. Người dùng gọi thẳng URL S3 bị từ chối – nhờ đó các lớp kiểm soát ở CloudFront (signed URL, geo restriction, WAF) không bị bypass.</figcaption>
+      </figure>
+
+      <h3>Chuyển từ OAI sang OAC không gián đoạn</h3>
+      <ol class="steps">
+        <li>Sửa bucket policy cho phép <b>cả</b> OAI và OAC (hai statement).</li>
+        <li>Cập nhật origin của distribution sang OAC, chờ deploy xong tới mọi edge.</li>
+        <li>Xóa statement OAI khỏi bucket policy.</li>
+      </ol>
+
+      <h3>Custom origin (ALB, EC2, server on-prem)</h3>
+      <p>Custom origin phải truy cập được bằng HTTP/HTTPS chuẩn, nên tài liệu đề xuất:</p>
+      <ul>
+        <li>Cấu hình <b>origin custom header</b> (vd <code>X-Origin-Verify: &lt;giá trị bí mật&gt;</code>) để CloudFront thêm vào mọi request tới origin; ứng dụng/ALB <b>chỉ chấp nhận request có header đúng</b> (với ALB: listener rule kiểm tra header, hoặc AWS WAF rule trên ALB).</li>
+        <li><b>Viewer protocol policy = HTTPS</b> và <b>origin protocol policy = Match viewer / HTTPS</b> để header bí mật được mã hóa trên đường truyền; <b>xoay vòng</b> header định kỳ (thêm header mới ⇒ ứng dụng chấp nhận cả hai ⇒ bỏ header cũ).</li>
+        <li>Giới hạn Security Group của origin chỉ nhận traffic từ <b>CloudFront managed prefix list</b> <code>com.amazonaws.global.cloudfront.origin-facing</code> (IPv6: <code>com.amazonaws.global.ipv6.cloudfront.origin-facing</code>).</li>
+      </ul>
+
+      <h3>VPC origins – origin nằm hẳn trong private subnet</h3>
+      <ul>
+        <li>Dùng <b>ALB, NLB hoặc EC2 trong private subnet</b> làm origin; CloudFront kết nối qua <b>ENI do dịch vụ quản lý</b> trong subnet ⇒ CloudFront là <b>điểm vào duy nhất</b>, không cần ACL hay cơ chế tự chế để chặn truy cập trực tiếp.</li>
+        <li>VPC vẫn phải có <b>internet gateway</b> (chỉ để đánh dấu VPC nhận traffic internet, không dùng để định tuyến tới origin); subnet cần ít nhất 1 IPv4 trống.</li>
+        <li>Security Group của origin cho phép inbound từ managed prefix list hoặc từ security group dịch vụ <code>CloudFront-VPCOrigins-Service-SG</code> (chặt hơn – chỉ distribution của bạn).</li>
+        <li>Không hỗ trợ: Gateway Load Balancer, NLB có TLS listener, gRPC, Lambda@Edge origin request/response. Chia sẻ VPC origin cross-account qua <b>AWS RAM</b>.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Users must not access S3 objects directly, only through CloudFront</i>” ⇒ <b>OAC</b> + bucket policy cho <code>cloudfront.amazonaws.com</code> + <code>AWS:SourceArn</code>. Đáp án có <b>OAI</b> chỉ đúng khi không có OAC trong lựa chọn; <b>OAC</b> là bắt buộc nếu có <b>SSE-KMS</b>.</li>
+          <li>“<i>Ensure the ALB only accepts traffic from CloudFront</i>” ⇒ <b>custom header</b> bí mật (kiểm tra ở ALB rule / WAF) + Security Group dùng <b>CloudFront managed prefix list</b>; nếu được chọn kiến trúc mới ⇒ <b>VPC origin</b> (ALB internal).</li>
+          <li>“<i>Least operational overhead to keep the origin private</i>” ⇒ <b>VPC origins</b> thay vì tự dựng proxy/whitelist IP.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: CACHE BEHAVIOR & TTL ===================== -->
+      <h2 id="cache"><img src="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" alt="">Cache behavior, cache key và TTL</h2>
+      <p class="lead">Một <span class="t" data-vi="Hành vi cache theo đường dẫn">cache behavior</span> gom các thiết lập áp dụng cho một <b>path pattern</b>: origin đích, viewer protocol policy, allowed HTTP methods, cache policy, origin request policy, signed URL, nén, function association… Mỗi distribution có một <b>default cache behavior</b> với path pattern <code>*</code> (không đổi được) và luôn được xét <b>sau cùng</b>.</p>
+
+      <h3>Path pattern – khớp đầu tiên thắng</h3>
+      <ul>
+        <li>Các behavior được so khớp <b>theo thứ tự</b> trong danh sách; <b>khớp đầu tiên</b> được áp dụng. Ví dụ thứ tự <code>images/*.jpg</code> → <code>images/*</code> → <code>*.gif</code>: request <code>images/sample.gif</code> khớp behavior thứ 2.</li>
+        <li>Ký tự đại diện: <code>*</code> = 0+ ký tự, <code>?</code> = đúng 1 ký tự; path pattern <b>phân biệt hoa thường</b>, tối đa 255 ký tự; không xét query string/cookie.</li>
+        <li>Mỗi behavior trỏ tới <b>một</b> origin (hoặc origin group) ⇒ cần ít nhất số behavior bằng số origin muốn dùng.</li>
+        <li><b>Rủi ro bảo mật</b>: nếu behavior đứng trước không yêu cầu signed URL còn behavior đứng sau có, file khớp cả hai sẽ bị truy cập <b>không cần chữ ký</b>.</li>
+      </ul>
+
+      <h3>Allowed HTTP methods</h3>
+      <ul>
+        <li><b>GET, HEAD</b> · <b>GET, HEAD, OPTIONS</b> · <b>GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE</b> (cần cho form, API, upload, gRPC).</li>
+        <li>CloudFront chỉ <b>cache</b> response của <b>GET, HEAD</b> (và tùy chọn OPTIONS); các method khác luôn chuyển tới origin.</li>
+        <li>Bật đủ 7 method mà chỉ cần PUT ⇒ phải dùng OAC/bucket policy hoặc origin để chặn DELETE ngoài ý muốn.</li>
+      </ul>
+
+      <h3>Cache key, cache policy và origin request policy</h3>
+      <p><span class="t" data-vi="Khóa cache – định danh object trong cache">Cache key</span> là định danh duy nhất của mỗi object trong cache, quyết định một request có <b>cache hit</b> hay không. Mặc định gồm tên miền distribution + đường dẫn URL. <b>Cache policy</b> chỉ định thêm <b>header, cookie, query string</b> nào vào cache key, cùng các giá trị TTL và bật nén (Gzip/Brotli).</p>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4>Cache key nhỏ</h4><ul>
+          <li>Ít biến thể ⇒ <b>cache hit ratio cao</b> ⇒ nhanh hơn, origin nhẹ hơn, rẻ hơn.</li>
+          <li>Managed policy <b>CachingOptimized</b> cho nội dung tĩnh/S3.</li>
+          <li>Dùng <b>CloudFront Functions</b> chuẩn hóa header/query string trước khi tạo cache key.</li>
+        </ul></div>
+        <div style="--accent:#DD344C"><h4>Cache key lớn</h4><ul>
+          <li>Thêm cookie/session ID, header <code>User-Agent</code>, mọi query string ⇒ mỗi người một bản ⇒ <b>cache hit ratio thấp</b>.</li>
+          <li>Chỉ thêm những giá trị thật sự làm nội dung khác đi.</li>
+          <li>Nội dung không cache (API) ⇒ managed policy <b>CachingDisabled</b>.</li>
+        </ul></div>
+      </div>
+      <p><b>Origin request policy</b> tách riêng: chọn header/cookie/query string được <b>gửi tới origin</b> nhưng <b>không</b> đưa vào cache key (vd origin cần biết <code>CloudFront-Viewer-Country</code> hay user-agent nhưng nội dung vẫn cache chung). Mọi giá trị trong cache key tự động được gửi tới origin.</p>
+
+      <h3>TTL – object ở trong cache bao lâu?</h3>
+      <p>Hết thời gian cache, request kế tiếp khiến CloudFront hỏi lại origin: origin trả <b>304 Not Modified</b> nếu bản cache vẫn mới nhất, hoặc <b>200 OK</b> kèm bản mới. Object ít được truy cập có thể bị <b>evict</b> sớm. Thời gian cache phụ thuộc <b>Minimum / Default / Maximum TTL</b> (trong cache policy) và header của origin:</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Origin gửi header</th><th>CloudFront cache bao lâu</th></tr></thead>
+        <tbody>
+          <tr><td><code>Cache-Control: max-age</code></td><td>Bằng <code>max-age</code>, nhưng bị “kẹp” trong khoảng [Minimum TTL, Maximum TTL]. Trình duyệt cache theo <code>max-age</code>.</td></tr>
+          <tr><td><code>max-age</code> + <code>s-maxage</code></td><td>CloudFront dùng <b><code>s-maxage</code></b> (kẹp trong [Min, Max]); trình duyệt dùng <code>max-age</code> ⇒ cache ở edge lâu hơn ở trình duyệt.</td></tr>
+          <tr><td><code>Expires</code></td><td>Tới thời điểm Expires (kẹp trong [Min, Max]). Có cả <code>max-age</code> và <code>Expires</code> ⇒ chỉ dùng <code>max-age</code>.</td></tr>
+          <tr><td>Không có header</td><td><b>Default TTL</b> (Min TTL &gt; 0 ⇒ giá trị lớn hơn giữa Min và Default).</td></tr>
+          <tr><td><code>no-cache</code> / <code>no-store</code> / <code>private</code></td><td>Min TTL = 0 ⇒ tôn trọng header. <b>Min TTL &gt; 0 ⇒ vẫn cache tối thiểu Min TTL</b> (cảnh báo trong tài liệu).</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Giá trị mặc định: <b>Minimum TTL 0</b>, <b>Default TTL 86.400 s (1 ngày)</b>, <b>Maximum TTL 31.536.000 s (1 năm)</b>. <code>max-age</code> tối đa 100 năm.</li>
+        <li>Viewer gửi <code>Cache-Control</code>/<code>Pragma</code> trong GET <b>không</b> ép CloudFront quay về origin được – CloudFront bỏ qua.</li>
+        <li><code>stale-while-revalidate</code>: trả nội dung cũ trong khi làm mới ngầm; <code>stale-if-error</code>: origin lỗi 5xx/không với tới ⇒ vẫn trả bản cũ (giới hạn bởi Maximum TTL) – tăng availability.</li>
+        <li>Lỗi 4xx/5xx từ origin cũng được cache (error caching TTL, mặc định <b>10 giây</b>); cấu hình được bằng <b>custom error response</b> (trang lỗi tùy biến, có thể lấy từ S3).</li>
+      </ul>
+
+      <h3>Xóa nội dung trước khi hết hạn: invalidation vs versioned file name</h3>
+      <div class="compare">
+        <div style="--accent:#FF9900"><h4>Invalidation</h4><ul>
+          <li>Xóa object khỏi cache POP và regional edge cache; request kế tiếp lấy bản mới từ origin.</li>
+          <li><b>1.000 path đầu tiên mỗi tháng miễn phí</b> (cộng dồn mọi distribution trong account), vượt thì tính phí theo path.</li>
+          <li>Path có wildcard (<code>/images/*</code>, <code>/*</code>) tính là <b>1 path</b> dù xóa hàng nghìn file.</li>
+          <li>Không xóa được bản cache ở trình duyệt / proxy công ty.</li>
+        </ul></div>
+        <div style="--accent:#147EBA"><h4>Versioned file name (khuyến nghị khi cập nhật thường xuyên)</h4><ul>
+          <li>Đổi tên: <code>app.v2.js</code>, <code>logo_2.png</code>, cập nhật HTML trỏ tên mới.</li>
+          <li><b>Rẻ hơn</b> (không trả phí invalidation), kiểm soát được cả cache trình duyệt.</li>
+          <li>Dễ <b>roll forward / roll back</b>, phân tích log theo tên file, phục vụ bản khác nhau cho người dùng khác nhau.</li>
+        </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Users still see the old version after updating files in S3</i>” ⇒ <b>create an invalidation</b> (nhanh, một lần) hoặc dùng <b>versioned object names</b> (lâu dài, rẻ). Không phải “xóa distribution” hay “giảm TTL về 0 cho mọi thứ”.</li>
+          <li>“<i>Low cache hit ratio</i>” ⇒ bỏ bớt header/cookie/query string khỏi <b>cache key</b>, tăng TTL, gửi giá trị origin cần bằng <b>origin request policy</b>, bật <b>Origin Shield</b>.</li>
+          <li>“<i>Serve stale content if the origin is down</i>” ⇒ <code>stale-if-error</code> / TTL đủ dài + <b>origin group</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: SIGNED URL / COOKIE ===================== -->
+      <h2 id="signed"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">Nội dung riêng tư: signed URL và signed cookie</h2>
+      <p class="lead">Nội dung chỉ dành cho người dùng được phép (đã đăng nhập, đã trả tiền…) được bảo vệ bằng <span class="t" data-vi="URL có chữ ký">signed URL</span> hoặc <span class="t" data-vi="Cookie có chữ ký">signed cookie</span>. Ứng dụng của bạn xác thực người dùng rồi tạo URL/cookie được <b>ký bằng private key</b>; CloudFront dùng <b>public key</b> để kiểm tra chữ ký và thời hạn trước khi trả nội dung.</p>
+
+      <ol class="steps">
+        <li>(Khuyến nghị) Khóa origin để người dùng chỉ đi qua CloudFront – <b>OAC</b> cho S3, <b>custom header</b> cho custom origin.</li>
+        <li>Tạo <b>signer</b>: <span class="t" data-vi="Nhóm khóa tin cậy">trusted key group</span> (khuyến nghị) chứa public key; gắn vào <b>cache behavior</b> qua <i>Restrict viewer access = Yes</i>.</li>
+        <li>Ứng dụng kiểm tra quyền người dùng ⇒ trả về <b>signed URL</b> hoặc header <code>Set-Cookie</code> chứa <b>signed cookie</b>.</li>
+        <li>CloudFront xác minh chữ ký (bị sửa ⇒ từ chối), kiểm tra policy (thời gian, IP) ⇒ trả object từ cache hoặc origin.</li>
+      </ol>
+
+      <div class="compare">
+        <div style="--accent:#FF9900"><h4>Signed URL</h4><ul>
+          <li>Hạn chế truy cập <b>từng file riêng lẻ</b> (vd file cài đặt ứng dụng, một bộ phim thuê).</li>
+          <li>Client <b>không hỗ trợ cookie</b> (custom HTTP client).</li>
+          <li>URL dài hơn, chứa tham số <code>Expires</code>/<code>Policy</code>, <code>Signature</code>, <code>Key-Pair-Id</code>.</li>
+          <li>Ưu tiên hơn cookie: request có signed URL thì CloudFront <b>chỉ xét signed URL</b>.</li>
+        </ul></div>
+        <div style="--accent:#8C4FFF"><h4>Signed cookie</h4><ul>
+          <li>Truy cập <b>nhiều file bị hạn chế</b> cùng lúc: mọi segment của video <b>HLS</b>, toàn bộ <b>khu vực subscriber</b> của website.</li>
+          <li><b>Không muốn đổi URL</b> hiện có.</li>
+          <li>Không dùng được nếu URL gốc đã chứa tham số <code>Expires</code>, <code>Policy</code>, <code>Signature</code>, <code>Key-Pair-Id</code>, <code>Hash-Algorithm</code> (CloudFront tưởng là signed URL).</li>
+        </ul></div>
+      </div>
+
+      <h3>Canned policy vs custom policy</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Khả năng</th><th>Canned policy</th><th>Custom policy</th></tr></thead>
+        <tbody>
+          <tr><td>Dùng lại policy cho nhiều file (wildcard trong <code>Resource</code>)</td><td class="no">Không</td><td class="yes">Có</td></tr>
+          <tr><td>Thời điểm <b>bắt đầu</b> được truy cập</td><td class="no">Không</td><td class="yes">Có (tùy chọn)</td></tr>
+          <tr><td>Thời điểm <b>hết hạn</b></td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Giới hạn <b>IP / dải IP</b> người dùng</td><td class="no">Không</td><td class="yes">Có (tùy chọn)</td></tr>
+          <tr><td>URL chứa policy base64 (dài hơn)</td><td>Không</td><td>Có</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Thời hạn có thể chỉ vài phút (thuê phim, tải nhạc theo yêu cầu) đến nhiều năm (tài liệu cho nhà đầu tư, đào tạo nhân viên).</li>
+        <li>CloudFront kiểm tra hạn <b>lúc bắt đầu HTTP request</b>: tải file lớn bắt đầu trước giờ hết hạn vẫn hoàn tất; nhưng kết nối rớt rồi tải lại sau hạn, hoặc Range GET sau hạn ⇒ thất bại.</li>
+        <li>Key pair: <b>RSA 2048</b> hoặc <b>ECDSA 256</b>, định dạng PEM base64.</li>
+        <li><b>Trusted key group</b> (khuyến nghị) vs <b>CloudFront key pair của AWS account</b> (cũ): key group <b>không cần root user</b>, quản lý bằng API/IAM, tự động hóa xoay vòng khóa; mặc định tối đa <b>4 key group / distribution</b>, <b>5 public key / key group</b>. Key pair kiểu cũ <b>chỉ root user tạo được</b>, tối đa <b>2 key pair active / account</b>.</li>
+        <li>CloudFront <b>không yêu cầu chữ ký với request OPTIONS</b> (để CORS preflight chạy được) – đảm bảo origin không trả nội dung bảo vệ cho OPTIONS.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – CloudFront signed URL vs S3 presigned URL</span>
+        <ul>
+          <li><b>S3 presigned URL</b>: ký bằng credential của IAM principal, truy cập <b>thẳng S3</b>, không qua cache CDN; phù hợp upload/download tạm thời từ S3 (Bài 16).</li>
+          <li><b>CloudFront signed URL/cookie</b>: ký bằng key của trusted key group, đi qua <b>edge cache</b>, kiểm soát được thời gian bắt đầu, IP, wildcard. Đề nói “<i>premium video to paying subscribers worldwide with low latency</i>” ⇒ CloudFront signed cookie/URL + OAC.</li>
+          <li>Thêm query string vào URL <b>sau khi ký</b> ⇒ <b>403</b>; query string phải nằm trong phần được ký.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>One downloadable file per customer, expires in 24 hours</i>” ⇒ <b>signed URL</b> (canned policy đủ dùng).</li>
+          <li>“<i>Members-only area with many files / HLS video, don’t change URLs</i>” ⇒ <b>signed cookies</b>.</li>
+          <li>“<i>Restrict access to users from the corporate IP range and only after a start date</i>” ⇒ <b>custom policy</b>.</li>
+          <li>“<i>Avoid using the root user to manage signing keys</i>” ⇒ <b>trusted key groups</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: GEO RESTRICTION ===================== -->
+      <h2 id="geo"><img src="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" alt="">Geo restriction – chặn theo quốc gia</h2>
+      <p class="lead"><span class="t" data-vi="Giới hạn địa lý (chặn theo vùng)">Geographic restriction</span> (còn gọi <i>geo blocking</i>) ngăn người dùng ở một số vị trí truy cập nội dung của distribution – thường vì <b>bản quyền phân phối</b> hoặc yêu cầu pháp lý.</p>
+      <div class="compare">
+        <div style="--accent:#FF9900"><h4>Tính năng geo restriction của CloudFront</h4><ul>
+          <li><b>Allow list</b> (chỉ các nước được phép) hoặc <b>Block list</b> (cấm các nước).</li>
+          <li>Áp dụng cho <b>toàn bộ distribution</b>, mức <b>quốc gia</b>.</li>
+          <li>Bị chặn ⇒ <b>HTTP 403 (Forbidden)</b>; có thể cấu hình trang lỗi tùy biến, cache lỗi (mặc định 10 giây).</li>
+          <li>Xác định vị trí bằng CSDL bên thứ ba, độ chính xác tổng thể <b>99,8%</b>; không xác định được ⇒ <b>vẫn phục vụ</b>.</li>
+        </ul></div>
+        <div style="--accent:#147EBA"><h4>Dịch vụ geolocation bên thứ ba</h4><ul>
+          <li>Hạn chế <b>một phần file</b> của distribution, hoặc chi tiết hơn quốc gia (thành phố, mã bưu chính, tọa độ).</li>
+          <li>Ứng dụng tra IP người dùng ⇒ được phép thì tạo <b>signed URL</b>, không thì trả 403.</li>
+          <li>Khuyến nghị dùng S3 origin + <b>OAC</b> để không ai vòng qua.</li>
+        </ul></div>
+      </div>
+      <p>Ví dụ trong tài liệu: chỉ có quyền phân phối ở Liechtenstein ⇒ allow list chỉ Liechtenstein; người dùng ở Monaco được DNS đưa tới edge ở Milan, edge thấy không được phép ⇒ trả 403. Trong standard log, request bị chặn có <code>sc-status = 403</code> nhưng không phân biệt được bị chặn vì vị trí hay vì lý do khác.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Prevent users in specific countries from accessing content distributed through CloudFront</i>” ⇒ <b>CloudFront geo restriction</b> (block list/allow list) – ít vận hành nhất.</li>
+          <li>Phân biệt với <b>Route 53 geolocation routing</b> (Bài 24): Route 53 <b>định tuyến</b> người dùng tới endpoint khác nhau theo vị trí; CloudFront geo restriction <b>chặn</b> (403). Muốn chặn theo nước ở tầng ứng dụng với điều kiện phức tạp ⇒ AWS WAF geo match rule (bài Threat Protection).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: EDGE FUNCTIONS ===================== -->
+      <h2 id="edge-functions"><img src="../assets/icons/res/Amazon-CloudFront_Functions.svg" alt="">Chạy code tại biên: CloudFront Functions và Lambda@Edge</h2>
+      <p class="lead">Cả hai cho phép chạy code để <b>phản hồi sự kiện của CloudFront</b> mà không quản lý server. <span class="t" data-vi="Hàm siêu nhẹ chạy tại POP">CloudFront Functions</span> dành cho xử lý <b>nhẹ, cực ngắn</b> ở quy mô hàng triệu request/giây; <span class="t" data-vi="Hàm Lambda chạy tại biên">Lambda@Edge</span> là phần mở rộng của AWS Lambda cho logic <b>nặng hơn</b>: cần mạng, thư viện, request body.</p>
+
+      <h3>Bốn sự kiện (trigger) trên đường đi của request</h3>
+      <figure class="diagram">
+        <svg viewBox="0 0 800 250" width="800" role="img" aria-label="Bốn sự kiện viewer request, origin request, origin response, viewer response">
+          <defs><marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Users.svg" x="20" y="90" width="56" height="56"/>
+          <text x="48" y="164" font-size="12" text-anchor="middle" font-weight="600">Viewer</text>
+          <rect x="260" y="40" width="260" height="160" rx="8" fill="rgba(140,79,255,.06)" stroke="#8C4FFF" stroke-width="2"/>
+          <image href="../assets/icons/svc/Amazon-CloudFront.svg" x="365" y="96" width="48" height="48"/>
+          <text x="390" y="164" font-size="12" text-anchor="middle" font-weight="700">CloudFront cache</text>
+          <text x="390" y="180" font-size="10" text-anchor="middle" class="muted">(hit ⇒ không gọi origin trigger)</text>
+          <image href="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" x="710" y="90" width="56" height="56"/>
+          <text x="738" y="164" font-size="12" text-anchor="middle" font-weight="600">Origin</text>
+          <path class="line-o" d="M80 100 L256 80" marker-end="url(#ah4)"/>
+          <text x="168" y="74" font-size="11" text-anchor="middle" font-weight="700">① Viewer request</text>
+          <text x="168" y="60" font-size="10" text-anchor="middle" class="muted">CF Functions / Lambda@Edge</text>
+          <path class="line-o" d="M256 170 L80 136" marker-end="url(#ah4)"/>
+          <text x="168" y="186" font-size="11" text-anchor="middle" font-weight="700">④ Viewer response</text>
+          <text x="168" y="200" font-size="10" text-anchor="middle" class="muted">CF Functions / Lambda@Edge</text>
+          <path class="line-o" d="M524 80 L706 104" marker-end="url(#ah4)"/>
+          <text x="612" y="74" font-size="11" text-anchor="middle" font-weight="700">② Origin request</text>
+          <text x="612" y="60" font-size="10" text-anchor="middle" class="muted">chỉ Lambda@Edge (khi cache miss)</text>
+          <path class="line-o" d="M706 132 L524 170" marker-end="url(#ah4)"/>
+          <text x="612" y="186" font-size="11" text-anchor="middle" font-weight="700">③ Origin response</text>
+          <text x="612" y="200" font-size="10" text-anchor="middle" class="muted">chỉ Lambda@Edge</text>
+          <text x="400" y="238" font-size="11" text-anchor="middle" class="muted">Viewer trigger chạy với mọi request; origin trigger chỉ chạy khi CloudFront phải gọi origin</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> Bốn điểm có thể gắn code. <b>CloudFront Functions</b> chỉ gắn được ở <b>viewer request / viewer response</b>; <b>Lambda@Edge</b> gắn được cả 4. Mỗi cache behavior chọn function cho từng sự kiện.</figcaption>
+      </figure>
+
+      <h3>Bảng so sánh (theo tài liệu “Differences between CloudFront Functions and Lambda@Edge”)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>CloudFront Functions</th><th>Lambda@Edge</th></tr></thead>
+        <tbody>
+          <tr><td>Ngôn ngữ</td><td>JavaScript (ECMAScript 5.1 compliant)</td><td>Node.js và Python</td></tr>
+          <tr><td>Sự kiện</td><td>Viewer request, viewer response</td><td>Viewer request/response, <b>origin request/response</b></td></tr>
+          <tr><td>Quy mô</td><td><b>Hàng triệu request/giây</b></td><td>Tới <b>10.000 request/giây mỗi Region</b></td></tr>
+          <tr><td>Thời gian chạy</td><td><b>Dưới 1 mili giây</b></td><td>Tới <b>30 giây</b></td></tr>
+          <tr><td>Bộ nhớ tối đa</td><td>2 MB</td><td>128 MB (viewer trigger) · 10.240 MB (origin trigger)</td></tr>
+          <tr><td>Kích thước code + thư viện</td><td>10 KB</td><td>50 MB</td></tr>
+          <tr><td>Truy cập mạng / file system</td><td class="no">Không</td><td class="yes">Có (gọi API, dùng AWS SDK, dịch vụ ngoài)</td></tr>
+          <tr><td>Đọc <b>request body</b></td><td class="no">Không</td><td class="yes">Có</td></tr>
+          <tr><td>Dữ liệu vị trí địa lý &amp; thiết bị</td><td class="yes">Có</td><td>Chỉ ở origin trigger</td></tr>
+          <tr><td>CloudFront KeyValueStore</td><td class="yes">Có (runtime 2.0)</td><td class="no">Không</td></tr>
+          <tr><td>Build &amp; test hoàn toàn trong CloudFront</td><td class="yes">Có</td><td class="no">Không (tạo trong Lambda – kiến thức thi: function phải ở <b>us-east-1</b>, rồi được nhân bản ra các Region)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="compare">
+        <div style="--accent:#8C4FFF"><h4><img src="../assets/icons/res/Amazon-CloudFront_Functions.svg" alt="">Use case CloudFront Functions</h4><ul>
+          <li><b>Cache key normalization</b> – chuẩn hóa header, query string, cookie, URL để tăng cache hit ratio.</li>
+          <li><b>Header manipulation</b> – thêm/sửa/xóa header (vd thêm <code>True-Client-IP</code>, security header HSTS).</li>
+          <li><b>URL redirect / rewrite</b> – chuyển hướng theo thông tin request, viết lại path (vd thêm <code>index.html</code>).</li>
+          <li><b>Request authorization</b> – kiểm tra token đã hash như <b>JWT</b> trong header.</li>
+        </ul></div>
+        <div style="--accent:#FF9900"><h4><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Use case Lambda@Edge</h4><ul>
+          <li>Function chạy <b>vài mili giây trở lên</b>, cần chỉnh CPU/bộ nhớ.</li>
+          <li>Phụ thuộc <b>thư viện bên thứ ba</b> (kể cả AWS SDK để gọi dịch vụ AWS khác).</li>
+          <li>Cần <b>truy cập mạng</b> tới dịch vụ ngoài (xác thực với IdP, tra DB).</li>
+          <li>Cần <b>file system</b> hoặc đọc <b>body</b> của request; xử lý ở origin request/response (chọn origin động, resize ảnh rồi trả về…).</li>
+        </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Lightweight header manipulation / URL rewrite / redirect at very high scale, lowest cost and latency</i>” ⇒ <b>CloudFront Functions</b>.</li>
+          <li>“<i>Needs to call an external service / inspect request body / run for several seconds / modify origin request</i>” ⇒ <b>Lambda@Edge</b>.</li>
+          <li>“<i>Serve different content by device type or country without changing origin</i>” ⇒ edge function đọc header <code>CloudFront-Viewer-Country</code>/<code>CloudFront-Is-Mobile-Viewer</code> để rewrite URL.</li>
+          <li>Đừng nhầm Lambda@Edge với <b>S3 Object Lambda</b> (biến đổi object khi GET từ S3 access point) hay Lambda thường đứng sau API Gateway.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: GLOBAL ACCELERATOR ===================== -->
+      <h2 id="global-accelerator"><img src="../assets/icons/svc/AWS-Global-Accelerator.svg" alt="">AWS Global Accelerator</h2>
+      <p class="lead"><b>AWS Global Accelerator</b> là dịch vụ global giúp tạo <span class="t" data-vi="Bộ tăng tốc">accelerator</span> để <b>cải thiện hiệu năng và availability</b> cho ứng dụng có người dùng toàn cầu. Accelerator cấp <b>static IP</b> được quảng bá kiểu <span class="t" data-vi="Một IP quảng bá từ nhiều nơi, client tới điểm gần nhất">anycast</span> từ mạng edge của AWS: traffic của người dùng <b>vào mạng AWS tại edge location gần nhất</b>, rồi đi trên <b>AWS global network</b> – được giám sát, không tắc nghẽn, dự phòng – tới endpoint tối ưu.</p>
+
+      <h3>Thành phần</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Ý nghĩa (theo tài liệu)</th></tr></thead>
+        <tbody>
+          <tr><td><b>Static IP addresses</b></td><td><b>2 static IPv4</b> (dual-stack: 2 IPv4 + 2 IPv6 = 4 địa chỉ), anycast từ edge. Hoặc dùng IP của chính bạn – <b>BYOIP</b> (chỉ IPv4). IP <b>giữ nguyên suốt đời accelerator</b>, kể cả khi disable; chỉ mất khi <b>xóa</b> accelerator (dùng IAM/tag để hạn chế quyền xóa).</td></tr>
+          <tr><td><b>Accelerator</b></td><td>Hướng traffic tới endpoint qua mạng AWS; gồm 1+ listener. Hai loại: <b>standard</b> và <b>custom routing</b>.</td></tr>
+          <tr><td><b>DNS name</b></td><td>Dạng <code>a1234567890abcdef.awsglobalaccelerator.com</code> trỏ tới các static IP; có thể dùng tên miền riêng (Route 53 alias tới accelerator – Bài 24).</td></tr>
+          <tr><td><span class="t" data-vi="Vùng mạng cô lập">Network zone</span></td><td>Giống AZ cho mạng: đơn vị hạ tầng vật lý cô lập. Mỗi static IP được phục vụ từ <b>một network zone khác nhau</b>; một IP bị chặn/gián đoạn thì client thử IP còn lại.</td></tr>
+          <tr><td><b>Listener</b></td><td>Nhận kết nối theo <b>port/dải port</b> và giao thức <b>TCP, UDP hoặc cả hai</b>; gắn với 1+ endpoint group. (Kiến thức thi: listener có tùy chọn <i>client affinity</i> – None hoặc Source IP – để giữ một client luôn về cùng endpoint.)</td></tr>
+          <tr><td><b>Endpoint group</b></td><td>Gắn với <b>một AWS Region</b>, chứa 1+ endpoint. Có <span class="t" data-vi="Núm điều chỉnh % traffic vào Region">traffic dial</span> để tăng/giảm % traffic vào Region đó.</td></tr>
+          <tr><td><b>Endpoint</b></td><td>Standard: <b>NLB, ALB (internet-facing hoặc internal), EC2 instance, Elastic IP</b>; mỗi endpoint có <b>weight</b>. Custom routing: <b>VPC subnet</b> chứa EC2.</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 330" width="800" role="img" aria-label="Global Accelerator với hai endpoint group ở hai Region">
+          <defs>
+            <marker id="ah5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker>
+            <marker id="ah5g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7D8998"/></marker>
+          </defs>
+          <image href="../assets/icons/res/Users.svg" x="16" y="40" width="48" height="48"/>
+          <text x="40" y="104" font-size="11" text-anchor="middle" font-weight="600">User Paris</text>
+          <image href="../assets/icons/res/Users.svg" x="16" y="210" width="48" height="48"/>
+          <text x="40" y="274" font-size="11" text-anchor="middle" font-weight="600">User New York</text>
+          <image href="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" x="150" y="40" width="44" height="44"/>
+          <text x="172" y="100" font-size="10" text-anchor="middle">Edge Paris</text>
+          <image href="../assets/icons/res/Amazon-CloudFront_Edge-Location.svg" x="150" y="210" width="44" height="44"/>
+          <text x="172" y="270" font-size="10" text-anchor="middle">Edge New York</text>
+          <path class="line-o" d="M68 64 L146 62" marker-end="url(#ah5)"/>
+          <path class="line-o" d="M68 234 L146 232" marker-end="url(#ah5)"/>
+          <text x="107" y="140" font-size="11" text-anchor="middle" font-weight="700">Anycast</text>
+          <text x="107" y="156" font-size="10" text-anchor="middle">75.2.x.x</text>
+          <text x="107" y="170" font-size="10" text-anchor="middle">99.83.x.x</text>
+          <rect x="230" y="20" width="160" height="290" rx="8" fill="rgba(236,114,17,.05)" stroke="#EC7211" stroke-dasharray="6 4"/>
+          <image href="../assets/icons/svc/AWS-Global-Accelerator.svg" x="286" y="120" width="48" height="48"/>
+          <text x="310" y="186" font-size="11" text-anchor="middle" font-weight="700">AWS global network</text>
+          <text x="310" y="202" font-size="10" text-anchor="middle" class="muted">Listener TCP 443</text>
+          <text x="310" y="218" font-size="10" text-anchor="middle" class="muted">TCP kết thúc tại edge</text>
+          <path class="line-o" d="M198 62 L282 132" marker-end="url(#ah5)"/>
+          <path class="line-o" d="M198 232 L282 158" marker-end="url(#ah5)"/>
+          <rect x="450" y="20" width="320" height="130" rx="8" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="462" y="40" font-size="12" font-weight="700" style="fill:#147EBA">Endpoint group eu-west-1 – traffic dial 100%</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" x="480" y="56" width="48" height="48"/>
+          <text x="504" y="120" font-size="10" text-anchor="middle">ALB · weight 128</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Network-Load-Balancer.svg" x="640" y="56" width="48" height="48"/>
+          <text x="664" y="120" font-size="10" text-anchor="middle">NLB · weight 128</text>
+          <rect x="450" y="180" width="320" height="130" rx="8" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="462" y="200" font-size="12" font-weight="700" style="fill:#147EBA">Endpoint group us-east-1 – traffic dial 100%</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" x="480" y="216" width="48" height="48"/>
+          <text x="504" y="280" font-size="10" text-anchor="middle">ALB (internal)</text>
+          <image href="../assets/icons/res/Amazon-EC2_Elastic-IP-Address.svg" x="640" y="216" width="48" height="48"/>
+          <text x="664" y="280" font-size="10" text-anchor="middle">EC2 / Elastic IP</text>
+          <path class="line-o" d="M338 136 L446 86" marker-end="url(#ah5)"/>
+          <path class="line-o" d="M338 156 L446 240" marker-end="url(#ah5)"/>
+          <path d="M610 152 L610 178" fill="none" stroke="#7D8998" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#ah5g)"/>
+          <text x="618" y="170" font-size="10" class="muted">endpoint unhealthy ⇒ chuyển ngay kết nối mới</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Global Accelerator standard: người dùng kết nối tới cùng <b>2 static anycast IP</b>, vào mạng AWS ở edge gần nhất rồi tới <b>endpoint group</b> của Region gần/khỏe nhất. Traffic dial điều chỉnh % theo Region; weight chia traffic giữa các endpoint trong Region. Endpoint không khỏe ⇒ kết nối mới chuyển sang endpoint/Region khác <b>ngay lập tức</b>, không phụ thuộc DNS TTL.</figcaption>
+      </figure>
+
+      <h3>Standard accelerator vs custom routing accelerator</h3>
+      <div class="compare">
+        <div style="--accent:#FF9900"><h4>Standard accelerator</h4><ul>
+          <li>Định tuyến tới endpoint <b>tối ưu</b> dựa trên <b>vị trí người dùng (geo-proximity), sức khỏe endpoint, weight, traffic dial</b>.</li>
+          <li>Endpoint: ALB, NLB, EC2, Elastic IP ở 1 hoặc nhiều Region.</li>
+          <li>Có <b>health check</b> và failover tự động.</li>
+          <li>Use case: multi-Region, blue/green, A/B test, DR.</li>
+        </ul></div>
+        <div style="--accent:#8C4FFF"><h4>Custom routing accelerator</h4><ul>
+          <li>Ánh xạ <b>tất định</b> người dùng tới <b>một EC2 + port cụ thể</b> trong VPC subnet, theo logic ứng dụng của bạn.</li>
+          <li>Use case: <b>VoIP</b> (gán nhiều người gọi vào một media server), <b>game multiplayer</b> (ghép người chơi vào một game session).</li>
+          <li>Không health check, không failover; chỉ IPv4; luôn giữ client IP.</li>
+        </ul></div>
+      </div>
+
+      <h3>Cơ chế quan trọng</h3>
+      <ul>
+        <li><b>Kết thúc TCP tại edge</b>: Global Accelerator terminate kết nối TCP của client ở edge location và gần như đồng thời mở kết nối TCP mới tới endpoint ⇒ response nhanh hơn, throughput cao hơn.</li>
+        <li><b>Health check</b>: endpoint mới phải qua health check mới nhận traffic. Endpoint không khỏe ⇒ <b>ngay lập tức</b> chuyển kết nối mới sang endpoint khả dụng khác. Không còn endpoint khỏe nào ⇒ gửi tới <b>tất cả</b> endpoint. Health check cấu hình trong Global Accelerator (EC2/EIP) hoặc dùng health check của ALB/NLB.</li>
+        <li><b>Traffic dial</b> (mỗi endpoint group): % traffic <b>đã được hướng tới</b> group đó mà group chấp nhận; ví dụ dial 50% cho us-east-1 ⇒ 100 request tới thì nhận 50, phần còn lại chuyển sang Region khác. Dùng cho performance test, nâng cấp stack, blue/green giữa các Region.</li>
+        <li><b>Endpoint weight</b> (mỗi endpoint): giá trị <b>0–255</b>, mặc định <b>128</b>; tỉ lệ = weight / tổng weight trong group.</li>
+        <li><b>Client IP preservation</b>: hỗ trợ cho <b>ALB, EC2, NLB có security group</b>; <b>không</b> hỗ trợ NLB không có security group và Elastic IP. Custom routing luôn giữ client IP.</li>
+        <li><b>Idle timeout</b> cố định: <b>340 giây</b> với TCP, <b>30 giây</b> với UDP; kết nối đang mở vẫn tới endpoint cũ (kể cả unhealthy) cho tới khi idle timeout.</li>
+        <li><b>Bảo mật</b>: che origin sau 2 static IP, được <b>AWS Shield</b> bảo vệ DDoS mặc định; kết nối tới ALB internal/EC2 private qua IP private trong VPC, không lộ ra internet. Security group và WAF rule cũ vẫn hoạt động.</li>
+        <li>Phản hồi ping (ICMP echo) tại edge – không đo được độ trễ thực tới endpoint bằng ping.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>2</b><span>static anycast IPv4 mỗi accelerator (dual-stack: 4 địa chỉ)</span></div>
+        <div class="stat"><b>2</b><span>network zone tách biệt phục vụ 2 IP</span></div>
+        <div class="stat"><b>128 / 255</b><span>endpoint weight mặc định / tối đa</span></div>
+        <div class="stat"><b>0–100%</b><span>traffic dial của mỗi endpoint group</span></div>
+        <div class="stat"><b>340 s / 30 s</b><span>idle timeout TCP / UDP</span></div>
+        <div class="stat"><b>TCP + UDP</b><span>giao thức listener hỗ trợ</span></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Static IP addresses</i> / <i>IP allowlisting by customers’ firewalls</i> for a multi-Region application” ⇒ <b>Global Accelerator</b> (chỉ 2 IP để whitelist một lần; thêm/bớt Region không đổi IP).</li>
+          <li>“<i>UDP</i>”, “<i>gaming</i>”, “<i>VoIP</i>”, “<i>IoT</i>”, “<i>non-HTTP</i>” cần độ trễ thấp toàn cầu ⇒ <b>Global Accelerator</b> (CloudFront chỉ HTTP/HTTPS).</li>
+          <li>“<i>Fast regional failover not affected by DNS caching</i>” ⇒ <b>Global Accelerator</b> (failover ở tầng mạng, IP không đổi) thay cho Route 53 failover (phụ thuộc TTL).</li>
+          <li>“<i>Route a specific user to a specific EC2 instance and port</i>” ⇒ <b>custom routing accelerator</b>.</li>
+          <li>“<i>Shift 20% of traffic to a new Region</i>” ⇒ <b>traffic dial</b>; trong cùng Region giữa các endpoint ⇒ <b>endpoint weight</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: SO SÁNH ===================== -->
+      <h2 id="so-sanh"><img src="../assets/icons/svc/AWS-Global-Accelerator.svg" alt="">CloudFront vs Global Accelerator vs các lựa chọn khác</h2>
+      <p class="lead">Cả CloudFront và Global Accelerator đều dùng mạng edge và backbone của AWS, nhưng giải quyết hai bài toán khác nhau. Bảng dưới tổng hợp từ tài liệu hai dịch vụ và kiến thức thi phổ biến.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Amazon CloudFront</th><th>AWS Global Accelerator</th></tr></thead>
+        <tbody>
+          <tr><td>Bản chất</td><td><b>CDN</b> – cache nội dung tại edge</td><td><b>Tăng tốc mạng</b> – proxy TCP/UDP qua backbone, <b>không cache</b></td></tr>
+          <tr><td>Giao thức</td><td>HTTP/HTTPS (kèm WebSocket, gRPC)</td><td><b>TCP, UDP</b> (mọi ứng dụng, kể cả HTTP)</td></tr>
+          <tr><td>Điểm vào</td><td>Tên miền <code>*.cloudfront.net</code>; IP edge <b>thay đổi</b></td><td><b>2 static anycast IP</b> cố định (hoặc BYOIP)</td></tr>
+          <tr><td>Nội dung phù hợp</td><td>Tĩnh, media, nội dung cache được; cả dynamic/API</td><td>Ứng dụng động, game, VoIP, IoT, API cần IP cố định</td></tr>
+          <tr><td>Origin / endpoint</td><td>S3, ALB, NLB, EC2, MediaPackage, HTTP bất kỳ (cả on-prem)</td><td>ALB, NLB, EC2, Elastic IP (custom routing: VPC subnet) – chỉ trong AWS</td></tr>
+          <tr><td>Failover</td><td>Origin group theo mã HTTP (GET/HEAD/OPTIONS)</td><td>Health check, chuyển endpoint/Region ngay, không phụ thuộc DNS</td></tr>
+          <tr><td>Bảo mật nội dung</td><td>OAC, signed URL/cookie, geo restriction, WAF, field-level encryption</td><td>Che origin sau static IP, Shield, client IP preservation</td></tr>
+          <tr><td>Chạy code tại biên</td><td class="yes">CloudFront Functions, Lambda@Edge</td><td class="no">Không</td></tr>
+          <tr><td>Từ khóa đề</td><td>“cache”, “static content”, “reduce origin load”, “signed URL”, “geo-restrict”</td><td>“static IP”, “UDP”, “gaming”, “allowlist IP”, “deterministic routing”, “fast failover”</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Chọn giải pháp nhanh theo tình huống đề</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu trong đề</th><th>Giải pháp</th><th>Vì sao không phải phương án khác</th></tr></thead>
+        <tbody>
+          <tr><td>Website tĩnh trên S3, người dùng toàn cầu, bucket phải private</td><td><b>CloudFront + OAC</b> (REST endpoint)</td><td>S3 website endpoint cần bucket public, không dùng OAC</td></tr>
+          <tr><td>Video/khóa học trả phí, nhiều file, không đổi URL</td><td><b>Signed cookies</b></td><td>Signed URL phải ký từng file</td></tr>
+          <tr><td>Link tải một file hết hạn sau 1 giờ qua CDN</td><td><b>Signed URL</b></td><td>S3 presigned URL không đi qua cache</td></tr>
+          <tr><td>Cấm người dùng ở một số quốc gia</td><td><b>CloudFront geo restriction</b></td><td>Route 53 geolocation chỉ định tuyến, không chặn</td></tr>
+          <tr><td>Thêm security header / redirect URL ở quy mô lớn, rẻ</td><td><b>CloudFront Functions</b></td><td>Lambda@Edge đắt và chậm hơn cho việc nhẹ</td></tr>
+          <tr><td>Xác thực gọi IdP bên ngoài / đọc body / sửa origin request</td><td><b>Lambda@Edge</b></td><td>CloudFront Functions không có mạng, không đọc body</td></tr>
+          <tr><td>Static IP cho ứng dụng đa Region, khách hàng whitelist IP</td><td><b>Global Accelerator</b></td><td>IP của CloudFront/ALB thay đổi</td></tr>
+          <tr><td>Game UDP toàn cầu, giảm jitter</td><td><b>Global Accelerator</b></td><td>CloudFront không hỗ trợ UDP</td></tr>
+          <tr><td>Upload file lớn từ khắp thế giới vào một bucket</td><td><b>S3 Transfer Acceleration</b> (Bài 15)</td><td>CloudFront tối ưu cho phân phối (download)</td></tr>
+          <tr><td>ALB chỉ nhận traffic từ CloudFront</td><td><b>Custom header</b> + prefix list, hoặc <b>VPC origin</b></td><td>Security Group không biết “distribution của tôi” nếu chỉ dùng IP</td></tr>
+          <tr><td>Origin S3 phải sẵn sàng khi một Region lỗi</td><td><b>Origin group</b> + S3 CRR</td><td>Một origin = single point of failure</td></tr>
+          <tr><td>Giảm request trùng tới origin on-prem băng thông thấp</td><td><b>Origin Shield</b> + TTL dài</td><td>Thêm POP không gộp được request giữa các khu vực</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>“Global Accelerator <b>cache</b> nội dung” – <b>sai</b>. Muốn cache ⇒ CloudFront.</li>
+          <li>“CloudFront cung cấp <b>static IP</b>” – <b>sai</b>. Cần IP cố định ⇒ Global Accelerator (có thể đặt trước ALB).</li>
+          <li>Global Accelerator <b>không</b> nhận S3 bucket làm endpoint; endpoint chỉ là ALB, NLB, EC2, Elastic IP.</li>
+          <li>Route 53 <b>latency routing</b> cũng đưa người dùng tới Region nhanh nhất nhưng traffic vẫn đi <b>internet công cộng</b> và failover phụ thuộc <b>TTL</b>; Global Accelerator đưa traffic vào backbone AWS ngay từ edge.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>CloudFront</b> = CDN: request ⇒ POP gần nhất (độ trễ) ⇒ regional edge cache ⇒ (Origin Shield) ⇒ origin. PUT/POST/… và request động bỏ qua regional edge cache. Data transfer từ AWS origin tới CloudFront <b>miễn phí</b>; price class giảm chi phí.</li>
+          <li><b>Distribution</b>: nhiều origin + nhiều <b>cache behavior</b> theo path pattern (khớp đầu tiên thắng, default <code>*</code> cuối cùng). Chứng chỉ ACM cho viewer HTTPS phải ở <b>us-east-1</b>. <b>Origin group</b> failover theo mã HTTP, chỉ GET/HEAD/OPTIONS, mặc định 3 × 10 s.</li>
+          <li><b>OAC</b> (thay OAI): service principal <code>cloudfront.amazonaws.com</code> + <code>AWS:SourceArn</code>; hỗ trợ <b>SSE-KMS</b>, PUT/DELETE, mọi Region; không dùng với S3 website endpoint. Custom origin ⇒ <b>custom header</b> + prefix list; private subnet ⇒ <b>VPC origins</b>.</li>
+          <li><b>Cache key</b> nhỏ ⇒ cache hit ratio cao; cache policy (key + TTL) vs origin request policy (chỉ gửi tới origin). TTL mặc định: Min 0 · Default 86.400 s · Max 31.536.000 s; <code>s-maxage</code> cho CloudFront, <code>max-age</code> cho trình duyệt. <b>Invalidation</b> 1.000 path/tháng free, wildcard = 1 path; cập nhật thường xuyên ⇒ <b>versioned file name</b>.</li>
+          <li><b>Signed URL</b> (một file, client không cookie) vs <b>signed cookie</b> (nhiều file, giữ URL); <b>custom policy</b> thêm thời điểm bắt đầu + IP + wildcard; dùng <b>trusted key group</b> (không cần root). <b>Geo restriction</b>: allow/block list theo quốc gia, cả distribution, trả 403.</li>
+          <li><b>CloudFront Functions</b>: JS, viewer trigger, &lt; 1 ms, triệu req/s, không mạng ⇒ header, redirect, rewrite, JWT, chuẩn hóa cache key. <b>Lambda@Edge</b>: Node.js/Python, 4 trigger, tới 30 s, có mạng/body/SDK.</li>
+          <li><b>Global Accelerator</b>: 2 static anycast IP (2 network zone), listener TCP/UDP, endpoint group theo Region + <b>traffic dial</b>, endpoint <b>weight</b> 0–255 (mặc định 128), health check failover tức thì, client IP preservation (ALB, EC2, NLB có SG). Standard vs <b>custom routing</b> (VoIP/game, EC2 + port cụ thể). <b>Không cache</b>.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Amazon CloudFront</dt><dd><b>Mạng phân phối nội dung (CDN) của AWS</b> – cache và phân phối nội dung qua edge location.</dd></div>
+        <div><dt>Edge location / Point of Presence (POP)</dt><dd><b>Vị trí biên / Điểm hiện diện</b> – nơi CloudFront cache nội dung gần người dùng.</dd></div>
+        <div><dt>Regional edge cache</dt><dd><b>Bộ đệm biên khu vực</b> – tầng cache lớn giữa POP và origin.</dd></div>
+        <div><dt>Origin Shield</dt><dd><b>Lá chắn origin</b> – tầng cache tập trung trước origin, gộp request, tăng cache hit ratio.</dd></div>
+        <div><dt>Distribution</dt><dd><b>Bản phân phối</b> – cấu hình CloudFront: origin, cache behavior, tên miền, bảo mật.</dd></div>
+        <div><dt>Origin / Custom origin</dt><dd><b>Nguồn gốc nội dung / Origin tùy biến</b> – nơi chứa bản gốc; custom origin là HTTP server (EC2, ALB, S3 website endpoint, on-prem).</dd></div>
+        <div><dt>Origin group (origin failover)</dt><dd><b>Nhóm origin</b> – primary + secondary, chuyển khi primary trả mã lỗi đã chọn.</dd></div>
+        <div><dt>Alternate domain name (CNAME)</dt><dd><b>Tên miền thay thế</b> – tên miền riêng thay cho <code>*.cloudfront.net</code>, cần chứng chỉ ACM ở us-east-1.</dd></div>
+        <div><dt>Origin Access Control (OAC)</dt><dd><b>Kiểm soát truy cập origin</b> – CloudFront ký SigV4 khi gọi S3; bucket policy cho service principal CloudFront.</dd></div>
+        <div><dt>Origin Access Identity (OAI)</dt><dd><b>Danh tính truy cập origin (cũ)</b> – cơ chế legacy, không hỗ trợ SSE-KMS, PUT/DELETE, Region mới.</dd></div>
+        <div><dt>VPC origin</dt><dd><b>Origin trong VPC</b> – ALB/NLB/EC2 ở private subnet làm origin, CloudFront là điểm vào duy nhất.</dd></div>
+        <div><dt>Managed prefix list (CloudFront origin-facing)</dt><dd><b>Danh sách tiền tố IP do AWS quản lý</b> – dải IP CloudFront dùng để gọi origin, dùng trong Security Group.</dd></div>
+        <div><dt>Cache behavior / Path pattern</dt><dd><b>Hành vi cache / Mẫu đường dẫn</b> – bộ thiết lập áp dụng cho các URL khớp pattern; khớp đầu tiên thắng.</dd></div>
+        <div><dt>Cache key</dt><dd><b>Khóa cache</b> – định danh object trong cache (URL + header/cookie/query string được chọn).</dd></div>
+        <div><dt>Cache hit ratio</dt><dd><b>Tỉ lệ trúng cache</b> – phần trăm request được phục vụ từ edge.</dd></div>
+        <div><dt>Cache policy / Origin request policy</dt><dd><b>Chính sách cache / Chính sách request tới origin</b> – quyết định cache key + TTL / giá trị chỉ gửi tới origin.</dd></div>
+        <div><dt>Minimum / Default / Maximum TTL</dt><dd><b>TTL tối thiểu / mặc định / tối đa</b> – 0 / 86.400 / 31.536.000 giây mặc định.</dd></div>
+        <div><dt>Invalidation</dt><dd><b>Vô hiệu hóa cache</b> – xóa object khỏi edge trước khi hết hạn; 1.000 path/tháng miễn phí.</dd></div>
+        <div><dt>Versioned file name</dt><dd><b>Tên file có phiên bản</b> – đổi tên file khi cập nhật thay cho invalidation.</dd></div>
+        <div><dt>Signed URL / Signed cookie</dt><dd><b>URL có chữ ký / Cookie có chữ ký</b> – cấp quyền truy cập nội dung riêng tư có thời hạn.</dd></div>
+        <div><dt>Canned policy / Custom policy</dt><dd><b>Chính sách dựng sẵn / tùy biến</b> – chỉ thời hạn / thêm thời điểm bắt đầu, IP, wildcard.</dd></div>
+        <div><dt>Trusted key group</dt><dd><b>Nhóm khóa tin cậy</b> – chứa public key để CloudFront xác minh chữ ký; không cần root user.</dd></div>
+        <div><dt>Geo restriction (geo blocking)</dt><dd><b>Giới hạn địa lý</b> – allow/block list quốc gia cho cả distribution, trả 403.</dd></div>
+        <div><dt>Price class</dt><dd><b>Hạng giá</b> – giới hạn tập edge location được dùng để giảm chi phí.</dd></div>
+        <div><dt>CloudFront Functions</dt><dd><b>Hàm siêu nhẹ tại biên</b> – JavaScript, viewer request/response, dưới 1 ms.</dd></div>
+        <div><dt>Lambda@Edge</dt><dd><b>Hàm Lambda tại biên</b> – Node.js/Python, 4 sự kiện, tới 30 s, có mạng.</dd></div>
+        <div><dt>Viewer request / Origin request / Origin response / Viewer response</dt><dd><b>Bốn sự kiện của CloudFront</b> – điểm có thể gắn code trên đường đi request/response.</dd></div>
+        <div><dt>AWS Global Accelerator</dt><dd><b>Bộ tăng tốc toàn cầu</b> – static anycast IP đưa traffic TCP/UDP vào backbone AWS.</dd></div>
+        <div><dt>Anycast IP</dt><dd><b>IP quảng bá từ nhiều vị trí</b> – cùng một IP, client được đưa tới điểm gần nhất.</dd></div>
+        <div><dt>Standard / Custom routing accelerator</dt><dd><b>Bộ tăng tốc chuẩn / định tuyến tùy biến</b> – tới endpoint tối ưu / tới EC2 + port cụ thể.</dd></div>
+        <div><dt>Listener / Endpoint group / Endpoint</dt><dd><b>Bộ lắng nghe / Nhóm điểm cuối theo Region / Điểm cuối</b> – thành phần của accelerator.</dd></div>
+        <div><dt>Traffic dial</dt><dd><b>Núm điều chỉnh lưu lượng</b> – % traffic một endpoint group chấp nhận.</dd></div>
+        <div><dt>Endpoint weight</dt><dd><b>Trọng số điểm cuối</b> – 0–255, mặc định 128, chia traffic trong một group.</dd></div>
+        <div><dt>Network zone</dt><dd><b>Vùng mạng cô lập</b> – mỗi static IP được phục vụ từ một zone riêng.</dd></div>
+        <div><dt>Client IP preservation</dt><dd><b>Giữ nguyên IP client</b> – endpoint thấy IP gốc của người dùng.</dd></div>
+        <div><dt>BYOIP</dt><dd><b>Mang IP của bạn</b> – dùng dải IPv4 riêng làm static IP của accelerator.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company hosts a static website in an Amazon S3 bucket and serves it to users worldwide through Amazon CloudFront. The security team requires that the bucket is not publicly accessible and that users cannot access objects by using S3 URLs. The objects are encrypted with SSE-KMS. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Configure the S3 static website endpoint as a custom origin and keep the bucket policy that allows public read access.</li>
+            <li data-k="B">Create an origin access identity (OAI) and grant it s3:GetObject in the bucket policy.</li>
+            <li data-k="C">Use the S3 REST endpoint as the origin with origin access control (OAC). Allow the cloudfront.amazonaws.com service principal in the bucket policy with an AWS:SourceArn condition, and grant the distribution kms:Decrypt in the KMS key policy.</li>
+            <li data-k="D">Enable S3 Transfer Acceleration and restrict the bucket policy to the Transfer Acceleration endpoint.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>OAC</b> cho phép bucket hoàn toàn private, chỉ distribution khớp <code>AWS:SourceArn</code> đọc được; OAC hỗ trợ <b>SSE-KMS</b> khi thêm statement cho CloudFront vào KMS key policy. <b>A sai</b>: website endpoint yêu cầu bucket public và không dùng được OAC. <b>B sai</b>: OAI là cơ chế cũ, <b>không hỗ trợ SSE-KMS</b>. <b>D sai</b>: Transfer Acceleration tăng tốc upload/download S3, không chặn truy cập trực tiếp.</div>
+          <div class="trans">
+            <div class="tq">Một công ty host một static website trong một Amazon S3 bucket và phục vụ người dùng toàn cầu thông qua Amazon CloudFront. Nhóm bảo mật yêu cầu bucket không được truy cập công khai và người dùng không thể truy cập object bằng URL của S3. Các object được mã hóa bằng SSE-KMS. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình S3 static website endpoint làm custom origin và giữ bucket policy cho phép đọc công khai.</span><span class="why">Sai: website endpoint yêu cầu bucket public và không dùng được OAC, trái yêu cầu bucket private.</span></li>
+              <li data-k="B"><span class="tv">Tạo một origin access identity (OAI) và cấp cho nó quyền s3:GetObject trong bucket policy.</span><span class="why">Sai: OAI là cơ chế cũ và không hỗ trợ object mã hóa SSE-KMS.</span></li>
+              <li data-k="C"><span class="tv">Dùng S3 REST endpoint làm origin với origin access control (OAC). Cho phép service principal cloudfront.amazonaws.com trong bucket policy kèm điều kiện AWS:SourceArn, và cấp quyền kms:Decrypt cho distribution trong KMS key policy.</span><span class="why">Đúng: OAC giữ bucket hoàn toàn private, chỉ distribution khớp AWS:SourceArn đọc được, và hỗ trợ SSE-KMS khi KMS key policy cho phép CloudFront giải mã.</span></li>
+              <li data-k="D"><span class="tv">Bật S3 Transfer Acceleration và giới hạn bucket policy chỉ cho endpoint Transfer Acceleration.</span><span class="why">Sai: Transfer Acceleration chỉ tăng tốc upload/download S3, không chặn được truy cập trực tiếp vào bucket.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A gaming company runs a multiplayer game that uses UDP on Amazon EC2 instances behind Network Load Balancers in us-east-1 and eu-west-1. Players around the world experience high latency and jitter. Several enterprise customers also need a small, fixed set of IP addresses to allow in their firewalls. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Create an AWS Global Accelerator standard accelerator with a UDP listener and endpoint groups in both Regions that contain the NLBs.</li>
+            <li data-k="B">Create an Amazon CloudFront distribution with the NLBs as origins and provide the CloudFront IP ranges to customers.</li>
+            <li data-k="C">Use Amazon Route 53 latency-based routing with Elastic IP addresses on each EC2 instance.</li>
+            <li data-k="D">Enable S3 Transfer Acceleration for game assets and assign Elastic IP addresses to the NLBs.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Global Accelerator</b> hỗ trợ <b>UDP</b>, cung cấp <b>2 static anycast IP</b> để khách hàng whitelist một lần, đưa traffic vào mạng AWS tại edge gần nhất ⇒ giảm latency/jitter, tự failover giữa Region. <b>B sai</b>: CloudFront chỉ HTTP/HTTPS, IP edge thay đổi và rất nhiều. <b>C sai</b>: Route 53 không giảm jitter trên internet, khách phải whitelist nhiều IP thay đổi khi scale. <b>D sai</b>: Transfer Acceleration dành cho S3, không liên quan traffic game UDP.</div>
+          <div class="trans">
+            <div class="tq">Một công ty game vận hành một game nhiều người chơi dùng UDP trên các Amazon EC2 instance phía sau Network Load Balancer ở us-east-1 và eu-west-1. Người chơi trên khắp thế giới gặp độ trễ và jitter cao. Một số khách hàng doanh nghiệp cũng cần một tập nhỏ địa chỉ IP cố định để cho phép trong firewall của họ. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một AWS Global Accelerator standard accelerator với một UDP listener và endpoint group ở cả hai Region chứa các NLB.</span><span class="why">Đúng: Global Accelerator hỗ trợ UDP, cung cấp 2 static anycast IP để khách hàng whitelist, và đưa traffic vào mạng AWS tại edge gần nhất để giảm độ trễ và jitter.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Amazon CloudFront distribution với các NLB làm origin và cung cấp dải IP của CloudFront cho khách hàng.</span><span class="why">Sai: CloudFront chỉ hỗ trợ HTTP/HTTPS, không hỗ trợ UDP, và dải IP edge rất nhiều, thay đổi theo thời gian.</span></li>
+              <li data-k="C"><span class="tv">Dùng Amazon Route 53 latency-based routing với Elastic IP address trên từng EC2 instance.</span><span class="why">Sai: Route 53 không giảm jitter trên đường Internet, và khách hàng phải whitelist nhiều IP thay đổi khi scale.</span></li>
+              <li data-k="D"><span class="tv">Bật S3 Transfer Acceleration cho tài nguyên game và gán Elastic IP address cho các NLB.</span><span class="why">Sai: Transfer Acceleration dành cho Amazon S3, không liên quan tới traffic game UDP.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,D">
+          <div class="qh">A media company sells online courses. Each course consists of hundreds of HLS video segment files served through Amazon CloudFront from a private S3 bucket. Only paying subscribers must be able to watch, and the company does not want to change the existing URLs of the files. The company also wants to avoid using the AWS account root user. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Generate S3 presigned URLs for every segment file.</li>
+            <li data-k="B">Use CloudFront signed cookies that the application sets after the subscriber signs in.</li>
+            <li data-k="C">Create a CloudFront key pair by signing in as the root user.</li>
+            <li data-k="D">Create a trusted key group with a public key and enable Restrict viewer access on the cache behavior.</li>
+            <li data-k="E">Configure CloudFront geo restriction with an allow list of the subscribers' countries.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, D.</b> Tài liệu khuyên dùng <b>signed cookies</b> khi cần cho phép truy cập <b>nhiều file</b> (như mọi file của video HLS) và <b>không muốn đổi URL</b> (B). <b>Trusted key group</b> là signer được khuyến nghị, <b>không cần root user</b>, gắn vào cache behavior qua <i>Restrict viewer access</i> (D). <b>A sai</b>: presigned URL đi thẳng S3, bỏ qua cache CDN và phải đổi URL từng file. <b>C sai</b>: CloudFront key pair kiểu cũ <b>bắt buộc root user</b>. <b>E sai</b>: geo restriction chặn theo quốc gia, không phân biệt người đã trả tiền.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền thông bán các khóa học trực tuyến. Mỗi khóa học gồm hàng trăm file phân đoạn video HLS được phục vụ qua Amazon CloudFront từ một S3 bucket private. Chỉ những người đăng ký đã trả phí mới được xem, và công ty không muốn thay đổi URL hiện có của các file. Công ty cũng muốn tránh dùng root user của AWS account. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo S3 presigned URL cho từng file phân đoạn.</span><span class="why">Sai: presigned URL truy cập thẳng S3, bỏ qua cache của CloudFront và phải đổi URL của từng file.</span></li>
+              <li data-k="B"><span class="tv">Dùng CloudFront signed cookies do ứng dụng thiết lập sau khi người đăng ký đăng nhập.</span><span class="why">Đúng: signed cookies cho phép truy cập nhiều file (mọi phân đoạn HLS) mà không phải thay đổi URL.</span></li>
+              <li data-k="C"><span class="tv">Tạo một CloudFront key pair bằng cách đăng nhập với root user.</span><span class="why">Sai: CloudFront key pair kiểu cũ bắt buộc dùng root user, trái yêu cầu tránh root user.</span></li>
+              <li data-k="D"><span class="tv">Tạo một trusted key group với một public key và bật Restrict viewer access trên cache behavior.</span><span class="why">Đúng: trusted key group là signer được khuyến nghị, không cần root user, và Restrict viewer access buộc request phải có chữ ký hợp lệ.</span></li>
+              <li data-k="E"><span class="tv">Cấu hình CloudFront geo restriction với allow list các quốc gia của người đăng ký.</span><span class="why">Sai: geo restriction chặn theo quốc gia, không phân biệt được ai đã trả phí.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company updates the CSS and JavaScript files of its website several times each day. The files are served through Amazon CloudFront with a long TTL. After each deployment, some users continue to see old versions of the files, and invalidation charges are increasing. What is the MOST cost-effective way to ensure that users receive the latest files?</div>
+          <ol class="opts">
+            <li data-k="A">Set the Default TTL and Maximum TTL of the cache behavior to 0 seconds.</li>
+            <li data-k="B">Create an invalidation for /* after each deployment.</li>
+            <li data-k="C">Disable the CloudFront distribution during deployments.</li>
+            <li data-k="D">Use versioned file names (for example, app.v42.js) and update the HTML to reference the new names.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Tài liệu khuyến nghị <b>versioned file names</b> khi cập nhật thường xuyên: <b>rẻ hơn</b> (không trả phí invalidation), kiểm soát được cả cache ở trình duyệt/proxy, dễ rollback. <b>A sai</b>: TTL 0 làm mọi request về origin, mất lợi ích CDN, tăng tải và chi phí. <b>B sai</b>: dù <code>/*</code> chỉ tính 1 path, invalidation không xóa cache ở trình duyệt và vẫn tốn phí khi vượt 1.000 path/tháng; không phải giải pháp tối ưu lâu dài. <b>C sai</b>: gây gián đoạn dịch vụ.</div>
+          <div class="trans">
+            <div class="tq">Một công ty cập nhật các file CSS và JavaScript của website nhiều lần mỗi ngày. Các file được phục vụ qua Amazon CloudFront với TTL dài. Sau mỗi lần deploy, một số người dùng vẫn thấy phiên bản cũ của các file, và chi phí invalidation ngày càng tăng. Cách MOST cost-effective (tiết kiệm chi phí nhất) để đảm bảo người dùng nhận được file mới nhất là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đặt Default TTL và Maximum TTL của cache behavior về 0 giây.</span><span class="why">Sai: TTL 0 khiến mọi request đều về origin, mất lợi ích của CDN và làm tăng tải cũng như chi phí.</span></li>
+              <li data-k="B"><span class="tv">Tạo một invalidation cho /* sau mỗi lần deploy.</span><span class="why">Sai: invalidation không xóa cache ở trình duyệt và vẫn tốn phí khi vượt hạn mức miễn phí, chính là vấn đề chi phí đang gặp.</span></li>
+              <li data-k="C"><span class="tv">Tắt CloudFront distribution trong lúc deploy.</span><span class="why">Sai: tắt distribution gây gián đoạn dịch vụ cho người dùng.</span></li>
+              <li data-k="D"><span class="tv">Dùng tên file có phiên bản (ví dụ app.v42.js) và cập nhật HTML để tham chiếu tên mới.</span><span class="why">Đúng: tên file có phiên bản không tốn phí invalidation, vượt qua cả cache trình duyệt/proxy và dễ rollback, đúng khuyến nghị cho file cập nhật thường xuyên.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company uses Amazon CloudFront in front of an Application Load Balancer. The company needs to add security response headers (such as Strict-Transport-Security) to every response and redirect requests from old URL paths to new paths. The solution must handle millions of requests per second with the lowest latency and cost. What should a solutions architect use?</div>
+          <ol class="opts">
+            <li data-k="A">Lambda@Edge functions on the origin request and origin response events.</li>
+            <li data-k="B">CloudFront Functions on the viewer request and viewer response events.</li>
+            <li data-k="C">An AWS Lambda function behind Amazon API Gateway that the ALB calls for every request.</li>
+            <li data-k="D">AWS Global Accelerator with custom routing.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>CloudFront Functions</b> phù hợp <b>header manipulation</b> và <b>URL redirect/rewrite</b>, chạy dưới 1 ms, quy mô <b>hàng triệu request/giây</b>, gắn ở viewer request/response. <b>A sai</b>: Lambda@Edge nặng và đắt hơn, giới hạn 10.000 req/s mỗi Region; origin trigger không chạy khi cache hit nên không thêm header cho mọi response. <b>C sai</b>: thêm hop, tăng độ trễ và chi phí, phải sửa ứng dụng. <b>D sai</b>: Global Accelerator không sửa header HTTP.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng Amazon CloudFront phía trước một Application Load Balancer. Công ty cần thêm các security response header (như Strict-Transport-Security) vào mọi response và chuyển hướng (redirect) request từ các đường dẫn URL cũ sang đường dẫn mới. Giải pháp phải xử lý hàng triệu request mỗi giây với độ trễ và chi phí thấp nhất. Solutions architect nên dùng gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Các Lambda@Edge function trên sự kiện origin request và origin response.</span><span class="why">Sai: Lambda@Edge nặng và đắt hơn, quy mô thấp hơn; trigger origin không chạy khi cache hit nên không thêm header cho mọi response.</span></li>
+              <li data-k="B"><span class="tv">CloudFront Functions trên sự kiện viewer request và viewer response.</span><span class="why">Đúng: CloudFront Functions phù hợp cho chỉnh sửa header và redirect/rewrite URL, chạy dưới 1 ms, quy mô hàng triệu request/giây với chi phí thấp.</span></li>
+              <li data-k="C"><span class="tv">Một AWS Lambda function phía sau Amazon API Gateway mà ALB gọi cho mỗi request.</span><span class="why">Sai: thêm chặng xử lý làm tăng độ trễ và chi phí, đồng thời phải sửa ứng dụng.</span></li>
+              <li data-k="D"><span class="tv">AWS Global Accelerator với custom routing.</span><span class="why">Sai: Global Accelerator hoạt động ở tầng mạng, không sửa được header HTTP hay redirect URL.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company serves dynamic content through Amazon CloudFront from an internet-facing Application Load Balancer. A security audit found that attackers are sending requests directly to the ALB DNS name, bypassing the AWS WAF web ACL that is associated with the CloudFront distribution. How can the company ensure that the ALB processes only requests that come through CloudFront?</div>
+          <ol class="opts">
+            <li data-k="A">Configure CloudFront to add a custom origin header with a secret value, configure the ALB listener rules to forward only requests that contain the header, and allow the CloudFront origin-facing managed prefix list in the ALB security group.</li>
+            <li data-k="B">Configure origin access control (OAC) for the ALB origin with an S3 bucket policy.</li>
+            <li data-k="C">Enable CloudFront geo restriction to block all countries except the company's country.</li>
+            <li data-k="D">Use CloudFront signed URLs for all dynamic requests.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Với custom origin, tài liệu đề xuất <b>origin custom header</b> bí mật (gửi qua HTTPS, xoay vòng định kỳ) và origin chỉ chấp nhận request có header đó; kết hợp Security Group chỉ nhận dải IP trong <b>CloudFront managed prefix list</b>. (Có thể chuyển ALB sang internal và dùng <b>VPC origin</b>.) <b>B sai</b>: bucket policy/OAC kiểu S3 không áp dụng cho ALB. <b>C sai</b>: geo restriction không ngăn truy cập trực tiếp ALB. <b>D sai</b>: signed URL kiểm tra ở CloudFront, kẻ tấn công vẫn gọi thẳng ALB được.</div>
+          <div class="trans">
+            <div class="tq">Một công ty phục vụ nội dung động qua Amazon CloudFront từ một Application Load Balancer internet-facing. Một cuộc kiểm toán bảo mật phát hiện kẻ tấn công đang gửi request trực tiếp tới tên DNS của ALB, bỏ qua AWS WAF web ACL được gắn với CloudFront distribution. Làm thế nào để công ty đảm bảo ALB chỉ xử lý các request đi qua CloudFront?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình CloudFront thêm một custom origin header chứa giá trị bí mật, cấu hình listener rule của ALB chỉ chuyển tiếp request có header đó, và cho phép CloudFront origin-facing managed prefix list trong security group của ALB.</span><span class="why">Đúng: header bí mật chỉ CloudFront biết cùng security group giới hạn theo CloudFront managed prefix list đảm bảo ALB từ chối request gửi thẳng vào.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình origin access control (OAC) cho origin ALB với một S3 bucket policy.</span><span class="why">Sai: OAC kèm bucket policy là cơ chế cho S3 origin, không áp dụng được cho ALB.</span></li>
+              <li data-k="C"><span class="tv">Bật CloudFront geo restriction để chặn mọi quốc gia trừ quốc gia của công ty.</span><span class="why">Sai: geo restriction chỉ áp dụng cho request đi qua CloudFront, không ngăn truy cập trực tiếp vào ALB.</span></li>
+              <li data-k="D"><span class="tv">Dùng CloudFront signed URL cho tất cả request động.</span><span class="why">Sai: signed URL chỉ được kiểm tra tại CloudFront, kẻ tấn công vẫn gọi thẳng ALB được.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs an application on Application Load Balancers in us-east-1 and eu-west-1 behind an AWS Global Accelerator standard accelerator. The company deployed a new application version in eu-west-1 and wants to send only 20% of the traffic that would normally go to eu-west-1 to that Region, with the remainder going to us-east-1, without changing any client configuration. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Change the Route 53 weighted records for the accelerator's static IP addresses.</li>
+            <li data-k="B">Set the endpoint weight of the eu-west-1 ALB to 20.</li>
+            <li data-k="C">Set the traffic dial of the eu-west-1 endpoint group to 20%.</li>
+            <li data-k="D">Create a new accelerator with new static IP addresses for eu-west-1.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Traffic dial</b> đặt cho <b>endpoint group</b> (một Region) quyết định % traffic đã được hướng tới group đó mà group chấp nhận; phần còn lại chuyển sang Region khác – đúng ví dụ 50% trong tài liệu. <b>A sai</b>: Global Accelerator dùng static IP, không cần (và không nên) dùng Route 53 weighted. <b>B sai</b>: weight chỉ chia traffic <b>giữa các endpoint trong cùng group</b>; group chỉ có một ALB thì weight không làm giảm traffic vào Region. <b>D sai</b>: tạo IP mới buộc client thay đổi cấu hình.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng trên các Application Load Balancer ở us-east-1 và eu-west-1 phía sau một AWS Global Accelerator standard accelerator. Công ty đã triển khai phiên bản ứng dụng mới ở eu-west-1 và muốn chỉ gửi 20% lượng traffic vốn đi tới eu-west-1 vào Region đó, phần còn lại chuyển sang us-east-1, mà không thay đổi bất kỳ cấu hình nào phía client. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thay đổi các Route 53 weighted record cho các static IP address của accelerator.</span><span class="why">Sai: Global Accelerator dùng static IP, việc phân phối giữa Region được điều khiển trong accelerator chứ không qua Route 53 weighted.</span></li>
+              <li data-k="B"><span class="tv">Đặt endpoint weight của ALB ở eu-west-1 thành 20.</span><span class="why">Sai: weight chỉ chia traffic giữa các endpoint trong cùng một endpoint group; group chỉ có một ALB thì weight không giảm traffic vào Region.</span></li>
+              <li data-k="C"><span class="tv">Đặt traffic dial của endpoint group eu-west-1 thành 20%.</span><span class="why">Đúng: traffic dial của endpoint group quyết định tỉ lệ traffic mà Region đó nhận, phần còn lại tự chuyển sang Region khác, không cần đổi cấu hình client.</span></li>
+              <li data-k="D"><span class="tv">Tạo một accelerator mới với static IP address mới cho eu-west-1.</span><span class="why">Sai: IP mới buộc client phải thay đổi cấu hình, trái yêu cầu.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A company serves a static website from Amazon S3 through Amazon CloudFront. The company wants the website to remain available if the S3 bucket in the primary Region becomes unavailable, and it wants to reduce the number of requests that reach the origin from CloudFront locations around the world. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Replicate the bucket to a second Region with S3 Cross-Region Replication and create a CloudFront origin group with the two buckets as primary and secondary origins.</li>
+            <li data-k="B">Configure a Route 53 failover record that points directly to the two S3 bucket REST endpoints.</li>
+            <li data-k="C">Enable CloudFront Origin Shield in the AWS Region that has the lowest latency to the primary origin.</li>
+            <li data-k="D">Add the Authorization header and all query strings to the cache key.</li>
+            <li data-k="E">Set the Minimum TTL, Default TTL, and Maximum TTL to 0 seconds.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> <b>Origin group</b> với secondary là bucket nhân bản bằng CRR giúp CloudFront tự chuyển khi primary trả lỗi/timeout (A). <b>Origin Shield</b> thêm tầng cache tập trung, gộp request trùng từ mọi regional edge cache, <b>giảm tải origin</b> (C). <b>B sai</b>: bỏ qua CloudFront, mất cache; REST endpoint private không phục vụ trực tiếp người dùng. <b>D sai</b>: cache key lớn làm giảm cache hit ratio, tăng request tới origin. <b>E sai</b>: TTL 0 khiến mọi request về origin.</div>
+          <div class="trans">
+            <div class="tq">Một công ty phục vụ một static website từ Amazon S3 qua Amazon CloudFront. Công ty muốn website vẫn khả dụng nếu S3 bucket ở Region chính không khả dụng, và muốn giảm số request từ các CloudFront location trên khắp thế giới đi tới origin. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Nhân bản bucket sang Region thứ hai bằng S3 Cross-Region Replication và tạo một CloudFront origin group với hai bucket làm origin primary và secondary.</span><span class="why">Đúng: origin group giúp CloudFront tự chuyển sang bucket secondary (được nhân bản bằng CRR) khi primary trả lỗi hoặc timeout.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình một Route 53 failover record trỏ thẳng tới REST endpoint của hai S3 bucket.</span><span class="why">Sai: cách này bỏ qua CloudFront nên mất cache, và REST endpoint của bucket private không phục vụ trực tiếp người dùng.</span></li>
+              <li data-k="C"><span class="tv">Bật CloudFront Origin Shield ở AWS Region có độ trễ thấp nhất tới origin chính.</span><span class="why">Đúng: Origin Shield thêm một tầng cache tập trung, gộp request trùng từ mọi regional edge cache nên giảm số request tới origin.</span></li>
+              <li data-k="D"><span class="tv">Thêm header Authorization và tất cả query string vào cache key.</span><span class="why">Sai: cache key lớn làm giảm cache hit ratio, khiến nhiều request tới origin hơn.</span></li>
+              <li data-k="E"><span class="tv">Đặt Minimum TTL, Default TTL và Maximum TTL về 0 giây.</span><span class="why">Sai: TTL 0 khiến mọi request đều đi về origin, ngược với mục tiêu.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company distributes licensed video content through Amazon CloudFront. Because of licensing agreements, users in two specific countries must be blocked from viewing any of the content. The company wants the solution with the LEAST operational overhead. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Use Amazon Route 53 geolocation routing to send users from the two countries to an error page.</li>
+            <li data-k="B">Write a Lambda@Edge function that calls a third-party geolocation API on every viewer request.</li>
+            <li data-k="C">Create signed URLs that include an IP range for every allowed country.</li>
+            <li data-k="D">Enable CloudFront geographic restrictions with a block list that contains the two countries.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>CloudFront geo restriction</b> chặn ở mức <b>quốc gia</b> cho <b>toàn bộ distribution</b> bằng block list, trả <b>403</b> – cấu hình vài cú nhấp, không cần code. <b>A sai</b>: Route 53 chỉ định tuyến DNS, người dùng vẫn có thể truy cập distribution qua tên khác/resolver khác; không phải cơ chế chặn. <b>B sai</b>: chạy được nhưng tốn vận hành và chi phí; dịch vụ bên thứ ba chỉ cần khi chặn chi tiết hơn quốc gia hoặc một phần file. <b>C sai</b>: liệt kê dải IP mọi quốc gia là bất khả thi.</div>
+          <div class="trans">
+            <div class="tq">Một công ty phân phối nội dung video có bản quyền qua Amazon CloudFront. Do các thỏa thuận bản quyền, người dùng ở hai quốc gia cụ thể phải bị chặn không được xem bất kỳ nội dung nào. Công ty muốn giải pháp có LEAST operational overhead (ít công vận hành nhất). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng Amazon Route 53 geolocation routing để gửi người dùng từ hai quốc gia đó tới một trang lỗi.</span><span class="why">Sai: Route 53 chỉ định tuyến DNS, người dùng vẫn có thể truy cập distribution qua tên hoặc resolver khác; không phải cơ chế chặn.</span></li>
+              <li data-k="B"><span class="tv">Viết một Lambda@Edge function gọi API định vị địa lý của bên thứ ba cho mỗi viewer request.</span><span class="why">Sai: chạy được nhưng tốn công vận hành và chi phí; chỉ cần khi phải chặn chi tiết hơn mức quốc gia.</span></li>
+              <li data-k="C"><span class="tv">Tạo signed URL chứa dải IP của mọi quốc gia được phép.</span><span class="why">Sai: liệt kê dải IP của mọi quốc gia được phép là bất khả thi về vận hành.</span></li>
+              <li data-k="D"><span class="tv">Bật CloudFront geographic restrictions với một block list chứa hai quốc gia đó.</span><span class="why">Đúng: geo restriction chặn ở mức quốc gia cho toàn bộ distribution (trả 403), chỉ cần cấu hình, không cần code.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company is adding a custom domain name (www.example.com) with HTTPS to an Amazon CloudFront distribution. The company's workloads run in ap-southeast-1, so the administrator requested a public certificate from AWS Certificate Manager (ACM) in ap-southeast-1. The certificate does not appear in the list when the administrator edits the distribution. What should the administrator do?</div>
+          <ol class="opts">
+            <li data-k="A">Export the certificate from ACM and upload it to the S3 origin bucket.</li>
+            <li data-k="B">Request or import the certificate in ACM in the US East (N. Virginia) Region (us-east-1) and associate it with the distribution.</li>
+            <li data-k="C">Attach the certificate to the Application Load Balancer origin instead; CloudFront will use it automatically for viewers.</li>
+            <li data-k="D">Change the viewer protocol policy to HTTP and HTTPS.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Tài liệu: để dùng chứng chỉ ACM cho HTTPS giữa <b>viewer và CloudFront</b>, phải <b>request hoặc import chứng chỉ ở us-east-1</b>. <b>A sai</b>: ACM không xuất private key của chứng chỉ public, và S3 không dùng chứng chỉ theo cách này. <b>C sai</b>: chứng chỉ trên ALB chỉ phục vụ kết nối CloudFront → origin, không dùng cho viewer. <b>D sai</b>: không giải quyết việc thiếu chứng chỉ cho tên miền tùy biến, còn làm giảm bảo mật.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang thêm tên miền tùy chỉnh (www.example.com) có HTTPS cho một Amazon CloudFront distribution. Workload của công ty chạy ở ap-southeast-1, nên quản trị viên đã yêu cầu một public certificate từ AWS Certificate Manager (ACM) ở ap-southeast-1. Chứng chỉ không xuất hiện trong danh sách khi quản trị viên chỉnh sửa distribution. Quản trị viên nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Export chứng chỉ từ ACM và upload nó lên S3 origin bucket.</span><span class="why">Sai: ACM không cho export private key của public certificate, và S3 bucket không dùng chứng chỉ theo cách này.</span></li>
+              <li data-k="B"><span class="tv">Request hoặc import chứng chỉ trong ACM ở Region US East (N. Virginia) (us-east-1) và gắn nó với distribution.</span><span class="why">Đúng: để dùng chứng chỉ ACM cho HTTPS giữa viewer và CloudFront, chứng chỉ bắt buộc phải nằm ở us-east-1.</span></li>
+              <li data-k="C"><span class="tv">Gắn chứng chỉ vào origin Application Load Balancer thay vào đó; CloudFront sẽ tự động dùng nó cho viewer.</span><span class="why">Sai: chứng chỉ trên ALB chỉ phục vụ kết nối CloudFront → origin, không được dùng cho viewer.</span></li>
+              <li data-k="D"><span class="tv">Đổi viewer protocol policy thành HTTP and HTTPS.</span><span class="why">Sai: không giải quyết việc thiếu chứng chỉ cho tên miền tùy chỉnh, lại còn làm giảm bảo mật.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/HowCloudFrontWorks.html" target="_blank" rel="noopener">How CloudFront delivers content (regional edge caches)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/origin-shield.html" target="_blank" rel="noopener">Use Amazon CloudFront Origin Shield</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/high_availability_origin_failover.html" target="_blank" rel="noopener">Optimize high availability with CloudFront origin failover</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cnames-and-https-requirements.html" target="_blank" rel="noopener">Requirements for using SSL/TLS certificates with CloudFront</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-overview.html" target="_blank" rel="noopener">Restrict access to files (custom origins, custom headers)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html" target="_blank" rel="noopener">Restrict access with VPC origins</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/DownloadDistValuesCacheBehavior.html" target="_blank" rel="noopener">Cache behavior settings</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/controlling-the-cache-key.html" target="_blank" rel="noopener">Control the cache key with a policy</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Expiration.html" target="_blank" rel="noopener">Manage how long content stays in the cache (expiration)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Invalidation.html" target="_blank" rel="noopener">Invalidate files to remove content</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/PayingForInvalidation.html" target="_blank" rel="noopener">Pay for file invalidation</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/PrivateContent.html" target="_blank" rel="noopener">Serve private content with signed URLs and signed cookies</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-choosing-signed-urls-cookies.html" target="_blank" rel="noopener">Decide to use signed URLs or signed cookies</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-signed-urls.html" target="_blank" rel="noopener">Use signed URLs (canned vs custom policy)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-trusted-signers.html" target="_blank" rel="noopener">Specify signers (trusted key groups)</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/georestrictions.html" target="_blank" rel="noopener">Restrict the geographic distribution of your content</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/edge-functions-choosing.html" target="_blank" rel="noopener">Differences between CloudFront Functions and Lambda@Edge</a></li>
+        <li><a href="https://docs.aws.amazon.com/global-accelerator/latest/dg/introduction-components.html" target="_blank" rel="noopener">AWS Global Accelerator components</a></li>
+        <li><a href="https://docs.aws.amazon.com/global-accelerator/latest/dg/introduction-how-it-works.html" target="_blank" rel="noopener">How AWS Global Accelerator works</a></li>
+        <li><a href="https://docs.aws.amazon.com/global-accelerator/latest/dg/introduction-benefits-of-migrating.html" target="_blank" rel="noopener">Understanding AWS Global Accelerator use cases</a></li>
+        <li><a href="https://docs.aws.amazon.com/global-accelerator/latest/dg/preserve-client-ip-address.html" target="_blank" rel="noopener">Preserve client IP addresses in Global Accelerator</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

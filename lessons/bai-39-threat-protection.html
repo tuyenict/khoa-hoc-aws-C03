@@ -1,0 +1,970 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 39 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-WAF.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="39" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Phân biệt nhóm dịch vụ <b>bảo vệ / ngăn chặn</b> (AWS WAF, AWS Shield, Firewall Manager) với nhóm <b>phát hiện / đánh giá / điều tra</b> (GuardDuty, Inspector, Macie, Security Hub, Detective) – câu hỏi “chọn dịch vụ nào” rất hay gặp.</li>
+          <li>Thiết kế <b>web ACL</b> của AWS WAF: rule, rule group, AWS Managed Rules, thứ tự ưu tiên, default action, các action Allow/Block/Count/CAPTCHA/Challenge, <b>rate-based rule</b>, geo match, WCU, phạm vi CloudFront (<b>us-east-1</b>) vs Regional.</li>
+          <li>So sánh <b>Shield Standard</b> (miễn phí, L3/L4) và <b>Shield Advanced</b> (SRT, cost protection, automatic application layer DDoS mitigation, health-based detection, WAF được bao phí) và biết tài nguyên nào được bảo vệ.</li>
+          <li>Hiểu <b>GuardDuty</b> (nguồn dữ liệu nền tảng, protection plans, severity, phản ứng tự động qua EventBridge), <b>Inspector</b> (quét CVE cho EC2/ECR/Lambda), <b>Macie</b> (PII trong S3).</li>
+          <li>Biết vai trò tổng hợp của <b>Security Hub CSPM</b> (chuẩn FSBP/CIS/PCI DSS/NIST, ASFF, cross-Region aggregation, cần AWS Config) và <b>Amazon Detective</b> (behavior graph, điều tra root cause).</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 8 – Security &amp; Encryption</span>
+        <p>Bài 21 đã dạy <b>Security Group, NACL, AWS Network Firewall, VPC Flow Logs</b>; Bài 25 đã dạy CloudFront (geo restriction, OAC) và Global Accelerator; Bài 12 đã nhắc WAF gắn trên ALB; Bài 16 đã nhắc Macie cho S3. Bài này <b>không lặp lại</b> các phần đó mà đi sâu vào chính các dịch vụ chống tấn công và phát hiện mối đe dọa. CloudTrail, CloudWatch và <b>AWS Config rules</b> học ở <b>Bài 40</b>; mã hóa (KMS, Secrets Manager) đã học ở <b>Bài 38</b>.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/cat/Security-Identity-Compliance.svg" alt="">Bức tranh tổng thể: bảo vệ, phát hiện và điều tra</h2>
+      <p class="lead">Bảo mật trên AWS theo nguyên tắc <span class="t" data-vi="Phòng thủ nhiều lớp">defense in depth</span>: không dựa vào một lớp duy nhất. Ở <b>vành đai</b> (perimeter) – nơi traffic từ Internet đi vào lần đầu – ta <b>chặn</b> tấn công bằng <b>AWS Shield</b> (DDoS) và <b>AWS WAF</b> (tấn công tầng ứng dụng HTTP/S), quản lý tập trung bằng <b>AWS Firewall Manager</b>. Bên trong môi trường, ta <b>phát hiện</b> hoạt động đáng ngờ (<b>GuardDuty</b>), <b>đánh giá</b> lỗ hổng phần mềm (<b>Inspector</b>), <b>tìm dữ liệu nhạy cảm</b> (<b>Macie</b>), <b>tổng hợp &amp; chấm điểm tuân thủ</b> (<b>Security Hub CSPM</b>) và <b>điều tra nguyên nhân gốc</b> (<b>Detective</b>).</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-WAF.svg" alt="">
+          <div><h4>AWS WAF</h4><span class="vi">Tường lửa ứng dụng web (Layer 7)</span><p>Giám sát và lọc request HTTP(S) tới CloudFront, ALB, API Gateway REST API, AppSync, Cognito user pool, App Runner, Verified Access, Amplify… Trả về nội dung, <b>HTTP 403</b> hoặc custom response.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Shield.svg" alt="">
+          <div><h4>AWS Shield</h4><span class="vi">Dịch vụ chống DDoS được quản lý</span><p><b>Standard</b>: tự động, miễn phí cho mọi khách hàng, chống tấn công L3/L4 phổ biến. <b>Advanced</b>: trả phí, thêm SRT, cost protection, giảm thiểu DDoS L7 tự động.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Firewall-Manager.svg" alt="">
+          <div><h4>AWS Firewall Manager</h4><span class="vi">Quản lý tường lửa tập trung</span><p>Đặt chính sách một lần cho WAF, Shield Advanced, security group, NACL, Network Firewall, DNS Firewall – tự áp cho mọi account &amp; tài nguyên mới trong <b>AWS Organizations</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-GuardDuty.svg" alt="">
+          <div><h4>Amazon GuardDuty</h4><span class="vi">Phát hiện mối đe dọa liên tục</span><p>Phân tích CloudTrail management events, VPC Flow Logs, DNS logs (và các protection plan) bằng threat intelligence + ML ⇒ sinh <b>finding</b> (credential bị lộ, cryptomining, malware…).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Inspector.svg" alt="">
+          <div><h4>Amazon Inspector</h4><span class="vi">Quản lý lỗ hổng tự động</span><p>Tự phát hiện và quét liên tục <b>EC2</b>, <b>image ECR</b>, <b>Lambda</b> tìm <b>CVE</b> và network exposure ngoài ý muốn; chấm <b>Inspector risk score</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Macie.svg" alt="">
+          <div><h4>Amazon Macie</h4><span class="vi">Phát hiện dữ liệu nhạy cảm trong S3</span><p>Dùng ML + pattern matching tìm <b>PII</b>, dữ liệu tài chính, credential trong object S3; theo dõi bucket public/không mã hóa.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Security-Hub.svg" alt="">
+          <div><h4>AWS Security Hub CSPM</h4><span class="vi">Quản lý tư thế bảo mật đám mây</span><p>“<b>Single pane of glass</b>”: gom finding từ GuardDuty, Inspector, Macie, partner… theo định dạng <b>ASFF</b>; kiểm tra tuân thủ FSBP, CIS, PCI DSS, NIST; tính security score.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Detective.svg" alt="">
+          <div><h4>Amazon Detective</h4><span class="vi">Điều tra nguyên nhân gốc</span><p>Tự thu CloudTrail, VPC Flow Logs, finding GuardDuty; dùng ML + thống kê + <b>graph</b> dựng <b>behavior graph</b> tới <b>1 năm</b> dữ liệu lịch sử để điều tra.</p></div></div>
+      </div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Câu hỏi bạn cần trả lời</th><th>Dịch vụ</th><th>Từ khóa trong đề</th></tr></thead>
+        <tbody>
+          <tr><td>Chặn SQL injection, XSS, bot, IP xấu, giới hạn số request ở tầng HTTP</td><td><b>AWS WAF</b></td><td>“<i>SQL injection</i>”, “<i>cross-site scripting</i>”, “<i>block requests from specific countries/IPs</i>”, “<i>rate limit</i>”, “<i>layer 7</i>”</td></tr>
+          <tr><td>Chống DDoS tầng mạng/vận chuyển (SYN flood, UDP reflection)</td><td><b>Shield Standard</b> (có sẵn)</td><td>“<i>no additional cost</i>”, “<i>common DDoS</i>”</td></tr>
+          <tr><td>DDoS lớn, cần đội chuyên gia 24/7, hoàn tiền chi phí tăng vọt do tấn công</td><td><b>Shield Advanced</b></td><td>“<i>DDoS Response Team / SRT</i>”, “<i>cost protection</i>”, “<i>advanced DDoS visibility</i>”</td></tr>
+          <tr><td>Áp WAF/Shield/SG đồng loạt cho mọi account, kể cả account mới</td><td><b>Firewall Manager</b></td><td>“<i>centrally manage</i>”, “<i>across all accounts in the organization</i>”, “<i>new accounts automatically</i>”</td></tr>
+          <tr><td>Phát hiện hành vi bất thường: credential bị đánh cắp, EC2 đào coin, gọi tới IP độc hại</td><td><b>GuardDuty</b></td><td>“<i>intelligent threat detection</i>”, “<i>malicious activity</i>”, “<i>anomalous API calls</i>”, “<i>cryptocurrency mining</i>”</td></tr>
+          <tr><td>Quét lỗ hổng phần mềm (CVE) trên EC2, container image, Lambda</td><td><b>Inspector</b></td><td>“<i>vulnerability scan</i>”, “<i>CVE</i>”, “<i>unintended network exposure</i>”, “<i>software vulnerabilities</i>”</td></tr>
+          <tr><td>Tìm PII / số thẻ tín dụng trong S3</td><td><b>Macie</b></td><td>“<i>sensitive data</i>”, “<i>PII</i>”, “<i>S3</i>”, “<i>data privacy</i>”</td></tr>
+          <tr><td>Một nơi xem mọi finding + kiểm tra tuân thủ chuẩn</td><td><b>Security Hub CSPM</b></td><td>“<i>aggregate findings</i>”, “<i>single dashboard</i>”, “<i>CIS / PCI DSS compliance checks</i>”</td></tr>
+          <tr><td>Điều tra nguyên nhân gốc của một finding</td><td><b>Detective</b></td><td>“<i>root cause</i>”, “<i>investigate</i>”, “<i>visualize relationships</i>”</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Security-Identity-Compliance.svg" alt="">Defense in depth cho một ứng dụng web trên AWS</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Người dùng<small>+ bot, kẻ tấn công</small></div>
+            <span class="arrow">DNS</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Route 53<small>Shield Standard</small></div>
+            <span class="arrow">HTTPS</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">CloudFront<small>Shield + <b>WAF</b> (web ACL global)</small></div>
+            <span class="arrow">origin</span>
+            <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB<small><b>WAF</b> (web ACL regional)</small></div>
+            <span class="arrow">target</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 / ECS / Lambda<small>SG, NACL (Bài 21)</small></div>
+          </div>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">Lớp PHÁT HIỆN &amp; ĐÁNH GIÁ (không chặn traffic)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/svc/Amazon-GuardDuty.svg" alt="">GuardDuty<small>mối đe dọa</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Inspector.svg" alt="">Inspector<small>lỗ hổng CVE</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Macie.svg" alt="">Macie<small>PII trong S3</small></div>
+                <span class="arrow">finding</span>
+                <div class="node"><img src="../assets/icons/svc/AWS-Security-Hub.svg" alt="">Security Hub CSPM<small>tổng hợp + chuẩn</small></div>
+                <span class="arrow">event</span>
+                <div class="node"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">EventBridge<small>→ Lambda / SNS</small></div>
+              </div>
+            </div>
+          </div>
+          <div class="grp plain"><span class="lbl"><img src="../assets/icons/svc/AWS-Firewall-Manager.svg" alt="">Firewall Manager: áp WAF / Shield Advanced / SG cho toàn Organization · <img src="../assets/icons/svc/Amazon-Detective.svg" alt="">Detective: điều tra root cause từ finding</span></div>
+        </div>
+        <figcaption><b>Hình 1.</b> Các lớp bảo vệ một ứng dụng web. Hàng trên là đường đi của traffic: Shield và WAF <b>chặn</b> ngay ở vành đai (edge hoặc Region). Hàng dưới là các dịch vụ <b>phát hiện</b>: chúng đọc log/cấu hình/tài nguyên, sinh finding, gửi về Security Hub và EventBridge để cảnh báo hoặc tự khắc phục – chúng <b>không</b> nằm trên đường đi của request.</figcaption>
+      </figure>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li><b>GuardDuty, Inspector, Macie, Security Hub, Detective không chặn traffic.</b> Đề hỏi “<i>block</i>” / “<i>prevent</i>” tấn công web ⇒ WAF/Shield; đề hỏi “<i>detect</i>” / “<i>identify</i>” ⇒ nhóm phát hiện.</li>
+          <li><b>Inspector</b> (lỗ hổng phần mềm trên tài nguyên của bạn) ≠ <b>GuardDuty</b> (hành vi đang diễn ra, đáng ngờ) ≠ <b>Trusted Advisor</b> (khuyến nghị best practice chung).</li>
+          <li><b>Macie chỉ dành cho S3</b>. PII trong DynamoDB/RDS không phải Macie; PII trong văn bản ⇒ Comprehend (Bài 37).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: AWS WAF ===================== -->
+      <h2 id="waf"><img src="../assets/icons/svc/AWS-WAF.svg" alt="">AWS WAF: web ACL, rule và rule group</h2>
+      <p class="lead"><span class="t" data-vi="Tường lửa ứng dụng web">AWS WAF</span> cho phép giám sát các request HTTP(S) được chuyển tới tài nguyên web được bảo vệ. Dựa trên tiêu chí bạn đặt (IP nguồn, giá trị query string, header, quốc gia…), dịch vụ gắn với tài nguyên sẽ trả về nội dung, trả mã <b>HTTP 403 (Forbidden)</b>, hoặc một <b>custom response</b>. WAF làm việc ở <b>Layer 7</b> – nó hiểu HTTP, khác với Security Group/NACL (Layer 3/4, Bài 21).</p>
+
+      <h3>Tài nguyên được WAF bảo vệ</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Có thể gắn web ACL</th><th>KHÔNG gắn trực tiếp được</th></tr></thead>
+        <tbody>
+          <tr><td>
+            <ul>
+              <li><b>Amazon CloudFront</b> distribution (phạm vi <b>Global</b>)</li>
+              <li><b>Application Load Balancer</b></li>
+              <li><b>Amazon API Gateway REST API</b></li>
+              <li><b>AWS AppSync</b> GraphQL API</li>
+              <li><b>Amazon Cognito</b> user pool</li>
+              <li><b>AWS App Runner</b> service, <b>AWS Verified Access</b> instance, <b>AWS Amplify</b>, Amazon Bedrock AgentCore Gateway</li>
+            </ul></td>
+            <td>
+            <ul>
+              <li><b>Network Load Balancer</b>, <b>Classic Load Balancer</b> <i>(suy ra: không có trong danh sách của tài liệu)</i></li>
+              <li><b>EC2 instance</b> trực tiếp</li>
+              <li>API Gateway <b>HTTP API</b> (chỉ REST API) – <i>kiến thức phổ biến, khớp danh sách tài liệu</i></li>
+              <li>Muốn bảo vệ app trên <b>ECS</b>: đặt sau <b>ALB đã bật WAF</b> (tài liệu ghi rõ)</li>
+            </ul></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Các thành phần</h3>
+      <ul>
+        <li><span class="t" data-vi="Danh sách kiểm soát truy cập web">Web ACL</span> (trên console mới gọi là <b>protection pack</b>): tài nguyên WAF dùng để bảo vệ một tập tài nguyên AWS. Chứa các rule và một <span class="t" data-vi="Hành động mặc định">default action</span> (<b>Allow</b> hoặc <b>Block</b>) cho request không bị rule nào allow/block rõ ràng.</li>
+        <li><span class="t" data-vi="Quy tắc">Rule</span>: một <b>statement</b> (tiêu chí kiểm tra) + một <b>action</b>. Rule <b>không phải</b> tài nguyên riêng – chỉ tồn tại trong web ACL hoặc rule group.</li>
+        <li><span class="t" data-vi="Nhóm quy tắc">Rule group</span>: tập rule tái sử dụng. Có 3 nguồn: <b>AWS Managed Rules</b>, <b>AWS Marketplace</b> (seller bên thứ ba), và rule group <b>tự viết</b>. Mỗi rule group có <b>capacity cố định (immutable)</b> đặt lúc tạo.</li>
+        <li><span class="t" data-vi="Đơn vị dung lượng web ACL">Web ACL capacity unit (WCU)</span>: đơn vị đo tài nguyên xử lý của rule. Rule đơn giản (geo match = 1 WCU) tốn ít, rule phức tạp (regex, transformation, kiểm tra JSON body) tốn nhiều.</li>
+        <li><b>Thứ tự ưu tiên (priority)</b>: WAF đánh giá rule <b>từ trên xuống</b> theo số priority; rule có <b>terminating action</b> (Allow/Block) khớp đầu tiên sẽ dừng việc đánh giá.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>5.000 WCU</b><span>dung lượng tối đa của một web ACL (cũng là tối đa của một rule group)</span></div>
+        <div class="stat"><b>1.500 WCU</b><span>mức WCU nằm trong giá cơ bản của web ACL; vượt mức này tính phí thêm theo bậc</span></div>
+        <div class="stat"><b>16 KB</b><span>giới hạn kiểm tra body mặc định (CloudFront, API Gateway, Cognito…); tăng lên thì có thể tốn thêm phí</span></div>
+        <div class="stat"><b>HTTP 403</b><span>phản hồi mặc định khi request bị Block (tùy biến được bằng custom response)</span></div>
+      </div>
+
+      <h3>Rule action</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Action</th><th>Terminating?</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><b>Allow</b></td><td class="yes">Có</td><td>Chuyển request tới tài nguyên; có thể chèn custom header trước khi chuyển.</td></tr>
+          <tr><td><b>Block</b></td><td class="yes">Có</td><td>Chặn; mặc định tài nguyên trả <b>403 Forbidden</b>, có thể tùy biến response.</td></tr>
+          <tr><td><b>Count</b></td><td class="no">Không</td><td>Chỉ đếm (metric, log) và có thể gắn <span class="t" data-vi="Nhãn gắn vào request">label</span>, rồi tiếp tục đánh giá rule sau. Dùng để <b>thử nghiệm rule mới trên traffic production</b> trước khi bật Block.</td></tr>
+          <tr><td><b>CAPTCHA</b></td><td>Tùy token</td><td>Bắt người dùng giải câu đố để chứng minh là người. Token hợp lệ ⇒ như Count; token không hợp lệ/hết hạn ⇒ chặn và gửi câu đố. Chỉ chạy khi trình duyệt truy cập <b>HTTPS</b>. <b>Có phí thêm</b>.</td></tr>
+          <tr><td><b>Challenge</b></td><td>Tùy token</td><td>“Thử thách ngầm” (silent challenge) bằng JavaScript để phân biệt trình duyệt thật với bot, người dùng không phải thao tác. <b>Có phí thêm</b>.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Các loại rule statement hay dùng</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Statement</th><th>Kiểm tra gì</th><th>Ví dụ dùng trong đề</th></tr></thead>
+        <tbody>
+          <tr><td><b>IP set match</b></td><td>IP nguồn nằm trong danh sách IP/CIDR (IP set tái sử dụng)</td><td>Chặn dải IP tấn công; chỉ cho IP văn phòng vào trang admin</td></tr>
+          <tr><td><b>Geo match</b></td><td>Quốc gia/vùng nguồn (mã ISO 3166 alpha-2, dữ liệu MaxMind); <b>1 WCU</b>; luôn gắn label quốc gia</td><td>“<i>Block requests from specific countries</i>”</td></tr>
+          <tr><td><b>SQL injection</b> / <b>XSS</b> match</td><td>Mã SQL độc hại / script độc hại trong URI, query, header, body</td><td>“<i>Protect against SQL injection and cross-site scripting</i>”</td></tr>
+          <tr><td><b>String match</b> / <b>Regex</b> (regex pattern set)</td><td>Chuỗi hoặc biểu thức chính quy trong thành phần request</td><td>Chặn User-Agent cụ thể, đường dẫn <code>/admin</code></td></tr>
+          <tr><td><b>Size constraint</b></td><td>Kích thước của thành phần request</td><td>Chặn body/query quá lớn</td></tr>
+          <tr><td><b>Label match</b></td><td>Label do rule trước gắn vào request</td><td>Kết hợp kết quả của managed rule group</td></tr>
+          <tr><td><b>Rate-based</b></td><td>Đếm request theo nhóm (IP, header…) trong một cửa sổ thời gian</td><td>“<i>HTTP flood</i>”, “<i>limit requests per IP</i>”</td></tr>
+          <tr><td>Logical <b>AND / OR / NOT</b></td><td>Kết hợp các statement khác</td><td>Chặn quốc gia X <b>trừ</b> IP đối tác (AND + NOT IP set)</td></tr>
+          <tr><td><b>Managed rule group</b> / <b>Rule group</b> reference</td><td>Dùng nguyên một rule group (không lồng được trong statement khác)</td><td>Bật Core rule set, Known bad inputs…</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>AWS Managed Rules</h3>
+      <p>Các rule group do AWS viết và cập nhật, chọn version được, override action từng rule được, thu hẹp phạm vi bằng <span class="t" data-vi="Câu lệnh thu hẹp phạm vi">scope-down statement</span>. Tất cả đều gắn <b>label</b> cho request khớp.</p>
+      <ul>
+        <li><b>Baseline</b>: <b>Core rule set (CRS)</b> – các lỗ hổng web phổ biến (kiểu OWASP); <b>Admin protection</b> – chặn truy cập trang quản trị lộ ra ngoài; <b>Known bad inputs</b> – pattern request không hợp lệ/khai thác đã biết.</li>
+        <li><b>Use-case specific</b>: SQL database, Linux OS, POSIX OS, Windows OS, PHP application, WordPress application.</li>
+        <li><b>IP reputation</b>: <b>Amazon IP reputation list</b> (IP do Amazon threat intelligence đánh dấu xấu), <b>Anonymous IP list</b> (VPN, proxy, Tor, hosting – che giấu danh tính).</li>
+        <li><b>Intelligent threat mitigation</b> (có <b>phí thêm</b>): <b>Bot Control</b> (bot thông thường và bot nhắm mục tiêu), <b>Fraud Control ATP</b> (<i>account takeover prevention</i> – chống chiếm tài khoản qua trang login, credential stuffing), <b>Fraud Control ACFP</b> (<i>account creation fraud prevention</i> – chống tạo tài khoản giả), <b>Anti-DDoS</b> (DDoS tầng 7).</li>
+      </ul>
+
+      <h3>Phạm vi (scope), ghi log và giám sát</h3>
+      <ul>
+        <li>Web ACL cho <b>CloudFront</b> có phạm vi <b>Global</b> và Region bị cố định là <b>US East (N. Virginia) <code>us-east-1</code></b>. Web ACL cho tài nguyên <b>Regional</b> (ALB, API Gateway, AppSync, Cognito…) phải tạo <b>cùng Region</b> với tài nguyên đó.</li>
+        <li>Mỗi tài nguyên chỉ gắn được <b>một</b> web ACL; một web ACL có thể gắn nhiều tài nguyên <i>(kiến thức phổ biến)</i>.</li>
+        <li><b>Log đầy đủ request</b> (logging configuration): gửi tới <b>CloudWatch Logs</b>, <b>Amazon S3</b> hoặc <b>Amazon Data Firehose</b>. Tên đích phải bắt đầu bằng <code>aws-waf-logs-</code> <i>(kiến thức phổ biến)</i>. Ngoài ra WAF có <b>CloudWatch metrics</b> và <b>sampled requests</b> trên console.</li>
+        <li>Quy trình triển khai an toàn theo tài liệu: test/tune trong môi trường staging ⇒ chạy rule ở <b>Count mode</b> với traffic production ⇒ rồi mới bật Block.</li>
+        <li>CloudFront <b>geo restriction</b> (Bài 25) không chuyển request bị chặn tới WAF. Nếu cần chặn theo địa lý <b>kết hợp tiêu chí khác</b> (vd chặn quốc gia X trừ một số IP) ⇒ dùng <b>WAF geo match</b> thay cho geo restriction.</li>
+      </ul>
+
+      <!-- RATE-BASED -->
+      <h3>Rate-based rule – giới hạn tốc độ request</h3>
+      <p><span class="t" data-vi="Quy tắc dựa trên tốc độ">Rate-based rule</span> đếm request đến, gom theo tiêu chí bạn chọn, và áp action (thường là Block) khi một nhóm vượt ngưỡng trong <b>evaluation window</b>. Đây là công cụ chính chống <span class="t" data-vi="Tấn công làm ngập HTTP – DDoS tầng 7">HTTP flood</span>, brute-force login và scraping.</p>
+      <div class="stats">
+        <div class="stat"><b>60 / 120 / 300 / 600 s</b><span>evaluation window hợp lệ; mặc định <b>300 giây (5 phút)</b> – thời gian “nhìn lại” mỗi lần kiểm tra</span></div>
+        <div class="stat"><b>10</b><span>rate limit nhỏ nhất được phép (số request trong evaluation window, cho mỗi aggregation instance)</span></div>
+        <div class="stat"><b>2 + 30/key</b><span>WCU: 2 cơ bản, +30 cho mỗi custom aggregation key, + WCU của scope-down statement</span></div>
+      </div>
+      <ul>
+        <li><b>Request aggregation</b>: theo <b>IP nguồn</b>, theo <b>IP trong header</b> (vd <code>X-Forwarded-For</code> – WAF lấy IP <b>đầu tiên</b> trong header, hữu ích khi đứng sau proxy/CDN khác), <b>custom keys</b> (kết hợp header, cookie, query, URI path, label…) hoặc <b>Count all</b> (đếm tất cả – bắt buộc có scope-down statement).</li>
+        <li><b>Scope-down statement</b>: chỉ đếm request khớp điều kiện, vd chỉ đếm request tới <code>/login</code>, hay chỉ request từ một quốc gia.</li>
+        <li><b>Action</b>: mọi action <b>trừ Allow</b>. Rate limit được áp “gần đúng”, không bảo đảm chính xác tuyệt đối.</li>
+        <li>Mỗi lần dùng rule (trong web ACL khác nhau, hay rule group dùng ở nhiều nơi) là một <b>instance riêng</b>, đếm riêng.</li>
+        <li>Rate-based statement <b>không lồng được</b> trong statement khác.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 800 330" width="800" role="img" aria-label="Luồng đánh giá web ACL của AWS WAF">
+          <defs><marker id="a39" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#DD344C"/></marker>
+          <marker id="b39" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#7AA116"/></marker></defs>
+          <image href="../assets/icons/res/Users.svg" x="15" y="20" width="44" height="44"/>
+          <text x="8" y="80" font-size="11" font-weight="700">HTTP(S) request</text>
+          <path d="M65 42 H140" stroke="#DD344C" stroke-width="2" marker-end="url(#a39)"/>
+          <rect x="145" y="10" width="640" height="250" rx="10" fill="#DD344C" fill-opacity="0.05" stroke="#DD344C"/>
+          <image href="../assets/icons/svc/AWS-WAF.svg" x="155" y="18" width="34" height="34"/>
+          <text x="195" y="40" font-size="13" font-weight="700">Web ACL (đánh giá theo priority, từ nhỏ đến lớn)</text>
+          <rect x="160" y="60" width="140" height="58" rx="6" fill="none" stroke="#545B64"/>
+          <text x="168" y="78" font-size="11" font-weight="700">P0: IP set (văn phòng)</text>
+          <text x="168" y="94" font-size="10">khớp ⇒ ALLOW</text>
+          <text x="168" y="108" font-size="10">(terminating)</text>
+          <path d="M300 89 H325" stroke="#545B64" stroke-width="2" marker-end="url(#a39)"/>
+          <rect x="330" y="60" width="140" height="58" rx="6" fill="none" stroke="#545B64"/>
+          <text x="338" y="78" font-size="11" font-weight="700">P1: Geo match</text>
+          <text x="338" y="94" font-size="10">quốc gia bị cấm</text>
+          <text x="338" y="108" font-size="10">⇒ BLOCK (403)</text>
+          <path d="M470 89 H495" stroke="#545B64" stroke-width="2" marker-end="url(#a39)"/>
+          <rect x="500" y="60" width="130" height="58" rx="6" fill="none" stroke="#545B64"/>
+          <text x="508" y="78" font-size="11" font-weight="700">P2: Rate-based</text>
+          <text x="508" y="94" font-size="10">&gt; 2.000 req/5 phút</text>
+          <text x="508" y="108" font-size="10">mỗi IP ⇒ BLOCK</text>
+          <path d="M630 89 H650" stroke="#545B64" stroke-width="2" marker-end="url(#a39)"/>
+          <rect x="655" y="60" width="120" height="58" rx="6" fill="none" stroke="#545B64"/>
+          <text x="662" y="78" font-size="11" font-weight="700">P3: Managed</text>
+          <text x="662" y="94" font-size="10">CRS, SQLi, Known</text>
+          <text x="662" y="108" font-size="10">bad inputs ⇒ BLOCK</text>
+          <rect x="330" y="140" width="300" height="46" rx="6" fill="none" stroke="#545B64" stroke-dasharray="4 3"/>
+          <text x="340" y="158" font-size="11" font-weight="700">Rule ở Count mode (đang thử nghiệm)</text>
+          <text x="340" y="174" font-size="10">đếm + gắn label, KHÔNG dừng – đánh giá tiếp</text>
+          <path d="M715 120 V215 H560" stroke="#7AA116" stroke-width="2" marker-end="url(#b39)"/>
+          <rect x="330" y="198" width="225" height="46" rx="6" fill="#7AA116" fill-opacity="0.1" stroke="#7AA116"/>
+          <text x="340" y="216" font-size="11" font-weight="700">Không rule nào terminating khớp</text>
+          <text x="340" y="232" font-size="10">⇒ DEFAULT ACTION (Allow hoặc Block)</text>
+          <image href="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" x="80" y="200" width="40" height="40"/>
+          <text x="60" y="256" font-size="11">ALB / CloudFront / API GW</text>
+          <path d="M325 221 H128" stroke="#7AA116" stroke-width="2" marker-end="url(#b39)"/>
+          <text x="170" y="214" font-size="10">Allow ⇒ tới tài nguyên</text>
+          <text x="160" y="300" font-size="11">Log: CloudWatch Logs / S3 / Data Firehose · Metric: CloudWatch · Sampled requests trên console</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Cách web ACL xử lý một request. Rule được đánh giá theo <b>priority</b>; rule đầu tiên có action <b>terminating</b> (Allow/Block, hoặc CAPTCHA/Challenge khi token không hợp lệ) khớp sẽ quyết định. Count chỉ ghi nhận rồi đi tiếp. Nếu không rule nào quyết định ⇒ <b>default action</b>. Đặt rule “allow IP tin cậy” lên đầu để không bị các rule chặn phía sau ảnh hưởng. Ngưỡng 2.000 trong hình chỉ là ví dụ.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Protect a web application on ALB/CloudFront/API Gateway from SQL injection and XSS</i>” ⇒ <b>AWS WAF</b> + AWS Managed Rules (Core rule set, SQL database). <b>Không</b> phải Shield, GuardDuty hay Security Group.</li>
+          <li>“<i>A single IP sends thousands of requests</i>”, “<i>HTTP flood</i>”, “<i>brute-force login</i>” ⇒ <b>WAF rate-based rule</b> (có thể scope-down vào <code>/login</code>).</li>
+          <li>“<i>Block traffic from specific countries but allow a partner IP range</i>” ⇒ WAF rule: <b>AND(geo match, NOT(IP set))</b>.</li>
+          <li>“<i>Web ACL for CloudFront not visible</i>” ⇒ web ACL phải ở phạm vi <b>Global (us-east-1)</b>.</li>
+          <li>“<i>Application behind a Network Load Balancer needs WAF</i>” ⇒ NLB không hỗ trợ WAF: đổi sang <b>ALB</b> hoặc đặt <b>CloudFront</b> + WAF phía trước.</li>
+          <li>“<i>Test new rules without impacting users</i>” ⇒ đặt rule ở <b>Count</b> và xem metric/log.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: SHIELD ===================== -->
+      <h2 id="shield"><img src="../assets/icons/svc/AWS-Shield.svg" alt="">AWS Shield: chống DDoS Standard vs Advanced</h2>
+      <p class="lead"><span class="t" data-vi="Tấn công từ chối dịch vụ phân tán">Distributed Denial of Service (DDoS)</span> là tấn công dùng nhiều nguồn cùng lúc làm cạn tài nguyên khiến ứng dụng không phục vụ được người dùng thật. <b>AWS Shield</b> là dịch vụ chống DDoS được quản lý, bảo vệ <span class="t" data-vi="Vành đai ứng dụng – điểm traffic từ ngoài vào AWS lần đầu">application perimeter</span>. Nếu người dùng vào thẳng Region, vành đai là <b>VPC</b>; nếu đi qua <b>Route 53</b> rồi <b>CloudFront</b> hoặc <b>Global Accelerator</b>, vành đai bắt đầu ngay tại <b>edge</b> của mạng AWS – xa ứng dụng hơn, hấp thụ tấn công tốt hơn.</p>
+
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/AWS-Shield.svg" alt="">Shield Standard</h4>
+          <ul>
+            <li><b>Tự động</b> cho <b>mọi khách hàng AWS</b>, <b>không tốn thêm phí</b>, không cần bật.</li>
+            <li>Chống các tấn công DDoS phổ biến, thường gặp ở <b>tầng mạng và vận chuyển (Layer 3/4)</b>: <b>SYN flood</b>, <b>UDP reflection</b>…</li>
+            <li>Lợi ích đặc biệt với <b>Route 53 hosted zone</b>, <b>CloudFront</b>, <b>Global Accelerator standard accelerator</b>: được bảo vệ toàn diện trước mọi tấn công L3/L4 đã biết.</li>
+            <li>Không có đội hỗ trợ riêng, không bồi hoàn chi phí, không có metric tấn công chi tiết.</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/AWS-Shield_AWS-Shield-Advanced.svg" alt="">Shield Advanced</h4>
+          <ul>
+            <li><b>Trả phí</b> (subscription); chỉ bảo vệ tài nguyên bạn <b>chỉ định rõ</b> (hoặc qua chính sách Firewall Manager) – <b>không tự động</b>.</li>
+            <li>Bảo vệ mở rộng trước DDoS, <b>volumetric bot</b>, khai thác lỗ hổng; cả <b>L3/L4 và L7</b>.</li>
+            <li><b>Shield Response Team (SRT)</b>, <b>proactive engagement</b>, <b>cost protection</b>, <b>health-based detection</b>, <b>automatic application layer DDoS mitigation</b>, protection groups, metric &amp; báo cáo chi tiết.</li>
+            <li>Bao gồm phí WAF chuẩn cho tài nguyên được bảo vệ.</li>
+          </ul></div>
+      </div>
+
+      <h3>Tài nguyên Shield Advanced bảo vệ được</h3>
+      <ul>
+        <li><b>Amazon CloudFront</b> distribution (kể cả staging distribution của continuous deployment).</li>
+        <li><b>Amazon Route 53</b> hosted zone.</li>
+        <li><b>AWS Global Accelerator</b> standard accelerator.</li>
+        <li><b>Elastic IP</b> của EC2 ⇒ bảo vệ <b>EC2 instance</b> và <b>Network Load Balancer</b> thông qua Elastic IP gắn với chúng.</li>
+        <li><b>Application Load Balancer</b> và <b>Classic Load Balancer</b>.</li>
+      </ul>
+
+      <h3>Các năng lực của Shield Advanced (theo tài liệu)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Năng lực</th><th>Chi tiết</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t" data-vi="Đội phản ứng của Shield">Shield Response Team (SRT)</span></td><td>Đội chuyên gia đã bảo vệ AWS và Amazon.com; liên hệ <b>bất kỳ lúc nào</b> khi bị DDoS ảnh hưởng tính khả dụng, cùng tạo custom mitigation. <b>Yêu cầu thêm</b> gói <b>Business Support</b> hoặc <b>Enterprise Support</b>.</td></tr>
+          <tr><td><span class="t" data-vi="Chủ động liên hệ">Proactive engagement</span></td><td>SRT <b>chủ động liên hệ bạn</b> khi Route 53 health check gắn với tài nguyên chuyển <b>unhealthy</b> trong một sự kiện Shield phát hiện. Chỉ có với tài nguyên đã bật health-based detection.</td></tr>
+          <tr><td><span class="t" data-vi="Phát hiện dựa trên tình trạng sức khỏe">Health-based detection</span></td><td>Dùng <b>Route 53 health checks</b> để giảm false positive, phát hiện và giảm thiểu nhanh hơn khi tài nguyên unhealthy. Áp dụng mọi loại tài nguyên <b>trừ Route 53 hosted zone</b>.</td></tr>
+          <tr><td><span class="t" data-vi="Tự động giảm thiểu DDoS tầng ứng dụng">Automatic application layer DDoS mitigation</span></td><td>Shield Advanced tự áp <b>WAF rate limiting</b> lên request từ nguồn DDoS đã biết và <b>tự thêm/quản lý rule WAF</b> khi phát hiện tấn công L7; chọn chế độ <b>Count</b> hoặc <b>Block</b>. Thêm một rule group tốn <b>150 WCU</b> vào web ACL.</td></tr>
+          <tr><td><span class="t" data-vi="Bảo vệ chi phí">Cost protection</span></td><td>Bồi hoàn (dưới dạng <b>service credit</b>) phần hóa đơn tăng vọt do DDoS vào tài nguyên được bảo vệ, vd phí data transfer out (DTO) – phải gửi yêu cầu credit sau tấn công.</td></tr>
+          <tr><td><span class="t" data-vi="Nhóm bảo vệ">Protection groups</span></td><td>Gom tài nguyên được bảo vệ thành nhóm logic để phát hiện/giảm thiểu trên cả nhóm; tiêu chí membership tự thêm tài nguyên mới; một tài nguyên thuộc nhiều nhóm được.</td></tr>
+          <tr><td>Enhanced visibility</td><td>Metric và báo cáo thời gian thực về sự kiện/tấn công qua console, API và <b>CloudWatch metrics</b>.</td></tr>
+          <tr><td>Tích hợp WAF &amp; Firewall Manager</td><td>Phí WAF chuẩn (web ACL, rule, request cơ bản – tới 1.500 WCU và body mặc định) của tài nguyên được bảo vệ <b>đã bao gồm</b>; có Layer 7 Anti-DDoS managed rule group; tới <b>50 tỷ request/tháng</b>. Chính sách Shield Advanced của <b>Firewall Manager</b> miễn phí với khách hàng Shield Advanced.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>$0</b><span>Shield Standard – mọi khách hàng, tự động</span></div>
+        <div class="stat"><b>~$3.000/tháng</b><span>Shield Advanced, cam kết <b>1 năm</b>; một phí cho cả Organization (consolidated billing) – <i>giá &amp; cam kết: kiến thức phổ biến/trang pricing, không có trong trang đã đọc</i></span></div>
+        <div class="stat"><b>150 WCU</b><span>rule group của automatic application layer DDoS mitigation</span></div>
+        <div class="stat"><b>50 tỷ</b><span>request/tháng tới tài nguyên WAF được Shield Advanced bảo vệ đã bao gồm</span></div>
+      </div>
+
+      <ul>
+        <li><b>Thanh toán</b>: với account trong AWS Organizations, phí Shield Advanced tính vào <b>payer account</b>; nhiều account trong cùng consolidated billing family chỉ trả <b>một</b> phí subscription (organization phải sở hữu mọi account và tài nguyên).</li>
+        <li><b>Không bao gồm</b>: WAF cho tài nguyên không được Shield Advanced bảo vệ, và phí WAF “không chuẩn” như <b>Bot Control</b>, action <b>CAPTCHA</b>, web ACL &gt; 1.500 WCU, kiểm tra body vượt kích thước mặc định.</li>
+      </ul>
+
+      <h3>Kiến trúc chống DDoS (DDoS resiliency)</h3>
+      <p>Shield bảo vệ mọi ứng dụng trên AWS, nhưng tài liệu nhấn mạnh <b>quyết định kiến trúc</b> của bạn ảnh hưởng tới khả năng chịu DDoS. Các best practice <i>(tổng hợp từ tài liệu và whitepaper DDoS best practices – kiến thức phổ biến)</i>:</p>
+      <ol class="steps">
+        <li><b>Đưa vành đai ra edge</b>: phục vụ qua <b>CloudFront</b> (nội dung tĩnh và động) và <b>Route 53</b>; với TCP/UDP không phải HTTP ⇒ <b>Global Accelerator</b>. Mạng edge toàn cầu hấp thụ tấn công volumetric.</li>
+        <li><b>Giảm bề mặt tấn công</b>: backend trong <b>private subnet</b>, chỉ ALB/CloudFront public; Security Group chỉ cho origin nhận traffic từ CloudFront (managed prefix list) hoặc ALB.</li>
+        <li><b>Lọc tầng 7</b> bằng <b>WAF</b> (rate-based rule, managed rules, geo, IP reputation) trên CloudFront/ALB.</li>
+        <li><b>Hấp thụ bằng scale</b>: ALB + <b>Auto Scaling</b> để chịu tải tăng đột biến trong khi mitigation hoạt động.</li>
+        <li><b>Giám sát</b>: CloudWatch alarm cho metric bất thường; với ứng dụng quan trọng ⇒ <b>Shield Advanced</b> + health check + proactive engagement.</li>
+      </ol>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Shield.svg" alt="">Kiến trúc chịu DDoS với Shield Advanced</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Internet.svg" alt="">Internet<small>người dùng + botnet</small></div>
+            <span class="arrow">tấn công L3/L4/L7</span>
+            <div class="grp plain"><span class="lbl">AWS edge locations</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/svc/Amazon-Route-53.svg" alt="">Route 53<small>hosted zone được bảo vệ</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-CloudFront.svg" alt="">CloudFront<small>+ web ACL (us-east-1)<br>rate-based, CRS</small></div>
+              </div>
+            </div>
+          </div>
+          <div class="arrow down"><span>chỉ traffic đã lọc</span></div>
+          <div class="grp region"><span class="lbl">Region</span>
+            <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC</span>
+              <div class="row">
+                <div class="grp pub"><span class="lbl">Public subnet</span>
+                  <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB<small>Shield Advanced protection<br>+ Route 53 health check</small></div>
+                </div>
+                <div class="grp priv"><span class="lbl">Private subnet (Auto Scaling)</span>
+                  <div class="row">
+                    <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2</div>
+                    <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="grp plain"><span class="lbl"><img src="../assets/icons/res/AWS-Shield_AWS-Shield-Advanced.svg" alt="">SRT (cần Business/Enterprise Support) · Proactive engagement khi health check unhealthy · Cost protection · Metric DDoS trên CloudWatch</span></div>
+        </div>
+        <figcaption><b>Hình 3.</b> Ứng dụng web được thiết kế chịu DDoS: vành đai đặt ở edge (Route 53 + CloudFront + WAF), backend nằm trong private subnet và co giãn bằng Auto Scaling. Shield Advanced bảo vệ CloudFront, hosted zone và ALB; health check giúp phát hiện nhanh và kích hoạt proactive engagement.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Protect against DDoS at no additional cost</i>” ⇒ <b>Shield Standard</b> (đã bật sẵn) + CloudFront/Route 53.</li>
+          <li>“<i>24/7 access to AWS DDoS experts</i>”, “<i>reimburse scaling charges caused by a DDoS attack</i>”, “<i>near real-time attack visibility</i>” ⇒ <b>Shield Advanced</b>.</li>
+          <li>“<i>Automatically mitigate layer 7 DDoS with minimal effort</i>” ⇒ Shield Advanced <b>automatic application layer DDoS mitigation</b> (cần web ACL WAF gắn với tài nguyên).</li>
+          <li>“<i>Protect an EC2 instance / NLB with Shield Advanced</i>” ⇒ bảo vệ qua <b>Elastic IP</b>.</li>
+          <li>“<i>Subscribe all accounts in the organization to Shield Advanced and protect new resources automatically</i>” ⇒ <b>Firewall Manager</b> Shield Advanced policy.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: FIREWALL MANAGER ===================== -->
+      <h2 id="firewall-manager"><img src="../assets/icons/svc/AWS-Firewall-Manager.svg" alt="">AWS Firewall Manager: quản lý chính sách tập trung</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ quản lý tường lửa tập trung">AWS Firewall Manager</span> đơn giản hóa việc quản trị nhiều loại bảo vệ trên <b>nhiều account và tài nguyên</b>: bạn thiết lập <b>một lần</b>, dịch vụ <b>tự động áp</b> lên các account và tài nguyên – kể cả account và tài nguyên <b>thêm vào sau</b>. Đặc biệt hữu ích khi cần bảo vệ <b>toàn bộ organization</b> hoặc thường xuyên thêm tài nguyên mới.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Loại chính sách (policy)</th><th>Firewall Manager làm gì</th></tr></thead>
+        <tbody>
+          <tr><td><b>AWS WAF</b></td><td>Triển khai rule group bắt buộc lên mọi ALB/CloudFront/API Gateway trong phạm vi; account vẫn thêm rule riêng được <i>(cơ chế first/last rule group: kiến thức phổ biến)</i>.</td></tr>
+          <tr><td><b>AWS Shield Advanced</b></td><td>Subscribe mọi member account vào Shield Advanced, tự subscribe account mới vào phạm vi; tự thêm protection cho tài nguyên mới.</td></tr>
+          <tr><td><b>Security group</b></td><td>Áp security group rule cho mọi member account hoặc tập con, tự áp cho account mới; <b>audit</b> rule quá rộng <i>(audit: kiến thức phổ biến)</i>.</td></tr>
+          <tr><td><b>Network ACL</b></td><td>Áp NACL chuẩn cho subnet trong phạm vi.</td></tr>
+          <tr><td><b>AWS Network Firewall</b></td><td>Triển khai firewall và policy cho VPC (Network Firewall: Bài 21).</td></tr>
+          <tr><td><b>Route 53 Resolver DNS Firewall</b></td><td>Gắn rule group DNS Firewall cho VPC (chặn truy vấn tới domain độc hại).</td></tr>
+          <tr><td>Third-party firewall</td><td>Firewall/managed rule của partner mua qua AWS Marketplace.</td></tr>
+        </tbody>
+      </table></div>
+
+      <ul>
+        <li><b>Phạm vi chính sách</b>: theo account, <b>mọi tài nguyên một loại</b> (vd mọi CloudFront distribution), hoặc <b>tài nguyên có tag cụ thể</b>.</li>
+        <li><b>Điều kiện tiên quyết</b> (theo thứ tự trong tài liệu): tham gia và cấu hình <b>AWS Organizations</b>; tạo <b>Firewall Manager default administrator account</b>; <b>bật AWS Config</b>; (tùy chọn) subscribe Marketplace cho third-party; bật chia sẻ qua <b>AWS RAM</b> cho chính sách Network Firewall và DNS Firewall.</li>
+        <li><b>Giá</b>: phí phát sinh cho <b>dịch vụ bên dưới</b> như WAF và AWS Config. Chính sách Shield Advanced miễn phí cho khách hàng Shield Advanced.</li>
+        <li>Theo dõi <b>compliance</b> của từng chính sách; tích hợp <b>Security Hub CSPM</b>; giám sát DDoS tập trung cho cả organization.</li>
+      </ul>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – chuỗi cửa hàng</span>
+        <p><b>WAF</b> là <b>bảo vệ đứng cửa</b> một cửa hàng, kiểm tra từng khách theo danh sách quy định. <b>Shield</b> là <b>hàng rào &amp; đội chống bạo loạn</b> khi một đám đông khổng lồ kéo tới chặn cửa (Standard: hàng rào chung của khu phố; Advanced: đội riêng gọi được 24/7 kèm bảo hiểm thiệt hại). <b>Firewall Manager</b> là <b>trụ sở chính</b> ban hành quy định an ninh chung và tự áp cho mọi chi nhánh – kể cả chi nhánh mới mở.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Enforce a common set of WAF rules across all accounts in AWS Organizations, including future accounts, with least operational overhead</i>” ⇒ <b>Firewall Manager</b> (không phải script hay StackSets tự viết).</li>
+          <li>“<i>Apply/audit security groups across accounts centrally</i>” ⇒ Firewall Manager <b>security group policy</b>.</li>
+          <li>Thấy Firewall Manager trong đáp án ⇒ nhớ điều kiện: <b>Organizations + administrator account + AWS Config</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: GUARDDUTY ===================== -->
+      <h2 id="guardduty"><img src="../assets/icons/svc/Amazon-GuardDuty.svg" alt="">Amazon GuardDuty: phát hiện mối đe dọa thông minh</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ phát hiện mối đe dọa">Amazon GuardDuty</span> liên tục giám sát, phân tích các nguồn dữ liệu và log trong môi trường AWS. Nó dùng <span class="t" data-vi="Nguồn tình báo mối đe dọa">threat intelligence feeds</span> (danh sách IP, domain độc hại, file hash) và <b>machine learning</b> để nhận diện hoạt động đáng ngờ, rồi sinh <span class="t" data-vi="Phát hiện – báo cáo chi tiết về một vấn đề bảo mật">finding</span>. Với các nguồn nền tảng, chỉ cần bật GuardDuty là chạy – không cài agent, không cấu hình log.</p>
+
+      <h3>Các kịch bản GuardDuty phát hiện (theo tài liệu)</h3>
+      <ul>
+        <li><b>Credential AWS bị lộ / bị đánh cắp</b> (compromised and exfiltrated credentials).</li>
+        <li><b>Data exfiltration</b> và phá hủy dữ liệu có thể dẫn tới <b>ransomware</b>; đăng nhập bất thường vào Aurora/RDS.</li>
+        <li><b>Cryptomining</b> trái phép trên EC2 và container.</li>
+        <li><b>Malware</b> trong EC2, container, và file mới upload lên S3.</li>
+        <li>Sự kiện cấp OS, mạng, file bất thường trên EKS, ECS-Fargate, EC2.</li>
+      </ul>
+
+      <h3>Nguồn dữ liệu nền tảng (foundational data sources)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nguồn</th><th>Đặc điểm quan trọng</th></tr></thead>
+        <tbody>
+          <tr><td><b>AWS CloudTrail management events</b></td><td>Control plane events (vd <code>AttachRolePolicy</code>, <code>CreateSubnet</code>, <code>CreateTrail</code>). GuardDuty lấy qua <b>luồng sự kiện độc lập, nhân bản</b> – không ảnh hưởng cấu hình CloudTrail của bạn và ngược lại.</td></tr>
+          <tr><td><b>VPC Flow Logs</b> (của EC2)</td><td>Cũng qua luồng độc lập – <b>không cần tạo/cấu hình VPC Flow Logs</b> trong account. GuardDuty không lưu và không cho bạn truy cập flow log đó.</td></tr>
+          <tr><td><b>Route 53 Resolver DNS query logs</b></td><td>Chỉ khi EC2 dùng <b>AWS DNS resolver</b> (mặc định). Nếu dùng DNS khác (OpenDNS, Google DNS, resolver tự dựng) ⇒ GuardDuty <b>không</b> truy cập được nguồn này.</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Log được mã hóa khi truyền; GuardDuty trích trường cần thiết để profiling rồi <b>loại bỏ log</b>. Việc truy cập các nguồn nền tảng <b>không tốn thêm phí</b> (phí GuardDuty tính theo lượng dữ liệu phân tích – <i>kiến thức phổ biến</i>).</li>
+        <li><b>Regional</b>: AWS khuyến nghị bật GuardDuty ở <b>mọi Region</b>, kể cả Region không dùng – kẻ tấn công có thể tạo tài nguyên ở Region bạn ít để ý; global service events (IAM, STS, CloudFront…) được nhân bản xử lý ở mọi Region đã bật.</li>
+        <li><span class="t" data-vi="Phát hiện mối đe dọa mở rộng">Extended Threat Detection</span>: tự bật, không tốn thêm phí – nối nhiều sự kiện rời rạc thành một <b>attack sequence</b> (tấn công nhiều giai đoạn) và sinh finding tương ứng.</li>
+      </ul>
+
+      <h3>Protection plans (bật tùy chọn)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Protection plan</th><th>Phân tích gì</th></tr></thead>
+        <tbody>
+          <tr><td><b>S3 Protection</b></td><td>CloudTrail <b>data events</b> của S3 ⇒ phát hiện exfiltration, phá hủy dữ liệu trong bucket.</td></tr>
+          <tr><td><b>EKS Protection</b></td><td>Kubernetes <b>audit logs</b> của EKS cluster.</td></tr>
+          <tr><td><b>Runtime Monitoring</b></td><td>Sự kiện cấp OS trên EKS, EC2, ECS (cả Fargate) qua <b>GuardDuty security agent</b>. Là plan duy nhất <b>không</b> tự bật khi kích hoạt GuardDuty lần đầu.</td></tr>
+          <tr><td><b>Malware Protection for EC2</b></td><td>Quét <b>EBS volume</b> gắn với EC2; có tùy chọn on-demand.</td></tr>
+          <tr><td><b>Malware Protection for S3</b></td><td>Quét object <b>mới upload</b> vào bucket; dùng được <b>độc lập</b> không cần bật GuardDuty.</td></tr>
+          <tr><td>Malware Protection for AWS Backup</td><td>Quét EBS snapshot, AMI, recovery point của AWS Backup.</td></tr>
+          <tr><td><b>RDS Protection</b></td><td>Profiling <b>login activity</b> vào Aurora/RDS ⇒ phát hiện truy cập bất thường.</td></tr>
+          <tr><td><b>Lambda Protection</b></td><td>Network activity log (bắt đầu từ VPC flow logs) của Lambda ⇒ cryptomining, liên lạc với server độc hại.</td></tr>
+          <tr><td>AI Protection</td><td>CloudTrail data events của Bedrock, Bedrock AgentCore, SageMaker AI ⇒ gọi model bất thường, cost harvesting.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Finding và mức độ nghiêm trọng</h3>
+      <div class="stats">
+        <div class="stat"><b>9,0 – 10,0</b><span><b>Critical</b>: attack sequence có thể đang/vừa diễn ra; ưu tiên xử lý ngay (có thể là ransomware)</span></div>
+        <div class="stat"><b>7,0 – 8,9</b><span><b>High</b>: tài nguyên đã bị xâm phạm và đang bị dùng trái phép</span></div>
+        <div class="stat"><b>4,0 – 6,9</b><span><b>Medium</b>: hoạt động đáng ngờ lệch khỏi hành vi bình thường</span></div>
+        <div class="stat"><b>1,0 – 3,9</b><span><b>Low</b>: cố gắng đáng ngờ chưa thành công (vd port scan)</span></div>
+        <div class="stat"><b>30 ngày</b><span>free trial khi bật lần đầu ở một Region (gồm mọi protection plan trừ Runtime Monitoring)</span></div>
+      </div>
+      <ul>
+        <li>Tên finding type có dạng <code>ThreatPurpose:ResourceTypeAffected/ThreatFamilyName.DetectionMechanism!Artifact</code>, vd <code>CryptoCurrency:EC2/BitcoinTool.B!DNS</code>, <code>UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration</code> <i>(định dạng tên: kiến thức phổ biến)</i>.</li>
+        <li>Tạo <b>sample findings</b> để thử quy trình phản ứng. Có thể dùng <b>suppression rules</b> (tự archive finding đã biết là vô hại), <b>trusted IP list</b> và <b>threat list</b> tự định nghĩa <i>(ba tính năng này: kiến thức phổ biến)</i>.</li>
+        <li>Finding hiển thị trên console, lấy qua API/CLI/SDK, gửi tới <b>Security Hub CSPM</b>, <b>EventBridge</b> (mỗi khi finding thay đổi), và pivot sang <b>Detective</b> để điều tra.</li>
+        <li><b>Multi-account</b>: quản lý qua <b>AWS Organizations</b> (khuyến nghị) với <span class="t" data-vi="Tài khoản quản trị được ủy quyền">delegated administrator</span> account, hoặc phương thức mời (legacy).</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/Amazon-GuardDuty.svg" alt="">Phát hiện và tự động phản ứng với finding của GuardDuty</span>
+          <div class="flow">
+            <div class="grp plain"><span class="lbl">Nguồn dữ liệu (luồng độc lập)</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">CloudTrail<small>management events</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC Flow Logs</div>
+                <div class="node"><img src="../assets/icons/res/Amazon-Route-53_Resolver.svg" alt="">DNS logs</div>
+                <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">S3 / EKS / RDS / Runtime<small>protection plans</small></div>
+              </div>
+            </div>
+            <span class="arrow">phân tích</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-GuardDuty.svg" alt="">GuardDuty<small>threat intel + ML<br>⇒ finding (severity)</small></div>
+            <span class="arrow">event</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-EventBridge_Rule.svg" alt="">EventBridge rule<small>lọc theo type/severity</small></div>
+          </div>
+          <div class="arrow down"><span>targets / tích hợp</span></div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" alt="">SNS<small>email/chat cho SecOps</small></div>
+            <div class="node"><img src="../assets/icons/svc/AWS-Lambda.svg" alt="">Lambda<small>cô lập EC2 (đổi SG),<br>vô hiệu hóa access key</small></div>
+            <div class="node"><img src="../assets/icons/svc/AWS-Security-Hub.svg" alt="">Security Hub CSPM<small>tổng hợp</small></div>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Detective.svg" alt="">Detective<small>điều tra root cause</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> GuardDuty tự đọc các nguồn nền tảng (không cần tạo trail hay bật VPC Flow Logs), sinh finding và phát event tới <b>EventBridge</b>. Rule EventBridge chuyển tới SNS để cảnh báo hoặc Lambda để <b>tự khắc phục</b>. Các hành động khắc phục trong hình (đổi SG cách ly, vô hiệu hóa key) là mẫu phổ biến do bạn tự viết, không phải tính năng có sẵn của GuardDuty.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Detect compromised EC2 instances communicating with known malicious IPs / mining cryptocurrency</i>”, “<i>unusual API activity</i>”, “<i>threat detection with least operational overhead</i>” ⇒ <b>GuardDuty</b>.</li>
+          <li>“<i>Automatically respond / notify on high-severity GuardDuty findings</i>” ⇒ <b>EventBridge rule</b> ⇒ <b>SNS</b> / <b>Lambda</b> (hoặc Step Functions, SSM Automation).</li>
+          <li>“<i>Must we enable VPC Flow Logs / CloudTrail first for GuardDuty?</i>” ⇒ <b>Không</b>; GuardDuty dùng luồng độc lập.</li>
+          <li>“<i>Scan new S3 uploads for malware</i>” ⇒ <b>GuardDuty Malware Protection for S3</b>. “<i>Detect anomalous logins to RDS/Aurora</i>” ⇒ <b>RDS Protection</b>.</li>
+          <li>“<i>Enable GuardDuty for all current and future accounts</i>” ⇒ Organizations + <b>delegated administrator</b> + auto-enable.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: INSPECTOR ===================== -->
+      <h2 id="inspector"><img src="../assets/icons/svc/Amazon-Inspector.svg" alt="">Amazon Inspector: quét lỗ hổng tự động và liên tục</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ quản lý lỗ hổng">Amazon Inspector</span> là dịch vụ <b>vulnerability management</b>: tự động <b>phát hiện</b> workload và <b>quét liên tục</b> để tìm <span class="t" data-vi="Lỗ hổng và điểm phơi nhiễm phổ biến – mã định danh lỗ hổng công khai">CVE (Common Vulnerabilities and Exposures)</span> trong phần mềm và <span class="t" data-vi="Phơi nhiễm mạng ngoài ý muốn">unintended network exposure</span>. Mỗi vấn đề sinh một finding chi tiết kèm khuyến nghị khắc phục; khi bạn khắc phục, Inspector <b>tự phát hiện và đóng finding</b>.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Scan type</th><th>Quét gì</th><th>Cách hoạt động</th></tr></thead>
+        <tbody>
+          <tr><td><b>Amazon EC2 scanning</b></td><td>CVE gói OS &amp; gói ngôn ngữ lập trình, network exposure, <b>network reachability</b></td><td>Qua <b>SSM Agent</b> cài trên instance (agent-based) hoặc qua <b>EBS snapshot</b> (agentless). Mặc định bật <b>hybrid scanning mode</b>: instance có SSM Agent được quét agent-based, còn lại quét agentless.</td></tr>
+          <tr><td><b>Amazon ECR scanning</b></td><td>CVE trong <b>container image</b></td><td>Chuyển private registry từ <b>basic</b> sang <b>enhanced scanning</b>; quét khi push và quét lại liên tục trong <b>re-scan duration</b> (mặc định <b>7 ngày</b> cho account mới; chỉnh được).</td></tr>
+          <tr><td><b>Lambda standard scanning</b></td><td>CVE trong gói phụ thuộc của function &amp; layer</td><td>Quét khi deploy, quét lại khi cập nhật hoặc khi có CVE mới.</td></tr>
+          <tr><td><b>Lambda code scanning</b> (tùy chọn)</td><td>Lỗ hổng trong <b>code</b> của bạn (vd injection, lộ dữ liệu, credential hard-code)</td><td>Bật thêm trên nền Lambda standard scanning <i>(ví dụ loại lỗ hổng code: kiến thức phổ biến)</i>.</td></tr>
+          <tr><td>Machine image (AMI) scanning, Code Security</td><td>AMI bạn sở hữu; source code, dependency, IaC</td><td>Bật riêng; AMI quét qua EBS snapshot không cần chạy instance.</td></tr>
+        </tbody>
+      </table></div>
+
+      <ul>
+        <li><b>Không cần lên lịch</b>: Inspector tự quét lại khi có thay đổi có thể gây lỗ hổng – cài gói mới, cài patch, hoặc khi <b>CVE mới được công bố</b>. Ảnh hưởng hiệu năng tối thiểu.</li>
+        <li><span class="t" data-vi="Điểm rủi ro theo ngữ cảnh của Inspector">Inspector risk score</span>: điều chỉnh điểm <b>CVSS</b> gốc của NVD theo môi trường thực tế – vd hạ điểm nếu lỗ hổng khai thác qua mạng nhưng instance không có đường mạng ra Internet.</li>
+        <li><b>Dashboard</b>, view findings theo nhóm, <b>suppression rules</b>, xuất báo cáo <b>CSV/JSON</b>.</li>
+        <li>Finding gửi tới <b>EventBridge</b> (định tuyến tới Lambda, SNS) và <b>Security Hub CSPM</b>.</li>
+        <li><b>Multi-account</b>: kích hoạt cho toàn organization “một cú click” bằng <b>delegated administrator</b>, tự kích hoạt cho account mới.</li>
+        <li>Inspector thế hệ hiện tại (“Inspector v2”) thay thế Inspector Classic – bản cũ cần cài Inspector agent và chạy assessment theo lịch <i>(kiến thức phổ biến)</i>. Đề cũ có thể nhắc “Inspector agent”.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>EC2 không được quét agent-based ⇒ kiểm tra instance có <b>SSM Agent</b> chạy và được Systems Manager quản lý (managed instance), có instance profile phù hợp <i>(chi tiết IAM: kiến thức phổ biến)</i>.</li>
+          <li>Inspector <b>chỉ tìm</b> lỗ hổng, <b>không tự vá</b>. Vá hàng loạt ⇒ <b>Systems Manager Patch Manager</b> (Bài 41).</li>
+          <li>Quét image ECR “basic scanning” là của chính ECR (Bài 34); “enhanced scanning” liên tục, gồm cả gói ngôn ngữ ⇒ do <b>Inspector</b> cung cấp.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Continuously scan EC2 instances and container images for software vulnerabilities (CVEs)</i>” ⇒ <b>Amazon Inspector</b>.</li>
+          <li>“<i>Identify EC2 instances with unintended network exposure / reachable ports from the internet</i>” ⇒ Inspector (network reachability).</li>
+          <li>“<i>Scan Lambda functions’ dependencies for vulnerabilities</i>” ⇒ Inspector Lambda scanning.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: MACIE ===================== -->
+      <h2 id="macie"><img src="../assets/icons/svc/Amazon-Macie.svg" alt="">Amazon Macie: tìm dữ liệu nhạy cảm trong S3</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ bảo mật dữ liệu">Amazon Macie</span> là dịch vụ data security dùng <b>machine learning</b> và <b>pattern matching</b> để <b>phát hiện dữ liệu nhạy cảm</b>, cho thấy rủi ro bảo mật dữ liệu và hỗ trợ tự động bảo vệ. Phạm vi là dữ liệu trong <b>Amazon S3</b> (general purpose bucket).</p>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Đánh giá bảo mật bucket</h4>
+          <ul>
+            <li>Khi bật, Macie tự tạo và duy trì <b>inventory</b> mọi S3 general purpose bucket.</li>
+            <li>Đánh giá liên tục quyền truy cập &amp; bảo mật: bucket <b>public</b>, <b>chia sẻ với account khác</b>, cài đặt <b>mã hóa</b>…</li>
+            <li>Phát hiện vấn đề (vd bucket vừa thành public) ⇒ sinh <span class="t" data-vi="Phát hiện về chính sách/cấu hình bucket">policy finding</span>.</li>
+            <li>Dashboard thống kê: số bucket public, chia sẻ, số object Macie phân tích được…</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/svc/Amazon-Macie.svg" alt="">Phát hiện dữ liệu nhạy cảm</h4>
+          <ul>
+            <li><span class="t" data-vi="Phát hiện dữ liệu nhạy cảm tự động">Automated sensitive data discovery</span>: liên tục đánh giá inventory, <b>lấy mẫu</b> object đại diện để phân tích – tầm nhìn rộng, chi phí thấp.</li>
+            <li><span class="t" data-vi="Tác vụ phát hiện dữ liệu nhạy cảm">Sensitive data discovery job</span>: phân tích <b>sâu, có mục tiêu</b> – chọn bucket, độ sâu lấy mẫu, tiêu chí object; chạy <b>một lần</b> hoặc <b>định kỳ</b>.</li>
+            <li>Tìm thấy ⇒ sinh <span class="t" data-vi="Phát hiện dữ liệu nhạy cảm trong object">sensitive data finding</span>.</li>
+          </ul></div>
+      </div>
+
+      <ul>
+        <li><span class="t" data-vi="Bộ nhận dạng dữ liệu được quản lý">Managed data identifiers</span>: tiêu chí dựng sẵn của Macie, phát hiện danh sách lớn và ngày càng tăng các loại dữ liệu nhạy cảm cho nhiều quốc gia: <b>PII</b> (tên, địa chỉ, số hộ chiếu…), <b>dữ liệu tài chính</b> (số thẻ tín dụng, tài khoản ngân hàng), <b>credential</b> (private key, AWS secret key).</li>
+        <li><span class="t" data-vi="Bộ nhận dạng dữ liệu tùy chỉnh">Custom data identifiers</span>: bạn định nghĩa bằng <b>regex</b>, tùy chọn kèm keyword và quy tắc khoảng cách (proximity) – vd mã nhân viên, mã hợp đồng nội bộ.</li>
+        <li><span class="t" data-vi="Danh sách cho phép (bỏ qua)">Allow lists</span>: văn bản/pattern Macie <b>bỏ qua</b> – vd tên người đại diện công khai, số điện thoại công khai, dữ liệu mẫu để test.</li>
+        <li>Mỗi finding có <b>severity</b>, thông tin tài nguyên, cách/thời điểm phát hiện; publish tới <b>EventBridge</b> và <b>Security Hub CSPM</b>.</li>
+        <li><b>Multi-account</b>: Macie administrator quản lý qua <b>AWS Organizations</b> (bật Macie cho member) hoặc lời mời.</li>
+        <li><b>Giá</b>: theo số bucket được đánh giá, số object được monitor cho automated discovery, và lượng dữ liệu được phân tích; <b>30 ngày free trial</b> (gồm đánh giá bucket và có thể gồm automated discovery, <b>không</b> gồm discovery job). Nếu object mã hóa bằng customer managed KMS key, Macie cần quyền dùng key (và có thể phát sinh phí KMS).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Identify S3 buckets/objects that contain PII / credit card numbers</i>”, “<i>GDPR/HIPAA data discovery in S3</i>” ⇒ <b>Amazon Macie</b>.</li>
+          <li>“<i>Notify when Macie finds sensitive data</i>” ⇒ Macie finding ⇒ <b>EventBridge</b> ⇒ SNS/Lambda (vd chuyển object sang bucket cách ly).</li>
+          <li>“<i>Detect a proprietary data pattern (employee ID format)</i>” ⇒ <b>custom data identifier</b> (regex).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: SECURITY HUB & DETECTIVE ===================== -->
+      <h2 id="security-hub"><img src="../assets/icons/svc/AWS-Security-Hub.svg" alt="">AWS Security Hub CSPM và Amazon Detective</h2>
+      <p class="lead"><span class="t" data-vi="Quản lý tư thế bảo mật đám mây">AWS Security Hub Cloud Security Posture Management (CSPM)</span> – trước đây gọi tắt là <b>AWS Security Hub</b> – cung cấp <b>cái nhìn toàn diện</b> về trạng thái bảo mật trên AWS và giúp đánh giá môi trường theo <b>chuẩn bảo mật ngành và best practice</b>. Nó thu thập dữ liệu bảo mật xuyên account, xuyên dịch vụ AWS và sản phẩm bên thứ ba – một “<b>single pane of glass</b>”.</p>
+
+      <h3>Security Hub CSPM làm gì</h3>
+      <ul>
+        <li><b>Security standards</b> (mỗi chuẩn gồm nhiều <span class="t" data-vi="Kiểm soát bảo mật – một best practice được kiểm tra">security control</span>): <b>AWS Foundational Security Best Practices (FSBP)</b> do AWS phát triển, <b>CIS AWS Foundations Benchmark</b>, <b>PCI DSS</b>, <b>NIST</b>. Chạy kiểm tra liên tục ⇒ sinh <b>control finding</b> và tính <span class="t" data-vi="Điểm bảo mật">security score</span>.</li>
+        <li><b>Cần AWS Config</b>: phần lớn control dùng <b>service-linked AWS Config rules</b> ⇒ phải bật AWS Config và ghi lại (record) tài nguyên. (Config rules không bị tính phí nếu chỉ do chuẩn Security Hub kích hoạt; config item vẫn tính phí.)</li>
+        <li><b>Nhận finding</b> từ GuardDuty, Inspector, Macie, Firewall Manager, IAM Access Analyzer… và partner (APN), chuẩn hóa theo <span class="t" data-vi="Định dạng finding bảo mật chuẩn của AWS">AWS Security Finding Format (ASFF)</span>, tương quan và ưu tiên.</li>
+        <li><b>Tự động hóa</b>: <span class="t" data-vi="Quy tắc tự động hóa">automation rules</span> tự sửa/suppress finding theo tiêu chí; tích hợp <b>EventBridge</b> và <b>custom actions</b> để gửi finding tới ticketing hoặc hệ thống tự khắc phục.</li>
+        <li><b>Regional</b>: chỉ nhận và xử lý finding trong Region đã bật; chỉ tổng hợp finding sinh ra <b>sau khi bật</b> (không hồi tố). Muốn đủ kiểm tra CIS ⇒ bật ở <b>mọi Region</b> được hỗ trợ.</li>
+        <li><span class="t" data-vi="Tổng hợp xuyên Region">Cross-Region aggregation</span>: chọn một <b>home Region</b> (trước gọi là aggregation Region) và các <b>linked Region</b> ⇒ finding, insight, control status, security score được nhân bản về home Region; cập nhật đồng bộ <b>hai chiều</b>; <b>không tốn thêm phí</b>.</li>
+        <li><b>Multi-account</b>: delegated administrator qua Organizations; <b>central configuration</b> cho phép admin cấu hình chuẩn/control cho nhiều account và Region.</li>
+        <li><b>30 ngày free trial</b> khi bật lần đầu.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">AWS Organization – delegated administrator (Security account)</span>
+          <div class="row">
+            <div class="grp region"><span class="lbl">Linked Region: eu-west-1</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/svc/Amazon-GuardDuty.svg" alt="">GuardDuty</div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Inspector.svg" alt="">Inspector</div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Security-Hub.svg" alt="">Security Hub CSPM</div>
+              </div>
+            </div>
+            <div class="grp region"><span class="lbl">Linked Region: ap-southeast-1</span>
+              <div class="flow">
+                <div class="node"><img src="../assets/icons/svc/Amazon-Macie.svg" alt="">Macie</div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Config.svg" alt="">AWS Config<small>control checks</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Security-Hub.svg" alt="">Security Hub CSPM</div>
+              </div>
+            </div>
+          </div>
+          <div class="arrow down"><span>nhân bản finding, insight, control status, security score (2 chiều)</span></div>
+          <div class="grp region"><span class="lbl">Home Region: us-east-1</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/svc/AWS-Security-Hub.svg" alt="">Security Hub CSPM<small>ASFF · FSBP / CIS / PCI DSS / NIST<br>security score toàn org</small></div>
+              <span class="arrow">event</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">EventBridge<small>custom action / auto remediation</small></div>
+              <span class="arrow dashed">pivot</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-Detective.svg" alt="">Detective<small>behavior graph</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> Security Hub CSPM ở account delegated administrator gom finding từ các dịch vụ bảo mật của mọi member account; cross-Region aggregation nhân bản dữ liệu từ linked Region về home Region để xem một chỗ. Từ finding có thể pivot sang Detective điều tra, hoặc dùng EventBridge để tự động khắc phục.</figcaption>
+      </figure>
+
+      <h3>Amazon Detective – điều tra nguyên nhân gốc</h3>
+      <p><span class="t" data-vi="Dịch vụ điều tra bảo mật">Amazon Detective</span> giúp phân tích, điều tra và nhanh chóng xác định <b>root cause</b> của security finding hoặc hoạt động đáng ngờ. Detective <b>tự thu thập</b> log từ tài nguyên AWS, rồi dùng <b>machine learning, phân tích thống kê và lý thuyết đồ thị</b> để dựng visualization phục vụ điều tra nhanh – bạn không phải tự tổ chức dữ liệu, viết query hay tinh chỉnh thuật toán.</p>
+      <ul>
+        <li><b>Nguồn dữ liệu</b>: sự kiện theo thời gian (đăng nhập, API call, network traffic) từ <b>CloudTrail</b> và <b>VPC Flow Logs</b>, cộng <b>finding GuardDuty</b>; tích hợp <b>Amazon Security Lake</b> (CloudTrail, VPC Flow Logs, EKS audit log) để truy vấn raw log.</li>
+        <li><span class="t" data-vi="Đồ thị hành vi">Behavior graph</span>: tập dữ liệu liên kết đã trích xuất và phân tích từ một hoặc nhiều account; account bật Detective là <b>administrator</b> của behavior graph; tích hợp Organizations.</li>
+        <li>Truy cập tới <b>1 năm</b> dữ liệu sự kiện lịch sử; trả lời câu hỏi kiểu “<i>API call này có bất thường với role này không?</i>”, “<i>traffic tăng vọt từ instance này có bình thường không?</i>”.</li>
+        <li><b>Finding groups</b>: gom nhiều finding/hoạt động liên quan đến cùng một sự kiện bảo mật; <b>Detective Investigation</b>: điều tra IAM user/role theo <span class="t" data-vi="Dấu hiệu xâm nhập">indicator of compromise (IOC)</span>.</li>
+        <li>Pivot thẳng từ finding trong GuardDuty hoặc Security Hub sang Detective. Giá theo GB dữ liệu xử lý; <b>30 ngày free trial</b>.</li>
+      </ul>
+
+      <h3>So sánh nhóm dịch vụ phát hiện</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>GuardDuty</th><th>Inspector</th><th>Macie</th><th>Security Hub CSPM</th><th>Detective</th></tr></thead>
+        <tbody>
+          <tr><td>Câu hỏi trả lời</td><td>Có ai đang tấn công / hành vi đáng ngờ?</td><td>Phần mềm có lỗ hổng CVE / lộ mạng?</td><td>Dữ liệu nhạy cảm nằm đâu trong S3? Bucket có an toàn?</td><td>Tổng thể có tuân thủ chuẩn không? Finding nào ưu tiên?</td><td>Vì sao xảy ra, phạm vi ảnh hưởng?</td></tr>
+          <tr><td>Đầu vào</td><td>CloudTrail, VPC Flow Logs, DNS logs + protection plans</td><td>EC2 (SSM Agent/EBS snapshot), ECR image, Lambda</td><td>Object &amp; cấu hình S3</td><td>Finding từ dịch vụ khác + AWS Config checks</td><td>CloudTrail, VPC Flow Logs, finding GuardDuty</td></tr>
+          <tr><td>Cần agent?</td><td class="no">Không (trừ Runtime Monitoring)</td><td>SSM Agent (hoặc agentless)</td><td class="no">Không</td><td class="no">Không (cần AWS Config)</td><td class="no">Không</td></tr>
+          <tr><td>Chặn traffic?</td><td class="no">Không</td><td class="no">Không</td><td class="no">Không</td><td class="no">Không</td><td class="no">Không</td></tr>
+          <tr><td>Free trial</td><td>30 ngày</td><td>có <i>(15 ngày – kiến thức phổ biến)</i></td><td>30 ngày</td><td>30 ngày</td><td>30 ngày</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Single dashboard to view and prioritize security findings from GuardDuty, Inspector, and Macie across accounts</i>” ⇒ <b>Security Hub CSPM</b>.</li>
+          <li>“<i>Continuously check accounts against CIS AWS Foundations Benchmark / PCI DSS</i>” ⇒ Security Hub CSPM security standards (bật <b>AWS Config</b> trước).</li>
+          <li>“<i>Investigate the root cause of a GuardDuty finding, visualize related entities over time</i>” ⇒ <b>Amazon Detective</b>.</li>
+          <li>“<i>View findings from all Regions in one Region</i>” ⇒ Security Hub <b>cross-Region aggregation</b> (home Region).</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải nhớ</span>
+        <ul>
+          <li><b>Chặn</b>: WAF (L7, HTTP) – Shield (DDoS) – Firewall Manager (áp tập trung). <b>Phát hiện</b>: GuardDuty (mối đe dọa), Inspector (CVE), Macie (PII trong S3). <b>Tổng hợp</b>: Security Hub CSPM. <b>Điều tra</b>: Detective.</li>
+          <li><b>WAF</b> gắn được CloudFront, ALB, API Gateway REST API, AppSync, Cognito user pool, App Runner, Verified Access, Amplify – <b>không</b> NLB/EC2. Web ACL CloudFront ở <b>us-east-1</b> (Global). Rule đánh giá theo <b>priority</b>; Allow/Block terminating, Count không; default action Allow/Block; block mặc định trả <b>403</b>.</li>
+          <li><b>WCU</b>: web ACL tối đa <b>5.000</b>, giá cơ bản gồm <b>1.500</b>; rule group tối đa 5.000, capacity cố định.</li>
+          <li><b>Rate-based rule</b>: window 60/120/300/600 s (mặc định 300), limit tối thiểu <b>10</b>, aggregate theo IP / forwarded IP / custom keys / count all; action ≠ Allow; scope-down statement.</li>
+          <li><b>Shield Standard</b>: miễn phí, tự động, L3/L4. <b>Shield Advanced</b>: trả phí, chỉ tài nguyên chỉ định (CloudFront, Route 53, Global Accelerator, EIP ⇒ EC2/NLB, ALB, CLB); SRT (cần Business/Enterprise Support), proactive engagement (cần health check), cost protection (service credit), automatic L7 mitigation (150 WCU), bao phí WAF chuẩn.</li>
+          <li><b>Firewall Manager</b>: cần Organizations + admin account + AWS Config; chính sách WAF, Shield Advanced, SG, NACL, Network Firewall, DNS Firewall; tự áp cho account/tài nguyên mới.</li>
+          <li><b>GuardDuty</b>: CloudTrail management events + VPC Flow Logs + DNS logs qua luồng độc lập (không cần bật); protection plans S3/EKS/Runtime/Malware/RDS/Lambda; severity Low 1–3,9, Medium 4–6,9, High 7–8,9, Critical 9–10; phản ứng bằng EventBridge.</li>
+          <li><b>Inspector</b>: EC2 (SSM Agent hoặc agentless snapshot), ECR enhanced scanning, Lambda; quét liên tục khi có CVE mới; risk score điều chỉnh CVSS theo ngữ cảnh.</li>
+          <li><b>Macie</b>: chỉ S3; policy finding (bucket) + sensitive data finding; managed/custom data identifiers, allow lists; automated discovery (lấy mẫu) vs discovery job (sâu, một lần/định kỳ).</li>
+          <li><b>Security Hub CSPM</b>: FSBP, CIS, PCI DSS, NIST; ASFF; cần AWS Config; cross-Region aggregation miễn phí; automation rules. <b>Detective</b>: behavior graph, tới 1 năm dữ liệu, root cause.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="glossary">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Defense in depth</dt><dd><b>Phòng thủ nhiều lớp</b> – kết hợp nhiều lớp bảo vệ độc lập.</dd></div>
+        <div><dt>AWS WAF / Web ACL (protection pack)</dt><dd><b>Tường lửa ứng dụng web / Danh sách kiểm soát truy cập web</b>.</dd></div>
+        <div><dt>Rule / Rule group / Rule statement</dt><dd><b>Quy tắc / Nhóm quy tắc / Câu lệnh kiểm tra</b> của WAF.</dd></div>
+        <div><dt>AWS Managed Rules</dt><dd><b>Bộ quy tắc do AWS quản lý</b> – Core rule set, Known bad inputs, SQL database, IP reputation…</dd></div>
+        <div><dt>Default action</dt><dd><b>Hành động mặc định</b> (Allow/Block) khi không rule nào quyết định.</dd></div>
+        <div><dt>Terminating / Non-terminating action</dt><dd><b>Hành động kết thúc / không kết thúc</b> việc đánh giá (Allow, Block vs Count).</dd></div>
+        <div><dt>CAPTCHA / Challenge</dt><dd><b>Câu đố xác minh người dùng / Thử thách ngầm bằng JavaScript</b> chống bot.</dd></div>
+        <div><dt>Web ACL capacity unit (WCU)</dt><dd><b>Đơn vị dung lượng web ACL</b> – tối đa 5.000, giá cơ bản gồm 1.500.</dd></div>
+        <div><dt>Rate-based rule</dt><dd><b>Quy tắc giới hạn tốc độ</b> request theo nhóm trong evaluation window.</dd></div>
+        <div><dt>Evaluation window / Aggregation key</dt><dd><b>Cửa sổ đánh giá / Khóa gom nhóm</b> của rate-based rule.</dd></div>
+        <div><dt>Scope-down statement</dt><dd><b>Câu lệnh thu hẹp phạm vi</b> request được kiểm tra.</dd></div>
+        <div><dt>Geo match / IP set / Regex pattern set</dt><dd><b>Khớp vị trí địa lý / Tập IP / Tập mẫu biểu thức chính quy</b>.</dd></div>
+        <div><dt>Label</dt><dd><b>Nhãn</b> rule gắn vào request để rule sau dùng.</dd></div>
+        <div><dt>SQL injection / Cross-site scripting (XSS)</dt><dd><b>Chèn mã SQL / Tấn công chèn script chéo trang</b>.</dd></div>
+        <div><dt>Bot Control / Fraud Control (ATP, ACFP)</dt><dd><b>Kiểm soát bot / Chống gian lận</b> – chiếm tài khoản, tạo tài khoản giả.</dd></div>
+        <div><dt>DDoS / HTTP flood</dt><dd><b>Tấn công từ chối dịch vụ phân tán / Tấn công làm ngập HTTP</b>.</dd></div>
+        <div><dt>SYN flood / UDP reflection</dt><dd><b>Làm ngập gói SYN / Tấn công phản xạ UDP</b> – DDoS tầng 3/4.</dd></div>
+        <div><dt>Application perimeter</dt><dd><b>Vành đai ứng dụng</b> – điểm traffic bên ngoài vào AWS lần đầu.</dd></div>
+        <div><dt>Shield Standard / Shield Advanced</dt><dd><b>Chống DDoS cơ bản miễn phí / nâng cao trả phí</b>.</dd></div>
+        <div><dt>Shield Response Team (SRT)</dt><dd><b>Đội phản ứng DDoS của AWS</b> (trước gọi là DRT).</dd></div>
+        <div><dt>Proactive engagement</dt><dd><b>SRT chủ động liên hệ</b> khi health check unhealthy.</dd></div>
+        <div><dt>Health-based detection</dt><dd><b>Phát hiện dựa trên health check</b> Route 53.</dd></div>
+        <div><dt>Cost protection</dt><dd><b>Bảo vệ chi phí</b> – service credit cho phí tăng do DDoS.</dd></div>
+        <div><dt>Protection group</dt><dd><b>Nhóm bảo vệ</b> tài nguyên trong Shield Advanced.</dd></div>
+        <div><dt>AWS Firewall Manager / Policy</dt><dd><b>Quản lý tường lửa tập trung / Chính sách bảo vệ</b>.</dd></div>
+        <div><dt>Threat detection / Threat intelligence</dt><dd><b>Phát hiện mối đe dọa / Tình báo mối đe dọa</b>.</dd></div>
+        <div><dt>Finding / Severity</dt><dd><b>Phát hiện / Mức độ nghiêm trọng</b> (Low, Medium, High, Critical).</dd></div>
+        <div><dt>Foundational data sources</dt><dd><b>Nguồn dữ liệu nền tảng</b> của GuardDuty.</dd></div>
+        <div><dt>Protection plan</dt><dd><b>Gói bảo vệ mở rộng</b> của GuardDuty (S3, EKS, Runtime, Malware, RDS, Lambda).</dd></div>
+        <div><dt>Extended Threat Detection / Attack sequence</dt><dd><b>Phát hiện mở rộng / Chuỗi tấn công nhiều giai đoạn</b>.</dd></div>
+        <div><dt>Cryptomining</dt><dd><b>Đào tiền mã hóa trái phép</b>.</dd></div>
+        <div><dt>Suppression rule / Trusted IP list / Threat list</dt><dd><b>Quy tắc ẩn finding / Danh sách IP tin cậy / Danh sách mối đe dọa</b>.</dd></div>
+        <div><dt>Delegated administrator</dt><dd><b>Tài khoản quản trị được ủy quyền</b> cho dịch vụ bảo mật trong Organizations.</dd></div>
+        <div><dt>Vulnerability management / CVE / CVSS</dt><dd><b>Quản lý lỗ hổng / Mã lỗ hổng công khai / Hệ thống chấm điểm lỗ hổng</b>.</dd></div>
+        <div><dt>Network reachability / Unintended network exposure</dt><dd><b>Khả năng tiếp cận mạng / Phơi nhiễm mạng ngoài ý muốn</b>.</dd></div>
+        <div><dt>Inspector risk score</dt><dd><b>Điểm rủi ro theo ngữ cảnh</b> của Inspector.</dd></div>
+        <div><dt>Agent-based / Agentless / Hybrid scanning</dt><dd><b>Quét có agent / không agent / kết hợp</b>.</dd></div>
+        <div><dt>Sensitive data / PII</dt><dd><b>Dữ liệu nhạy cảm / Thông tin nhận dạng cá nhân</b>.</dd></div>
+        <div><dt>Managed / Custom data identifier</dt><dd><b>Bộ nhận dạng dữ liệu dựng sẵn / tùy chỉnh</b> (Macie).</dd></div>
+        <div><dt>Allow list (Macie)</dt><dd><b>Danh sách bỏ qua</b> khi phát hiện dữ liệu nhạy cảm.</dd></div>
+        <div><dt>Automated sensitive data discovery / Discovery job</dt><dd><b>Phát hiện tự động lấy mẫu / Tác vụ phát hiện chuyên sâu</b>.</dd></div>
+        <div><dt>Policy finding / Sensitive data finding</dt><dd><b>Phát hiện về cấu hình bucket / về dữ liệu nhạy cảm</b>.</dd></div>
+        <div><dt>Cloud Security Posture Management (CSPM)</dt><dd><b>Quản lý tư thế bảo mật đám mây</b>.</dd></div>
+        <div><dt>Security standard / Security control / Security score</dt><dd><b>Chuẩn bảo mật / Kiểm soát bảo mật / Điểm bảo mật</b>.</dd></div>
+        <div><dt>AWS Security Finding Format (ASFF)</dt><dd><b>Định dạng finding bảo mật chuẩn</b>.</dd></div>
+        <div><dt>Cross-Region aggregation / Home Region / Linked Region</dt><dd><b>Tổng hợp xuyên Region / Region chính / Region liên kết</b>.</dd></div>
+        <div><dt>Automation rule / Custom action</dt><dd><b>Quy tắc tự động hóa / Hành động tùy chỉnh</b> trong Security Hub.</dd></div>
+        <div><dt>Behavior graph / Finding group</dt><dd><b>Đồ thị hành vi / Nhóm phát hiện liên quan</b> (Detective).</dd></div>
+        <div><dt>Root cause / Indicator of compromise (IOC)</dt><dd><b>Nguyên nhân gốc / Dấu hiệu xâm nhập</b>.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs a public web application on Amazon EC2 instances behind an Application Load Balancer. The security team noticed SQL injection and cross-site scripting attempts in the application logs. The company wants to block these attacks before they reach the instances with the LEAST operational overhead. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Enable Amazon GuardDuty and configure it to block malicious requests to the ALB.</li>
+            <li data-k="B">Create an AWS WAF web ACL with the AWS Managed Rules Core rule set and SQL database rule groups, and associate it with the ALB.</li>
+            <li data-k="C">Update the security group of the ALB to deny traffic that contains SQL statements.</li>
+            <li data-k="D">Subscribe to AWS Shield Advanced and enable proactive engagement.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>AWS WAF</b> kiểm tra request HTTP ở Layer 7 và gắn trực tiếp được vào ALB; <b>AWS Managed Rules</b> (Core rule set, SQL database) chặn SQLi/XSS mà không phải tự viết rule – ít vận hành nhất. <b>A sai</b>: GuardDuty chỉ <b>phát hiện</b>, không chặn request. <b>C sai</b>: Security Group làm việc ở L3/L4, không đọc nội dung HTTP và không có rule deny. <b>D sai</b>: Shield Advanced tập trung chống DDoS; proactive engagement là SRT liên hệ khi health check unhealthy, không phải chặn SQLi.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng web công khai trên các Amazon EC2 instance phía sau một Application Load Balancer. Đội bảo mật nhận thấy các nỗ lực SQL injection và cross-site scripting trong log ứng dụng. Công ty muốn chặn các cuộc tấn công này trước khi chúng tới được instance với LEAST operational overhead (ít công vận hành nhất). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật Amazon GuardDuty và cấu hình nó chặn các request độc hại tới ALB.</span><span class="why">Sai: GuardDuty chỉ phát hiện mối đe dọa và tạo finding, không nằm trên đường đi của request nên không chặn được SQLi/XSS.</span></li>
+              <li data-k="B"><span class="tv">Tạo một AWS WAF web ACL với AWS Managed Rules Core rule set và các rule group SQL database, rồi gắn nó vào ALB.</span><span class="why">Đúng: AWS WAF kiểm tra request HTTP ở Layer 7, gắn trực tiếp vào ALB, và managed rule group chặn SQLi/XSS mà không phải tự viết rule – ít vận hành nhất.</span></li>
+              <li data-k="C"><span class="tv">Cập nhật security group của ALB để từ chối traffic chứa câu lệnh SQL.</span><span class="why">Sai: security group hoạt động ở L3/L4, không đọc nội dung HTTP và chỉ có rule allow, không có rule deny.</span></li>
+              <li data-k="D"><span class="tv">Đăng ký AWS Shield Advanced và bật proactive engagement.</span><span class="why">Sai: Shield Advanced tập trung chống DDoS; proactive engagement là việc SRT chủ động liên hệ khi có sự kiện, không chặn SQLi/XSS.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company's login page, served through Amazon CloudFront, is being targeted by a credential-stuffing attack. Thousands of requests per minute come from a small set of IP addresses. Legitimate users rarely send more than 20 login requests in 5 minutes. The company wants to automatically block abusive IP addresses only on the /login path. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Configure CloudFront geo restriction to block the countries where the attacking IP addresses are located.</li>
+            <li data-k="B">Create a network ACL rule in the VPC of the origin to deny the attacking IP addresses.</li>
+            <li data-k="C">Enable AWS Shield Standard on the CloudFront distribution.</li>
+            <li data-k="D">Add an AWS WAF rate-based rule to the web ACL associated with the distribution, aggregate by IP address, set a limit of 100 requests in a 300-second evaluation window, add a scope-down statement for the /login URI path, and set the action to Block.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Rate-based rule</b> đếm request theo từng IP trong evaluation window (300 giây là mặc định) và tự Block IP vượt ngưỡng; <b>scope-down statement</b> giới hạn việc đếm chỉ cho <code>/login</code>. Khi IP giảm tốc độ, rule tự thôi chặn – không cần cập nhật tay. <b>A sai</b>: chặn cả quốc gia ảnh hưởng người dùng thật và kẻ tấn công đổi IP dễ dàng. <b>B sai</b>: traffic đi qua CloudFront nên origin thấy IP của CloudFront; NACL cũng phải cập nhật thủ công. <b>C sai</b>: Shield Standard đã bật sẵn, chỉ chống DDoS L3/L4, không giới hạn request L7 theo path.</div>
+          <div class="trans">
+            <div class="tq">Trang đăng nhập của một công ty, được phục vụ qua Amazon CloudFront, đang bị tấn công credential-stuffing. Hàng nghìn request mỗi phút đến từ một nhóm nhỏ địa chỉ IP. Người dùng hợp lệ hiếm khi gửi quá 20 request đăng nhập trong 5 phút. Công ty muốn tự động chặn các địa chỉ IP lạm dụng chỉ trên đường dẫn /login. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình CloudFront geo restriction để chặn các quốc gia nơi đặt các địa chỉ IP tấn công.</span><span class="why">Sai: chặn cả quốc gia ảnh hưởng tới người dùng thật, áp cho toàn bộ site chứ không riêng /login, và kẻ tấn công dễ đổi IP sang nước khác.</span></li>
+              <li data-k="B"><span class="tv">Tạo một rule network ACL trong VPC của origin để từ chối các địa chỉ IP tấn công.</span><span class="why">Sai: traffic đi qua CloudFront nên origin chỉ thấy IP của CloudFront; NACL cũng phải cập nhật thủ công, không tự động.</span></li>
+              <li data-k="C"><span class="tv">Bật AWS Shield Standard trên CloudFront distribution.</span><span class="why">Sai: Shield Standard đã bật sẵn và chỉ chống DDoS L3/L4, không giới hạn tốc độ request L7 theo IP hay theo path.</span></li>
+              <li data-k="D"><span class="tv">Thêm một AWS WAF rate-based rule vào web ACL gắn với distribution, gom theo địa chỉ IP, đặt giới hạn 100 request trong evaluation window 300 giây, thêm scope-down statement cho URI path /login, và đặt action là Block.</span><span class="why">Đúng: rate-based rule đếm request theo từng IP và tự Block IP vượt ngưỡng (cao hơn mức của người dùng thật), scope-down giới hạn chỉ cho /login, và tự bỏ chặn khi IP giảm tốc độ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A media company serves its website through Amazon CloudFront with an Application Load Balancer origin. The website is business critical, and the company has been the target of large DDoS attacks. The company wants 24/7 access to AWS DDoS experts during attacks, protection against cost spikes caused by attacks, and automatic mitigation of application layer attacks. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Subscribe to AWS Shield Advanced, add protections for the CloudFront distribution and the ALB, associate an AWS WAF web ACL, enable automatic application layer DDoS mitigation, and have a Business or Enterprise Support plan.</li>
+            <li data-k="B">Rely on AWS Shield Standard and enable AWS WAF logging to Amazon S3.</li>
+            <li data-k="C">Enable Amazon GuardDuty and create an Amazon EventBridge rule to notify AWS Support during attacks.</li>
+            <li data-k="D">Deploy AWS Network Firewall in the origin VPC and enable stateful rule groups.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Ba yêu cầu – <b>Shield Response Team (SRT)</b>, <b>cost protection</b>, <b>automatic application layer DDoS mitigation</b> – đều là năng lực của <b>Shield Advanced</b>. Mitigation L7 tự động cần web ACL WAF gắn với tài nguyên; SRT cần gói Business/Enterprise Support. <b>B sai</b>: Shield Standard không có SRT, không bồi hoàn chi phí. <b>C sai</b>: GuardDuty là phát hiện mối đe dọa trong account, không chống DDoS. <b>D sai</b>: Network Firewall lọc traffic VPC, không bảo vệ CloudFront edge và không có SRT/cost protection.</div>
+          <div class="trans">
+            <div class="tq">Một công ty truyền thông phục vụ website qua Amazon CloudFront với origin là một Application Load Balancer. Website có vai trò sống còn với doanh nghiệp, và công ty từng là mục tiêu của các cuộc tấn công DDoS quy mô lớn. Công ty muốn được tiếp cận 24/7 các chuyên gia DDoS của AWS trong lúc bị tấn công, được bảo vệ khỏi chi phí tăng đột biến do tấn công gây ra, và tự động giảm thiểu các cuộc tấn công ở tầng ứng dụng. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đăng ký AWS Shield Advanced, thêm protection cho CloudFront distribution và ALB, gắn một AWS WAF web ACL, bật automatic application layer DDoS mitigation, và có gói Business hoặc Enterprise Support.</span><span class="why">Đúng: SRT 24/7, cost protection và automatic application layer DDoS mitigation đều là tính năng của Shield Advanced; mitigation L7 cần web ACL WAF, SRT cần gói Business/Enterprise Support.</span></li>
+              <li data-k="B"><span class="tv">Dựa vào AWS Shield Standard và bật ghi log AWS WAF vào Amazon S3.</span><span class="why">Sai: Shield Standard không có SRT, không bồi hoàn chi phí và không tự giảm thiểu tấn công L7; log WAF chỉ để phân tích.</span></li>
+              <li data-k="C"><span class="tv">Bật Amazon GuardDuty và tạo một Amazon EventBridge rule để thông báo cho AWS Support khi bị tấn công.</span><span class="why">Sai: GuardDuty phát hiện mối đe dọa trong account, không chống DDoS và không đem lại SRT hay cost protection.</span></li>
+              <li data-k="D"><span class="tv">Triển khai AWS Network Firewall trong VPC của origin và bật stateful rule group.</span><span class="why">Sai: Network Firewall lọc traffic trong VPC, không bảo vệ tầng edge CloudFront và không có SRT/cost protection.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company has 150 AWS accounts in AWS Organizations and creates new accounts every month. The security team must ensure that every Application Load Balancer and Amazon API Gateway REST API in every account, including future accounts, is protected by a standard set of AWS WAF rules. The solution must require the LEAST operational overhead. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Write an AWS Lambda function that runs daily in each account to create a web ACL and associate it with new resources.</li>
+            <li data-k="B">Use AWS CloudFormation StackSets to deploy a web ACL to every account and ask application teams to associate it with their resources.</li>
+            <li data-k="C">Designate an AWS Firewall Manager administrator account, enable AWS Config in the member accounts, and create a Firewall Manager AWS WAF policy scoped to ALBs and API Gateway REST APIs across the organization.</li>
+            <li data-k="D">Create one web ACL in the management account and share it with all accounts by using AWS Resource Access Manager.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Firewall Manager</b> được thiết kế cho đúng bài toán này: đặt chính sách WAF một lần và tự áp cho mọi account, tài nguyên trong phạm vi – kể cả account và tài nguyên <b>mới</b>. Điều kiện: Organizations, Firewall Manager administrator account, <b>AWS Config</b>. <b>A sai</b>: tự viết code, nhiều vận hành. <b>B sai</b>: vẫn phụ thuộc đội ứng dụng tự gắn web ACL, không bảo đảm tuân thủ. <b>D sai</b>: web ACL không chia sẻ qua RAM để gắn vào tài nguyên account khác theo cách này; đây không phải cơ chế quản lý tập trung WAF.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 150 AWS account trong AWS Organizations và tạo account mới hằng tháng. Đội bảo mật phải bảo đảm mọi Application Load Balancer và Amazon API Gateway REST API trong mọi account, kể cả các account tạo trong tương lai, đều được bảo vệ bằng một bộ rule AWS WAF tiêu chuẩn. Giải pháp phải có LEAST operational overhead (ít công vận hành nhất). Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Viết một AWS Lambda function chạy hằng ngày trong mỗi account để tạo web ACL và gắn nó vào các tài nguyên mới.</span><span class="why">Sai: phải tự viết, triển khai và duy trì code ở 150+ account, nhiều công vận hành và có độ trễ tới một ngày.</span></li>
+              <li data-k="B"><span class="tv">Dùng AWS CloudFormation StackSets để triển khai một web ACL tới mọi account và yêu cầu các đội ứng dụng tự gắn nó vào tài nguyên của họ.</span><span class="why">Sai: vẫn phụ thuộc vào việc đội ứng dụng tự gắn web ACL nên không bảo đảm mọi tài nguyên đều được bảo vệ.</span></li>
+              <li data-k="C"><span class="tv">Chỉ định một AWS Firewall Manager administrator account, bật AWS Config trong các member account, và tạo một Firewall Manager AWS WAF policy áp cho ALB và API Gateway REST API trên toàn organization.</span><span class="why">Đúng: Firewall Manager đặt chính sách WAF một lần và tự áp cho mọi account và tài nguyên trong phạm vi, kể cả account/tài nguyên mới – ít vận hành nhất.</span></li>
+              <li data-k="D"><span class="tv">Tạo một web ACL trong management account và chia sẻ nó với tất cả account bằng AWS Resource Access Manager.</span><span class="why">Sai: web ACL không được chia sẻ qua RAM để gắn vào tài nguyên của account khác; đây không phải cơ chế quản lý WAF tập trung.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company wants to detect threats such as EC2 instances communicating with known command-and-control servers, cryptocurrency mining, and IAM credentials being used from unusual locations. The company does not currently have VPC Flow Logs or DNS query logging enabled and wants a managed solution with minimal setup. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Enable VPC Flow Logs, Route 53 Resolver query logging, and an organization trail, then enable Amazon GuardDuty to read those logs.</li>
+            <li data-k="B">Enable Amazon GuardDuty in all AWS Regions. GuardDuty analyzes CloudTrail management events, VPC flow logs, and DNS logs through independent streams.</li>
+            <li data-k="C">Enable Amazon Inspector to scan EC2 instances for these threats.</li>
+            <li data-k="D">Enable Amazon Macie and create a sensitive data discovery job.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Khi bật, <b>GuardDuty</b> tự lấy CloudTrail management events, VPC Flow Logs (EC2) và DNS logs qua <b>luồng độc lập, nhân bản</b> – không cần bật các log đó trong account; AWS khuyến nghị bật GuardDuty ở mọi Region. <b>A sai</b>: các bước bật log là thừa (chúng có ích cho mục đích khác nhưng GuardDuty không cần). <b>C sai</b>: Inspector quét lỗ hổng phần mềm, không phát hiện hành vi đang diễn ra. <b>D sai</b>: Macie tìm dữ liệu nhạy cảm trong S3.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn phát hiện các mối đe dọa như EC2 instance liên lạc với các command-and-control server đã biết, đào tiền mã hóa, và IAM credential bị sử dụng từ những vị trí bất thường. Hiện công ty chưa bật VPC Flow Logs hay DNS query logging và muốn một giải pháp được quản lý với thiết lập tối thiểu. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật VPC Flow Logs, Route 53 Resolver query logging, và một organization trail, rồi bật Amazon GuardDuty để đọc các log đó.</span><span class="why">Sai: các bước bật log là thừa vì GuardDuty tự lấy dữ liệu qua luồng độc lập, không đọc log trong account bạn – trái với yêu cầu thiết lập tối thiểu.</span></li>
+              <li data-k="B"><span class="tv">Bật Amazon GuardDuty ở tất cả AWS Region. GuardDuty phân tích CloudTrail management events, VPC flow logs và DNS logs qua các luồng độc lập.</span><span class="why">Đúng: GuardDuty là dịch vụ được quản lý, tự thu CloudTrail, VPC Flow Logs và DNS logs mà không cần bật trong account, phát hiện C2, crypto mining và credential bất thường.</span></li>
+              <li data-k="C"><span class="tv">Bật Amazon Inspector để quét EC2 instance tìm các mối đe dọa này.</span><span class="why">Sai: Inspector quét lỗ hổng phần mềm (CVE), không phát hiện hành vi độc hại đang diễn ra như liên lạc C2 hay lạm dụng credential.</span></li>
+              <li data-k="D"><span class="tv">Bật Amazon Macie và tạo một sensitive data discovery job.</span><span class="why">Sai: Macie tìm dữ liệu nhạy cảm trong S3, không giám sát hành vi của EC2 hay IAM.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A security team wants to be notified immediately and to automatically isolate an EC2 instance whenever Amazon GuardDuty generates a high-severity finding about that instance. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Create an Amazon EventBridge rule that matches GuardDuty findings with severity 7.0 or higher.</li>
+            <li data-k="B">Configure GuardDuty to write findings to Amazon CloudWatch Logs and create a metric filter that runs every 24 hours.</li>
+            <li data-k="C">Enable AWS Shield Advanced proactive engagement for the instance.</li>
+            <li data-k="D">Set an AWS Lambda function that replaces the instance's security groups with an isolation security group, and an Amazon SNS topic, as targets of the rule.</li>
+            <li data-k="E">Configure Amazon Inspector to stop the instance when a finding is generated.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> GuardDuty phát event tới <b>EventBridge</b> khi finding thay đổi; rule lọc severity <b>High (7,0–8,9)</b> và <b>Critical (9,0–10,0)</b>, targets là <b>Lambda</b> (cách ly instance bằng SG riêng) và <b>SNS</b> (thông báo). <b>B sai</b>: cơ chế gián tiếp, chậm và không phải tích hợp chuẩn. <b>C sai</b>: proactive engagement của Shield dành cho sự kiện DDoS. <b>E sai</b>: Inspector không phản ứng với finding GuardDuty và không tự dừng instance.</div>
+          <div class="trans">
+            <div class="tq">Một đội bảo mật muốn được thông báo ngay lập tức và tự động cách ly một EC2 instance mỗi khi Amazon GuardDuty tạo một finding mức độ nghiêm trọng cao về instance đó. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một Amazon EventBridge rule khớp với các finding GuardDuty có severity từ 7.0 trở lên.</span><span class="why">Đúng: GuardDuty gửi finding tới EventBridge gần như tức thì; rule lọc severity ≥ 7.0 (High và Critical) để kích hoạt phản ứng.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình GuardDuty ghi finding vào Amazon CloudWatch Logs và tạo một metric filter chạy mỗi 24 giờ.</span><span class="why">Sai: đây là cách gián tiếp, chậm (không "ngay lập tức") và không phải tích hợp chuẩn của GuardDuty.</span></li>
+              <li data-k="C"><span class="tv">Bật AWS Shield Advanced proactive engagement cho instance.</span><span class="why">Sai: proactive engagement của Shield dành cho sự kiện DDoS, không liên quan tới finding GuardDuty hay việc cách ly instance.</span></li>
+              <li data-k="D"><span class="tv">Đặt một AWS Lambda function thay security group của instance bằng một isolation security group, cùng một Amazon SNS topic, làm target của rule.</span><span class="why">Đúng: Lambda thực hiện cách ly tự động bằng security group riêng, còn SNS gửi thông báo ngay – đáp ứng cả hai yêu cầu.</span></li>
+              <li data-k="E"><span class="tv">Cấu hình Amazon Inspector dừng instance khi có finding được tạo.</span><span class="why">Sai: Inspector không phản ứng với finding GuardDuty và không có khả năng tự dừng instance.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs hundreds of Amazon EC2 instances and stores container images in Amazon ECR. The company needs to continuously identify software vulnerabilities (CVEs) in the operating system packages of the instances and in the container images, and to rescan automatically when new CVEs are published. Which service should the company use?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon GuardDuty Runtime Monitoring</li>
+            <li data-k="B">AWS Security Hub CSPM with the CIS AWS Foundations Benchmark</li>
+            <li data-k="C">Amazon Inspector with Amazon EC2 scanning and Amazon ECR enhanced scanning</li>
+            <li data-k="D">AWS Trusted Advisor security checks</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Amazon Inspector</b> tự phát hiện và quét liên tục EC2 (qua SSM Agent hoặc agentless) và image ECR (enhanced scanning) tìm <b>CVE</b>, tự quét lại khi CVE mới được công bố. <b>A sai</b>: Runtime Monitoring phát hiện hành vi đáng ngờ ở runtime, không liệt kê CVE. <b>B sai</b>: CIS benchmark kiểm tra cấu hình account, không quét gói phần mềm; Security Hub chỉ <b>nhận</b> finding Inspector. <b>D sai</b>: Trusted Advisor kiểm tra best practice cấu hình, không quét lỗ hổng phần mềm.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy hàng trăm Amazon EC2 instance và lưu container image trong Amazon ECR. Công ty cần liên tục xác định các lỗ hổng phần mềm (CVE) trong các gói hệ điều hành của instance và trong container image, và tự động quét lại khi CVE mới được công bố. Công ty nên dùng dịch vụ nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon GuardDuty Runtime Monitoring</span><span class="why">Sai: Runtime Monitoring phát hiện hành vi đáng ngờ khi workload đang chạy, không liệt kê CVE trong gói phần mềm.</span></li>
+              <li data-k="B"><span class="tv">AWS Security Hub CSPM với CIS AWS Foundations Benchmark</span><span class="why">Sai: CIS benchmark kiểm tra cấu hình account, không quét gói phần mềm; Security Hub chỉ nhận finding từ Inspector.</span></li>
+              <li data-k="C"><span class="tv">Amazon Inspector với Amazon EC2 scanning và Amazon ECR enhanced scanning</span><span class="why">Đúng: Inspector tự phát hiện và quét liên tục EC2 và image ECR tìm CVE, và tự quét lại khi có CVE mới được công bố.</span></li>
+              <li data-k="D"><span class="tv">Các security check của AWS Trusted Advisor</span><span class="why">Sai: Trusted Advisor kiểm tra best practice cấu hình (vd security group mở), không quét lỗ hổng phần mềm.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A healthcare company stores millions of documents in hundreds of Amazon S3 buckets. A compliance audit requires the company to identify which buckets contain personally identifiable information (PII) and to be alerted if any bucket becomes publicly accessible. The company also uses an internal patient ID format that must be detected. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Use Amazon Athena to run regular expression queries against all objects every night.</li>
+            <li data-k="B">Enable Amazon GuardDuty S3 Protection.</li>
+            <li data-k="C">Use Amazon Comprehend to detect PII in every object by invoking it from an S3 event notification.</li>
+            <li data-k="D">Enable Amazon Macie with automated sensitive data discovery, add a custom data identifier for the patient ID format, and route Macie findings to Amazon EventBridge for alerts.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Macie</b> dùng managed data identifiers để tìm PII trong S3, cho thêm <b>custom data identifier</b> (regex) cho định dạng riêng, và tự đánh giá bucket ⇒ <b>policy finding</b> khi bucket thành public; finding đi qua <b>EventBridge</b> để cảnh báo. <b>A sai</b>: tự xây, tốn công và chi phí, không theo dõi trạng thái public. <b>B sai</b>: S3 Protection của GuardDuty phát hiện hành vi đáng ngờ (exfiltration), không phân loại dữ liệu. <b>C sai</b>: Comprehend phân tích văn bản nhưng phải tự xây pipeline, không có inventory/bảo mật bucket.</div>
+          <div class="trans">
+            <div class="tq">Một công ty y tế lưu hàng triệu tài liệu trong hàng trăm Amazon S3 bucket. Một đợt audit tuân thủ yêu cầu công ty xác định bucket nào chứa thông tin nhận dạng cá nhân (PII) và được cảnh báo nếu bất kỳ bucket nào trở nên công khai. Công ty cũng dùng một định dạng mã bệnh nhân nội bộ cần được phát hiện. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng Amazon Athena chạy truy vấn biểu thức chính quy trên tất cả object mỗi đêm.</span><span class="why">Sai: phải tự xây giải pháp, tốn công và chi phí quét, và không theo dõi việc bucket trở thành public.</span></li>
+              <li data-k="B"><span class="tv">Bật Amazon GuardDuty S3 Protection.</span><span class="why">Sai: GuardDuty S3 Protection phát hiện hoạt động đáng ngờ (vd exfiltration), không phân loại dữ liệu để tìm PII.</span></li>
+              <li data-k="C"><span class="tv">Dùng Amazon Comprehend để phát hiện PII trong mọi object bằng cách gọi nó từ S3 event notification.</span><span class="why">Sai: phải tự xây pipeline, chỉ xử lý object mới, và không có inventory hay đánh giá trạng thái public của bucket.</span></li>
+              <li data-k="D"><span class="tv">Bật Amazon Macie với automated sensitive data discovery, thêm một custom data identifier cho định dạng mã bệnh nhân, và chuyển finding của Macie tới Amazon EventBridge để cảnh báo.</span><span class="why">Đúng: Macie tìm PII bằng managed data identifier, hỗ trợ custom data identifier (regex) cho mã bệnh nhân, tạo policy finding khi bucket thành public, và đẩy finding qua EventBridge.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company uses Amazon GuardDuty, Amazon Inspector, and Amazon Macie in 40 accounts across three AWS Regions. The security team wants a single place to view and prioritize all findings, and to continuously check the accounts against the AWS Foundational Security Best Practices standard. Which TWO actions should a solutions architect take? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Enable Amazon Detective in each account and use the behavior graph as the compliance dashboard.</li>
+            <li data-k="B">Enable AWS Security Hub CSPM with a delegated administrator account in AWS Organizations, enable the AWS Foundational Security Best Practices standard, and ensure AWS Config is enabled and recording resources.</li>
+            <li data-k="C">Export all findings to Amazon S3 and build an Amazon QuickSight dashboard.</li>
+            <li data-k="D">Enable AWS Shield Advanced to aggregate findings from all security services.</li>
+            <li data-k="E">Configure Security Hub CSPM cross-Region aggregation with a home Region and the other Regions as linked Regions.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> <b>Security Hub CSPM</b> nhận finding từ GuardDuty, Inspector, Macie (chuẩn hóa ASFF), chạy kiểm tra <b>FSBP</b> (cần <b>AWS Config</b> cho phần lớn control); delegated administrator gom finding của mọi member account (B). <b>Cross-Region aggregation</b> nhân bản dữ liệu từ các linked Region về <b>home Region</b> để xem một chỗ, không tốn thêm phí (E). <b>A sai</b>: Detective dùng để điều tra root cause, không kiểm tra tuân thủ. <b>C sai</b>: tự xây, nhiều vận hành, không có security controls. <b>D sai</b>: Shield Advanced chống DDoS, không tổng hợp finding.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng Amazon GuardDuty, Amazon Inspector và Amazon Macie trên 40 account ở ba AWS Region. Đội bảo mật muốn một nơi duy nhất để xem và ưu tiên xử lý mọi finding, đồng thời liên tục kiểm tra các account theo tiêu chuẩn AWS Foundational Security Best Practices. Solutions architect nên thực hiện HAI hành động nào? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật Amazon Detective trong mỗi account và dùng behavior graph làm dashboard tuân thủ.</span><span class="why">Sai: Detective dùng để điều tra root cause, không tổng hợp finding toàn tổ chức và không kiểm tra tuân thủ theo tiêu chuẩn.</span></li>
+              <li data-k="B"><span class="tv">Bật AWS Security Hub CSPM với một delegated administrator account trong AWS Organizations, bật tiêu chuẩn AWS Foundational Security Best Practices, và bảo đảm AWS Config được bật và đang ghi nhận tài nguyên.</span><span class="why">Đúng: Security Hub CSPM nhận finding từ GuardDuty, Inspector, Macie, chạy control FSBP (cần AWS Config), và delegated administrator gom finding của mọi member account.</span></li>
+              <li data-k="C"><span class="tv">Export tất cả finding sang Amazon S3 và xây dashboard Amazon QuickSight.</span><span class="why">Sai: phải tự xây và duy trì, nhiều vận hành, và không có security control để kiểm tra tuân thủ FSBP.</span></li>
+              <li data-k="D"><span class="tv">Bật AWS Shield Advanced để tổng hợp finding từ mọi dịch vụ bảo mật.</span><span class="why">Sai: Shield Advanced chống DDoS, không tổng hợp finding từ các dịch vụ bảo mật khác.</span></li>
+              <li data-k="E"><span class="tv">Cấu hình cross-Region aggregation của Security Hub CSPM với một home Region và các Region còn lại là linked Region.</span><span class="why">Đúng: cross-Region aggregation đưa finding từ các linked Region về home Region, giúp xem tất cả ở một chỗ cho cả ba Region.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A security analyst receives a GuardDuty finding indicating that an IAM role's temporary credentials were used from an unusual IP address. The analyst needs to quickly understand which API calls the role made over the past several weeks, which resources were involved, and whether the behavior differs from the role's normal baseline, without building custom queries. Which service should the analyst use?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon Detective</li>
+            <li data-k="B">Amazon Inspector</li>
+            <li data-k="C">AWS Firewall Manager</li>
+            <li data-k="D">Amazon Macie</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Amazon Detective</b> tự thu CloudTrail, VPC Flow Logs và finding GuardDuty, dựng <b>behavior graph</b> (tới 1 năm dữ liệu) với baseline và visualization để điều tra <b>root cause</b>, không cần tự viết query; pivot trực tiếp từ finding GuardDuty. <b>B sai</b>: Inspector quét lỗ hổng phần mềm. <b>C sai</b>: Firewall Manager quản lý chính sách tường lửa. <b>D sai</b>: Macie tìm dữ liệu nhạy cảm trong S3.</div>
+          <div class="trans">
+            <div class="tq">Một chuyên viên phân tích bảo mật nhận được một finding GuardDuty cho biết temporary credential của một IAM role đã được sử dụng từ một địa chỉ IP bất thường. Chuyên viên cần nhanh chóng hiểu role đó đã thực hiện những API call nào trong vài tuần qua, những tài nguyên nào liên quan, và hành vi có khác với baseline bình thường của role hay không, mà không phải tự xây truy vấn. Chuyên viên nên dùng dịch vụ nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon Detective</span><span class="why">Đúng: Detective tự thu CloudTrail, VPC Flow Logs và finding GuardDuty, dựng behavior graph có baseline và trực quan hóa để điều tra root cause mà không cần viết query.</span></li>
+              <li data-k="B"><span class="tv">Amazon Inspector</span><span class="why">Sai: Inspector quét lỗ hổng phần mềm, không phân tích lịch sử API call hay hành vi của IAM role.</span></li>
+              <li data-k="C"><span class="tv">AWS Firewall Manager</span><span class="why">Sai: Firewall Manager quản lý tập trung chính sách tường lửa/WAF, không phải công cụ điều tra.</span></li>
+              <li data-k="D"><span class="tv">Amazon Macie</span><span class="why">Sai: Macie tìm dữ liệu nhạy cảm trong S3, không điều tra hoạt động của credential.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/how-aws-waf-works.html" target="_blank" rel="noopener">How AWS WAF works</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-action.html" target="_blank" rel="noopener">Using rule actions in AWS WAF</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/aws-waf-capacity-units.html" target="_blank" rel="noopener">Web ACL capacity units (WCUs) in AWS WAF</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-rate-based.html" target="_blank" rel="noopener">Using rate-based rule statements in AWS WAF</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-rate-based-high-level-settings.html" target="_blank" rel="noopener">Rate-based rule high-level settings</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-geo-match.html" target="_blank" rel="noopener">Geographic match rule statement</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/aws-managed-rule-groups-list.html" target="_blank" rel="noopener">AWS Managed Rules rule groups list</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/web-acl-creating.html" target="_blank" rel="noopener">Creating a web ACL in AWS WAF</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/logging-destinations.html" target="_blank" rel="noopener">AWS WAF logging destinations</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/ddos-standard-summary.html" target="_blank" rel="noopener">AWS Shield Standard overview</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/ddos-advanced-summary.html" target="_blank" rel="noopener">AWS Shield Advanced overview</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/ddos-advanced-summary-capabilities.html" target="_blank" rel="noopener">Shield Advanced capabilities and options</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/ddos-advanced-summary-protected-resources.html" target="_blank" rel="noopener">Resources that Shield Advanced protects</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/fms-chapter.html" target="_blank" rel="noopener">AWS Firewall Manager</a></li>
+        <li><a href="https://docs.aws.amazon.com/waf/latest/developerguide/fms-prereq.html" target="_blank" rel="noopener">AWS Firewall Manager prerequisites</a></li>
+        <li><a href="https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_data-sources.html" target="_blank" rel="noopener">GuardDuty foundational data sources</a></li>
+        <li><a href="https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_findings-severity.html" target="_blank" rel="noopener">Severity levels of GuardDuty findings</a></li>
+        <li><a href="https://docs.aws.amazon.com/inspector/latest/user/scanning-resources.html" target="_blank" rel="noopener">Automated scan types in Amazon Inspector</a></li>
+        <li><a href="https://docs.aws.amazon.com/securityhub/latest/userguide/finding-aggregation.html" target="_blank" rel="noopener">Cross-Region aggregation in Security Hub CSPM</a></li>
+        <li><a href="https://docs.aws.amazon.com/detective/latest/userguide/what-is-detective.html" target="_blank" rel="noopener">What is Amazon Detective?</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

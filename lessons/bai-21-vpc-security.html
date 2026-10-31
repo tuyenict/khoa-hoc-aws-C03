@@ -1,0 +1,896 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 21 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/res/Amazon-VPC_Network-Access-Control-List.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="21" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Giải thích chính xác sự khác nhau giữa <span class="t" data-vi="Có trạng thái">stateful</span> và <span class="t" data-vi="Không trạng thái">stateless</span>, và hệ quả của nó lên cách viết rule.</li>
+          <li>So sánh <b>Security Group</b> với <span class="t" data-vi="Danh sách kiểm soát truy cập mạng">Network ACL (NACL)</span> theo 5 tiêu chí AWS dùng trong tài liệu – loại câu hỏi xuất hiện gần như chắc chắn trong đề.</li>
+          <li>Đọc và viết rule NACL: số thứ tự rule, rule <code>*</code>, default NACL vs custom NACL, quota 20 rule (tối đa 40) mỗi chiều.</li>
+          <li>Tính đúng dải <span class="t" data-vi="Cổng tạm thời">ephemeral ports</span> cho từng loại client (Linux, Windows, ELB, NAT gateway, Lambda) để không “làm gãy” traffic trả về.</li>
+          <li>Dùng <b>VPC Flow Logs</b> để chẩn đoán: cấp độ tạo, đích lưu log, định dạng record, <code>ACCEPT</code>/<code>REJECT</code>, những traffic <b>không</b> được ghi.</li>
+          <li>Biết khi nào cần <b>AWS Network Firewall</b> (lọc theo domain, IPS, deep packet inspection), cách chèn firewall endpoint bằng route table, và phân biệt với SG / NACL / AWS WAF / DNS Firewall.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 4 – Networking</span>
+        <p><b>Bài 10</b> đã dạy chi tiết <b>Security Group</b> ở góc độ instance: thành phần rule, default security group, security group referencing, connection tracking. <b>Bài 20</b> đã dựng VPC, subnet, route table, IGW, NAT. Bài này tập trung vào <b>lớp bảo mật mạng của VPC</b>: stateful vs stateless, <b>Network ACL</b>, <b>ephemeral ports</b>, <b>VPC Flow Logs</b> và <b>AWS Network Firewall</b>. Security Group chỉ được nhắc lại ở mức cần để so sánh. Các bài sau: <b>Bài 22</b> – peering, endpoint, PrivateLink, Transit Gateway; <b>Bài 23</b> – VPN &amp; Direct Connect.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">Tổng quan: các lớp bảo mật mạng trong VPC</h2>
+      <p class="lead">Theo tài liệu Amazon VPC, bạn dùng <span class="t" data-vi="Nhóm bảo mật">security group</span> làm <b>cơ chế chính</b> để kiểm soát truy cập mạng; khi cần, dùng <span class="t" data-vi="Danh sách kiểm soát truy cập mạng">network ACL</span> để kiểm soát <b>stateless, thô (coarse-grain)</b> ở cấp subnet. Bên trên hai lớp này, <b>AWS Network Firewall</b> lọc traffic ở <b>biên (perimeter)</b> của VPC, còn <b>VPC Flow Logs</b> cho bạn “camera an ninh” ghi lại ai đã đi qua cổng nào.</p>
+
+      <p>Ý tưởng xuyên suốt là <span class="t" data-vi="Phòng thủ theo chiều sâu">defense in depth</span>: không dựa vào một lớp duy nhất. AWS viết rõ: vì network ACL áp cho <b>toàn bộ subnet</b>, nó có thể làm lớp phòng thủ dự phòng “<i>in case an instance is ever launched without the correct security group</i>” – phòng khi ai đó launch instance với security group sai.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Firewall.svg" alt="">
+          <div><h4>Security group</h4><span class="vi">Nhóm bảo mật</span><p>Tường lửa ảo ở cấp <b>instance / network interface</b>. Chỉ có rule <b>allow</b>, <b>stateful</b>. Đã học kỹ ở Bài 10.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Network-Access-Control-List.svg" alt="">
+          <div><h4>Network ACL</h4><span class="vi">Danh sách kiểm soát truy cập mạng</span><p>Lọc ở cấp <b>subnet</b>. Có cả <b>allow</b> và <b>deny</b>, <b>stateless</b>, đánh giá theo số thứ tự rule. Miễn phí.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Flow-Logs.svg" alt="">
+          <div><h4>VPC Flow Logs</h4><span class="vi">Nhật ký luồng mạng</span><p>Ghi metadata IP traffic của network interface; đẩy vào <b>CloudWatch Logs</b>, <b>S3</b> hoặc <b>Data Firehose</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Network-Firewall.svg" alt="">
+          <div><h4>AWS Network Firewall</h4><span class="vi">Tường lửa mạng được quản lý</span><p>Firewall stateful + <b>IDS/IPS</b> (Suricata) ở biên VPC: lọc domain, deep packet inspection, chặn giao thức.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Reachability-Analyzer.svg" alt="">
+          <div><h4>Reachability Analyzer</h4><span class="vi">Trình phân tích khả năng kết nối</span><p>Phân tích <b>cấu hình tĩnh</b> (route, SG, NACL…) giữa 2 tài nguyên, chỉ ra thành phần đang chặn.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Route-53_Resolver-DNS-Firewall.svg" alt="">
+          <div><h4>Route 53 Resolver DNS Firewall</h4><span class="vi">Tường lửa DNS</span><p>Lọc truy vấn DNS gửi tới Route 53 Resolver – loại traffic mà <b>cả SG lẫn NACL đều không chặn được</b>.</p></div></div>
+      </div>
+
+      <h3>Traffic đi qua các lớp theo thứ tự nào?</h3>
+      <p>Tài liệu mô tả: traffic từ internet gateway được <b>route table</b> định tuyến tới subnet phù hợp; <b>rule của network ACL</b> gắn với subnet quyết định traffic nào được vào subnet; <b>rule của security group</b> gắn với instance quyết định traffic nào được tới instance. Chiều ra thì ngược lại: security group (outbound) → network ACL (outbound) → route table → gateway.</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+          <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+            <div class="flow">
+              <div class="node"><img src="../assets/icons/res/Internet.svg" alt="">Internet</div>
+              <span class="arrow">vào</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" alt="">Internet gateway</div>
+              <span class="arrow">route table</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-VPC_Router.svg" alt="">VPC router</div>
+              <span class="arrow">lớp 1: subnet</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-VPC_Network-Access-Control-List.svg" alt="">Network ACL<small>stateless · allow + deny</small></div>
+              <span class="arrow">lớp 2: ENI</span>
+              <div class="node"><img src="../assets/icons/res/Firewall.svg" alt="">Security group<small>stateful · chỉ allow</small></div>
+              <span class="arrow">tới</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 instance</div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Hai lớp lọc có sẵn trong mọi VPC: <b>network ACL</b> ở biên subnet (lọc khi traffic <b>vào/ra subnet</b>), <b>security group</b> ở network interface của instance. Gói tin phải được <b>cả hai</b> cho phép mới tới được instance. Flow Logs ghi lại kết quả ACCEPT/REJECT; Network Firewall (nếu có) được chèn trước subnet bằng route table.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – tòa chung cư</span>
+        <p><b>Network ACL</b> là <b>bảo vệ ở cổng khu nhà</b>: có danh sách “cho vào / cấm vào” đánh số thứ tự, đọc từ trên xuống, khớp dòng nào làm theo dòng đó; và <b>không nhớ mặt ai</b> – bạn đi ra rồi quay lại vẫn bị kiểm tra lại từ đầu (stateless). <b>Security group</b> là <b>lễ tân ở cửa từng căn hộ</b>: chỉ có danh sách khách được mời (allow), và <b>nhớ</b> ai vừa đi ra để cho họ quay vào (stateful). <b>Network Firewall</b> là <b>trạm an ninh soi chiếu hành lý</b> ở cổng chính của cả khu đô thị, mở từng kiện hàng (deep packet inspection). <b>Flow Logs</b> là <b>sổ ghi camera</b>: ghi giờ, ai, đi đâu, được cho qua hay bị chặn – nhưng không ghi nội dung hành lý.</p></div>
+
+      <!-- ===================== PHẦN 2: STATEFUL vs STATELESS ===================== -->
+      <h2 id="stateful-stateless"><img src="../assets/icons/res/Firewall.svg" alt="">Stateful vs Stateless – khái niệm gốc của cả bài</h2>
+      <p class="lead">Tài liệu NACL định nghĩa: NACL là <span class="t" data-vi="Không trạng thái">stateless</span> – thông tin về traffic đã gửi/nhận trước đó <b>không được lưu</b>. Nếu bạn tạo rule NACL cho phép một traffic inbound vào subnet, <b>phản hồi của traffic đó không tự động được cho phép</b>. Ngược lại, security group là <span class="t" data-vi="Có trạng thái">stateful</span> – thông tin traffic trước đó được lưu, nên nếu SG cho phép inbound thì phản hồi <b>tự động được phép ra</b>, bất kể outbound rule.</p>
+
+      <h3>Một kết nối TCP thực ra có hai chiều</h3>
+      <p>Khi người dùng mở <code>https://</code> tới web server, client chọn một <b>cổng nguồn tạm thời</b> (ephemeral port, vd 50123) và gửi tới cổng đích 443 của server. Server trả lời <b>từ cổng 443 về cổng 50123</b> của client. Vậy có hai “luồng”:</p>
+      <ul>
+        <li><b>Request</b>: <code>client:50123 → server:443</code> (inbound với server).</li>
+        <li><b>Response</b>: <code>server:443 → client:50123</code> (outbound với server, đích là <b>ephemeral port</b> của client).</li>
+      </ul>
+      <p>Với <b>stateful</b> (SG), bạn chỉ cần mở chiều request; firewall ghi nhớ kết nối và tự cho response đi. Với <b>stateless</b> (NACL), bạn phải viết <b>hai rule</b>: inbound cho port 443 và outbound cho <b>dải ephemeral port</b> của client.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 720 300" width="720" role="img" aria-label="So sánh stateful và stateless khi xử lý request và response">
+          <defs><marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Users.svg" x="20" y="110" width="56" height="56"/>
+          <text x="48" y="186" font-size="12" text-anchor="middle" font-weight="600">Client</text>
+          <text x="48" y="202" font-size="11" text-anchor="middle" class="muted">port 50123</text>
+          <!-- NACL box -->
+          <rect x="200" y="20" width="150" height="260" rx="6" fill="none" stroke="#7AA116" stroke-width="2" stroke-dasharray="6 4"/>
+          <image href="../assets/icons/res/Amazon-VPC_Network-Access-Control-List.svg" x="250" y="30" width="44" height="44"/>
+          <text x="275" y="90" font-size="12.5" text-anchor="middle" font-weight="700" style="fill:#7AA116">Network ACL</text>
+          <text x="275" y="106" font-size="11" text-anchor="middle" class="muted">stateless</text>
+          <text x="275" y="150" font-size="11" text-anchor="middle">Inbound rule: TCP 443 ✔</text>
+          <text x="275" y="236" font-size="11" text-anchor="middle">Outbound rule:</text>
+          <text x="275" y="252" font-size="11" text-anchor="middle">TCP 1024-65535 ✔ (bắt buộc)</text>
+          <!-- SG box -->
+          <rect x="420" y="20" width="150" height="260" rx="6" fill="none" stroke="#DD344C" stroke-width="2" stroke-dasharray="6 4"/>
+          <image href="../assets/icons/res/Firewall.svg" x="473" y="30" width="44" height="44"/>
+          <text x="495" y="90" font-size="12.5" text-anchor="middle" font-weight="700" style="fill:#DD344C">Security group</text>
+          <text x="495" y="106" font-size="11" text-anchor="middle" class="muted">stateful</text>
+          <text x="495" y="150" font-size="11" text-anchor="middle">Inbound rule: TCP 443 ✔</text>
+          <text x="495" y="236" font-size="11" text-anchor="middle">Outbound: không cần rule</text>
+          <text x="495" y="252" font-size="11" text-anchor="middle">(nhớ kết nối)</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="630" y="110" width="56" height="56"/>
+          <text x="658" y="186" font-size="12" text-anchor="middle" font-weight="600">Web server</text>
+          <text x="658" y="202" font-size="11" text-anchor="middle" class="muted">port 443</text>
+          <path class="line-o" d="M80 128 H625" marker-end="url(#ah1)"/>
+          <text x="150" y="122" font-size="11" text-anchor="middle">request → :443</text>
+          <path class="line-o" d="M625 158 H80" marker-end="url(#ah1)" stroke-dasharray="6 4"/>
+          <text x="150" y="176" font-size="11" text-anchor="middle">response → :50123</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Cùng một kết nối HTTPS: security group chỉ cần rule inbound 443 vì nó <b>nhớ trạng thái</b> kết nối; network ACL không nhớ, nên phải có thêm rule <b>outbound tới dải ephemeral port</b> của client, nếu không response bị chặn và người dùng thấy timeout.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Đề mô tả “<i>inbound traffic is allowed but users receive timeouts</i>”, “<i>the security group allows port 443 … the network ACL allows inbound 443 … connection fails</i>” ⇒ nghĩ ngay <b>NACL thiếu outbound rule cho ephemeral ports</b> (vì NACL stateless).</li>
+          <li>Đề hỏi “<i>Which component is stateful?</i>” ⇒ <b>security group</b> (và Network Firewall stateful engine). “<i>Stateless</i>” ⇒ <b>network ACL</b> (và stateless rule group của Network Firewall).</li>
+          <li>Sửa outbound rule của <b>security group</b> <b>không</b> ảnh hưởng tới response của kết nối inbound đã được cho phép – bẫy thường gặp khi đáp án gợi ý “add an outbound rule to the security group”.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: SG vs NACL ===================== -->
+      <h2 id="sg-vs-nacl"><img src="../assets/icons/res/Amazon-VPC_Network-Access-Control-List.svg" alt="">Security Group vs Network ACL</h2>
+      <p class="lead">Đây là bảng so sánh chính thức trong mục <i>Compare security groups and network ACLs</i> của tài liệu Amazon VPC – nên thuộc lòng từng dòng.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Đặc điểm</th><th>Security group</th><th>Network ACL</th></tr></thead>
+        <tbody>
+          <tr><td><b>Cấp hoạt động</b> (level of operation)</td><td>Cấp <b>instance</b> (network interface)</td><td>Cấp <b>subnet</b></td></tr>
+          <tr><td><b>Phạm vi</b> (scope)</td><td>Áp cho mọi instance <b>được gắn</b> security group</td><td>Áp cho mọi instance <b>trong các subnet được liên kết</b></td></tr>
+          <tr><td><b>Loại rule</b></td><td class="no">Chỉ <b>allow</b></td><td class="yes"><b>Allow và deny</b></td></tr>
+          <tr><td><b>Cách đánh giá rule</b></td><td>Đánh giá <b>tất cả rule</b> rồi mới quyết định</td><td>Đánh giá <b>theo thứ tự số tăng dần</b>, dừng ở rule khớp đầu tiên</td></tr>
+          <tr><td><b>Traffic trả về</b></td><td class="yes">Tự động được phép (<b>stateful</b>)</td><td class="no">Phải cho phép tường minh (<b>stateless</b>)</td></tr>
+          <tr><td>Mặc định khi tạo mới</td><td>Không có inbound; outbound cho tất cả</td><td>Custom NACL: <b>deny tất cả</b> (chỉ còn rule <code>*</code>); default NACL: allow tất cả</td></tr>
+          <tr><td>Gắn với</td><td>Nhiều SG cho một ENI (mặc định 5, tới 16)</td><td>Mỗi subnet <b>đúng 1</b> NACL; một NACL gắn được nhiều subnet</td></tr>
+          <tr><td>Nguồn/đích trong rule</td><td>CIDR, <b>security group khác</b>, prefix list</td><td><b>Chỉ CIDR</b></td></tr>
+          <tr><td>Chặn một IP cụ thể</td><td class="no">Không được (không có deny)</td><td class="yes">Được – thêm rule <b>DENY</b> số nhỏ</td></tr>
+          <tr><td>Không lọc được</td><td colspan="2">Amazon DNS (Route 53 Resolver), DHCP, instance metadata (IMDS), ECS task metadata, Windows license activation, Amazon Time Sync Service, IP dành riêng của default VPC router</td></tr>
+          <tr><td>Chi phí</td><td colspan="2">Miễn phí</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="stats">
+        <div class="stat"><b>60</b><span>inbound rule (và 60 outbound) mỗi security group – mặc định</span></div>
+        <div class="stat"><b>5 → 16</b><span>security group mỗi network interface</span></div>
+        <div class="stat"><b>1.000</b><span>trần của (rule/SG × SG/ENI)</span></div>
+        <div class="stat"><b>20 → 40</b><span>rule mỗi chiều mỗi network ACL (mặc định → tối đa)</span></div>
+        <div class="stat"><b>200</b><span>network ACL mỗi VPC (tăng được)</span></div>
+      </div>
+
+      <div class="compare">
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/Firewall.svg" alt="">Dùng Security group khi…</h4><ul>
+          <li>Cần kiểm soát chi tiết <b>theo vai trò</b> (web tier, app tier, DB tier) – AWS khuyên dùng SG làm <b>cơ chế chính</b>.</li>
+          <li>Muốn tham chiếu “chỉ cho phép từ SG của ALB / bastion” thay vì IP.</li>
+          <li>Muốn khỏi lo traffic trả về (stateful).</li>
+          <li>Các instance trong cùng subnet cần quy tắc khác nhau.</li>
+        </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-VPC_Network-Access-Control-List.svg" alt="">Dùng Network ACL khi…</h4><ul>
+          <li>Cần <b>DENY tường minh</b> một IP/dải IP (vd chặn IP đang tấn công).</li>
+          <li>Cần “<b>guard rail</b>” thô cho cả subnet, áp cho mọi tài nguyên kể cả tài nguyên <b>không gắn được SG</b> (vd NAT gateway).</li>
+          <li>Cần lớp thứ hai phòng khi ai đó launch instance với SG sai.</li>
+          <li>Cô lập tầng (vd subnet DB chỉ nhận từ CIDR của subnet app).</li>
+        </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Block a specific IP address / range that is attacking the application</i>” ⇒ <b>network ACL deny rule</b> (security group không deny được). Nếu traffic đi qua ALB/CloudFront và yêu cầu chặn theo IP ở lớp HTTP ⇒ <b>AWS WAF</b> IP set (học ở module bảo mật).</li>
+          <li>“<i>Allow traffic only from the load balancer</i>” ⇒ <b>security group</b> của instance tham chiếu <b>security group của ALB</b> – không dùng NACL vì NACL chỉ có CIDR.</li>
+          <li>“<i>Subnet-level</i>”, “<i>all instances in the subnet</i>”, “<i>explicit deny</i>”, “<i>rule number / order</i>” ⇒ <b>NACL</b>. “<i>Instance-level</i>”, “<i>reference another security group</i>” ⇒ <b>SG</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <p>Cả SG và NACL đều <b>không chặn được</b> truy vấn DNS tới Route 53 Resolver (địa chỉ VPC+2 / AmazonProvidedDNS) và truy cập IMDS (<code>169.254.169.254</code>). Đề hỏi “ngăn instance phân giải domain độc hại / chặn DNS exfiltration” ⇒ <b>Route 53 Resolver DNS Firewall</b>; “ngăn ứng dụng lạm dụng metadata” ⇒ cấu hình <b>IMDSv2 / instance metadata options</b>, không phải NACL.</p></div>
+
+      <!-- ===================== PHẦN 4: NETWORK ACL ===================== -->
+      <h2 id="nacl"><img src="../assets/icons/res/Amazon-VPC_Network-Access-Control-List.svg" alt="">Network ACL chi tiết</h2>
+      <p class="lead">Một <span class="t" data-vi="Danh sách kiểm soát truy cập mạng">network access control list (ACL)</span> cho phép hoặc từ chối traffic inbound/outbound cụ thể ở <b>cấp subnet</b>. Bạn có thể dùng <b>default network ACL</b> của VPC hoặc tạo <b>custom network ACL</b> với rule tương tự security group để thêm một lớp bảo mật. Không có phí cho network ACL.</p>
+
+      <h3>Liên kết NACL với subnet</h3>
+      <ul>
+        <li><b>Mỗi subnet bắt buộc</b> phải gắn với một network ACL. Không gắn tường minh ⇒ subnet tự động gắn với <b>default network ACL</b>.</li>
+        <li>Một network ACL gắn được với <b>nhiều subnet</b>, nhưng một subnet chỉ gắn với <b>một</b> network ACL tại một thời điểm. Gắn NACL mới ⇒ liên kết cũ bị gỡ.</li>
+        <li>NACL được đánh giá khi traffic <b>đi vào và rời khỏi subnet</b>, <b>không</b> đánh giá traffic được route <b>bên trong cùng một subnet</b>. ⇒ Hai instance cùng subnet nói chuyện với nhau chỉ chịu security group.</li>
+        <li>Thêm/xóa rule ⇒ thay đổi tự áp dụng cho mọi subnet đang gắn, có hiệu lực sau một khoảng ngắn.</li>
+      </ul>
+
+      <h3>Thành phần của một rule NACL</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><b>Rule number</b></td><td>Số từ <b>1 đến 32766</b>. Đánh giá từ số <b>nhỏ nhất</b>; khớp rule nào thì áp dụng ngay, <b>bỏ qua mọi rule số lớn hơn</b> dù mâu thuẫn. AWS khuyên đánh số cách quãng (10 hoặc 100) để chèn rule sau này.</td></tr>
+          <tr><td><b>Type</b></td><td>Loại traffic, vd SSH; có thể chọn All traffic hoặc custom range.</td></tr>
+          <tr><td><b>Protocol</b></td><td>Bất kỳ giao thức có số chuẩn IANA (TCP=6, UDP=17, ICMP=1…). Với ICMP chọn được type/code.</td></tr>
+          <tr><td><b>Port range</b></td><td>Cổng đích hoặc dải cổng, vd 80.</td></tr>
+          <tr><td><b>Source</b> (inbound) / <b>Destination</b> (outbound)</td><td><b>Chỉ CIDR</b> (IPv4 hoặc IPv6). CLI/API tự chuẩn hóa: <code>100.68.0.18/18</code> ⇒ <code>100.68.0.0/18</code>.</td></tr>
+          <tr><td><b>Allow / Deny</b></td><td>Cho phép hoặc từ chối.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Default network ACL</h3>
+      <p>Mỗi VPC tự có một <span class="t" data-vi="Danh sách ACL mặc định">default network ACL</span> cho phép <b>mọi traffic vào và ra</b> các subnet gắn với nó. Bạn sửa được (thêm rule, xóa các rule đánh số), nhưng <b>không xóa được rule <code>*</code></b>. Rule IPv6 chỉ được thêm khi VPC có IPv6 CIDR.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Rule #</th><th>Type</th><th>Protocol</th><th>Port</th><th>Source (inbound) / Destination (outbound)</th><th>Allow/Deny</th></tr></thead>
+        <tbody>
+          <tr><td>100</td><td>All IPv4 traffic</td><td>All</td><td>All</td><td><code>0.0.0.0/0</code></td><td class="yes">ALLOW</td></tr>
+          <tr><td>101</td><td>All IPv6 traffic</td><td>All</td><td>All</td><td><code>::/0</code></td><td class="yes">ALLOW</td></tr>
+          <tr><td>*</td><td>All traffic</td><td>All</td><td>All</td><td><code>0.0.0.0/0</code></td><td class="no">DENY</td></tr>
+          <tr><td>*</td><td>All IPv6 traffic</td><td>All</td><td>All</td><td><code>::/0</code></td><td class="no">DENY</td></tr>
+        </tbody>
+      </table></div>
+      <p>Bảng giống nhau cho inbound và outbound. Lưu ý: nếu bạn <b>đã sửa</b> inbound/outbound rule của default NACL, khi gắn thêm IPv6 CIDR vào VPC, AWS <b>không</b> tự thêm rule 101 cho IPv6.</p>
+
+      <h3>Custom network ACL</h3>
+      <p>NACL bạn tự tạo <b>chỉ có rule <code>*</code></b> ⇒ <b>mặc định từ chối mọi traffic vào và ra</b> cho tới khi bạn thêm rule. Với mỗi rule bạn thêm, phải có một rule chiều ngược lại cho <b>traffic phản hồi</b>. Ví dụ dưới đây là bộ rule mẫu trong tài liệu cho một subnet chứa web server public:</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th colspan="6">Inbound rules (ví dụ của AWS)</th></tr>
+          <tr><th>Rule #</th><th>Type</th><th>Port</th><th>Source</th><th>Allow/Deny</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td>100</td><td>HTTP</td><td>80</td><td><code>0.0.0.0/0</code></td><td class="yes">ALLOW</td><td>HTTP từ mọi IPv4</td></tr>
+          <tr><td>105</td><td>HTTP</td><td>80</td><td><code>::/0</code></td><td class="yes">ALLOW</td><td>HTTP từ mọi IPv6</td></tr>
+          <tr><td>110</td><td>HTTPS</td><td>443</td><td><code>0.0.0.0/0</code></td><td class="yes">ALLOW</td><td>HTTPS từ mọi IPv4</td></tr>
+          <tr><td>115</td><td>HTTPS</td><td>443</td><td><code>::/0</code></td><td class="yes">ALLOW</td><td>HTTPS từ mọi IPv6</td></tr>
+          <tr><td>120</td><td>SSH</td><td>22</td><td><code>192.0.2.0/24</code></td><td class="yes">ALLOW</td><td>SSH chỉ từ dải IP mạng nhà/công ty</td></tr>
+          <tr><td>140</td><td>Custom TCP</td><td>32768–65535</td><td><code>0.0.0.0/0</code></td><td class="yes">ALLOW</td><td><b>Traffic trả về</b> cho request do subnet khởi tạo (IPv4)</td></tr>
+          <tr><td>145</td><td>Custom TCP</td><td>32768–65535</td><td><code>::/0</code></td><td class="yes">ALLOW</td><td>Như trên cho IPv6</td></tr>
+          <tr><td>*</td><td>All</td><td>All</td><td><code>0.0.0.0/0</code>, <code>::/0</code></td><td class="no">DENY</td><td>Chặn mọi thứ còn lại (không sửa được)</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th colspan="6">Outbound rules (ví dụ của AWS)</th></tr>
+          <tr><th>Rule #</th><th>Type</th><th>Port</th><th>Destination</th><th>Allow/Deny</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td>100 / 105</td><td>HTTP</td><td>80</td><td><code>0.0.0.0/0</code> / <code>::/0</code></td><td class="yes">ALLOW</td><td>Subnet gọi HTTP ra Internet (vd tải bản vá)</td></tr>
+          <tr><td>110 / 115</td><td>HTTPS</td><td>443</td><td><code>0.0.0.0/0</code> / <code>::/0</code></td><td class="yes">ALLOW</td><td>Subnet gọi HTTPS ra Internet</td></tr>
+          <tr><td>120</td><td>Custom TCP</td><td>1024–65535</td><td><code>192.0.2.0/24</code></td><td class="yes">ALLOW</td><td><b>Phản hồi SSH</b> về máy quản trị</td></tr>
+          <tr><td>140 / 145</td><td>Custom TCP</td><td>32768–65535</td><td><code>0.0.0.0/0</code> / <code>::/0</code></td><td class="yes">ALLOW</td><td><b>Phản hồi</b> cho client Internet (phục vụ trang web)</td></tr>
+          <tr><td>*</td><td>All</td><td>All</td><td><code>0.0.0.0/0</code>, <code>::/0</code></td><td class="no">DENY</td><td>Chặn mọi thứ còn lại</td></tr>
+        </tbody>
+      </table></div>
+
+      <p>Cách AWS giải thích bảng inbound: một gói IPv4 tới port <b>443</b> không khớp rule 100 hay 105, khớp rule <b>110</b> ⇒ được vào. Một gói tới port <b>139</b> (NetBIOS) không khớp rule đánh số nào ⇒ rule <code>*</code> từ chối. IPv4 và IPv6 được đánh giá <b>riêng biệt</b>: rule IPv4 không bao giờ áp cho traffic IPv6.</p>
+
+      <h3>Thứ tự rule quyết định tất cả</h3>
+      <ol class="steps">
+        <li><b>Rule 100</b> – ALLOW TCP 443 từ <code>0.0.0.0/0</code>.</li>
+        <li><b>Rule 200</b> – DENY tất cả từ <code>198.51.100.7/32</code>.</li>
+        <li>Kết quả: IP <code>198.51.100.7</code> gửi tới 443 <b>vẫn vào được</b>, vì rule 100 khớp trước và dừng. Muốn chặn, rule DENY phải có <b>số nhỏ hơn</b> rule ALLOW, vd rule <b>90</b>.</li>
+      </ol>
+      <p>Tài liệu ghi rõ: khi cần mở dải port rộng nhưng chặn vài port trong đó, đặt <b>deny rule số nhỏ hơn</b> allow rule của dải rộng.</p>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – NACL và các dịch vụ khác</span>
+        <ul>
+          <li><b>ELB health check</b>: nếu subnet của backend có NACL <b>deny</b> mọi traffic từ <code>0.0.0.0/0</code> hoặc từ CIDR của chính subnet, load balancer <b>không health check được</b> instance.</li>
+          <li><b>Thêm và xóa rule cùng lúc</b>: nếu bạn xóa rule rồi thêm nhiều rule hơn quota cho phép, rule cần xóa bị xóa nhưng rule mới <b>không được thêm</b> ⇒ mất kết nối bất ngờ.</li>
+          <li>Quota <b>20 rule mỗi chiều</b> (tăng tối đa 40 inbound + 40 outbound = 80, nhưng hiệu năng mạng có thể bị ảnh hưởng). Không thể dùng NACL để chặn hàng nghìn IP ⇒ dùng <b>AWS WAF</b> hoặc <b>Network Firewall</b>.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>A new custom network ACL was associated with the subnet and all traffic stopped</i>” ⇒ custom NACL mặc định <b>deny all</b>.</li>
+          <li>“<i>Instances in the same subnet can communicate but not with another subnet</i>” ⇒ kiểm tra NACL (NACL không lọc traffic trong cùng subnet).</li>
+          <li>Câu hỏi đưa bảng rule NACL và hỏi traffic nào được phép ⇒ <b>đọc từ số nhỏ nhất</b>, dừng ở rule khớp đầu tiên.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: EPHEMERAL PORTS ===================== -->
+      <h2 id="ephemeral-ports"><img src="../assets/icons/res/Amazon-VPC_Router.svg" alt="">Ephemeral ports – chìa khóa để NACL không “làm gãy” kết nối</h2>
+      <p class="lead"><span class="t" data-vi="Cổng tạm thời">Ephemeral port</span> là cổng nguồn tạm thời mà <b>client khởi tạo request</b> tự chọn; response quay về đúng cổng đó. Theo tài liệu, <b>dải cổng do client chọn và phụ thuộc hệ điều hành</b> của client. Vì NACL stateless, bạn phải mở dải này ở chiều trả về.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Client khởi tạo request</th><th>Dải ephemeral port (theo tài liệu AWS)</th></tr></thead>
+        <tbody>
+          <tr><td>Nhiều Linux kernel (gồm <b>Amazon Linux</b>)</td><td><b>32768–61000</b></td></tr>
+          <tr><td>Request xuất phát từ <b>Elastic Load Balancing</b></td><td><b>1024–65535</b></td></tr>
+          <tr><td>Windows tới <b>Windows Server 2003</b></td><td><b>1025–5000</b></td></tr>
+          <tr><td><b>Windows Server 2008</b> trở về sau (và Windows 10)</td><td><b>49152–65535</b></td></tr>
+          <tr><td><b>NAT gateway</b></td><td><b>1024–65535</b></td></tr>
+          <tr><td><b>AWS Lambda</b> functions</td><td><b>1024–65535</b></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Hai tình huống cần nhớ</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Instance trong VPC là server</h4><ul>
+          <li>Client ở Internet (vd Windows 10) gọi vào port 443.</li>
+          <li>NACL <b>inbound</b>: allow TCP 443.</li>
+          <li>NACL <b>outbound</b>: allow TCP <b>tới dải ephemeral của client</b> – với Windows 10 là <b>49152–65535</b>.</li>
+          <li>Client đa dạng ⇒ thực tế mở <b>1024–65535</b>.</li>
+        </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Users.svg" alt="">Instance trong VPC là client</h4><ul>
+          <li>Instance Amazon Linux gọi ra <code>https://repo…</code> port 443 (tải bản vá).</li>
+          <li>NACL <b>outbound</b>: allow TCP 443.</li>
+          <li>NACL <b>inbound</b>: allow TCP tới dải ephemeral <b>của chính instance</b> – Amazon Linux <b>32768–61000</b>.</li>
+          <li>Nếu đi qua NAT gateway: subnet của NAT cần mở <b>1024–65535</b>.</li>
+        </ul></div>
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 330" width="760" role="img" aria-label="Rule NACL cho subnet public chứa NAT gateway và subnet private chứa app server">
+          <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="20" y="20" width="250" height="290" rx="6" fill="rgba(0,164,166,.08)" stroke="#00A4A6" stroke-width="1.5"/>
+          <text x="32" y="42" font-size="12.5" font-weight="700" style="fill:#00A4A6">Private subnet 10.0.10.0/24</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="105" y="58" width="56" height="56"/>
+          <text x="133" y="132" font-size="12" text-anchor="middle" font-weight="600">App (Amazon Linux)</text>
+          <text x="32" y="166" font-size="11" font-weight="700">NACL-Private</text>
+          <text x="32" y="186" font-size="11">OUT 100: TCP 443 → 0.0.0.0/0 ALLOW</text>
+          <text x="32" y="206" font-size="11">IN 100: TCP 32768-61000</text>
+          <text x="32" y="222" font-size="11">     từ 0.0.0.0/0 ALLOW</text>
+          <text x="32" y="250" font-size="11" class="muted">(response quay về ephemeral</text>
+          <text x="32" y="266" font-size="11" class="muted"> port của instance Linux)</text>
+          <rect x="300" y="20" width="250" height="290" rx="6" fill="rgba(122,161,22,.08)" stroke="#7AA116" stroke-width="1.5"/>
+          <text x="312" y="42" font-size="12.5" font-weight="700" style="fill:#7AA116">Public subnet 10.0.0.0/24</text>
+          <image href="../assets/icons/res/Amazon-VPC_NAT-Gateway.svg" x="397" y="58" width="56" height="56"/>
+          <text x="425" y="132" font-size="12" text-anchor="middle" font-weight="600">NAT gateway</text>
+          <text x="312" y="166" font-size="11" font-weight="700">NACL-Public</text>
+          <text x="312" y="186" font-size="11">IN 100: TCP 443 từ 10.0.10.0/24 ALLOW</text>
+          <text x="312" y="204" font-size="11">OUT 100: TCP 443 → 0.0.0.0/0 ALLOW</text>
+          <text x="312" y="222" font-size="11">IN 110: TCP 1024-65535 từ 0.0.0.0/0</text>
+          <text x="312" y="240" font-size="11">OUT 110: TCP 32768-61000</text>
+          <text x="312" y="256" font-size="11">     → 10.0.10.0/24 ALLOW</text>
+          <text x="312" y="284" font-size="11" class="muted">(NAT gateway dùng port 1024-65535)</text>
+          <image href="../assets/icons/res/Internet.svg" x="660" y="58" width="56" height="56"/>
+          <text x="688" y="132" font-size="12" text-anchor="middle" font-weight="600">Internet</text>
+          <text x="688" y="148" font-size="11" text-anchor="middle" class="muted">(qua IGW)</text>
+          <path class="line-o" d="M165 80 H393" marker-end="url(#ah2)"/>
+          <text x="285" y="74" font-size="11" text-anchor="middle">:443</text>
+          <path class="line-o" d="M457 80 H656" marker-end="url(#ah2)"/>
+          <text x="600" y="74" font-size="11" text-anchor="middle">:443</text>
+          <path class="line-o" d="M656 100 H457" marker-end="url(#ah2)" stroke-dasharray="6 4"/>
+          <text x="600" y="116" font-size="11" text-anchor="middle">→ 1024-65535</text>
+          <path class="line-o" d="M393 100 H165" marker-end="url(#ah2)" stroke-dasharray="6 4"/>
+          <text x="285" y="116" font-size="11" text-anchor="middle">→ 32768-61000</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Instance private (Amazon Linux) tải bản vá qua NAT gateway khi cả hai subnet dùng <b>custom NACL</b>. Mỗi lần traffic vào/ra một subnet đều cần rule cho request (443) <b>và</b> rule cho response (ephemeral port). Mũi tên nét liền = request, nét đứt = response.</figcaption>
+      </figure>
+
+      <div class="callout note"><span class="ttl">Thực hành của AWS</span>
+        <p>Tài liệu gợi ý: để phục vụ mọi loại client gọi tới instance public, bạn có thể mở ephemeral port <b>1024–65535</b>, rồi thêm rule <b>DENY</b> cho các port độc hại trong dải đó – nhớ đặt deny rule <b>trước</b> (số nhỏ hơn) allow rule dải rộng.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Đáp án đúng cho “web server behind NACL, users time out” thường là “<i>Add an outbound rule to the network ACL that allows TCP ports <b>1024-65535</b> to 0.0.0.0/0</i>”. Đáp án sai hay gặp: mở outbound <b>port 443</b> (sai – response đi tới ephemeral port của client, không phải 443), hoặc sửa security group.</li>
+          <li>Instance private không tải được bản cập nhật dù có NAT gateway và route đúng ⇒ NACL của subnet private thiếu <b>inbound ephemeral ports</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: TROUBLESHOOT ===================== -->
+      <h2 id="troubleshoot"><img src="../assets/icons/res/Amazon-VPC_Reachability-Analyzer.svg" alt="">Kết hợp SG + NACL và chẩn đoán sự cố</h2>
+      <p class="lead">AWS khuyến nghị: dùng security group làm cơ chế chính; NACL làm lớp phụ (deny một tập con traffic, guard rail cấp subnet). Khi traffic không tới được đích, hãy kiểm tra lần lượt từng lớp.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Triệu chứng</th><th>Nguyên nhân khả dĩ nhất</th><th>Cách sửa</th></tr></thead>
+        <tbody>
+          <tr><td>Kết nối <b>timeout</b>; Flow Logs: inbound <code>ACCEPT</code>, outbound <code>REJECT</code></td><td>NACL thiếu outbound rule cho <b>ephemeral ports</b></td><td>Thêm NACL outbound TCP 1024–65535</td></tr>
+          <tr><td>Flow Logs: inbound <code>REJECT</code></td><td>SG inbound không cho phép <b>hoặc</b> NACL inbound chặn</td><td>Xem SG trước (thường gặp), rồi NACL</td></tr>
+          <tr><td>Instance public có public IP nhưng không truy cập được</td><td>Route tới IGW / SG / NACL</td><td>Kiểm tra route → NACL → SG (Bài 20)</td></tr>
+          <tr><td>Mọi traffic vào subnet mới đều chết</td><td>Custom NACL mới tạo chỉ có rule <code>*</code> DENY</td><td>Thêm allow rule cả hai chiều</td></tr>
+          <tr><td>Đã chặn một IP nhưng IP đó vẫn vào được</td><td>Deny rule có <b>số lớn hơn</b> allow rule</td><td>Đổi deny rule thành số nhỏ hơn</td></tr>
+          <tr><td>ALB báo target <i>unhealthy</i> sau khi siết NACL</td><td>NACL chặn health check từ subnet của ALB</td><td>Cho phép traffic từ CIDR subnet ALB và ephemeral ports trả về</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Công cụ hỗ trợ</h3>
+      <ul>
+        <li><span class="t" data-vi="Trình phân tích khả năng kết nối">Reachability Analyzer</span>: công cụ phân tích <b>cấu hình tĩnh</b> (không gửi gói tin thật). Cho hai tài nguyên trong VPC, nó trả về đường đi từng chặng nếu tới được, hoặc chỉ ra <b>thành phần đang chặn</b> – ví dụ rule NACL thiếu hoặc sai.</li>
+        <li><b>VPC Flow Logs</b>: dữ liệu <b>thực tế</b> traffic đã ACCEPT hay REJECT (phần kế tiếp).</li>
+        <li><b>AWS Security Hub CSPM</b>: AWS gợi ý dùng để kiểm tra instance có bị lộ ra mạng ngoài ý muốn không.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>Determine why two resources cannot connect <b>without sending traffic</b></i>” / “<i>identify the misconfigured component</i>” ⇒ <b>Reachability Analyzer</b>. “<i>Analyze actual traffic / which requests were rejected / audit IP traffic</i>” ⇒ <b>VPC Flow Logs</b>.</p></div>
+
+      <!-- ===================== PHẦN 7: VPC FLOW LOGS ===================== -->
+      <h2 id="flow-logs"><img src="../assets/icons/res/Amazon-VPC_Flow-Logs.svg" alt="">VPC Flow Logs</h2>
+      <p class="lead"><span class="t" data-vi="Nhật ký luồng VPC">VPC Flow Logs</span> là tính năng ghi lại <b>thông tin về IP traffic</b> đi vào và ra các <b>network interface</b> trong VPC. Dữ liệu được publish tới <b>Amazon CloudWatch Logs</b>, <b>Amazon S3</b> hoặc <b>Amazon Data Firehose</b>. Đường đi + quyền để gửi log tới đích được gọi là <span class="t" data-vi="Đăng ký nhận log">subscription</span>.</p>
+
+      <p>Flow Logs giúp bạn: chẩn đoán <b>security group rule quá chặt</b>; giám sát traffic tới instance; xác định <b>hướng</b> traffic tới/từ network interface. Dữ liệu được thu thập <b>ngoài đường đi của traffic</b> nên <b>không ảnh hưởng throughput hay latency</b> – tạo/xóa flow log không có rủi ro về hiệu năng mạng.</p>
+
+      <h3>Tạo flow log ở đâu?</h3>
+      <ul>
+        <li>Ba cấp: <b>VPC</b>, <b>subnet</b>, hoặc <b>network interface</b>. Tạo ở cấp VPC/subnet ⇒ <b>mọi network interface</b> trong đó đều được giám sát, kể cả instance launch <b>sau</b> khi tạo flow log (AWS tự tạo log stream/file mới khi interface có traffic).</li>
+        <li>Tạo được cho network interface của <b>dịch vụ AWS khác</b>: Elastic Load Balancing, Amazon RDS, Amazon ElastiCache, Amazon Redshift, Amazon WorkSpaces, <b>NAT gateways</b>, <b>transit gateways</b>.</li>
+        <li>Khi tạo, bạn chỉ định: tài nguyên; <b>loại traffic</b> cần ghi – <b>accepted</b>, <b>rejected</b> hoặc <b>all</b>; và <b>đích</b> publish.</li>
+        <li>Sau khi tạo cần <b>vài phút</b> mới bắt đầu thu và publish; không thấy dữ liệu cho tới khi có traffic. Flow Logs <b>không phải luồng thời gian thực</b>.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>10 phút</b><span>aggregation interval tối đa mặc định (chọn được 1 phút)</span></div>
+        <div class="stat"><b>≤ 1 phút</b><span>luôn áp dụng với instance Nitro</span></div>
+        <div class="stat"><b>~5 phút</b><span>độ trễ giao log tới CloudWatch Logs (best effort)</span></div>
+        <div class="stat"><b>~10 phút</b><span>độ trễ giao log tới Amazon S3 (best effort)</span></div>
+        <div class="stat"><b>250</b><span>subscription tối đa mỗi tài nguyên mỗi account</span></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC</span>
+          <div class="row">
+            <div class="grp plain"><span class="lbl">Cấp tạo flow log</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC<small>mọi ENI</small></div>
+                <div class="node"><img src="../assets/icons/res/Amazon-VPC_Router.svg" alt="">Subnet<small>mọi ENI trong subnet</small></div>
+                <div class="node"><img src="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg" alt="">Network interface<small>EC2, ELB, RDS, NAT GW…</small></div>
+              </div></div>
+          </div>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Amazon-VPC_Flow-Logs.svg" alt="">Flow log<small>ACCEPT / REJECT / ALL</small></div>
+            <span class="arrow">publish</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Logs.svg" alt="">CloudWatch Logs<small>metric filter, alarm</small></div>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">Amazon S3<small>text / Parquet, lưu lâu</small></div>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Firehose.svg" alt="">Data Firehose<small>tới SIEM, OpenSearch…</small></div>
+            <span class="arrow dashed">query</span>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Athena.svg" alt="">Amazon Athena<small>SQL trên log ở S3</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> Flow log được tạo ở cấp VPC, subnet hoặc ENI, chọn loại traffic (accepted / rejected / all) và publish tới một trong ba đích. Log trong S3 thường được truy vấn bằng <b>Amazon Athena</b>; log trong CloudWatch Logs dùng metric filter + alarm để cảnh báo.</figcaption>
+      </figure>
+
+      <h3>Định dạng flow log record</h3>
+      <p>Mỗi record đại diện cho một <b>luồng IP</b> (xác định bởi <b>5-tuple</b> trên mỗi network interface) xảy ra trong một <span class="t" data-vi="Khoảng gộp dữ liệu">aggregation interval</span> (còn gọi là <i>capture window</i>). Record là chuỗi các trường cách nhau bằng dấu cách. <b>Default format</b> gồm các trường version 2 theo thứ tự cố định và <b>không sửa được</b>; muốn thêm/bớt trường thì dùng <b>custom format</b> (chọn trường và thứ tự, ít nhất 1 trường).</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>#</th><th>Trường (default, v2)</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><code>version</code></td><td>Phiên bản Flow Logs (default = 2)</td></tr>
+          <tr><td>2</td><td><code>account-id</code></td><td>Account sở hữu network interface nguồn</td></tr>
+          <tr><td>3</td><td><code>interface-id</code></td><td>ID network interface</td></tr>
+          <tr><td>4–5</td><td><code>srcaddr</code>, <code>dstaddr</code></td><td>IP nguồn / đích (IPv4 của ENI luôn là <b>private IPv4</b>)</td></tr>
+          <tr><td>6–7</td><td><code>srcport</code>, <code>dstport</code></td><td>Cổng nguồn / đích</td></tr>
+          <tr><td>8</td><td><code>protocol</code></td><td>Số giao thức IANA (6 = TCP, 17 = UDP, 1 = ICMP)</td></tr>
+          <tr><td>9–10</td><td><code>packets</code>, <code>bytes</code></td><td>Số gói / số byte trong luồng</td></tr>
+          <tr><td>11–12</td><td><code>start</code>, <code>end</code></td><td>Thời điểm gói đầu / cuối (Unix seconds)</td></tr>
+          <tr><td>13</td><td><code>action</code></td><td><b>ACCEPT</b> hoặc <b>REJECT</b> (bị SG/NACL chặn, hoặc gói tới sau khi kết nối đã đóng)</td></tr>
+          <tr><td>14</td><td><code>log-status</code></td><td><b>OK</b>, <b>NODATA</b> (không có traffic trong interval), <b>SKIPDATA</b> (bỏ sót do giới hạn/lỗi nội bộ)</td></tr>
+        </tbody>
+      </table></div>
+
+      <p>Một số trường <b>custom</b> hay dùng: <code>vpc-id</code>, <code>subnet-id</code>, <code>instance-id</code>, <code>tcp-flags</code> (FIN=1, SYN=2, RST=4, SYN-ACK=18) – v3; <code>pkt-srcaddr</code>/<code>pkt-dstaddr</code> (IP <b>gốc</b> ở cấp gói tin, phân biệt với IP của lớp trung gian như NAT gateway) – v3; <code>region</code>, <code>az-id</code> – v4; <code>flow-direction</code> (ingress/egress), <code>traffic-path</code> (vd 8 = qua internet gateway, 7 = qua gateway VPC endpoint), <code>pkt-src-aws-service</code> – v5; <code>reject-reason</code> (vd <code>BPA</code>) – v8.</p>
+
+      <h3>Đọc record: SG hay NACL đã chặn?</h3>
+      <p>Ví dụ (default format) – một luồng SSH (port 22, protocol 6) được chấp nhận:</p>
+      <pre><code>2 123456789010 eni-1235b8ca123456789 172.31.16.139 172.31.16.21 20641 22 6 20 4249 1418530010 1418530070 ACCEPT OK</code></pre>
+      <p>Tình huống kinh điển: bạn ping (ICMP, protocol 1) từ <code>203.0.113.12</code> tới instance <code>172.31.16.139</code>. Security group cho phép ICMP inbound; NACL cho phép ICMP inbound nhưng <b>không</b> cho phép ICMP outbound. Flow log ghi hai record:</p>
+      <pre><code>2 123456789010 eni-1235b8ca123456789 203.0.113.12 172.31.16.139 0 0 1 4 336 1432917027 1432917142 ACCEPT OK
+2 123456789010 eni-1235b8ca123456789 172.31.16.139 203.0.113.12 0 0 1 4 336 1432917094 1432917142 REJECT OK</code></pre>
+      <ul>
+        <li>Inbound <b>ACCEPT</b> rồi response outbound <b>REJECT</b> ⇒ chỉ có thể là <b>NACL</b> (stateless) chặn chiều về. Security group stateful không bao giờ chặn response của request đã được cho phép.</li>
+        <li>Nếu chỉ thấy inbound <b>REJECT</b> ⇒ SG hoặc NACL chặn ngay từ chiều vào.</li>
+      </ul>
+
+      <h3>Giới hạn quan trọng (theo tài liệu)</h3>
+      <ul>
+        <li>Sau khi tạo, <b>không đổi được cấu hình</b> hay định dạng record (vd đổi IAM role, thêm/bớt trường) ⇒ phải <b>xóa và tạo flow log mới</b>.</li>
+        <li><b>Không</b> bật flow log được cho VPC peer nếu VPC đó <b>không thuộc account của bạn</b>.</li>
+        <li>Xóa flow log chỉ dừng ghi log mới; dữ liệu cũ ở đích <b>không bị xóa</b>.</li>
+        <li>Traffic gửi tới secondary private IP vẫn hiện <b>primary private IP</b> trong <code>dstaddr</code> ⇒ cần trường <code>pkt-dstaddr</code> để thấy IP gốc.</li>
+        <li>Flow Logs chỉ ghi <b>metadata</b> của luồng, không ghi <b>nội dung gói tin (payload)</b>. Cần nội dung để IDS/phân tích pháp chứng ⇒ <b>Traffic Mirroring</b> (sao chép gói tin từ ENI tới công cụ phân tích) hoặc Network Firewall.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Traffic <b>không</b> được Flow Logs ghi lại</th></tr></thead>
+        <tbody>
+          <tr><td>Traffic instance gửi tới <b>Amazon DNS server</b> (nếu dùng DNS server riêng thì traffic tới server đó <b>được</b> ghi)</td></tr>
+          <tr><td>Traffic kích hoạt bản quyền Windows (Amazon Windows license activation)</td></tr>
+          <tr><td>Traffic tới/từ <code>169.254.169.254</code> (instance metadata) và <code>169.254.169.123</code> (Amazon Time Sync Service)</td></tr>
+          <tr><td>DHCP traffic; ARP traffic</td></tr>
+          <tr><td>Traffic <b>nguồn</b> của Traffic Mirroring (chỉ thấy traffic ở mirror target)</td></tr>
+          <tr><td>Traffic tới IP dành riêng của default VPC router</td></tr>
+          <tr><td>Traffic giữa endpoint network interface và network interface của Network Load Balancer</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Chi phí</h3>
+      <p>Khi publish flow log, áp dụng phí <b>data ingestion và archival của vended logs</b> (theo bảng giá CloudWatch – mục <i>Logs → Vended Logs</i>), cộng phí lưu trữ ở đích. Có thể gắn <b>cost allocation tag</b> cho log group / bucket / delivery stream đích để theo dõi chi phí.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Capture information about IP traffic / identify rejected connections / audit network traffic for compliance</i>” ⇒ <b>VPC Flow Logs</b>.</li>
+          <li>“<i>Analyze flow logs with SQL, low cost, long retention</i>” ⇒ Flow Logs → <b>S3</b> + <b>Amazon Athena</b>. “<i>Alarm when rejected SSH attempts exceed a threshold</i>” ⇒ Flow Logs → <b>CloudWatch Logs</b> + metric filter + alarm. “<i>Stream to a third-party SIEM</i>” ⇒ <b>Data Firehose</b>.</li>
+          <li>“<i>Inspect packet payload / content</i>” ⇒ <b>không</b> phải Flow Logs ⇒ <b>Traffic Mirroring</b> hoặc <b>Network Firewall</b>.</li>
+          <li><b>Amazon GuardDuty</b> phân tích VPC Flow Logs (cùng CloudTrail, DNS logs) làm nguồn dữ liệu phát hiện mối đe dọa – bạn không cần tự bật flow log cho GuardDuty.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <p>Đáp án “<i>modify the existing flow log to add the <code>tcp-flags</code> field</i>” là <b>sai</b> – flow log không sửa được, phải tạo flow log mới với custom format. Đáp án “<i>use flow logs to block malicious traffic</i>” cũng <b>sai</b> – Flow Logs chỉ quan sát, không chặn.</p></div>
+
+      <!-- ===================== PHẦN 8: NETWORK FIREWALL ===================== -->
+      <h2 id="network-firewall"><img src="../assets/icons/svc/AWS-Network-Firewall.svg" alt="">AWS Network Firewall</h2>
+      <p class="lead"><span class="t" data-vi="Tường lửa mạng AWS">AWS Network Firewall</span> là dịch vụ <b>tường lửa mạng stateful, được quản lý (managed)</b> kèm khả năng <span class="t" data-vi="Phát hiện và ngăn chặn xâm nhập">intrusion detection and prevention (IDS/IPS)</span> cho VPC. Nó lọc traffic ở <b>biên (perimeter)</b> của VPC: traffic đi tới/từ <b>internet gateway</b>, <b>NAT gateway</b>, hoặc qua <b>VPN / Direct Connect</b>. Engine stateful dùng IPS mã nguồn mở <b>Suricata</b> và hỗ trợ rule tương thích Suricata.</p>
+
+      <h3>Network Firewall làm được gì mà SG/NACL không làm được?</h3>
+      <ul>
+        <li>Chỉ cho đi qua traffic tới các <b>domain</b> hoặc IP endpoint đã biết của dịch vụ AWS (vd Amazon S3) – <b>lọc theo tên miền</b> (domain list allow/deny).</li>
+        <li>Dùng danh sách tùy chỉnh các <b>domain độc hại</b> để giới hạn tên miền mà ứng dụng được truy cập.</li>
+        <li><span class="t" data-vi="Kiểm tra sâu gói tin">Deep packet inspection</span> traffic vào/ra VPC.</li>
+        <li><b>Nhận diện giao thức stateful</b>: lọc HTTPS… <b>bất kể port</b> đang dùng.</li>
+        <li><b>TLS inspection</b> (giải mã để kiểm tra traffic mã hóa – cần cấu hình riêng).</li>
+      </ul>
+
+      <h3>Các tài nguyên của Network Firewall</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tài nguyên</th><th>Vai trò</th></tr></thead>
+        <tbody>
+          <tr><td><b>Firewall</b></td><td>Chứa logic lọc cho một VPC; định nghĩa <b>VPC chính</b> cần bảo vệ và <b>một subnet ở mỗi AZ</b> để đặt <b>firewall endpoint</b>.</td></tr>
+          <tr><td><b>Firewall policy</b></td><td>Định nghĩa rule group và các thiết lập (default action…) mà firewall dùng để lọc traffic vào/ra.</td></tr>
+          <tr><td><b>Rule group</b></td><td>Tập rule để so khớp traffic và hành động khi khớp. Có hai loại: <b>stateless</b> và <b>stateful</b>, mỗi loại có ARN riêng; tái sử dụng được giữa nhiều policy.</td></tr>
+          <tr><td><b>VPC endpoint association</b></td><td>Tạo thêm firewall endpoint cho cùng một firewall, ở VPC chính hoặc <b>VPC khác</b>, hoặc thêm endpoint trong cùng AZ.</td></tr>
+          <tr><td><b>Firewall subnet</b></td><td>Subnet <b>dành riêng</b> cho firewall endpoint. Endpoint <b>không lọc được traffic của chính subnet nó nằm trong</b> ⇒ đừng đặt workload vào firewall subnet.</td></tr>
+          <tr><td><b>Firewall state table</b></td><td>Bảng theo dõi các luồng (flow) được stateful rule xử lý.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Hai engine: stateless trước, stateful sau</h3>
+      <ol class="steps">
+        <li><b>Stateless engine</b> kiểm tra <b>từng gói tin riêng lẻ</b>, không quan tâm hướng hay kết nối; ưu tiên tốc độ; xét rule <b>theo thứ tự ưu tiên</b> và dừng ở rule khớp đầu tiên – AWS nói hành vi <b>tương tự network ACL</b>. Hành động: <b>Pass</b> (cho qua, dừng kiểm tra), <b>Drop</b> (chặn), <b>Forward to stateful rules</b> (chuyển sang engine stateful); tùy chọn <i>custom action</i> để đẩy metric CloudWatch.</li>
+        <li><b>Stateful engine</b> kiểm tra gói tin <b>trong ngữ cảnh luồng</b>, cho phép rule phức tạp, ghi log luồng và alert; xét hướng traffic – AWS nói hành vi <b>tương tự security group</b>, nhưng <b>mặc định cho qua</b> (security group mặc định chặn). Mặc định xét rule theo thứ tự hành động: <b>pass → drop → reject → alert</b>. Loại rule: <b>5-tuple</b> (chuẩn), <b>domain list</b>, <b>Suricata compatible</b> (IPS).</li>
+        <li>Hành động stateful: <b>Pass</b>; <b>Drop</b>; <b>Alert</b> (ghi alert log, tiếp tục xét); <b>Reject</b> (drop và gửi <b>TCP RST</b> về bên gửi – chỉ cho TCP).</li>
+      </ol>
+
+      <h3>Chèn firewall vào đường đi bằng route table</h3>
+      <p>Network Firewall <b>không</b> tự nằm trên đường đi: bạn phải sửa route table của VPC để traffic giữa subnet cần bảo vệ và bên ngoài đi qua <b>firewall endpoint</b> – <b>cả hai chiều</b>. Ví dụ kiến trúc 1 AZ với internet gateway trong tài liệu (VPC <code>10.0.0.0/16</code>, customer subnet <code>10.0.2.0/24</code>):</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Route table</th><th>Destination</th><th>Target</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="2"><b>Customer (protected) subnet</b></td><td><code>10.0.0.0/16</code></td><td>local</td><td></td></tr>
+          <tr><td><code>0.0.0.0/0</code></td><td><b>firewall endpoint</b> (<code>vpce-…</code>)</td><td>Trước khi có firewall: trỏ tới IGW</td></tr>
+          <tr><td rowspan="2"><b>Firewall subnet</b></td><td><code>10.0.0.0/16</code></td><td>local</td><td></td></tr>
+          <tr><td><code>0.0.0.0/0</code></td><td><b>internet gateway</b></td><td>Đã lọc xong ⇒ ra Internet</td></tr>
+          <tr><td><b>Internet gateway route table</b> (edge association)</td><td><code>10.0.2.0/24</code></td><td><b>firewall endpoint</b></td><td>Traffic <b>đi vào</b> subnet phải qua firewall trước</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud</span>
+          <div class="grp vpc"><span class="lbl"><img src="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg" alt="">VPC 10.0.0.0/16</span>
+            <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" alt="">Internet gateway<small>IGW route table: 10.0.2.0/24 → vpce (edge association)</small></div></div>
+            <div class="row">
+              <div class="grp az"><span class="lbl">Availability Zone A</span>
+                <div class="grp pub"><span class="lbl">Firewall subnet A</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Network-Firewall_Endpoints.svg" alt="">Firewall endpoint A<small>0.0.0.0/0 → IGW</small></div></div></div>
+                <div class="grp priv"><span class="lbl">Protected subnet A</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Workload<small>0.0.0.0/0 → endpoint A</small></div></div></div>
+              </div>
+              <div class="grp az"><span class="lbl">Availability Zone B</span>
+                <div class="grp pub"><span class="lbl">Firewall subnet B</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Network-Firewall_Endpoints.svg" alt="">Firewall endpoint B<small>0.0.0.0/0 → IGW</small></div></div></div>
+                <div class="grp priv"><span class="lbl">Protected subnet B</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Workload<small>0.0.0.0/0 → endpoint B</small></div></div></div>
+              </div>
+            </div>
+            <div class="row center"><div class="node"><img src="../assets/icons/svc/AWS-Network-Firewall.svg" alt="">Firewall + firewall policy<small>stateless &amp; stateful rule groups</small></div></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 5.</b> Network Firewall đa AZ với internet gateway: mỗi AZ có một <b>firewall subnet</b> riêng chứa firewall endpoint. Route table của protected subnet gửi <code>0.0.0.0/0</code> tới endpoint <b>cùng AZ</b>; route table của firewall subnet gửi <code>0.0.0.0/0</code> tới IGW; route table gắn với IGW (edge association – Bài 20) gửi traffic đi vào protected subnet qua endpoint tương ứng. Nhờ vậy cả traffic vào lẫn ra đều được kiểm tra.</figcaption>
+      </figure>
+
+      <h3>Mô hình triển khai, quản lý tập trung và logging</h3>
+      <ul>
+        <li><b>Distributed</b> – mỗi VPC có firewall riêng (như Hình 5). <b>Centralized</b> – một <b>inspection VPC</b> chứa firewall, các VPC khác nối qua <b>Transit Gateway</b> (Bài 22) để mọi traffic east-west / north-south được kiểm tra tại một chỗ. Tài liệu cũng cho phép tạo endpoint ở VPC khác qua <b>VPC endpoint association</b>.</li>
+        <li><b>AWS Firewall Manager</b> hỗ trợ Network Firewall: cấu hình và quản lý firewall <b>tập trung cho nhiều account</b> trong <b>AWS Organizations</b> từ một account duy nhất.</li>
+        <li><b>Logging</b> chỉ áp dụng cho traffic đi qua <b>stateful engine</b>: <b>flow logs</b>, <b>alert logs</b> (rule có action DROP, ALERT, REJECT), <b>TLS logs</b>. Đích: <b>Amazon S3</b>, <b>CloudWatch Logs</b>, <b>Data Firehose</b>. Metric (cả stateless/stateful) có trên CloudWatch.</li>
+        <li><b>Không hỗ trợ</b>: VPC peering; kiểm tra traffic Global Accelerator khi bật client IP preservation; kiểm tra traffic AmazonProvidedDNS của EC2.</li>
+        <li>Chi phí: dùng endpoint ở một AZ để lọc traffic của AZ khác có thể phát sinh <b>phí cross-zone</b>; bật logging cũng tính thêm phí.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>Filter outbound traffic by <b>domain name / FQDN</b></i>”, “<i>allow only *.amazonaws.com and approved domains</i>”, “<i>intrusion prevention (IPS)</i>”, “<i>deep packet inspection</i>”, “<i>Suricata rules</i>”, “<i>inspect traffic at the VPC perimeter</i>” ⇒ <b>AWS Network Firewall</b>.</li>
+          <li>“<i>Centrally inspect traffic for many VPCs</i>” ⇒ <b>inspection VPC + Transit Gateway + Network Firewall</b>. “<i>Enforce firewall rules across all accounts in an organization</i>” ⇒ <b>AWS Firewall Manager</b>.</li>
+          <li>“<i>Protect a web application from SQL injection / XSS</i>” ⇒ <b>AWS WAF</b> (lớp 7 trên ALB/CloudFront/API Gateway), <b>không</b> phải Network Firewall.</li>
+          <li>“<i>Third-party virtual appliances (firewall của hãng khác)</i>” ⇒ <b>Gateway Load Balancer</b> (Bài 12); “<i>managed AWS service, least operational overhead</i>” ⇒ <b>Network Firewall</b>.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>Tạo firewall xong mà <b>không sửa route table</b> ⇒ firewall không lọc gì cả.</li>
+          <li>Đặt workload <b>trong firewall subnet</b> ⇒ không được bảo vệ (endpoint không lọc traffic của subnet chứa nó).</li>
+          <li>Route chéo AZ (protected subnet AZ-A → endpoint AZ-B) vừa tốn phí cross-zone vừa làm mất tính sẵn sàng khi AZ-B lỗi ⇒ luôn route tới endpoint <b>cùng AZ</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: CHỌN CÔNG CỤ NÀO ===================== -->
+      <h2 id="chon-cong-cu"><img src="../assets/icons/svc/AWS-Firewall-Manager.svg" alt="">Chọn công cụ bảo mật mạng nào?</h2>
+      <p class="lead">Đề SAA-C03 thường đưa 4 đáp án gồm nhiều “loại tường lửa” khác nhau. Phân biệt bằng <b>lớp hoạt động</b> và <b>khả năng</b> của từng dịch vụ.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Security group</th><th>Network ACL</th><th>Network Firewall</th><th>AWS WAF</th><th>DNS Firewall</th></tr></thead>
+        <tbody>
+          <tr><td>Gắn vào</td><td>ENI / instance</td><td>Subnet</td><td>Biên VPC (endpoint + route)</td><td>CloudFront, ALB, API Gateway…</td><td>VPC (Route 53 Resolver)</td></tr>
+          <tr><td>Stateful?</td><td class="yes">Có</td><td class="no">Không</td><td class="yes">Có (+ stateless engine)</td><td>Lớp 7 (HTTP)</td><td>Theo truy vấn DNS</td></tr>
+          <tr><td>Deny tường minh</td><td class="no">Không</td><td class="yes">Có</td><td class="yes">Có</td><td class="yes">Có</td><td class="yes">Có (block domain)</td></tr>
+          <tr><td>Lọc theo domain</td><td class="no">Không</td><td class="no">Không</td><td class="yes">Có (SNI/Host)</td><td>Theo header Host</td><td class="yes">Có (truy vấn DNS)</td></tr>
+          <tr><td>IPS / DPI</td><td class="no">Không</td><td class="no">Không</td><td class="yes">Có (Suricata)</td><td>Rule HTTP (SQLi, XSS)</td><td class="no">Không</td></tr>
+          <tr><td>Chi phí</td><td>Miễn phí</td><td>Miễn phí</td><td>Theo giờ endpoint + GB</td><td>Theo rule + request</td><td>Theo domain + truy vấn</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Firewall-Manager.svg" alt="">
+          <div><h4>AWS Firewall Manager</h4><span class="vi">Quản lý tường lửa tập trung</span><p>Áp chính sách WAF, Shield Advanced, security group, Network Firewall, DNS Firewall đồng loạt cho các account trong Organizations.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Traffic-Mirroring.svg" alt="">
+          <div><h4>Traffic Mirroring</h4><span class="vi">Sao chép lưu lượng</span><p>Sao chép gói tin (có payload) từ ENI tới công cụ IDS/giám sát – khác Flow Logs chỉ có metadata.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-GuardDuty.svg" alt="">
+          <div><h4>Amazon GuardDuty</h4><span class="vi">Phát hiện mối đe dọa</span><p>Phân tích Flow Logs, CloudTrail, DNS logs để phát hiện hành vi bất thường; chỉ phát hiện, không chặn.</p></div></div>
+      </div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>Stateful</b> (SG) nhớ kết nối ⇒ response tự được phép. <b>Stateless</b> (NACL) không nhớ ⇒ phải mở rule cho cả chiều về (ephemeral ports).</li>
+          <li><b>SG</b>: cấp instance, chỉ allow, đánh giá tất cả rule, tham chiếu được SG khác, 60 rule/chiều, 5 (→16) SG/ENI. <b>NACL</b>: cấp subnet, allow + deny, đánh giá theo số thứ tự tăng dần (1–32766), dừng ở rule khớp đầu, chỉ CIDR, 20 (→40) rule/chiều, 1 NACL/subnet.</li>
+          <li><b>Default NACL</b> allow all (rule 100/101); <b>custom NACL</b> mới tạo deny all (chỉ còn rule <code>*</code>). Rule <code>*</code> không xóa được. NACL không lọc traffic trong cùng subnet.</li>
+          <li>Ephemeral ports: Linux 32768–61000; Windows Server 2008+ 49152–65535; ELB, NAT gateway, Lambda 1024–65535 ⇒ thực tế mở <b>1024–65535</b>, đặt DENY số nhỏ hơn nếu cần.</li>
+          <li>Muốn <b>chặn một IP</b> ⇒ NACL deny (số nhỏ hơn allow). Cả SG lẫn NACL <b>không</b> lọc DNS Amazon, DHCP, IMDS, Time Sync ⇒ DNS Firewall / IMDSv2.</li>
+          <li><b>VPC Flow Logs</b>: cấp VPC/subnet/ENI; ACCEPT/REJECT/ALL; đích CloudWatch Logs / S3 / Data Firehose; interval 10 phút (hoặc 1 phút); không real-time; không đổi cấu hình sau khi tạo; không ghi payload; không ghi DNS Amazon, IMDS, DHCP, ARP. Inbound ACCEPT + outbound REJECT ⇒ NACL.</li>
+          <li><b>Network Firewall</b>: managed stateful firewall + IPS (Suricata), lọc domain, DPI; firewall endpoint trong <b>firewall subnet riêng mỗi AZ</b>; phải sửa route table (gồm IGW edge association); stateless engine → stateful engine; log tới S3/CloudWatch/Firehose; quản lý đa account bằng Firewall Manager.</li>
+          <li>Không gửi traffic mà muốn biết vì sao không kết nối được ⇒ <b>Reachability Analyzer</b>.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Stateful / Stateless</dt><dd><b>Có trạng thái / Không trạng thái</b> – có/không ghi nhớ kết nối để tự cho traffic trả về.</dd></div>
+        <div><dt>Defense in depth</dt><dd><b>Phòng thủ theo chiều sâu</b> – nhiều lớp bảo mật chồng lên nhau.</dd></div>
+        <div><dt>Network ACL (NACL)</dt><dd><b>Danh sách kiểm soát truy cập mạng</b> – tường lửa stateless cấp subnet.</dd></div>
+        <div><dt>Default / Custom network ACL</dt><dd><b>NACL mặc định / tự tạo</b> – mặc định allow all; tự tạo deny all.</dd></div>
+        <div><dt>Rule number</dt><dd><b>Số thứ tự rule</b> – 1–32766, xét từ nhỏ đến lớn, khớp đầu tiên thắng.</dd></div>
+        <div><dt>Asterisk (*) rule</dt><dd><b>Rule mặc định cuối cùng</b> – DENY mọi thứ không khớp; không xóa được.</dd></div>
+        <div><dt>Ephemeral port</dt><dd><b>Cổng tạm thời</b> – cổng nguồn client tự chọn, nơi response quay về.</dd></div>
+        <div><dt>Reachability Analyzer</dt><dd><b>Trình phân tích khả năng kết nối</b> – phân tích cấu hình tĩnh, chỉ ra thành phần chặn.</dd></div>
+        <div><dt>VPC Flow Logs</dt><dd><b>Nhật ký luồng VPC</b> – metadata IP traffic của ENI.</dd></div>
+        <div><dt>Flow log record / Default format / Custom format</dt><dd><b>Bản ghi luồng / Định dạng mặc định / tùy chỉnh</b>.</dd></div>
+        <div><dt>Aggregation interval (capture window)</dt><dd><b>Khoảng gộp dữ liệu</b> – 10 phút hoặc 1 phút.</dd></div>
+        <div><dt>Subscription (flow logs)</dt><dd><b>Đăng ký nhận log</b> – đường đi + quyền gửi log tới đích.</dd></div>
+        <div><dt>ACCEPT / REJECT</dt><dd><b>Được chấp nhận / Bị từ chối</b> – giá trị trường action.</dd></div>
+        <div><dt>Traffic Mirroring</dt><dd><b>Sao chép lưu lượng</b> – copy gói tin đầy đủ từ ENI để phân tích.</dd></div>
+        <div><dt>AWS Network Firewall</dt><dd><b>Tường lửa mạng AWS</b> – managed stateful firewall + IDS/IPS ở biên VPC.</dd></div>
+        <div><dt>IDS / IPS</dt><dd><b>Hệ thống phát hiện / ngăn chặn xâm nhập</b>.</dd></div>
+        <div><dt>Deep packet inspection (DPI)</dt><dd><b>Kiểm tra sâu gói tin</b> – xem cả nội dung, không chỉ header.</dd></div>
+        <div><dt>Suricata</dt><dd><b>IPS mã nguồn mở</b> – ngôn ngữ rule của stateful engine.</dd></div>
+        <div><dt>Firewall endpoint / Firewall subnet</dt><dd><b>Điểm cuối tường lửa / Mạng con dành cho tường lửa</b> – mỗi AZ một.</dd></div>
+        <div><dt>Firewall policy / Rule group</dt><dd><b>Chính sách tường lửa / Nhóm quy tắc</b> – stateless hoặc stateful.</dd></div>
+        <div><dt>Stateless engine / Stateful engine</dt><dd><b>Bộ máy không trạng thái / có trạng thái</b> – xét từng gói / xét theo luồng.</dd></div>
+        <div><dt>Domain list rule group</dt><dd><b>Nhóm quy tắc danh sách tên miền</b> – allow/deny theo domain.</dd></div>
+        <div><dt>Inspection VPC</dt><dd><b>VPC kiểm tra tập trung</b> – chứa firewall, nối các VPC qua Transit Gateway.</dd></div>
+        <div><dt>AWS Firewall Manager</dt><dd><b>Quản lý tường lửa tập trung</b> – áp chính sách đa account trong Organizations.</dd></div>
+      </dl>
+
+      <!-- ===================== CÂU HỎI LUYỆN TẬP ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="C">
+          <div class="qh">A web application runs on Amazon EC2 instances in a public subnet. The instances' security group allows inbound TCP 443 from 0.0.0.0/0. A security engineer associates a new custom network ACL with the subnet and adds an inbound rule that allows TCP 443 from 0.0.0.0/0 and an outbound rule that allows TCP 443 to 0.0.0.0/0. Users now report that connections to the website time out. What should a solutions architect do to resolve the issue?</div>
+          <ol class="opts">
+            <li data-k="A">Add an outbound rule to the security group that allows TCP 443 to 0.0.0.0/0.</li>
+            <li data-k="B">Add an inbound rule to the network ACL that allows TCP 1024-65535 from 0.0.0.0/0.</li>
+            <li data-k="C">Add an outbound rule to the network ACL that allows TCP 1024-65535 to 0.0.0.0/0.</li>
+            <li data-k="D">Replace the network ACL rule numbers so that the outbound 443 rule is evaluated before the inbound 443 rule.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> NACL là <b>stateless</b>: response của web server đi từ port 443 <b>tới ephemeral port của client</b> (1024–65535 bao phủ mọi loại client). Custom NACL chỉ có rule <code>*</code> deny nên response bị chặn ⇒ timeout. <b>A sai</b>: security group stateful, response của inbound đã được cho phép tự động bất kể outbound rule. <b>B sai</b>: inbound ephemeral cần khi instance là <b>client</b> khởi tạo kết nối ra ngoài, không phải trường hợp này. <b>D sai</b>: rule inbound và outbound được đánh giá độc lập, thứ tự giữa hai chiều không liên quan; outbound 443 không khớp với response tới ephemeral port.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng web chạy trên các Amazon EC2 instance trong một public subnet. Security group của các instance cho phép inbound TCP 443 từ 0.0.0.0/0. Một kỹ sư bảo mật gắn một custom network ACL mới vào subnet và thêm một inbound rule cho phép TCP 443 từ 0.0.0.0/0 và một outbound rule cho phép TCP 443 tới 0.0.0.0/0. Người dùng giờ báo rằng kết nối tới website bị timeout. Solutions architect nên làm gì để khắc phục sự cố?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm outbound rule vào security group cho phép TCP 443 tới 0.0.0.0/0.</span><span class="why">Sai: security group là stateful, response cho kết nối inbound đã được cho phép tự động; vấn đề nằm ở NACL stateless.</span></li>
+              <li data-k="B"><span class="tv">Thêm inbound rule vào network ACL cho phép TCP 1024-65535 từ 0.0.0.0/0.</span><span class="why">Sai: inbound ephemeral chỉ cần khi instance là client khởi tạo kết nối ra ngoài; ở đây response của server đi ra (outbound), không phải đi vào.</span></li>
+              <li data-k="C"><span class="tv">Thêm outbound rule vào network ACL cho phép TCP 1024-65535 tới 0.0.0.0/0.</span><span class="why">Đúng: NACL stateless nên response từ port 443 về ephemeral port của client phải được cho phép tường minh ở chiều outbound; custom NACL thiếu rule này nên response bị chặn gây timeout.</span></li>
+              <li data-k="D"><span class="tv">Thay đổi số thứ tự rule của network ACL để rule outbound 443 được đánh giá trước rule inbound 443.</span><span class="why">Sai: rule inbound và outbound được đánh giá độc lập; hơn nữa rule outbound 443 không khớp với response gửi tới ephemeral port.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company detects malicious traffic from a single IP address, 198.51.100.25, targeting an application that runs on EC2 instances in a subnet. The company wants to immediately block all traffic from this IP address to every instance in the subnet while keeping all other traffic unchanged. Which solution meets this requirement?</div>
+          <ol class="opts">
+            <li data-k="A">Add an inbound DENY rule for 198.51.100.25/32 to the subnet's network ACL with a rule number lower than the existing ALLOW rules.</li>
+            <li data-k="B">Add an inbound DENY rule for 198.51.100.25/32 to the security group attached to the instances.</li>
+            <li data-k="C">Add an inbound DENY rule for 198.51.100.25/32 to the subnet's network ACL with a rule number higher than the existing ALLOW rules.</li>
+            <li data-k="D">Create a VPC flow log with a filter for REJECT traffic from 198.51.100.25.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> NACL hỗ trợ <b>deny</b> và áp cho toàn bộ subnet; rule được xét theo số tăng dần và dừng ở rule khớp đầu tiên, nên DENY phải có <b>số nhỏ hơn</b> ALLOW. <b>B sai</b>: security group <b>chỉ có allow</b>, không tạo được deny rule. <b>C sai</b>: rule ALLOW số nhỏ hơn sẽ khớp trước, IP vẫn vào được. <b>D sai</b>: Flow Logs chỉ ghi lại, không chặn traffic.</div>
+          <div class="trans">
+            <div class="tq">Một công ty phát hiện traffic độc hại từ một địa chỉ IP duy nhất, 198.51.100.25, nhắm vào một ứng dụng chạy trên các EC2 instance trong một subnet. Công ty muốn chặn ngay lập tức mọi traffic từ địa chỉ IP này tới tất cả instance trong subnet, đồng thời giữ nguyên mọi traffic khác. Giải pháp nào đáp ứng yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một inbound rule DENY cho 198.51.100.25/32 vào network ACL của subnet với số rule nhỏ hơn các rule ALLOW hiện có.</span><span class="why">Đúng: NACL hỗ trợ deny, áp dụng cho cả subnet và xét rule theo số tăng dần, nên DENY số nhỏ sẽ khớp trước ALLOW và chặn được IP này.</span></li>
+              <li data-k="B"><span class="tv">Thêm một inbound rule DENY cho 198.51.100.25/32 vào security group gắn với các instance.</span><span class="why">Sai: security group chỉ có rule allow, không thể tạo rule deny.</span></li>
+              <li data-k="C"><span class="tv">Thêm một inbound rule DENY cho 198.51.100.25/32 vào network ACL của subnet với số rule lớn hơn các rule ALLOW hiện có.</span><span class="why">Sai: rule ALLOW có số nhỏ hơn sẽ khớp trước và NACL dừng tại rule khớp đầu tiên, nên IP vẫn vào được.</span></li>
+              <li data-k="D"><span class="tv">Tạo một VPC flow log có bộ lọc traffic REJECT từ 198.51.100.25.</span><span class="why">Sai: Flow Logs chỉ ghi nhận traffic, không có khả năng chặn.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,D">
+          <div class="qh">Which TWO statements about security groups and network ACLs in a VPC are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Network ACLs are stateful, so return traffic is automatically allowed.</li>
+            <li data-k="B">Security groups evaluate all rules before deciding whether to allow traffic.</li>
+            <li data-k="C">A subnet can be associated with multiple network ACLs at the same time.</li>
+            <li data-k="D">A newly created custom network ACL denies all inbound and outbound traffic until rules are added.</li>
+            <li data-k="E">Network ACL rules can reference another security group as the source.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, D.</b> Theo bảng so sánh của AWS, security group <b>đánh giá tất cả rule</b> trước khi quyết định (B). Custom NACL mới chỉ có rule <code>*</code> DENY nên chặn hết (D). <b>A sai</b>: NACL <b>stateless</b>, phải cho phép traffic trả về tường minh. <b>C sai</b>: mỗi subnet chỉ gắn <b>một</b> NACL tại một thời điểm (một NACL thì gắn được nhiều subnet). <b>E sai</b>: source/destination của NACL <b>chỉ là CIDR</b>; tham chiếu security group là tính năng của security group.</div>
+          <div class="trans">
+            <div class="tq">HAI phát biểu nào về security group và network ACL trong một VPC là đúng? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Network ACL là stateful, nên traffic trả về được tự động cho phép.</span><span class="why">Sai: network ACL là stateless, traffic trả về phải được cho phép tường minh bằng rule.</span></li>
+              <li data-k="B"><span class="tv">Security group đánh giá tất cả các rule trước khi quyết định có cho phép traffic hay không.</span><span class="why">Đúng: theo bảng so sánh của AWS, security group xét toàn bộ rule (khác NACL xét theo thứ tự và dừng ở rule khớp đầu tiên).</span></li>
+              <li data-k="C"><span class="tv">Một subnet có thể được gắn với nhiều network ACL cùng lúc.</span><span class="why">Sai: mỗi subnet chỉ gắn một network ACL tại một thời điểm (ngược lại một NACL có thể gắn nhiều subnet).</span></li>
+              <li data-k="D"><span class="tv">Một custom network ACL mới tạo sẽ từ chối toàn bộ traffic inbound và outbound cho đến khi thêm rule.</span><span class="why">Đúng: custom NACL mới chỉ có rule * DENY mặc định nên chặn mọi traffic cho tới khi bạn thêm rule allow.</span></li>
+              <li data-k="E"><span class="tv">Rule của network ACL có thể tham chiếu một security group khác làm nguồn.</span><span class="why">Sai: nguồn/đích của rule NACL chỉ có thể là CIDR; tham chiếu security group là tính năng riêng của security group.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A solutions architect is troubleshooting connectivity to an EC2 instance. VPC flow logs show a record with action ACCEPT for inbound ICMP traffic from 203.0.113.12 to the instance, followed by a record with action REJECT for the outbound ICMP response to 203.0.113.12. What is the MOST likely cause?</div>
+          <ol class="opts">
+            <li data-k="A">The instance's security group does not have an outbound rule that allows ICMP.</li>
+            <li data-k="B">The route table of the subnet does not have a route to the internet gateway.</li>
+            <li data-k="C">The instance's security group does not have an inbound rule that allows ICMP.</li>
+            <li data-k="D">The subnet's network ACL does not have an outbound rule that allows ICMP.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Inbound được ACCEPT nghĩa là cả SG và NACL đều cho vào. Response bị REJECT ở chiều ra – chỉ thành phần <b>stateless</b> mới chặn response của request đã được cho phép ⇒ <b>NACL outbound</b>. <b>A sai</b>: SG stateful, response tự được phép bất kể outbound rule. <b>B sai</b>: thiếu route không tạo record REJECT (Flow Logs REJECT là do SG/NACL), và inbound từ Internet đã tới được. <b>C sai</b>: nếu SG không cho inbound thì record inbound đã là REJECT.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect đang xử lý sự cố kết nối tới một EC2 instance. VPC flow logs hiển thị một record có action ACCEPT cho traffic ICMP inbound từ 203.0.113.12 tới instance, tiếp theo là một record có action REJECT cho response ICMP outbound tới 203.0.113.12. Nguyên nhân MOST likely (có khả năng nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Security group của instance không có outbound rule cho phép ICMP.</span><span class="why">Sai: security group là stateful, response cho request inbound đã được cho phép sẽ tự động được phép đi ra bất kể outbound rule.</span></li>
+              <li data-k="B"><span class="tv">Route table của subnet không có route tới internet gateway.</span><span class="why">Sai: thiếu route không tạo ra record REJECT (REJECT do SG/NACL), và traffic inbound từ Internet vẫn tới được instance.</span></li>
+              <li data-k="C"><span class="tv">Security group của instance không có inbound rule cho phép ICMP.</span><span class="why">Sai: nếu security group không cho phép inbound thì record inbound đã là REJECT chứ không phải ACCEPT.</span></li>
+              <li data-k="D"><span class="tv">Network ACL của subnet không có outbound rule cho phép ICMP.</span><span class="why">Đúng: chỉ thành phần stateless như NACL mới chặn response của một request đã được cho phép; thiếu outbound rule ICMP trong NACL gây ra record REJECT ở chiều ra.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company must keep VPC flow logs for all network interfaces in a VPC for 1 year to meet compliance requirements. Security analysts need to run ad hoc SQL queries on the logs. The solution must be the MOST cost-effective. What should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Create a flow log for each EC2 instance's network interface and publish to Amazon CloudWatch Logs. Use CloudWatch Logs Insights for queries.</li>
+            <li data-k="B">Create a flow log at the VPC level, publish to Amazon S3, and query the logs with Amazon Athena.</li>
+            <li data-k="C">Enable Traffic Mirroring on all network interfaces and send the mirrored traffic to an EC2 instance that stores the packets in Amazon EBS.</li>
+            <li data-k="D">Create a flow log at the VPC level, publish to Amazon Data Firehose, and deliver the data to an Amazon RDS database for SQL queries.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Flow log cấp <b>VPC</b> tự bao phủ mọi ENI (kể cả ENI tạo sau). Lưu trên <b>S3</b> rẻ cho lưu trữ dài hạn; <b>Athena</b> truy vấn SQL ad hoc trực tiếp, serverless. <b>A sai</b>: tạo từng ENI dễ sót ENI mới; CloudWatch Logs đắt hơn S3 cho lưu trữ 1 năm. <b>C sai</b>: Traffic Mirroring sao chép toàn bộ gói tin – tốn kém, phức tạp, không phải yêu cầu. <b>D sai</b>: thêm Firehose + RDS tăng chi phí và vận hành không cần thiết.</div>
+          <div class="trans">
+            <div class="tq">Một công ty phải lưu giữ VPC flow logs của tất cả network interface trong một VPC trong 1 năm để đáp ứng yêu cầu tuân thủ. Các chuyên viên phân tích bảo mật cần chạy truy vấn SQL ad hoc trên log. Giải pháp phải MOST cost-effective (tiết kiệm chi phí nhất). Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một flow log cho network interface của từng EC2 instance và publish tới Amazon CloudWatch Logs. Dùng CloudWatch Logs Insights để truy vấn.</span><span class="why">Sai: tạo theo từng ENI dễ bỏ sót ENI mới, và CloudWatch Logs đắt hơn Amazon S3 khi lưu trữ log 1 năm.</span></li>
+              <li data-k="B"><span class="tv">Tạo flow log ở cấp VPC, publish tới Amazon S3 và truy vấn log bằng Amazon Athena.</span><span class="why">Đúng: flow log cấp VPC bao phủ mọi ENI (kể cả ENI tạo sau), S3 rẻ cho lưu trữ dài hạn và Athena cho phép truy vấn SQL ad hoc serverless trực tiếp trên S3.</span></li>
+              <li data-k="C"><span class="tv">Bật Traffic Mirroring trên tất cả network interface và gửi traffic được sao chép tới một EC2 instance lưu các gói tin trong Amazon EBS.</span><span class="why">Sai: Traffic Mirroring sao chép toàn bộ gói tin, tốn kém và phức tạp, vượt quá yêu cầu lưu flow log.</span></li>
+              <li data-k="D"><span class="tv">Tạo flow log ở cấp VPC, publish tới Amazon Data Firehose và chuyển dữ liệu vào một cơ sở dữ liệu Amazon RDS để truy vấn SQL.</span><span class="why">Sai: thêm Firehose và RDS làm tăng chi phí và công vận hành không cần thiết so với S3 + Athena.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company's security policy states that EC2 instances in private subnets may only make outbound HTTPS connections to an approved list of domain names, such as *.amazonaws.com and a partner's API domain. All other outbound traffic to the internet must be blocked and logged. The company wants a managed AWS solution with the LEAST operational overhead. What should a solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Deploy AWS Network Firewall with a stateful domain list rule group that allows only the approved domains, and update the VPC route tables to send outbound traffic through the firewall endpoints.</li>
+            <li data-k="B">Configure the network ACL of the private subnets to allow outbound traffic only to the approved domain names.</li>
+            <li data-k="C">Configure the instances' security groups to allow outbound HTTPS only to the approved domain names.</li>
+            <li data-k="D">Deploy AWS WAF on the NAT gateway with a rule that allows only the approved domain names.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Network Firewall có <b>domain list rule group</b> dạng allow list: domain khớp thì cho qua, không khớp thì chặn và ghi alert log; là dịch vụ managed. Phải sửa route table để traffic đi qua firewall endpoint. <b>B sai</b>: NACL chỉ nhận <b>CIDR</b>, không lọc theo tên miền. <b>C sai</b>: security group cũng chỉ CIDR/SG/prefix list, không có domain. <b>D sai</b>: AWS WAF không gắn vào NAT gateway; WAF bảo vệ ứng dụng web (CloudFront, ALB, API Gateway…) ở chiều vào.</div>
+          <div class="trans">
+            <div class="tq">Chính sách bảo mật của một công ty quy định rằng các EC2 instance trong private subnet chỉ được tạo kết nối HTTPS outbound tới một danh sách tên miền đã phê duyệt, chẳng hạn *.amazonaws.com và domain API của một đối tác. Mọi traffic outbound khác ra Internet phải bị chặn và ghi log. Công ty muốn một giải pháp managed của AWS với LEAST operational overhead (ít công vận hành nhất). Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Triển khai AWS Network Firewall với một stateful domain list rule group chỉ cho phép các domain đã phê duyệt, và cập nhật route table của VPC để gửi traffic outbound qua các firewall endpoint.</span><span class="why">Đúng: domain list rule group của Network Firewall hoạt động như allow list theo tên miền, chặn và ghi log phần còn lại; là dịch vụ managed, chỉ cần route traffic qua firewall endpoint.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình network ACL của các private subnet chỉ cho phép traffic outbound tới các tên miền đã phê duyệt.</span><span class="why">Sai: network ACL chỉ nhận CIDR, không lọc được theo tên miền.</span></li>
+              <li data-k="C"><span class="tv">Cấu hình security group của các instance chỉ cho phép HTTPS outbound tới các tên miền đã phê duyệt.</span><span class="why">Sai: security group chỉ hỗ trợ CIDR, security group khác hoặc prefix list, không hỗ trợ tên miền.</span></li>
+              <li data-k="D"><span class="tv">Triển khai AWS WAF trên NAT gateway với một rule chỉ cho phép các tên miền đã phê duyệt.</span><span class="why">Sai: AWS WAF không gắn được vào NAT gateway; WAF bảo vệ ứng dụng web (CloudFront, ALB, API Gateway…) ở chiều vào.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A solutions architect deployed AWS Network Firewall in a VPC and created a firewall endpoint in a dedicated subnet in each Availability Zone. The firewall policy contains rules that should drop traffic to known malicious IP addresses, but the firewall logs show no traffic and instances can still reach those IP addresses through the internet gateway. What is the MOST likely reason?</div>
+          <ol class="opts">
+            <li data-k="A">Network Firewall requires a Gateway Load Balancer in front of the firewall endpoints.</li>
+            <li data-k="B">The instances' security groups override the firewall policy.</li>
+            <li data-k="C">The route tables of the protected subnets still send 0.0.0.0/0 traffic directly to the internet gateway instead of to the firewall endpoints.</li>
+            <li data-k="D">Network Firewall can only inspect inbound traffic, not outbound traffic.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Network Firewall chỉ kiểm tra traffic <b>được route qua firewall endpoint</b>. Phải đổi route <code>0.0.0.0/0</code> của protected subnet sang endpoint (và cấu hình IGW route table cho chiều vào). <b>A sai</b>: không cần GWLB; GWLB dùng cho virtual appliance của bên thứ ba. <b>B sai</b>: security group và firewall là các lớp độc lập, SG không “ghi đè” firewall. <b>D sai</b>: Network Firewall lọc cả hai chiều tại biên VPC.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect đã triển khai AWS Network Firewall trong một VPC và tạo firewall endpoint trong một subnet riêng ở mỗi Availability Zone. Firewall policy chứa các rule nhằm drop traffic tới các địa chỉ IP độc hại đã biết, nhưng log của firewall không ghi nhận traffic nào và các instance vẫn truy cập được những IP đó qua internet gateway. Lý do MOST likely (có khả năng nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Network Firewall yêu cầu một Gateway Load Balancer đặt phía trước các firewall endpoint.</span><span class="why">Sai: Network Firewall không cần GWLB; GWLB dùng cho virtual appliance của bên thứ ba.</span></li>
+              <li data-k="B"><span class="tv">Security group của các instance ghi đè firewall policy.</span><span class="why">Sai: security group và Network Firewall là các lớp kiểm soát độc lập, security group không "ghi đè" firewall.</span></li>
+              <li data-k="C"><span class="tv">Route table của các protected subnet vẫn gửi traffic 0.0.0.0/0 thẳng tới internet gateway thay vì tới các firewall endpoint.</span><span class="why">Đúng: Network Firewall chỉ kiểm tra traffic được route qua firewall endpoint; route 0.0.0.0/0 vẫn trỏ tới IGW nên traffic đi vòng qua firewall và log trống.</span></li>
+              <li data-k="D"><span class="tv">Network Firewall chỉ kiểm tra được traffic inbound, không kiểm tra traffic outbound.</span><span class="why">Sai: Network Firewall lọc được cả hai chiều tại biên VPC.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A network engineer needs to find out why an EC2 instance in one subnet cannot connect to an Amazon RDS DB instance in another subnet of the same VPC. The engineer wants to identify the specific blocking configuration (such as a security group rule, network ACL rule, or route) without generating any test traffic. Which tool should the engineer use?</div>
+          <ol class="opts">
+            <li data-k="A">VPC Flow Logs</li>
+            <li data-k="B">VPC Traffic Mirroring</li>
+            <li data-k="C">Amazon GuardDuty</li>
+            <li data-k="D">VPC Reachability Analyzer</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Reachability Analyzer</b> phân tích <b>cấu hình tĩnh</b> giữa nguồn và đích, trả về đường đi từng chặng hoặc chỉ ra thành phần đang chặn (vd rule NACL thiếu) mà không cần gửi traffic. <b>A sai</b>: Flow Logs chỉ có dữ liệu khi có traffic thật, và cho biết ACCEPT/REJECT chứ không chỉ ra rule cụ thể. <b>B sai</b>: Traffic Mirroring sao chép gói tin, cũng cần traffic thật. <b>C sai</b>: GuardDuty phát hiện mối đe dọa, không chẩn đoán cấu hình mạng.</div>
+          <div class="trans">
+            <div class="tq">Một kỹ sư mạng cần tìm hiểu vì sao một EC2 instance trong một subnet không kết nối được tới một Amazon RDS DB instance trong một subnet khác của cùng VPC. Kỹ sư muốn xác định chính xác cấu hình đang chặn (chẳng hạn rule của security group, rule của network ACL hoặc route) mà không phải tạo ra bất kỳ traffic thử nghiệm nào. Kỹ sư nên dùng công cụ nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">VPC Flow Logs</span><span class="why">Sai: Flow Logs chỉ có dữ liệu khi có traffic thật và chỉ cho biết ACCEPT/REJECT, không chỉ ra rule cụ thể đang chặn.</span></li>
+              <li data-k="B"><span class="tv">VPC Traffic Mirroring</span><span class="why">Sai: Traffic Mirroring sao chép gói tin, cũng cần traffic thật và không chẩn đoán cấu hình.</span></li>
+              <li data-k="C"><span class="tv">Amazon GuardDuty</span><span class="why">Sai: GuardDuty phát hiện mối đe dọa bảo mật, không chẩn đoán cấu hình kết nối mạng.</span></li>
+              <li data-k="D"><span class="tv">VPC Reachability Analyzer</span><span class="why">Đúng: Reachability Analyzer phân tích cấu hình tĩnh giữa nguồn và đích, chỉ ra thành phần đang chặn (SG, NACL, route) mà không cần gửi traffic.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,E">
+          <div class="qh">An application runs on Amazon Linux EC2 instances in a private subnet and downloads updates through a NAT gateway in a public subnet. Both subnets use custom network ACLs. The instances cannot download updates over HTTPS. The route tables and security groups are configured correctly. Which TWO network ACL changes will resolve the issue? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">In the private subnet's network ACL, allow inbound TCP 32768-61000 from 0.0.0.0/0.</li>
+            <li data-k="B">In the private subnet's network ACL, allow inbound TCP 443 from 0.0.0.0/0.</li>
+            <li data-k="C">In the public subnet's network ACL, allow outbound TCP 22 to the private subnet CIDR.</li>
+            <li data-k="D">In the public subnet's network ACL, allow inbound TCP 443 from 0.0.0.0/0 only.</li>
+            <li data-k="E">In the public subnet's network ACL, allow inbound TCP 1024-65535 from 0.0.0.0/0.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, E.</b> Response từ Internet quay về NAT gateway ở các port <b>1024–65535</b> (dải NAT gateway dùng) ⇒ NACL public cần inbound 1024–65535 (E). Sau đó NAT gateway chuyển response về instance Amazon Linux ở ephemeral port <b>32768–61000</b> ⇒ NACL private cần inbound dải này (A). <b>B sai</b>: instance là client, response tới ephemeral port chứ không tới 443. <b>C sai</b>: SSH không liên quan. <b>D sai</b>: inbound 443 từ Internet chỉ cần khi có server phục vụ HTTPS trong subnet public, không giải quyết response.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng chạy trên các EC2 instance Amazon Linux trong một private subnet và tải bản cập nhật thông qua một NAT gateway trong public subnet. Cả hai subnet đều dùng custom network ACL. Các instance không tải được bản cập nhật qua HTTPS. Route table và security group đã được cấu hình đúng. HAI thay đổi network ACL nào sẽ khắc phục sự cố? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Trong network ACL của private subnet, cho phép inbound TCP 32768-61000 từ 0.0.0.0/0.</span><span class="why">Đúng: NAT gateway chuyển response về instance Amazon Linux ở dải ephemeral port 32768–61000, nên NACL private (stateless) phải cho phép inbound dải này.</span></li>
+              <li data-k="B"><span class="tv">Trong network ACL của private subnet, cho phép inbound TCP 443 từ 0.0.0.0/0.</span><span class="why">Sai: instance là client, response quay về ephemeral port của instance chứ không phải port 443.</span></li>
+              <li data-k="C"><span class="tv">Trong network ACL của public subnet, cho phép outbound TCP 22 tới CIDR của private subnet.</span><span class="why">Sai: SSH (port 22) không liên quan tới việc tải bản cập nhật qua HTTPS.</span></li>
+              <li data-k="D"><span class="tv">Trong network ACL của public subnet, chỉ cho phép inbound TCP 443 từ 0.0.0.0/0.</span><span class="why">Sai: inbound 443 chỉ cần khi có server HTTPS trong public subnet; nó không cho response từ Internet quay về NAT gateway ở ephemeral port.</span></li>
+              <li data-k="E"><span class="tv">Trong network ACL của public subnet, cho phép inbound TCP 1024-65535 từ 0.0.0.0/0.</span><span class="why">Đúng: response từ Internet quay về NAT gateway ở các port 1024–65535, nên NACL của public subnet phải cho phép inbound dải này.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company has 40 AWS accounts in AWS Organizations, each with several VPCs. The security team wants to ensure that every VPC across all accounts is protected by AWS Network Firewall with a consistent baseline policy, and that newly created VPCs are automatically covered. Which solution requires the LEAST operational effort?</div>
+          <ol class="opts">
+            <li data-k="A">Write an AWS Lambda function in each account that creates a Network Firewall in every new VPC.</li>
+            <li data-k="B">Use AWS Firewall Manager with a Network Firewall policy applied to the organization.</li>
+            <li data-k="C">Configure a default network ACL with the baseline rules in each VPC.</li>
+            <li data-k="D">Enable VPC Flow Logs in every account and send the logs to a central Amazon S3 bucket.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>AWS Firewall Manager</b> hỗ trợ Network Firewall, cho phép cấu hình và quản lý firewall <b>tập trung trên nhiều account</b> trong AWS Organizations từ một account, tự áp dụng cho tài nguyên mới trong phạm vi chính sách. <b>A sai</b>: tự viết Lambda tốn công phát triển và vận hành. <b>C sai</b>: NACL không cung cấp khả năng của Network Firewall (stateful, IPS, domain) và vẫn phải cấu hình từng VPC. <b>D sai</b>: Flow Logs chỉ ghi lại, không bảo vệ.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 40 AWS account trong AWS Organizations, mỗi account có nhiều VPC. Nhóm bảo mật muốn đảm bảo mọi VPC trên tất cả account đều được bảo vệ bởi AWS Network Firewall với một baseline policy nhất quán, và các VPC mới tạo được tự động áp dụng. Giải pháp nào đòi hỏi LEAST operational effort (ít công vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Viết một AWS Lambda function trong mỗi account để tạo Network Firewall trong mọi VPC mới.</span><span class="why">Sai: tự viết và duy trì Lambda ở 40 account tốn nhiều công phát triển và vận hành.</span></li>
+              <li data-k="B"><span class="tv">Dùng AWS Firewall Manager với một Network Firewall policy áp dụng cho toàn tổ chức.</span><span class="why">Đúng: Firewall Manager quản lý Network Firewall tập trung trên nhiều account trong AWS Organizations và tự áp dụng policy cho tài nguyên mới trong phạm vi.</span></li>
+              <li data-k="C"><span class="tv">Cấu hình default network ACL với các rule baseline trong mỗi VPC.</span><span class="why">Sai: NACL không có khả năng của Network Firewall (stateful, IPS, lọc domain) và vẫn phải cấu hình thủ công từng VPC.</span></li>
+              <li data-k="D"><span class="tv">Bật VPC Flow Logs trong mọi account và gửi log về một Amazon S3 bucket trung tâm.</span><span class="why">Sai: Flow Logs chỉ ghi nhận traffic, không bảo vệ VPC.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/infrastructure-security.html" target="_blank" rel="noopener">Infrastructure security in Amazon VPC (Compare security groups and network ACLs)</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/nacl-rules.html" target="_blank" rel="noopener">Network ACL rules</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/default-network-acl.html" target="_blank" rel="noopener">Default network ACL for a VPC</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/custom-network-acl.html" target="_blank" rel="noopener">Custom network ACLs (Ephemeral ports)</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/amazon-vpc-limits.html" target="_blank" rel="noopener">Amazon VPC quotas</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/flow-logs-basics.html" target="_blank" rel="noopener">Flow logs basics</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/flow-log-records.html" target="_blank" rel="noopener">Flow log records</a></li>
+        <li><a href="https://docs.aws.amazon.com/vpc/latest/userguide/flow-logs-limitations.html" target="_blank" rel="noopener">Flow log limitations</a></li>
+        <li><a href="https://docs.aws.amazon.com/network-firewall/latest/developerguide/how-it-works.html" target="_blank" rel="noopener">How AWS Network Firewall works</a></li>
+        <li><a href="https://docs.aws.amazon.com/network-firewall/latest/developerguide/firewall-high-level-steps.html" target="_blank" rel="noopener">High-level steps for implementing Network Firewall</a></li>
+        <li><a href="https://docs.aws.amazon.com/network-firewall/latest/developerguide/firewall-rules-engines.html" target="_blank" rel="noopener">Network Firewall stateless and stateful rules engines</a></li>
+        <li><a href="https://docs.aws.amazon.com/network-firewall/latest/developerguide/rule-action.html" target="_blank" rel="noopener">Defining rule actions in Network Firewall</a></li>
+        <li><a href="https://docs.aws.amazon.com/network-firewall/latest/developerguide/arch-single-zone-igw.html" target="_blank" rel="noopener">Single zone architecture with an internet gateway</a></li>
+        <li><a href="https://docs.aws.amazon.com/network-firewall/latest/developerguide/architectures.html" target="_blank" rel="noopener">Network Firewall example architectures with routing</a></li>
+        <li><a href="https://docs.aws.amazon.com/network-firewall/latest/developerguide/firewall-logging.html" target="_blank" rel="noopener">Logging network traffic from Network Firewall</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 13 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="13" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu <span class="t" data-vi="Tự động co giãn EC2">Amazon EC2 Auto Scaling</span> và <span class="t" data-vi="Nhóm tự động co giãn">Auto Scaling group (ASG)</span>: <b>minimum / desired / maximum capacity</b>, cân bằng instance giữa các AZ, tự thay instance hỏng – nền tảng của kiến trúc <i>highly available</i> và <i>cost-effective</i>.</li>
+          <li>Dùng <span class="t" data-vi="Mẫu khởi chạy">launch template</span> (có version) thay cho <b>launch configuration</b> đã bị hạn chế, biết tính năng nào <b>chỉ</b> có ở launch template.</li>
+          <li>Chọn đúng kiểu scaling: <b>target tracking</b>, <b>step</b>, <b>simple</b>, <b>scheduled</b>, <b>predictive</b> và scaling theo hàng đợi <b>Amazon SQS</b> (backlog per instance).</li>
+          <li>Phân biệt <span class="t" data-vi="Thời gian chờ giữa hai lần co giãn">cooldown</span>, <span class="t" data-vi="Thời gian làm nóng instance">instance warmup</span> và <span class="t" data-vi="Thời gian ân hạn kiểm tra sức khỏe">health check grace period</span>; bật <b>ELB health checks</b> cho ASG.</li>
+          <li>Dùng <span class="t" data-vi="Móc vòng đời">lifecycle hooks</span>, <b>warm pools</b>, <b>termination policies</b>, <b>scale-in protection</b>, <b>instance refresh</b> trong các kịch bản đề thi.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 2 – Compute</span>
+        <p>Bài 8 đã dạy <b>AMI, user data, golden AMI</b>; Bài 9 đã dạy <b>Spot, Savings Plans</b> và allocation strategy <code>price-capacity-optimized</code>, Capacity Rebalancing; Bài 12 đã dạy <b>target group, health check của ELB, deregistration delay</b>. Bài này ghép tất cả lại: Auto Scaling group <b>launch</b> instance từ launch template, <b>đăng ký</b> chúng vào target group, và <b>tăng/giảm</b> số lượng theo CloudWatch metric. Những phần đã học chỉ được nhắc lại ngắn gọn ở chỗ cần thiết.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">Amazon EC2 Auto Scaling là gì?</h2>
+      <p class="lead"><span class="t" data-vi="Tự động co giãn EC2">Amazon EC2 Auto Scaling</span> giúp bảo đảm bạn luôn có <b>đúng số EC2 instance</b> để xử lý tải của ứng dụng. Bạn gom instance vào các tập hợp gọi là <span class="t" data-vi="Nhóm tự động co giãn">Auto Scaling group</span>, khai báo số instance <b>tối thiểu</b> (nhóm không bao giờ nhỏ hơn), <b>tối đa</b> (không bao giờ lớn hơn) và <b>mong muốn</b> (nhóm luôn cố giữ đúng con số này). Khi có <span class="t" data-vi="Chính sách co giãn">scaling policy</span>, Auto Scaling tự <b>launch</b> hoặc <b>terminate</b> instance khi nhu cầu tăng hay giảm.</p>
+
+      <h3>Ba con số của một Auto Scaling group</h3>
+      <ul>
+        <li><span class="t" data-vi="Dung lượng tối thiểu">Minimum capacity (min size)</span>: sàn – ASG không bao giờ giảm xuống dưới. Muốn ứng dụng luôn <i>highly available</i> trên 2 AZ ⇒ min ≥ 2.</li>
+        <li><span class="t" data-vi="Dung lượng mong muốn">Desired capacity</span>: số instance ASG đang cố duy trì. Scaling policy, scheduled action hay bạn (manual scaling) đều thực chất là <b>đổi desired capacity</b>.</li>
+        <li><span class="t" data-vi="Dung lượng tối đa">Maximum capacity (max size)</span>: trần – chặn chi phí bùng nổ. Scaling policy tính ra con số vượt min/max thì Auto Scaling <b>cắt về trong khoảng [min, max]</b>.</li>
+      </ul>
+      <p>Ví dụ trong tài liệu: ASG có <b>min 4</b>, <b>desired 6</b>, <b>max 12</b>. Hai ví dụ “cắt biên” của tài liệu Dynamic scaling: max 3, đang có 2, policy “thêm 3” ⇒ chỉ thêm <b>1</b>; min 2, đang có 3, policy “bớt 2” ⇒ chỉ bớt <b>1</b>.</p>
+
+      <div class="stats">
+        <div class="stat"><b>$0</b><span>Auto Scaling không thu phí – chỉ trả cho EC2, EBS, CloudWatch alarm… đang dùng</span></div>
+        <div class="stat"><b>300 giây</b><span>default cooldown (simple scaling) &amp; grace period mặc định khi tạo ASG trên console</span></div>
+        <div class="stat"><b>1 giờ</b><span>heartbeat timeout mặc định của lifecycle hook (tối đa 48 giờ)</span></div>
+        <div class="stat"><b>24 giờ / 14 ngày</b><span>dữ liệu tối thiểu / tối đa predictive scaling phân tích</span></div>
+        <div class="stat"><b>125</b><span>scheduled action tối đa mỗi Auto Scaling group</span></div>
+        <div class="stat"><b>90%</b><span>minimum healthy percentage mặc định của instance refresh</span></div>
+      </div>
+
+      <h3>Các tính năng chính (theo tài liệu)</h3>
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">
+          <div><h4>Health monitoring &amp; replacement</h4><span class="vi">Giám sát và thay thế instance hỏng</span><p>Dùng EC2 health checks (và tùy chọn ELB, EBS, VPC Lattice, custom) để <b>thay instance bị terminate hoặc suy giảm</b>, giữ đúng desired capacity.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">
+          <div><h4>Balancing across AZs</h4><span class="vi">Cân bằng giữa các Vùng sẵn sàng</span><p>Chỉ định nhiều AZ, Auto Scaling <b>chia đều instance</b> giữa các AZ khi scale ⇒ chịu được sự cố một AZ.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Spot-Instance.svg" alt="">
+          <div><h4>Multiple instance types &amp; purchase options</h4><span class="vi">Nhiều loại instance, nhiều hình thức mua</span><p>Trộn On-Demand + Spot, nhiều instance type trong <b>một</b> ASG; tự xin lại Spot khi bị thu hồi; Capacity Rebalancing (Bài 9).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">
+          <div><h4>Load balancing</h4><span class="vi">Tích hợp cân bằng tải</span><p>Instance launch/terminate được <b>tự động register/deregister</b> với load balancer (target group).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">
+          <div><h4>Scalability</h4><span class="vi">Nhiều cách co giãn</span><p>Manual, scheduled, dynamic (target tracking/step/simple), predictive – thêm capacity lúc cao điểm, bớt lúc thấp điểm để <b>giảm chi phí</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_AMI.svg" alt="">
+          <div><h4>Instance refresh</h4><span class="vi">Làm mới instance cuốn chiếu</span><p>Thay instance <b>theo kiểu rolling</b> khi đổi AMI/launch template; hỗ trợ checkpoint kiểu <b>canary</b> và auto rollback.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">
+          <div><h4>Lifecycle hooks</h4><span class="vi">Móc vòng đời</span><p>Chạy hành động tùy biến khi instance <b>đang launch</b> hoặc <b>sắp terminate</b> – nền tảng cho kiến trúc event-driven.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">
+          <div><h4>Stateful workloads</h4><span class="vi">Hỗ trợ workload có trạng thái</span><p>Lifecycle hook lưu trạng thái lúc tắt; <b>scale-in protection</b> hoặc custom termination policy tránh terminate instance đang chạy việc dài.</p></div></div>
+      </div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Compute.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region: ap-southeast-1</span>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Users<small>Internet</small></div>
+              <span class="arrow">HTTPS</span>
+              <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Application Load Balancer<small>target group TG-web</small></div>
+              <span class="arrow dashed">metric</span>
+              <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">CloudWatch alarm<small>do target tracking tạo</small></div>
+            </div>
+            <div class="grp vpc"><span class="lbl">VPC 10.0.0.0/16 – Auto Scaling group: min 2 · desired 4 · max 8</span>
+              <div class="row">
+                <div class="grp az"><span class="lbl">Availability Zone a</span>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center">
+                      <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">i-01<small>InService</small></div>
+                      <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">i-02<small>InService</small></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="grp az"><span class="lbl">Availability Zone b</span>
+                  <div class="grp priv"><span class="lbl">Private subnet</span>
+                    <div class="row center">
+                      <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">i-03<small>InService</small></div>
+                      <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">i-04<small>InService</small></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="row center">
+              <div class="node"><img src="../assets/icons/res/Amazon-EC2_AMI.svg" alt="">Launch template v3<small>AMI, instance type, SG, user data</small></div>
+              <span class="arrow">launch / terminate</span>
+              <div class="node"><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">EC2 Auto Scaling<small>giữ desired capacity</small></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Kiến trúc chuẩn mà đề SAA-C03 dùng đi dùng lại: Auto Scaling group trải trên <b>nhiều AZ</b> (private subnet), launch instance từ <b>launch template</b>, tự <b>đăng ký</b> instance vào target group của <b>ALB</b>. CloudWatch alarm (do target tracking policy tự tạo) báo khi metric lệch khỏi mục tiêu ⇒ Auto Scaling đổi desired capacity trong khoảng [min, max]. Mất một AZ ⇒ ASG launch bù ở AZ còn lại.</figcaption>
+      </figure>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – quản lý ca ở chuỗi cà phê</span>
+        <p>Một quán cà phê có <b>quản lý ca</b> (Auto Scaling). Chủ quán quy định: luôn có <b>ít nhất 2</b> nhân viên (min), <b>không quá 8</b> (max), bình thường <b>4</b> (desired). <b>Sổ tay tuyển dụng</b> mô tả nhân viên mới phải mặc đồng phục gì, biết pha món nào (launch template). Quản lý nhìn <b>hàng người chờ</b> (CloudWatch metric): mỗi nhân viên phục vụ trung bình quá 10 khách thì gọi thêm người (target tracking). Biết trước <b>8 giờ sáng thứ Hai</b> đông ⇒ xếp lịch thêm người từ 7 giờ 45 (scheduled/predictive). Nhân viên mới đến phải <b>thay đồng phục, rửa tay</b> trước khi đứng quầy (lifecycle hook, warmup). Ai ốm thì cho về và gọi người thay (health check replacement).</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – nhận diện Auto Scaling trong đề</span>
+        <ul>
+          <li>“<i>Automatically replace unhealthy instances</i>”, “<i>maintain a fixed number of instances</i>” ⇒ <b>Auto Scaling group</b> (kể cả min = max = desired = 1 cho một instance “tự phục hồi”).</li>
+          <li>“<i>Handle variable traffic, pay only for what is needed</i>”, “<i>scale out during peak and scale in at night</i>” ⇒ ASG + scaling policy.</li>
+          <li>“<i>Highly available across Availability Zones</i>” ⇒ ASG trải <b>≥ 2 AZ</b> + ALB; ASG là tài nguyên <b>regional</b>, không trải qua nhiều Region.</li>
+          <li>Đề hỏi “<i>least operational overhead</i>” cho việc giữ tải trung bình ổn định ⇒ <b>target tracking</b>, không phải tự viết script gọi API.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: LAUNCH TEMPLATE ===================== -->
+      <h2 id="launch-template"><img src="../assets/icons/res/Amazon-EC2_AMI.svg" alt="">Launch template – bản mô tả instance cần launch</h2>
+      <p class="lead"><span class="t" data-vi="Mẫu khởi chạy">Launch template</span> chứa thông tin cấu hình instance: <b>AMI ID</b>, <b>instance type</b>, <b>key pair</b>, <b>security groups</b> và các tham số khác dùng để launch EC2. Điểm khác biệt quyết định so với <span class="t" data-vi="Cấu hình khởi chạy (thế hệ cũ)">launch configuration</span>: launch template có <b>nhiều version</b>.</p>
+
+      <h3>Versioning</h3>
+      <ul>
+        <li>Bạn có thể tạo một version <b>“base”</b> chỉ chứa phần cấu hình chung (chưa có AMI, chưa có user data), rồi tạo version mới thêm AMI + user data chứa bản ứng dụng mới để thử nghiệm. Các version thử nghiệm xóa được khi không cần.</li>
+        <li>Khi tạo launch template, <b>mọi tham số đều tùy chọn</b>. Nhưng nếu template <b>không có AMI</b> thì khi tạo ASG bạn <b>không thể</b> thêm AMI vào; nếu có AMI mà không có instance type thì có thể thêm một hoặc nhiều instance type lúc tạo ASG.</li>
+        <li>ASG có thể trỏ tới một version cụ thể, hoặc tới version <code>$Default</code> / <code>$Latest</code> để tự dùng version mặc định/mới nhất khi launch instance tiếp theo. Instance đang chạy <b>không tự thay đổi</b> – muốn thay hàng loạt ⇒ dùng <b>instance refresh</b>.</li>
+        <li>Có thể dùng <b>AWS Systems Manager parameter</b> thay cho AMI ID cứng: cập nhật parameter là template tự dùng AMI mới.</li>
+        <li>Thiếu quyền dùng/tạo tài nguyên nêu trong template (vd quyền <code>ec2:RunInstances</code>, <code>iam:PassRole</code> cho instance profile) ⇒ lỗi “not authorized to use the launch template” khi gán vào ASG.</li>
+      </ul>
+
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-EC2_AMI.svg" alt="">Launch template (khuyến nghị)</h4>
+          <ul>
+            <li>Có <b>nhiều version</b>, kế thừa từ version base.</li>
+            <li>Bắt buộc để dùng <b>mixed instances</b>: nhiều instance type, <b>On-Demand + Spot</b> trong một ASG.</li>
+            <li>Tính năng EC2 mới: SSM parameter cho AMI, EBS <b>io2</b>, gắn tag EBS volume, <b>T2 Unlimited</b>, <b>Capacity Reservations</b>, Capacity Blocks, <b>Dedicated Hosts</b>…</li>
+            <li>Dùng được cho cả EC2 launch thủ công, EC2 Fleet, Auto Scaling.</li>
+          </ul></div>
+        <div style="--accent:#D13212"><h4><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Launch configuration (cũ)</h4>
+          <ul>
+            <li><b>Không sửa được</b> sau khi tạo – đổi cấu hình phải tạo launch configuration mới rồi cập nhật ASG.</li>
+            <li>Một ASG chỉ dùng <b>một</b> launch configuration tại một thời điểm.</li>
+            <li>Từ <b>01/01/2023</b>: không hỗ trợ instance type mới.</li>
+            <li>Account tạo từ <b>01/06/2023</b>: không tạo được bằng console; từ <b>01/10/2024</b>: không tạo được bằng <b>bất kỳ</b> cách nào.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – “sửa” cấu hình của ASG</span>
+        <ul>
+          <li>Đổi AMI trong launch template (tạo version mới) <b>không</b> làm instance đang chạy đổi theo. Instance mới launch sau đó mới dùng AMI mới. Muốn thay toàn bộ có kiểm soát ⇒ <b>instance refresh</b>.</li>
+          <li>Phương án “<i>modify the existing launch configuration</i>” luôn <b>sai</b> – launch configuration là bất biến.</li>
+          <li>Phương án yêu cầu trộn <b>Spot + On-Demand</b> hoặc <b>nhiều instance type</b> mà dùng launch configuration ⇒ sai, phải là launch template.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: ASG, HEALTH CHECK, LIFECYCLE ===================== -->
+      <h2 id="asg"><img src="../assets/icons/res/Amazon-EC2_Auto-Scaling.svg" alt="">Auto Scaling group: AZ, health checks và vòng đời instance</h2>
+      <p class="lead">Instance trong <span class="t" data-vi="Nhóm tự động co giãn">Auto Scaling group</span> được quản lý như <b>một đơn vị logic</b>. Ngoài việc co giãn, ASG liên tục làm hai việc quan trọng cho <i>high availability</i>: <b>cân bằng giữa các AZ</b> và <b>thay instance không khỏe</b>.</p>
+
+      <h3>Cân bằng giữa các Availability Zone</h3>
+      <ul>
+        <li>Khi tạo ASG bạn chọn VPC và <b>một subnet cho mỗi AZ</b> muốn dùng. Auto Scaling cố gắng <b>chia đều</b> instance giữa các AZ đã bật khi scale out.</li>
+        <li>Khi scale in, Auto Scaling cũng ưu tiên giữ cân bằng: <b>cân bằng AZ được ưu tiên hơn termination policy</b> – AZ nào nhiều instance hơn thì bị chọn trước (chi tiết ở phần Termination).</li>
+        <li>Một AZ gặp sự cố ⇒ instance ở đó bị đánh dấu unhealthy/terminate ⇒ ASG launch bù ở các AZ còn lại để giữ desired capacity. Đây là cách đạt <i>fault tolerance</i> mà không phải tự viết script.</li>
+      </ul>
+
+      <h3>Các loại health check</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Health check type</th><th>Kiểm tra gì</th><th>Mặc định</th></tr></thead>
+        <tbody>
+          <tr><td><b>Amazon EC2 status checks &amp; scheduled events</b></td><td>Instance có ở trạng thái <code>running</code> không; status check (instance/system) có <code>impaired</code> không; instance có bị scheduled event (vd retirement) không.</td><td class="yes">Luôn bật, không tắt được</td></tr>
+          <tr><td><b>Elastic Load Balancing</b></td><td>Load balancer có báo target <b>healthy</b> không – tức ứng dụng có thực sự phục vụ được request.</td><td class="no">Phải bật</td></tr>
+          <tr><td><b>VPC Lattice</b></td><td>VPC Lattice có báo instance healthy không.</td><td class="no">Phải bật</td></tr>
+          <tr><td><b>Amazon EBS</b></td><td>EBS volume có truy cập được và qua I/O status check không.</td><td class="no">Phải bật</td></tr>
+          <tr><td><b>Custom</b></td><td>Kiểm tra riêng của bạn; báo kết quả bằng API <code>SetInstanceHealth</code> (CLI <code>set-instance-health</code>).</td><td>Tùy bạn</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Mọi instance khởi đầu ở trạng thái <code>Healthy</code>; chỉ chuyển <code>Unhealthy</code> khi Auto Scaling nhận được thông báo từ một trong các nguồn trên.</li>
+        <li>Instance <b>không còn ở trạng thái <code>running</code></b> (<code>stopping</code>, <code>stopped</code>, <code>shutting-down</code>, <code>terminated</code>) ⇒ bị coi là hỏng <b>ngay lập tức</b> và thay thế. Còn status check <code>impaired</code> thì Auto Scaling <b>chờ vài phút</b> cho AWS tự khắc phục; <code>insufficient-data</code> không bị tính là unhealthy.</li>
+        <li><b>Mặc định Auto Scaling bỏ qua kết quả ELB health check.</b> Chỉ sau khi bật, target bị LB báo <code>Unhealthy</code> mới bị ASG đánh dấu unhealthy ở lần kiểm tra định kỳ kế tiếp và thay thế. Nếu bật deregistration delay, ASG chờ request in-flight xong (hoặc hết timeout) rồi mới terminate.</li>
+        <li><b>Application status checks</b> (tạo và quản lý trong Amazon EC2) mở rộng tín hiệu status check tới ứng dụng (HTTP/HTTPS); báo <code>impaired</code> ⇒ ASG thay instance mà không cần cấu hình thêm.</li>
+      </ul>
+
+      <h3>Health check grace period</h3>
+      <ul>
+        <li><span class="t" data-vi="Thời gian ân hạn kiểm tra sức khỏe">Health check grace period</span> là thời gian <b>tối thiểu</b> giữ instance mới trong service trước khi terminate nó vì unhealthy – tránh “giết oan” instance đang khởi động (ELB health check chạy song song ngay khi instance được đăng ký vào LB).</li>
+        <li>Mặc định: <b>300 giây</b> khi tạo ASG bằng <b>console</b>; <b>0 giây</b> (tắt) khi tạo bằng <b>CLI/SDK</b>.</li>
+        <li>Áp dụng cho instance mới launch, instance quay lại từ <code>Standby</code>, instance được attach thủ công. Đặt quá dài làm health check kém hiệu quả.</li>
+        <li>Trong grace period, nếu instance <b>không còn <code>running</code></b> (vd ai đó stop nó) thì vẫn bị đánh dấu unhealthy và thay ngay.</li>
+        <li>Nếu dùng <b>launch lifecycle hook</b> để đảm bảo instance khởi tạo xong trước khi <code>InService</code>, có thể đặt grace period = 0.</li>
+      </ul>
+
+      <h3>Auto Scaling thay instance hỏng thế nào (tránh downtime)</h3>
+      <ul>
+        <li>Instance không còn chạy (hoặc bị <code>set-instance-health</code> đánh Unhealthy) ⇒ thay <b>ngay</b>.</li>
+        <li>Trường hợp khác: nếu đang có scaling activity và nhóm thiếu ≥ <b>10%</b> desired capacity thì chờ activity đó xong; khi nhóm đạt &gt; <b>90%</b> desired capacity, Auto Scaling thay <b>tối đa 10% desired capacity mỗi lần</b>, chờ instance mới qua health check và warmup rồi mới thay đợt tiếp. Tỉ lệ này chỉnh được bằng <span class="t" data-vi="Chính sách bảo trì instance">instance maintenance policy</span>.</li>
+        <li>Nếu <b>mọi</b> instance bị ELB báo unhealthy, Auto Scaling có thể đánh dấu ít instance hơn mỗi lần – cho bạn thời gian sửa lỗi cấu hình thay vì terminate cả nhóm.</li>
+        <li>Instance bị terminate ⇒ <b>Elastic IP bị gỡ</b> và <b>EBS volume bị detach/xóa</b> (theo <code>DeleteOnTermination</code>) – không tự gắn sang instance mới; muốn tự động ⇒ dùng lifecycle hook.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 400" width="780" role="img" aria-label="Vòng đời instance trong Auto Scaling group">
+          <defs><marker id="ah13a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" x="16" y="16" width="36" height="36"/>
+          <text x="60" y="40" font-size="13" font-weight="700">Vòng đời instance trong Auto Scaling group</text>
+          <text x="20" y="84" font-size="11.5" class="muted">Scale out</text>
+          <rect x="20" y="96" width="120" height="44" rx="8" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="80" y="123" font-size="12.5" font-weight="700" text-anchor="middle">Pending</text>
+          <path class="line-o" d="M140 118 L188 118" marker-end="url(#ah13a)"/>
+          <rect x="190" y="96" width="130" height="44" rx="8" fill="none" stroke="#8C4FFF" stroke-width="2" stroke-dasharray="5 4"/>
+          <text x="255" y="116" font-size="12.5" font-weight="700" text-anchor="middle">Pending:Wait</text>
+          <text x="255" y="132" font-size="10.5" text-anchor="middle" class="muted">launch hook</text>
+          <path class="line-o" d="M320 118 L368 118" marker-end="url(#ah13a)"/>
+          <rect x="370" y="96" width="140" height="44" rx="8" fill="none" stroke="#8C4FFF" stroke-width="2" stroke-dasharray="5 4"/>
+          <text x="440" y="116" font-size="12.5" font-weight="700" text-anchor="middle">Pending:Proceed</text>
+          <text x="440" y="132" font-size="10.5" text-anchor="middle" class="muted">complete-lifecycle-action</text>
+          <path class="line-o" d="M510 118 L600 180" marker-end="url(#ah13a)"/>
+          <text x="565" y="138" font-size="10.5" class="muted">đăng ký vào LB</text>
+          <rect x="560" y="182" width="150" height="54" rx="10" fill="none" stroke="#7AA116" stroke-width="2.5"/>
+          <text x="635" y="206" font-size="14" font-weight="700" text-anchor="middle">InService</text>
+          <text x="635" y="224" font-size="10.5" text-anchor="middle" class="muted">tính vào desired capacity</text>
+          <path class="line-o" d="M80 140 L80 250 L556 250 L590 238" marker-end="url(#ah13a)" stroke-dasharray="4 4"/>
+          <text x="92" y="244" font-size="10.5" class="muted">không có hook: Pending ⇒ InService</text>
+          <rect x="300" y="160" width="140" height="44" rx="8" fill="none" stroke="#147EBA" stroke-width="1.6"/>
+          <text x="370" y="180" font-size="12.5" font-weight="700" text-anchor="middle">Standby</text>
+          <text x="370" y="196" font-size="10.5" text-anchor="middle" class="muted">không health check</text>
+          <path class="line-o" d="M558 196 L444 186" marker-end="url(#ah13a)"/>
+          <path class="line-o" d="M440 198 L556 216" marker-end="url(#ah13a)"/>
+          <rect x="600" y="290" width="130" height="44" rx="8" fill="none" stroke="#147EBA" stroke-width="1.6"/>
+          <text x="665" y="310" font-size="12.5" font-weight="700" text-anchor="middle">Detaching</text>
+          <text x="665" y="326" font-size="10.5" text-anchor="middle" class="muted">thành EC2 độc lập</text>
+          <path class="line-o" d="M680 236 L680 286" marker-end="url(#ah13a)"/>
+          <text x="420" y="282" font-size="11.5" class="muted">scale in / unhealthy</text>
+          <path class="line-o" d="M600 236 L474 296" marker-end="url(#ah13a)"/>
+          <rect x="340" y="296" width="130" height="40" rx="8" fill="none" stroke="#D13212" stroke-width="2"/>
+          <text x="405" y="321" font-size="12.5" font-weight="700" text-anchor="middle">Terminating</text>
+          <path class="line-o" d="M340 316 L292 316" marker-end="url(#ah13a)"/>
+          <rect x="160" y="294" width="130" height="44" rx="8" fill="none" stroke="#8C4FFF" stroke-width="2" stroke-dasharray="5 4"/>
+          <text x="225" y="314" font-size="12" font-weight="700" text-anchor="middle">Terminating:Wait</text>
+          <text x="225" y="330" font-size="10.5" text-anchor="middle" class="muted">terminate hook</text>
+          <path class="line-o" d="M225 338 L225 352" marker-end="url(#ah13a)"/>
+          <rect x="140" y="354" width="170" height="36" rx="8" fill="none" stroke="#8C4FFF" stroke-width="2" stroke-dasharray="5 4"/>
+          <text x="225" y="377" font-size="12" font-weight="700" text-anchor="middle">Terminating:Proceed</text>
+          <path class="line-o" d="M310 372 L398 372" marker-end="url(#ah13a)"/>
+          <rect x="400" y="354" width="120" height="36" rx="8" fill="none" stroke="#D13212" stroke-width="2"/>
+          <text x="460" y="377" font-size="12.5" font-weight="700" text-anchor="middle">Terminated</text>
+        </svg>
+        <figcaption><b>Hình 2.</b> Vòng đời instance theo tài liệu “Amazon EC2 Auto Scaling instance lifecycle”. Scale out: <code>Pending</code> ⇒ (nếu có hook <code>EC2_INSTANCE_LAUNCHING</code>) <code>Pending:Wait</code> ⇒ <code>Pending:Proceed</code> ⇒ được <b>đăng ký vào load balancer</b> rồi mới <code>InService</code>. Scale in: <code>Terminating</code> ⇒ (hook <code>EC2_INSTANCE_TERMINATING</code>) <code>Terminating:Wait</code> ⇒ <code>Terminating:Proceed</code> ⇒ <code>Terminated</code>; instance đang terminate <b>không quay lại</b> service được. Từ <code>InService</code> có thể đưa vào <code>Standby</code> (để sửa lỗi, không bị health check) hoặc <b>detach</b> khỏi nhóm. Lưu ý: bạn bị tính tiền ngay khi instance launch, kể cả lúc chưa <code>InService</code>.</figcaption>
+      </figure>
+
+      <h3>Standby, detach, attach</h3>
+      <ul>
+        <li><b>Standby</b>: tạm rút instance <code>InService</code> ra khỏi service để <b>troubleshoot/cập nhật</b>; vẫn thuộc ASG nhưng <b>không bị health check</b>, không nhận traffic; xong thì đưa trở lại.</li>
+        <li><b>Detach</b>: tách instance khỏi ASG để quản lý riêng hoặc gắn sang ASG khác. <b>Attach</b>: đưa instance đang chạy (thỏa điều kiện) vào ASG.</li>
+        <li>Không muốn ASG thay instance trong lúc điều tra sự cố ⇒ <b>suspend</b> process <code>ReplaceUnhealthy</code> và <code>HealthCheck</code> (hoặc dùng Standby).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – health check của ASG</span>
+        <ul>
+          <li>“<i>Instances behind the ALB return HTTP 500 errors but the Auto Scaling group does not replace them</i>” ⇒ ASG đang chỉ dùng <b>EC2 health check</b> (instance vẫn <code>running</code>). Sửa: <b>bật ELB health check</b> cho ASG.</li>
+          <li>“<i>New instances are terminated and replaced in a loop before the application finishes starting</i>” ⇒ tăng <b>health check grace period</b> (hoặc dùng launch lifecycle hook).</li>
+          <li>“<i>Troubleshoot an instance without it being replaced</i>” ⇒ đưa vào <b>Standby</b> hoặc suspend <code>ReplaceUnhealthy</code>/<code>HealthCheck</code>.</li>
+          <li>“<i>Self-healing single instance with a static IP</i>” ⇒ ASG min=max=1 + lifecycle hook/user data gắn lại Elastic IP (EIP không tự chuyển sang instance mới).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: TỔNG QUAN CÁC KIỂU SCALING ===================== -->
+      <h2 id="kieu-scaling"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">Các cách co giãn: manual, scheduled, dynamic, predictive</h2>
+      <p class="lead">Mọi kiểu scaling cuối cùng đều làm cùng một việc: <b>thay đổi desired capacity</b>. Khác nhau ở chỗ <b>ai/cái gì</b> quyết định con số và <b>khi nào</b>. Chọn đúng kiểu là dạng câu hỏi xuất hiện nhiều nhất về Auto Scaling.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Kiểu</th><th>Kích hoạt bởi</th><th>Phản ứng</th><th>Dùng khi (từ khóa đề)</th></tr></thead>
+        <tbody>
+          <tr><td><b>Manual scaling</b></td><td>Bạn đổi desired/min/max (console, CLI <code>set-desired-capacity</code>)</td><td>Ngay lập tức</td><td>Thay đổi một lần, không lặp lại</td></tr>
+          <tr><td><b>Scheduled scaling</b></td><td>Scheduled action: một lần hoặc lặp lại (cron + time zone)</td><td>Chủ động, theo giờ đã biết</td><td>“<i>Predictable load every Monday 9 AM</i>”, “<i>known event on a specific date</i>”</td></tr>
+          <tr><td><b>Target tracking</b> (dynamic)</td><td>CloudWatch metric so với <b>target value</b>; alarm do Auto Scaling tự tạo</td><td>Phản ứng (reactive), tỉ lệ thuận với tải</td><td>“<i>Keep average CPU at 50%</i>”, “<i>requests per target</i>”, least operational overhead</td></tr>
+          <tr><td><b>Step scaling</b> (dynamic)</td><td>CloudWatch alarm do <b>bạn</b> tạo + các <b>step adjustment</b> theo mức vượt ngưỡng</td><td>Reactive, mạnh hơn khi vượt nhiều</td><td>Cần phản ứng <b>khác nhau theo mức độ</b> vi phạm</td></tr>
+          <tr><td><b>Simple scaling</b> (dynamic)</td><td>Một alarm + <b>một</b> adjustment, rồi chờ <b>cooldown</b></td><td>Reactive, chậm nhất</td><td>Hệ thống cũ; AWS khuyến nghị <b>không</b> dùng</td></tr>
+          <tr><td><b>Predictive scaling</b></td><td>Machine learning trên lịch sử metric (tới 14 ngày) – forecast 48 giờ</td><td><b>Proactive</b> – launch trước khi tải đến</td><td>“<i>Recurring daily/weekly pattern</i>”, “<i>application takes a long time to initialize</i>”</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout note"><span class="ttl">Phối hợp nhiều kiểu</span>
+        <p>Các kiểu dùng <b>kết hợp</b> được. Scheduled action chạy xong thì scaling policy vẫn tiếp tục quyết định, nhưng capacity phải nằm trong min/max mà scheduled action vừa đặt. Predictive + dynamic: mỗi policy tự tính desired capacity, Auto Scaling lấy <b>giá trị lớn nhất</b> (vd target tracking cần 10, predictive cần 8 ⇒ desired = 10). Predictive <b>không scale in</b> – cần dynamic policy để bớt capacity khi tải giảm.</p></div>
+
+      <!-- ===================== PHẦN 5: DYNAMIC SCALING ===================== -->
+      <h2 id="dynamic"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">Dynamic scaling: target tracking, step và simple scaling</h2>
+      <p class="lead"><span class="t" data-vi="Co giãn động">Dynamic scaling</span> thay đổi capacity khi traffic thay đổi. Một dynamic scaling policy bảo Auto Scaling theo dõi một <b>CloudWatch metric</b> và định nghĩa hành động khi <b>CloudWatch alarm</b> chuyển sang <code>ALARM</code>. Metric là giá trị <b>tổng hợp (aggregate)</b> từ mọi instance trong nhóm – vd 2 instance CPU 60% và 40% ⇒ trung bình 50%.</p>
+
+      <h3>Target tracking scaling (khuyến nghị)</h3>
+      <p><span class="t" data-vi="Co giãn theo giá trị mục tiêu">Target tracking scaling</span> hoạt động như <b>bộ điều nhiệt</b>: bạn chọn metric và <b>target value</b>, Auto Scaling <b>tự tạo và quản lý CloudWatch alarm</b> rồi thêm/bớt instance để giữ metric quanh mục tiêu. Ví dụ tài liệu: giữ CPU trung bình ~<b>50%</b> – vượt 50% thì scale out, dưới 50% thì scale in để tiết kiệm.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Predefined metric</th><th>Ý nghĩa</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td><code>ASGAverageCPUUtilization</code></td><td>CPU trung bình của ASG</td><td>Nên bật <b>detailed monitoring</b> (1 phút thay vì 5 phút mặc định của EC2 metric)</td></tr>
+          <tr><td><code>ASGAverageNetworkIn</code></td><td>Byte nhận trung bình trên mọi network interface</td><td>Workload nặng mạng</td></tr>
+          <tr><td><code>ASGAverageNetworkOut</code></td><td>Byte gửi trung bình</td><td>Workload nặng mạng</td></tr>
+          <tr><td><code>ALBRequestCountPerTarget</code></td><td>Số request ALB trung bình <b>mỗi target</b></td><td>Phải chỉ định <code>ResourceLabel</code> (target group); có thể scale về <b>0</b> nếu min = 0</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li><b>Chọn metric đúng</b>: metric phải là chỉ số <b>sử dụng (utilization)</b> và thay đổi <b>tỉ lệ nghịch</b> với capacity – gấp đôi số instance thì metric giảm ~50%. Tài liệu nêu rõ <b>không</b> dùng được cho target tracking: <code>RequestCount</code> tổng của LB, <code>Latency</code> của LB, và <code>ApproximateNumberOfMessagesVisible</code> của SQS (phải chia cho số instance – xem phần SQS bên dưới).</li>
+        <li>Có thể dùng <b>custom metric</b>, <b>high-resolution metric</b> (vài giây) hoặc <b>metric math</b> để kết hợp metric có sẵn. Khuyến nghị metric có chu kỳ <b>≤ 1 phút</b>.</li>
+        <li><b>Target value</b>: đặt càng cao càng tiết kiệm nhưng chừa <b>buffer</b> cho spike. Với metric thông lượng (request count…), target là thông lượng tối ưu của <b>một instance trong một phút</b>.</li>
+        <li><b>Nhiều target tracking policy</b> (mỗi policy một metric khác nhau) dùng chung được. Auto Scaling <b>ưu tiên availability</b>: scale out nếu <b>bất kỳ</b> policy nào muốn scale out; chỉ scale in khi <b>tất cả</b> policy (có bật scale-in) đều sẵn sàng scale in.</li>
+        <li>Target tracking scale in <b>từ từ</b> hơn khi traffic giảm. Có thể <b>tắt phần scale-in</b> của policy (vd giữ số instance trong lúc deploy).</li>
+        <li><b>Không sửa/xóa</b> CloudWatch alarm do target tracking tạo. Metric thiếu dữ liệu ⇒ alarm <code>INSUFFICIENT_DATA</code> ⇒ không scale cho đến khi có dữ liệu mới.</li>
+        <li>Auto Scaling <b>làm tròn có lợi cho availability</b>: cần thêm 1,5 instance ⇒ thêm 2; bớt 0,5 instance có thể làm metric vượt target ⇒ chưa scale in. Nhóm nhỏ nên metric có thể lệch target khá xa.</li>
+        <li>Target tracking <b>chỉ</b> scale out khi metric <b>cao hơn</b> target – không dùng được kiểu “metric thấp thì thêm máy”.</li>
+      </ul>
+
+      <h3>Step scaling và simple scaling</h3>
+      <p>Với <span class="t" data-vi="Co giãn theo bậc">step scaling</span> và <span class="t" data-vi="Co giãn đơn giản">simple scaling</span>, <b>bạn tự tạo CloudWatch alarm</b> (metric, threshold, số evaluation period) và tạo policy riêng cho scale out và scale in.</p>
+      <ul>
+        <li><b>Step scaling</b>: nhiều <span class="t" data-vi="Bậc điều chỉnh">step adjustment</span>, mỗi bậc gồm <b>lower bound</b>, <b>upper bound</b> (tính tương đối so với ngưỡng alarm khi dùng CLI/SDK; console dùng giá trị tuyệt đối) và lượng điều chỉnh. Vi phạm càng lớn, thêm càng nhiều. Các khoảng <b>không được chồng lấn hay hở</b>; policy tiếp tục áp dụng cho các lần vi phạm kế tiếp tới khi alarm về <code>OK</code>.</li>
+        <li><b>Simple scaling</b>: <b>một</b> adjustment duy nhất, sau mỗi activity phải chờ <b>cooldown</b> mới phản ứng tiếp – kể cả khi tải vẫn đang tăng.</li>
+        <li>Phân biệt: <b>desired capacity</b> = số bạn muốn có; <b>current capacity</b> = số instance đã qua warmup/cooldown, đang chạy và sẵn sàng.</li>
+        <li>Đặt khoảng cách đủ xa giữa ngưỡng scale out và scale in để tránh <span class="t" data-vi="Dao động co giãn liên tục">flapping</span> – vòng lặp vô hạn scale out ⇒ scale in ⇒ scale out.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 250" width="780" role="img" aria-label="Ví dụ step adjustments trong tài liệu">
+          <defs><marker id="ah13b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" x="16" y="12" width="34" height="34"/>
+          <text x="58" y="34" font-size="13" font-weight="700">Step adjustments (PercentChangeInCapacity) – alarm ngưỡng 50% CPU</text>
+          <path class="line-o" d="M30 130 L750 130" marker-end="url(#ah13b)"/>
+          <text x="740" y="152" font-size="11" text-anchor="end" class="muted">metric (CPU %)</text>
+          <rect x="30" y="70" width="150" height="50" rx="6" fill="none" stroke="#D13212" stroke-width="2"/>
+          <text x="105" y="92" font-size="13" font-weight="700" text-anchor="middle">−30%</text>
+          <text x="105" y="110" font-size="10.5" text-anchor="middle" class="muted">metric ≤ 30</text>
+          <rect x="185" y="70" width="110" height="50" rx="6" fill="none" stroke="#D13212" stroke-width="1.5"/>
+          <text x="240" y="92" font-size="13" font-weight="700" text-anchor="middle">−10%</text>
+          <text x="240" y="110" font-size="10.5" text-anchor="middle" class="muted">30 – 40</text>
+          <rect x="300" y="70" width="180" height="50" rx="6" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="390" y="92" font-size="13" font-weight="700" text-anchor="middle">Giữ nguyên</text>
+          <text x="390" y="110" font-size="10.5" text-anchor="middle" class="muted">40 – 60</text>
+          <rect x="485" y="70" width="110" height="50" rx="6" fill="none" stroke="#147EBA" stroke-width="1.5"/>
+          <text x="540" y="92" font-size="13" font-weight="700" text-anchor="middle">+10%</text>
+          <text x="540" y="110" font-size="10.5" text-anchor="middle" class="muted">60 – 70</text>
+          <rect x="600" y="70" width="150" height="50" rx="6" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <text x="675" y="92" font-size="13" font-weight="700" text-anchor="middle">+30%</text>
+          <text x="675" y="110" font-size="10.5" text-anchor="middle" class="muted">metric ≥ 70</text>
+          <text x="30" y="180" font-size="11.5">Bắt đầu 10 instance ⇒ CPU 60%: +10% × 10 = <tspan font-weight="700">11</tspan> ⇒ CPU vẫn 70%: +30% × 11 = 3,3 ⇒ làm tròn xuống 3 ⇒ <tspan font-weight="700">14</tspan></text>
+          <text x="30" y="204" font-size="11.5">CPU về 40%: −10% × 14 = 1,4 ⇒ bớt 1 ⇒ <tspan font-weight="700">13</tspan> ⇒ CPU 30%: −30% × 13 = 3,9 ⇒ bớt 3 ⇒ <tspan font-weight="700">10</tspan></text>
+          <text x="30" y="232" font-size="11" class="muted">Hai policy riêng: scale-out (alarm &gt; 50%) và scale-in (alarm &lt; 50%); bound tính tương đối với ngưỡng 50.</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Ví dụ step scaling lấy nguyên từ tài liệu “Step and simple scaling policies”: hai alarm quanh ngưỡng 50% và hai bộ step adjustment theo phần trăm nhóm. Vùng 40–60% là “vùng chết” chống flapping; vi phạm càng xa ngưỡng thì điều chỉnh càng mạnh – điều simple scaling không làm được.</figcaption>
+      </figure>
+
+      <h3>Scaling adjustment types</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Adjustment type</th><th>Tác dụng</th><th>Ví dụ (tài liệu)</th></tr></thead>
+        <tbody>
+          <tr><td><code>ChangeInCapacity</code></td><td>Cộng/trừ một số capacity unit</td><td>Đang 3, adjustment 5 ⇒ <b>8</b></td></tr>
+          <tr><td><code>ExactCapacity</code></td><td>Đặt capacity bằng đúng giá trị (không âm)</td><td>Đang 3, adjustment 5 ⇒ <b>5</b></td></tr>
+          <tr><td><code>PercentChangeInCapacity</code></td><td>Cộng/trừ theo % capacity hiện tại; có thể đặt <code>MinAdjustmentMagnitude</code></td><td>Đang 10, +10% ⇒ <b>11</b>. +25% của 4 = 1 nhưng MinAdjustmentMagnitude 2 ⇒ thêm <b>2</b></td></tr>
+        </tbody>
+      </table></div>
+      <p>Quy tắc làm tròn của <code>PercentChangeInCapacity</code>: giá trị &gt; 1 làm tròn <b>xuống</b> (12,7 ⇒ 12); giữa 0 và 1 ⇒ <b>1</b>; giữa 0 và −1 ⇒ <b>−1</b>; nhỏ hơn −1 làm tròn <b>lên</b> (−6,67 ⇒ −6).</p>
+
+      <h3>Nhiều dynamic policy cùng lúc</h3>
+      <ul>
+        <li>Một ASG có thể có nhiều target tracking và/hoặc step policy. Khi nhiều policy cùng kích hoạt, Auto Scaling chọn policy cho <b>capacity lớn nhất</b> – cả khi scale out lẫn scale in.</li>
+        <li>Ví dụ tài liệu: policy CPU thêm 1, policy SQS thêm 2 ⇒ thêm <b>2</b>. Scale in: nhóm 8 instance, một policy bớt 3, policy khác bớt 25% (= 2) ⇒ chỉ bớt <b>2</b> (để lại nhiều instance hơn).</li>
+        <li>Cẩn thận khi trộn target tracking với step scaling: step policy có thể scale in trước rồi target tracking lại scale out ⇒ hành vi không mong muốn.</li>
+      </ul>
+
+      <h3>Scaling theo hàng đợi Amazon SQS – backlog per instance</h3>
+      <p>Kiến trúc kinh điển: web tier đẩy job (vd ảnh cần resize) vào <b>SQS queue</b>, ASG worker lấy job xử lý. Scale theo <b>độ dài hàng đợi thô</b> là sai vì không tính tới số worker đang có. Tài liệu hướng dẫn dùng metric <span class="t" data-vi="Tồn đọng trên mỗi instance">backlog per instance</span>:</p>
+      <ol class="steps">
+        <li><b>Backlog per instance</b> = <code>ApproximateNumberOfMessages</code> ÷ số instance <code>InService</code>.</li>
+        <li><b>Acceptable backlog per instance</b> (target value) = độ trễ chấp nhận được ÷ thời gian xử lý trung bình một message.</li>
+        <li>Ví dụ: 10 instance, 1.500 message ⇒ backlog 150/instance. Xử lý 0,1 giây/message, chấp nhận trễ 10 giây ⇒ target = 10 ÷ 0,1 = <b>100</b>. 150 &gt; 100 ⇒ scale out thêm <b>5</b> instance (1.500 ÷ 15 = 100).</li>
+        <li>Publish custom metric lên CloudWatch (hoặc dùng <b>metric math</b> để khỏi publish – rẻ hơn) và tạo <b>target tracking</b> policy với target 100.</li>
+      </ol>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Users<small>upload ảnh</small></div>
+          <span class="arrow">HTTPS</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Web tier<small>ASG #1</small></div>
+          <span class="arrow">SendMessage</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Queue-Service_Queue.svg" alt="">SQS queue<small>ApproximateNumberOfMessages</small></div>
+          <span class="arrow">ReceiveMessage</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">Worker ASG #2<small>xử lý ảnh</small></div>
+        </div>
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">CloudWatch<small>metric math: messages ÷ InService</small></div>
+          <span class="arrow">backlog per instance</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Alarm.svg" alt="">Target tracking<small>target = 100</small></div>
+          <span class="arrow">đổi desired capacity</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" alt="">Worker ASG #2<small>scale out / in</small></div>
+        </div>
+        <figcaption><b>Hình 4.</b> Scaling worker theo SQS (tài liệu “Scaling policy based on Amazon SQS”): hàng đợi <b>decouple</b> web tier khỏi worker; ASG worker dùng target tracking trên metric <b>backlog per instance</b>. Message chưa xử lý xong khi instance bị terminate sẽ quay lại queue cho worker khác; job chạy dài có thể bật <b>instance scale-in protection</b> trong lúc xử lý.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – chọn scaling policy</span>
+        <ul>
+          <li>“<i>Maintain average CPU utilization at 40%</i>”, “<i>keep request count per instance at 1,000</i>” ⇒ <b>target tracking</b> (<code>ASGAverageCPUUtilization</code> / <code>ALBRequestCountPerTarget</code>).</li>
+          <li>“<i>Add 2 instances when CPU &gt; 70% and 4 instances when CPU &gt; 90%</i>” ⇒ <b>step scaling</b>.</li>
+          <li>“<i>Scale workers based on the number of messages in an SQS queue</i>” ⇒ target tracking trên <b>backlog per instance</b> (custom metric / metric math), không phải tổng số message.</li>
+          <li>“<i>Application uses memory heavily, scale on memory</i>” ⇒ EC2 không có metric memory sẵn ⇒ cài <b>CloudWatch agent</b> publish custom metric rồi target tracking trên metric đó.</li>
+          <li>“<i>Scaling reacts too slowly because metrics arrive every 5 minutes</i>” ⇒ bật <b>detailed monitoring</b> (1 phút) hoặc dùng high-resolution metric.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: COOLDOWN & WARMUP ===================== -->
+      <h2 id="cooldown"><img src="../assets/icons/res/Amazon-CloudWatch_Event-Time-Based.svg" alt="">Cooldown và instance warmup</h2>
+      <p class="lead">Instance mới cần thời gian khởi động; nếu Auto Scaling nhìn metric ngay lập tức nó sẽ thấy tải vẫn cao và launch thêm quá tay. Có hai cơ chế chống “phản ứng thái quá”: <span class="t" data-vi="Thời gian chờ giữa hai lần co giãn">scaling cooldown</span> (cũ, cho simple scaling) và <span class="t" data-vi="Thời gian làm nóng instance">instance warmup</span> (mới, cho target tracking/step).</p>
+
+      <div class="compare">
+        <div style="--accent:#D13212"><h4><img src="../assets/icons/res/Amazon-CloudWatch_Event-Time-Based.svg" alt="">Scaling cooldown</h4>
+          <ul>
+            <li>Chỉ áp dụng cho <b>simple scaling</b>. Sau khi launch/terminate, nhóm <b>chờ hết cooldown</b> rồi simple policy mới được chạy tiếp.</li>
+            <li><b>Default cooldown 300 giây</b>; không đặt được lúc tạo ASG trên console (sửa sau ở Advanced configurations). Có thể đặt cooldown riêng cho từng simple policy (thường <b>ngắn hơn cho scale in</b> để tiết kiệm).</li>
+            <li>Bắt đầu tính khi instance <b>cuối cùng</b> launch/terminate xong; có lifecycle hook thì tính sau khi hook hoàn tất.</li>
+            <li>AWS khuyến nghị <b>không dùng</b> simple scaling và cooldown.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">Default instance warmup</h4>
+          <ul>
+            <li>Thời gian sau khi instance <code>InService</code> mà nó <b>chưa đóng góp</b> vào metric tổng hợp của nhóm.</li>
+            <li>Target tracking và step scaling <b>không chờ cooldown</b> – scale out được ngay; instance đang warmup được <b>tính vào desired capacity</b> nên nhiều lần vi phạm liên tiếp chỉ gây <b>một</b> lần scale.</li>
+            <li>Trong lúc scale out, mọi scale in của dynamic policy <b>bị chặn</b> tới khi instance warm up xong.</li>
+            <li><b>Không bật mặc định</b>; AWS “strongly recommend” bật. Chưa biết đặt bao nhiêu ⇒ bắt đầu <b>300 giây</b> rồi tinh chỉnh.</li>
+          </ul></div>
+      </div>
+      <ul>
+        <li>Nếu chưa đặt default instance warmup: target tracking/step dùng <b>default cooldown</b> làm warmup; <b>instance refresh</b> dùng <b>health check grace period</b>; predictive scaling <b>không có</b> warmup.</li>
+        <li>Một số hoạt động <b>không chờ cooldown</b>: scheduled action, thay instance unhealthy, manual scaling (mặc định).</li>
+        <li>ASG đứng sau ELB: khi scale in, cooldown bắt đầu khi instance bắt đầu <b>connection draining</b> – không chờ draining (mặc định 300 giây) xong.</li>
+      </ul>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – cooldown vs warmup vs grace period</span>
+        <ul>
+          <li><b>Cooldown</b>: chặn <b>simple policy</b> chạy liên tiếp. <b>Warmup</b>: instance mới chưa được tính vào metric. <b>Grace period</b>: chưa terminate instance mới vì health check fail. Ba khái niệm khác nhau – đề hay đảo tên.</li>
+          <li>“<i>Auto Scaling launches too many instances during a spike because new instances report high CPU while booting</i>” ⇒ cấu hình <b>default instance warmup</b> (với target tracking/step), không phải tăng grace period.</li>
+          <li>“<i>Group keeps scaling in and out repeatedly</i>” (flapping) ⇒ nới khoảng cách giữa ngưỡng scale out/in, hoặc chuyển sang target tracking; với simple scaling thì tăng cooldown.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: SCHEDULED & PREDICTIVE ===================== -->
+      <h2 id="scheduled-predictive"><img src="../assets/icons/res/Amazon-EventBridge_Rule.svg" alt="">Scheduled scaling và predictive scaling</h2>
+      <p class="lead">Khi tải có <b>quy luật</b>, phản ứng sau khi tải đến (dynamic) là quá muộn với ứng dụng khởi động chậm. Hai cách <b>chủ động</b>: tự đặt lịch (<span class="t" data-vi="Co giãn theo lịch">scheduled scaling</span>) hoặc để AWS dự báo (<span class="t" data-vi="Co giãn dự đoán">predictive scaling</span>).</p>
+
+      <h3>Scheduled scaling</h3>
+      <ul>
+        <li><span class="t" data-vi="Hành động theo lịch">Scheduled action</span> đặt <b>desired</b> và tùy chọn <b>min/max</b> mới tại thời điểm chỉ định. Ví dụ tài liệu: sáng <b>thứ Tư</b> tăng capacity cho đỉnh giữa tuần, tối <b>thứ Sáu</b> giảm lại.</li>
+        <li>Một lần (one-time) hoặc lặp lại bằng <b>cron 5 trường</b>: <code>[Minute] [Hour] [Day_of_Month] [Month_of_Year] [Day_of_Week]</code> – vd <code>30 6 * * 2</code> = 6:30 sáng mỗi thứ Ba. Có start time/end time tùy chọn (CLI/SDK dùng UTC).</li>
+        <li><b>Time zone</b> mặc định <b>UTC</b>; có thể đặt tên IANA (vd <code>Asia/Ho_Chi_Minh</code>, <code>America/New_York</code>) – zone theo địa danh tự điều chỉnh <b>Daylight Saving Time</b>, còn <code>Etc/UTC</code> thì không.</li>
+        <li>Thường chạy trong vài giây nhưng có thể <b>trễ tới 2 phút</b>. Thứ tự thực thi được bảo đảm trong cùng một ASG, không bảo đảm giữa các ASG.</li>
+        <li>Giới hạn: <b>125</b> scheduled action mỗi ASG; tên duy nhất trong ASG; hai action không được trùng thời điểm. Tạm tắt mà không xóa ⇒ <b>suspend process <code>ScheduledActions</code></b>.</li>
+      </ul>
+
+      <h3>Predictive scaling</h3>
+      <ul>
+        <li>Phân tích dữ liệu lịch sử để tìm <b>quy luật theo ngày/tuần</b> rồi <b>dự báo</b> capacity cần trong tương lai, scale out <b>trước</b> khi tải đến.</li>
+        <li>Phù hợp: traffic <b>chu kỳ</b> (giờ hành chính cao, tối/cuối tuần thấp); workload <b>bật–tắt định kỳ</b> (batch, test, phân tích định kỳ); ứng dụng <b>khởi tạo lâu</b> gây trễ khi scale out.</li>
+        <li>Cần <b>ít nhất 24 giờ</b> dữ liệu metric để bắt đầu dự báo; phân tích tối đa <b>14 ngày</b> gần nhất (dự báo tốt hơn khi đủ 2 tuần). Tạo <b>forecast theo giờ cho 48 giờ tới</b>, cập nhật <b>mỗi 6 giờ</b>.</li>
+        <li>Hai mode: <b>forecast only</b> (mặc định khi mới bật – chỉ dự báo để bạn đánh giá) và <b>forecast and scale</b>. Ở mode scale, dự báo tăng ⇒ scale out; dự báo giảm ⇒ <b>không scale in</b> (cần dynamic policy).</li>
+        <li>Mặc định scale vào <b>đầu mỗi giờ</b>; có thể launch sớm hơn bằng <code>SchedulingBufferTime</code> (console: <b>Pre-launch instances</b>). Khuyến nghị bật default instance warmup.</li>
+        <li><b>Max capacity behavior</b> (<code>MaxCapacityBreachBehavior</code>, <code>MaxCapacityBuffer</code>): cho phép tự nâng max khi dự báo vượt – max mới <b>không tự giảm</b> lại.</li>
+        <li>Giả định nhóm <b>đồng nhất</b> (instance cùng năng lực) – cẩn thận với mixed instances group có số vCPU/băng thông khác nhau. Tạo ASG mới thay ASG cũ ⇒ phải chờ lại 24 giờ dữ liệu.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – scheduled hay predictive?</span>
+        <ul>
+          <li>“<i>A marketing event on a known date</i>”, “<i>every weekday at 8 AM the load increases; the time is fixed</i>” ⇒ <b>scheduled scaling</b>.</li>
+          <li>“<i>Traffic follows a daily/weekly cyclical pattern; instances take 10 minutes to boot; avoid manual analysis of patterns</i>” ⇒ <b>predictive scaling</b> (kèm target tracking để scale in và xử lý tải bất ngờ).</li>
+          <li>“<i>Unpredictable spikes</i>” ⇒ dynamic (target tracking); chỉ scheduled/predictive là <b>không đủ</b>.</li>
+          <li>Ứng dụng khởi động quá lâu ngay cả khi đã scale sớm ⇒ <b>warm pool</b> hoặc golden AMI (Bài 8).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: LIFECYCLE HOOKS & WARM POOLS ===================== -->
+      <h2 id="lifecycle-hooks"><img src="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" alt="">Lifecycle hooks và warm pools</h2>
+      <p class="lead"><span class="t" data-vi="Móc vòng đời">Lifecycle hooks</span> cho phép bạn “chen” hành động tùy biến vào vòng đời instance: tạm giữ instance ở trạng thái <b>wait</b> khi đang launch hoặc trước khi terminate, chạy việc cần làm, rồi mới cho chuyển trạng thái tiếp.</p>
+
+      <h3>Cách hoạt động</h3>
+      <ul>
+        <li>Hai loại hook: <code>autoscaling:EC2_INSTANCE_LAUNCHING</code> (<code>Pending</code> ⇒ <code>Pending:Wait</code>) và <code>autoscaling:EC2_INSTANCE_TERMINATING</code> (<code>Terminating</code> ⇒ <code>Terminating:Wait</code>).</li>
+        <li>Thời gian chờ mặc định (<b>heartbeat timeout</b>) là <b>1 giờ</b>. Có <b>global timeout</b> = <b>48 giờ</b> hoặc <b>100 × heartbeat timeout</b>, lấy giá trị nhỏ hơn. Có thể gia hạn bằng heartbeat.</li>
+        <li>Xong việc thì gọi <code>complete-lifecycle-action</code> với kết quả <b>CONTINUE</b> hoặc <b>ABANDON</b>:
+          <ul>
+            <li>Đang <b>launch</b>: CONTINUE ⇒ đưa instance vào service; ABANDON ⇒ hành động thất bại, instance bị terminate và thay thế.</li>
+            <li>Đang <b>terminate</b>: cả hai đều cho terminate; ABANDON dừng các hook còn lại, CONTINUE cho các hook khác chạy tiếp.</li>
+          </ul></li>
+        <li>Thông báo sự kiện: Auto Scaling gửi event tới <b>Amazon EventBridge</b> (lọc rồi chuyển tới <b>Lambda</b>, SNS, SQS…); qua CLI/SDK/CloudFormation còn có thể chỉ định trực tiếp <b>SNS topic</b> hoặc <b>SQS queue</b> làm notification target. Script trên instance có thể đọc <b>target lifecycle state</b> qua instance metadata.</li>
+        <li>Termination hook là <b>best-effort</b>: hết timeout hoặc ABANDON ⇒ terminate ngay. Hook <b>không ngăn</b> Spot bị thu hồi (thông báo 2 phút).</li>
+        <li>Hook launch thất bại liên tục ⇒ Auto Scaling <b>giới hạn tốc độ launch</b>. Với launch hook, health check grace period bắt đầu khi instance đã <code>InService</code>.</li>
+        <li>Hook áp dụng cho mọi launch/terminate (kể cả manual, instance refresh, max instance lifetime, Capacity Rebalancing, warm pool), nhưng <b>không</b> áp dụng khi attach/detach, vào/ra standby, hoặc force delete group.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 300" width="780" role="img" aria-label="Lifecycle hook khi terminate gọi Lambda qua EventBridge">
+          <defs><marker id="ah13c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="10" y="20" width="230" height="260" rx="10" fill="none" stroke="#ED7100" stroke-width="2"/>
+          <image href="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg" x="22" y="30" width="30" height="30"/>
+          <text x="60" y="50" font-size="13" font-weight="700">Auto Scaling group</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="95" y="80" width="56" height="56"/>
+          <text x="123" y="154" font-size="12" font-weight="700" text-anchor="middle">i-0abc</text>
+          <text x="123" y="172" font-size="11" text-anchor="middle" class="muted">Terminating:Wait</text>
+          <text x="123" y="200" font-size="10.5" text-anchor="middle" class="muted">deregister khỏi ALB</text>
+          <text x="123" y="216" font-size="10.5" text-anchor="middle" class="muted">(draining) + chờ hook</text>
+          <text x="123" y="244" font-size="10.5" text-anchor="middle" class="muted">timeout mặc định 1 giờ</text>
+          <path class="line-o" d="M240 108 L318 108" marker-end="url(#ah13c)"/>
+          <text x="279" y="98" font-size="11" text-anchor="middle">① event</text>
+          <image href="../assets/icons/svc/Amazon-EventBridge.svg" x="322" y="82" width="52" height="52"/>
+          <text x="348" y="152" font-size="12" font-weight="700" text-anchor="middle">EventBridge rule</text>
+          <text x="348" y="168" font-size="10.5" text-anchor="middle" class="muted">EC2 Instance-terminate</text>
+          <text x="348" y="182" font-size="10.5" text-anchor="middle" class="muted">Lifecycle Action</text>
+          <path class="line-o" d="M378 108 L466 108" marker-end="url(#ah13c)"/>
+          <text x="422" y="98" font-size="11" text-anchor="middle">② invoke</text>
+          <image href="../assets/icons/res/AWS-Lambda_Lambda-Function.svg" x="470" y="82" width="52" height="52"/>
+          <text x="496" y="152" font-size="12" font-weight="700" text-anchor="middle">Lambda function</text>
+          <path class="line-o" d="M526 100 L620 60" marker-end="url(#ah13c)"/>
+          <text x="560" y="62" font-size="11">③ Run Command</text>
+          <image href="../assets/icons/res/AWS-Systems-Manager_Run-Command.svg" x="624" y="30" width="44" height="44"/>
+          <text x="690" y="50" font-size="11" class="muted">copy log</text>
+          <path class="line-o" d="M646 74 L646 120" marker-end="url(#ah13c)"/>
+          <image href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" x="624" y="122" width="44" height="44"/>
+          <text x="646" y="182" font-size="11.5" text-anchor="middle">S3 bucket (logs)</text>
+          <path class="line-o" d="M496 160 Q496 250 244 250" marker-end="url(#ah13c)"/>
+          <text x="370" y="242" font-size="11" text-anchor="middle">④ complete-lifecycle-action CONTINUE</text>
+          <text x="370" y="272" font-size="10.5" text-anchor="middle" class="muted">⇒ Terminating:Proceed ⇒ Terminated</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Mẫu dùng lifecycle hook khi scale in mà tài liệu mô tả: hook tạm giữ instance ở <code>Terminating:Wait</code> và gửi event qua <b>EventBridge</b>; <b>Lambda</b> (ví dụ qua Systems Manager Run Command) tải log/dữ liệu ra <b>S3</b> rồi gọi <code>complete-lifecycle-action</code>. Chiều ngược lại – launch hook – dùng để chạy bootstrap script và chỉ đăng ký instance vào load balancer khi ứng dụng đã sẵn sàng.</figcaption>
+      </figure>
+
+      <h3>Warm pools – instance khởi tạo sẵn</h3>
+      <ul>
+        <li><span class="t" data-vi="Vùng chứa instance làm nóng sẵn">Warm pool</span> là tập instance <b>đã khởi tạo sẵn</b> nằm cạnh ASG. Khi scale out, ASG lấy instance từ warm pool (<b>warm start</b>) thay vì launch mới ⇒ giảm độ trễ cho ứng dụng <b>boot cực lâu</b> (vd phải ghi lượng lớn dữ liệu ra đĩa), không phải over-provision.</li>
+        <li>Trạng thái trong pool: <b>Stopped</b> (rẻ nhất – chỉ trả EBS + Elastic IP), <b>Hibernated</b> (giữ RAM vào EBS root; trả EBS kể cả phần RAM + EIP), <b>Running</b> (rất không khuyến khích vì tốn tiền).</li>
+        <li>Kích thước mặc định = <b>max − desired</b> (vd desired 6, max 10 ⇒ pool 4); có thể đặt <code>MaxGroupPreparedCapacity</code>, <code>MinSize</code>. Có <b>instance reuse policy</b> để trả instance về pool khi scale in thay vì terminate.</li>
+        <li>Giới hạn: root phải là <b>EBS</b> (instance store root không stop/hibernate được); không hỗ trợ <b>Spot</b> trong mixed instances group và nhóm có instance weighting; pool cạn ⇒ <b>cold start</b>. Nên dùng kèm <b>launch lifecycle hook</b> vì Auto Scaling stop instance vào pool mà <b>không chờ user data chạy xong</b>.</li>
+        <li>Tạo warm pool khi không cần chỉ <b>tốn tiền thêm</b> – boot nhanh thì không cần.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – lifecycle hooks &amp; warm pools</span>
+        <ul>
+          <li>“<i>Retrieve log files / save state from instances before they are terminated by scale-in</i>” ⇒ <b>termination lifecycle hook</b> (+ EventBridge + Lambda / SSM Run Command).</li>
+          <li>“<i>Instances must finish installing software before receiving traffic from the load balancer</i>” ⇒ <b>launch lifecycle hook</b>.</li>
+          <li>“<i>Register the instance with a third-party system / attach an ENI or Elastic IP on launch</i>” ⇒ launch lifecycle hook gọi Lambda.</li>
+          <li>“<i>Application boot time is several minutes; reduce scale-out latency cost-effectively</i>” ⇒ <b>warm pool</b> ở trạng thái <b>Stopped</b> (hoặc Hibernated nếu cần giữ RAM).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 9: TERMINATION, REFRESH, CÁC TÍNH NĂNG KHÁC ===================== -->
+      <h2 id="termination-refresh"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Termination policy, scale-in protection, instance refresh</h2>
+      <p class="lead">Khi scale in, Auto Scaling phải chọn <b>instance nào</b> bị terminate. Khi đổi AMI, bạn cần thay instance <b>cuốn chiếu</b> mà không downtime. Đây là nhóm tính năng giúp vận hành ASG an toàn.</p>
+
+      <h3>Default termination policy</h3>
+      <ol class="steps">
+        <li><b>Cân bằng AZ trước tiên</b>: chọn AZ có <b>nhiều instance nhất</b> và có ít nhất một instance không được bảo vệ khỏi scale in. (Cân bằng AZ luôn ưu tiên hơn termination policy.)</li>
+        <li>(Mixed instances group) chọn instance giúp nhóm khớp hơn với <b>allocation strategy</b> và tỉ lệ On-Demand/Spot.</li>
+        <li><b>Cấu hình lỗi thời</b>: ưu tiên instance launch từ <b>launch configuration</b> ⇒ từ launch template <b>khác</b> template hiện tại ⇒ dùng <b>version cũ nhất</b> của template hiện tại.</li>
+        <li><b>Gần giờ tính tiền kế tiếp nhất</b>; vẫn hòa thì chọn <b>ngẫu nhiên</b>. (Ngày nay EC2 phần lớn tính theo giây nên tiêu chí này ít lợi ích.)</li>
+      </ol>
+      <p>Instance bị health check đánh dấu <b>unhealthy</b> không đi qua termination policy – bị thay trực tiếp.</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Predefined termination policy</th><th>Terminate trước</th><th>Dùng khi</th></tr></thead>
+        <tbody>
+          <tr><td><code>Default</code></td><td>Theo các bước ở trên</td><td>Phần lớn trường hợp</td></tr>
+          <tr><td><code>AllocationStrategy</code></td><td>Instance làm nhóm lệch khỏi allocation strategy</td><td>Đổi instance type ưu tiên, tái cân bằng Spot pool</td></tr>
+          <tr><td><code>OldestLaunchTemplate</code></td><td>Instance dùng template không còn hiện hành, rồi version cũ nhất</td><td>Loại bỏ dần cấu hình cũ</td></tr>
+          <tr><td><code>OldestLaunchConfiguration</code></td><td>Instance dùng launch configuration cũ nhất</td><td>Như trên, cho launch configuration</td></tr>
+          <tr><td><code>ClosestToNextInstanceHour</code></td><td>Instance gần giờ tính tiền kế tiếp</td><td>Instance tính phí theo giờ</td></tr>
+          <tr><td><code>NewestInstance</code></td><td>Instance mới nhất</td><td>Đang <b>thử</b> cấu hình mới, không muốn giữ lại</td></tr>
+          <tr><td><code>OldestInstance</code></td><td>Instance cũ nhất</td><td>Nâng cấp dần sang instance type mới</td></tr>
+        </tbody>
+      </table></div>
+      <p>Ngoài ra có thể viết <b>custom termination policy</b> bằng Lambda function. Ngay cả với <code>OldestInstance</code>, instance mới hơn vẫn có thể bị terminate trước nếu AZ của nó đang dư instance.</p>
+
+      <h3>Scale-in protection và các cách “giữ” instance</h3>
+      <ul>
+        <li><span class="t" data-vi="Bảo vệ khỏi thu hẹp">Instance scale-in protection</span>: instance được bảo vệ <b>không bị chọn</b> khi scale in (vẫn bị thay nếu unhealthy). Mẫu trong tài liệu SQS: worker <b>bật protection</b> khi nhận job dài, <b>tắt</b> khi xong.</li>
+        <li><b>Suspend processes</b>: tạm dừng từng process của ASG (vd <code>Launch</code>, <code>Terminate</code>, <code>HealthCheck</code>, <code>ReplaceUnhealthy</code>, <code>AZRebalance</code>, <code>AlarmNotification</code>, <code>ScheduledActions</code>, <code>AddToLoadBalancer</code>, <code>InstanceRefresh</code>) khi điều tra sự cố hoặc bảo trì.</li>
+        <li><b>Maximum instance lifetime</b>: tự thay instance đã chạy quá thời gian quy định (tối thiểu 1 ngày – 86.400 giây) – hữu ích cho yêu cầu “luôn chạy trên AMI vá lỗi gần đây”.</li>
+      </ul>
+
+      <h3>Instance refresh – thay instance cuốn chiếu</h3>
+      <ul>
+        <li>Dùng khi: triển khai <b>AMI/user data mới</b>, đổi <b>instance type</b>, chuyển từ launch configuration sang launch template, áp dụng bản vá bảo mật.</li>
+        <li><b>Minimum healthy percentage</b>: % desired capacity phải luôn healthy trong lúc thay – mặc định <b>90%</b> (nếu không có instance maintenance policy). <b>Maximum healthy percentage</b> mặc định <b>100%</b> (đặt &gt; 100% để launch trước, terminate sau).</li>
+        <li><b>Checkpoints</b> (thay theo pha, vd 10% rồi dừng chờ kiểm tra – kiểu <b>canary</b>; checkpoint delay mặc định 1 giờ), <b>skip matching</b> (bỏ qua instance đã đúng cấu hình), <b>bake time</b>, <b>CloudWatch alarm</b> + <b>auto rollback</b> về cấu hình trước nếu refresh thất bại.</li>
+        <li>Instance warmup của refresh: lấy default instance warmup, nếu chưa có thì dùng health check grace period.</li>
+      </ul>
+
+      <h3>Mixed instances group (nhắc lại từ Bài 9)</h3>
+      <p>Một ASG (bắt buộc dùng <b>launch template</b>) có thể chạy <b>nhiều instance type</b> và trộn <b>On-Demand + Spot</b>: đặt <b>On-Demand base capacity</b>, <b>% On-Demand phần trên base</b>, allocation strategy Spot (<code>price-capacity-optimized</code> khuyến nghị; <code>lowest-price</code> không khuyến nghị) và On-Demand (<code>lowest-price</code> hoặc <code>prioritized</code> – ưu tiên type khớp Reserved Instance/Savings Plans). Có thể chọn type theo <b>thuộc tính</b> (vCPU, memory) và gán <b>instance weight</b> theo capacity unit.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – vận hành ASG</span>
+        <ul>
+          <li>“<i>Roll out a new AMI to all instances in the group with minimal downtime and least effort</i>” ⇒ tạo <b>launch template version mới</b> + <b>instance refresh</b> (min healthy 90%, có thể bật auto rollback).</li>
+          <li>“<i>Prevent a specific instance running a long job from being terminated during scale in</i>” ⇒ <b>instance scale-in protection</b>.</li>
+          <li>“<i>Which instance is terminated first?</i>” ⇒ AZ <b>nhiều instance nhất</b> trước ⇒ cấu hình cũ nhất ⇒ gần giờ tính tiền ⇒ ngẫu nhiên.</li>
+          <li>“<i>Testing a new launch template; remove the test instances first when scaling in</i>” ⇒ <code>NewestInstance</code>.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải nhớ</span>
+        <ul>
+          <li><b>ASG</b> = min / desired / max; mọi scaling đều đổi desired trong [min, max]. Regional, trải nhiều AZ, cân bằng AZ, tự thay instance hỏng. <b>Miễn phí</b> – chỉ trả tài nguyên.</li>
+          <li><b>Launch template</b> (có version, bắt buộc cho mixed instances/Spot + On-Demand, tính năng EC2 mới) thay <b>launch configuration</b> (bất biến; từ 01/10/2024 account mới không tạo được).</li>
+          <li><b>Health check</b>: EC2 luôn bật; <b>ELB health check phải bật</b> thì ASG mới thay instance mà ứng dụng chết. Grace period 300 s (console) / 0 (CLI). Thay tối đa 10% mỗi đợt.</li>
+          <li><b>Target tracking</b> (khuyến nghị; CPU, NetworkIn/Out, ALBRequestCountPerTarget; tự tạo alarm; scale out nếu bất kỳ policy nào muốn, scale in khi tất cả đồng ý) &gt; <b>step</b> (tự tạo alarm, nhiều bậc) &gt; <b>simple</b> (một bậc + cooldown 300 s).</li>
+          <li><b>SQS</b>: target tracking trên <b>backlog per instance</b> = messages ÷ InService; target = độ trễ chấp nhận ÷ thời gian xử lý.</li>
+          <li><b>Cooldown</b> chỉ cho simple scaling; <b>default instance warmup</b> cho target tracking/step (nên bật, bắt đầu 300 s); nhiều policy ⇒ chọn capacity lớn nhất.</li>
+          <li><b>Scheduled</b>: cron + time zone, 125 action/ASG, trễ ≤ 2 phút. <b>Predictive</b>: ≥ 24 giờ dữ liệu, xem 14 ngày, forecast 48 giờ, cập nhật mỗi 6 giờ, forecast only ⇒ forecast and scale, không scale in.</li>
+          <li><b>Lifecycle hooks</b>: Pending:Wait / Terminating:Wait, timeout 1 giờ (global 48 giờ / 100×), CONTINUE/ABANDON, EventBridge ⇒ Lambda. <b>Warm pool</b>: Stopped/Hibernated/Running, giảm độ trễ boot lâu.</li>
+          <li><b>Termination</b>: AZ nhiều nhất ⇒ cấu hình cũ ⇒ gần giờ tính tiền ⇒ ngẫu nhiên. <b>Scale-in protection</b>, <b>suspend processes</b>, <b>instance refresh</b> (min healthy 90%, checkpoint, auto rollback).</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Amazon EC2 Auto Scaling</dt><dd><b>Tự động co giãn EC2</b> – giữ đúng số instance cần thiết, miễn phí.</dd></div>
+        <div><dt>Auto Scaling group (ASG)</dt><dd><b>Nhóm tự động co giãn</b> – tập instance quản lý như một đơn vị logic.</dd></div>
+        <div><dt>Minimum / Desired / Maximum capacity</dt><dd><b>Dung lượng tối thiểu / mong muốn / tối đa</b> của ASG.</dd></div>
+        <div><dt>Launch template</dt><dd><b>Mẫu khởi chạy</b> – cấu hình instance, có nhiều version.</dd></div>
+        <div><dt>Launch configuration</dt><dd><b>Cấu hình khởi chạy (thế hệ cũ)</b> – bất biến, đang bị loại bỏ.</dd></div>
+        <div><dt>Scaling policy</dt><dd><b>Chính sách co giãn</b> – quy tắc tự đổi desired capacity.</dd></div>
+        <div><dt>Scale out / Scale in</dt><dd><b>Mở rộng ngang / Thu hẹp ngang</b> – thêm / bớt instance.</dd></div>
+        <div><dt>Dynamic scaling</dt><dd><b>Co giãn động</b> – phản ứng theo CloudWatch metric.</dd></div>
+        <div><dt>Target tracking scaling</dt><dd><b>Co giãn theo giá trị mục tiêu</b> – như bộ điều nhiệt.</dd></div>
+        <div><dt>Step scaling / Step adjustment</dt><dd><b>Co giãn theo bậc / Bậc điều chỉnh</b> – điều chỉnh theo mức vượt ngưỡng.</dd></div>
+        <div><dt>Simple scaling</dt><dd><b>Co giãn đơn giản</b> – một điều chỉnh rồi chờ cooldown.</dd></div>
+        <div><dt>Scaling adjustment type</dt><dd><b>Kiểu điều chỉnh</b> – ChangeInCapacity, ExactCapacity, PercentChangeInCapacity.</dd></div>
+        <div><dt>Scheduled scaling / Scheduled action</dt><dd><b>Co giãn theo lịch / Hành động theo lịch</b> – cron + time zone.</dd></div>
+        <div><dt>Predictive scaling</dt><dd><b>Co giãn dự đoán</b> – dự báo 48 giờ từ lịch sử.</dd></div>
+        <div><dt>Forecast only / Forecast and scale</dt><dd><b>Chỉ dự báo / Dự báo và co giãn</b> – hai mode của predictive.</dd></div>
+        <div><dt>Scaling cooldown</dt><dd><b>Thời gian chờ giữa hai lần co giãn</b> – mặc định 300 giây, cho simple scaling.</dd></div>
+        <div><dt>Default instance warmup</dt><dd><b>Thời gian làm nóng instance mặc định</b> – chưa tính vào metric.</dd></div>
+        <div><dt>Health check grace period</dt><dd><b>Thời gian ân hạn kiểm tra sức khỏe</b> – 300 s console / 0 CLI.</dd></div>
+        <div><dt>Backlog per instance</dt><dd><b>Tồn đọng trên mỗi instance</b> – metric scale theo SQS.</dd></div>
+        <div><dt>Flapping</dt><dd><b>Dao động co giãn liên tục</b> – scale out/in lặp vô hạn.</dd></div>
+        <div><dt>Lifecycle hook</dt><dd><b>Móc vòng đời</b> – giữ instance ở Pending:Wait / Terminating:Wait.</dd></div>
+        <div><dt>Heartbeat timeout / Global timeout</dt><dd><b>Thời gian chờ nhịp / Giới hạn chờ tổng</b> – 1 giờ / 48 giờ hoặc 100×.</dd></div>
+        <div><dt>Warm pool</dt><dd><b>Vùng chứa instance làm nóng sẵn</b> – Stopped, Hibernated, Running.</dd></div>
+        <div><dt>Standby</dt><dd><b>Trạng thái chờ</b> – rút instance khỏi service để sửa, không health check.</dd></div>
+        <div><dt>Termination policy</dt><dd><b>Chính sách chọn instance để kết thúc</b> khi scale in.</dd></div>
+        <div><dt>Instance scale-in protection</dt><dd><b>Bảo vệ khỏi thu hẹp</b> – instance không bị chọn khi scale in.</dd></div>
+        <div><dt>Suspend / Resume processes</dt><dd><b>Tạm dừng / Tiếp tục các tiến trình</b> của ASG.</dd></div>
+        <div><dt>Instance refresh</dt><dd><b>Làm mới instance cuốn chiếu</b> – rolling update theo launch template mới.</dd></div>
+        <div><dt>Minimum / Maximum healthy percentage</dt><dd><b>Tỉ lệ khỏe tối thiểu / tối đa</b> – mặc định 90% / 100%.</dd></div>
+        <div><dt>Instance maintenance policy</dt><dd><b>Chính sách bảo trì instance</b> – tốc độ thay instance.</dd></div>
+        <div><dt>Maximum instance lifetime</dt><dd><b>Tuổi thọ tối đa của instance</b> – tự thay instance quá hạn.</dd></div>
+        <div><dt>Mixed instances group</dt><dd><b>Nhóm trộn nhiều loại instance</b> – On-Demand + Spot, nhiều type.</dd></div>
+      </dl>
+
+      <!-- ===================== QUIZ ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs a web application on EC2 instances in an Auto Scaling group behind an Application Load Balancer. Occasionally the application process crashes and the instance returns HTTP 503 errors, but the instance stays in the running state and is never replaced. What should a solutions architect do to automatically replace these instances?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the health check grace period of the Auto Scaling group.</li>
+            <li data-k="B">Turn on Elastic Load Balancing health checks for the Auto Scaling group.</li>
+            <li data-k="C">Enable detailed monitoring for the EC2 instances.</li>
+            <li data-k="D">Configure a scheduled action that terminates all instances every night.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Mặc định ASG chỉ dùng <b>EC2 status checks</b> và <b>bỏ qua kết quả ELB health check</b>. Instance vẫn <code>running</code> nên không bị coi là hỏng. Bật ELB health check thì target bị ALB báo <code>Unhealthy</code> sẽ được ASG đánh dấu unhealthy và thay thế. <b>A sai</b>: grace period chỉ hoãn việc kiểm tra cho instance mới, không làm ASG đọc ELB health check. <b>C sai</b>: detailed monitoring chỉ đổi chu kỳ metric sang 1 phút. <b>D sai</b>: thô bạo, gây gián đoạn và không phát hiện lỗi.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy ứng dụng web trên các EC2 instance trong một Auto Scaling group phía sau một Application Load Balancer. Thỉnh thoảng tiến trình ứng dụng bị crash và instance trả về lỗi HTTP 503, nhưng instance vẫn ở trạng thái running và không bao giờ được thay thế. Solutions architect nên làm gì để tự động thay thế các instance này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng health check grace period của Auto Scaling group.</span><span class="why">Sai: grace period chỉ hoãn việc kiểm tra sức khỏe cho instance mới khởi động, không khiến ASG xét kết quả ELB health check.</span></li>
+              <li data-k="B"><span class="tv">Bật Elastic Load Balancing health checks cho Auto Scaling group.</span><span class="why">Đúng: mặc định ASG chỉ dùng EC2 status check (instance vẫn running nên "khỏe"); bật ELB health check thì instance bị ALB báo Unhealthy sẽ được ASG đánh dấu unhealthy và thay thế.</span></li>
+              <li data-k="C"><span class="tv">Bật detailed monitoring cho các EC2 instance.</span><span class="why">Sai: detailed monitoring chỉ đổi chu kỳ metric CloudWatch sang 1 phút, không ảnh hưởng tới việc phát hiện và thay instance lỗi.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình một scheduled action terminate tất cả instance mỗi đêm.</span><span class="why">Sai: cách làm thô bạo, gây gián đoạn và không phát hiện lỗi khi nó xảy ra trong ngày.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An application runs on EC2 instances in an Auto Scaling group. The operations team wants the group to keep the average CPU utilization of the instances at around 50% as traffic changes, with the LEAST operational overhead. Which scaling configuration should be used?</div>
+          <ol class="opts">
+            <li data-k="A">A simple scaling policy with a CloudWatch alarm at 50% CPU and a 300-second cooldown</li>
+            <li data-k="B">Two step scaling policies with manually created CloudWatch alarms at 40% and 60% CPU</li>
+            <li data-k="C">A scheduled action that sets the desired capacity every hour based on last week's CPU graph</li>
+            <li data-k="D">A target tracking scaling policy using the ASGAverageCPUUtilization metric with a target value of 50</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Target tracking hoạt động như <b>bộ điều nhiệt</b>: chọn metric <code>ASGAverageCPUUtilization</code> và target 50, Auto Scaling <b>tự tạo và quản lý CloudWatch alarm</b>, tự tính số instance cần thêm/bớt – ít công vận hành nhất và được AWS khuyến nghị. <b>A sai</b>: simple scaling phản ứng chậm vì phải chờ cooldown, AWS khuyến nghị không dùng. <b>B sai</b>: phải tự tạo, tự bảo trì alarm và step – nhiều công hơn. <b>C sai</b>: lịch tĩnh không theo kịp thay đổi thực tế và phải cập nhật thủ công.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng chạy trên các EC2 instance trong một Auto Scaling group. Nhóm vận hành muốn group giữ mức CPU utilization trung bình của các instance ở khoảng 50% khi traffic thay đổi, với LEAST operational overhead (ít công sức vận hành nhất). Nên dùng cấu hình scaling nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một simple scaling policy với CloudWatch alarm ở mức 50% CPU và cooldown 300 giây</span><span class="why">Sai: simple scaling phản ứng chậm vì phải chờ hết cooldown mới scale tiếp, và AWS không khuyến nghị dùng.</span></li>
+              <li data-k="B"><span class="tv">Hai step scaling policy với các CloudWatch alarm tạo thủ công ở mức 40% và 60% CPU</span><span class="why">Sai: phải tự tạo và bảo trì alarm cùng các bước scale – tốn công vận hành hơn target tracking.</span></li>
+              <li data-k="C"><span class="tv">Một scheduled action đặt desired capacity mỗi giờ dựa trên biểu đồ CPU của tuần trước</span><span class="why">Sai: lịch tĩnh không theo kịp biến động traffic thực tế và phải cập nhật thủ công thường xuyên.</span></li>
+              <li data-k="D"><span class="tv">Một target tracking scaling policy dùng metric ASGAverageCPUUtilization với target value là 50</span><span class="why">Đúng: target tracking hoạt động như bộ điều nhiệt – Auto Scaling tự tạo, quản lý alarm và tự tính số instance để giữ CPU quanh 50%, ít công vận hành nhất.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company processes uploaded videos with a fleet of EC2 worker instances in an Auto Scaling group that polls an Amazon SQS queue. Each message takes about 2 seconds to process, and the business accepts a maximum delay of 60 seconds before a video starts processing. How should the solutions architect configure scaling so that the fleet size follows the amount of pending work?</div>
+          <ol class="opts">
+            <li data-k="A">Create a target tracking policy on a backlog-per-instance metric (ApproximateNumberOfMessages divided by the number of InService instances) with a target value of 30.</li>
+            <li data-k="B">Create a target tracking policy on the ApproximateNumberOfMessagesVisible metric with a target value of 30.</li>
+            <li data-k="C">Create a step scaling policy on the CPUUtilization metric of the worker instances.</li>
+            <li data-k="D">Create a scheduled action that doubles the group size every hour.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> Tài liệu khuyến nghị metric <b>backlog per instance</b> = <code>ApproximateNumberOfMessages</code> ÷ số instance <code>InService</code>, với target = <b>độ trễ chấp nhận ÷ thời gian xử lý</b> = 60 ÷ 2 = <b>30</b> message mỗi instance (publish custom metric hoặc dùng metric math). <b>B sai</b>: tài liệu nêu rõ số message trong queue <b>không</b> thay đổi tỉ lệ với số instance nên không dùng trực tiếp cho target tracking – dễ thêm quá nhiều instance khi queue đang rút. <b>C sai</b>: CPU không phản ánh lượng việc đang chờ. <b>D sai</b>: không liên quan tới tải thực.</div>
+          <div class="trans">
+            <div class="tq">Một công ty xử lý các video được tải lên bằng một nhóm EC2 worker instance trong một Auto Scaling group, các worker này poll một hàng đợi Amazon SQS. Mỗi message mất khoảng 2 giây để xử lý, và doanh nghiệp chấp nhận độ trễ tối đa 60 giây trước khi một video bắt đầu được xử lý. Solutions architect nên cấu hình scaling thế nào để kích thước nhóm instance bám theo lượng công việc đang chờ?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một target tracking policy trên metric backlog-per-instance (ApproximateNumberOfMessages chia cho số instance InService) với target value là 30.</span><span class="why">Đúng: backlog per instance phản ánh lượng việc mỗi instance phải gánh; target = độ trễ chấp nhận ÷ thời gian xử lý = 60 ÷ 2 = 30 message/instance – đúng cách AWS khuyến nghị.</span></li>
+              <li data-k="B"><span class="tv">Tạo một target tracking policy trên metric ApproximateNumberOfMessagesVisible với target value là 30.</span><span class="why">Sai: số message trong queue không thay đổi tỉ lệ với số instance, nên dùng trực tiếp cho target tracking dễ thêm quá nhiều instance.</span></li>
+              <li data-k="C"><span class="tv">Tạo một step scaling policy trên metric CPUUtilization của các worker instance.</span><span class="why">Sai: CPU không phản ánh số video đang chờ trong hàng đợi, nên không đảm bảo độ trễ 60 giây.</span></li>
+              <li data-k="D"><span class="tv">Tạo một scheduled action nhân đôi kích thước group mỗi giờ.</span><span class="why">Sai: lịch cố định không liên quan tới lượng việc thực tế, gây lãng phí hoặc thiếu capacity.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">An online learning platform experiences a large, predictable increase in traffic every weekday between 7:00 AM and 9:00 AM local time. The application instances take about 15 minutes to become fully ready. The company has 3 months of steady traffic history and wants capacity in place before the load arrives without manually analyzing the traffic pattern. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">A target tracking scaling policy with a lower CPU target value</li>
+            <li data-k="B">A simple scaling policy with a shorter cooldown period</li>
+            <li data-k="C">A predictive scaling policy in forecast and scale mode with pre-launch instances (scheduling buffer time) configured, combined with a target tracking policy</li>
+            <li data-k="D">Increasing the health check grace period to 15 minutes</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Predictive scaling phân tích lịch sử (cần ≥ 24 giờ, xem tới 14 ngày) để tìm quy luật <b>theo ngày/tuần</b>, forecast 48 giờ và <b>scale out trước</b> khi tải đến; <code>SchedulingBufferTime</code> (Pre-launch instances) cho instance khởi động lâu thời gian sẵn sàng. Kèm target tracking để scale in và xử lý tải bất ngờ (predictive không scale in). <b>A sai</b>: target tracking vẫn là reactive – instance mất 15 phút mới sẵn sàng. <b>B sai</b>: simple scaling còn chậm hơn. <b>D sai</b>: grace period chỉ liên quan health check, không thêm capacity.</div>
+          <div class="trans">
+            <div class="tq">Một nền tảng học trực tuyến có lượng traffic tăng mạnh và dự đoán được vào mỗi ngày làm việc trong khoảng 7:00 đến 9:00 sáng giờ địa phương. Các instance ứng dụng mất khoảng 15 phút để sẵn sàng hoàn toàn. Công ty có 3 tháng lịch sử traffic ổn định và muốn có sẵn capacity trước khi tải đến mà không phải tự phân tích quy luật traffic. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một target tracking scaling policy với CPU target value thấp hơn</span><span class="why">Sai: target tracking vẫn là phản ứng (reactive) – chỉ scale khi tải đã đến, mà instance mất 15 phút mới sẵn sàng.</span></li>
+              <li data-k="B"><span class="tv">Một simple scaling policy với cooldown ngắn hơn</span><span class="why">Sai: simple scaling cũng là reactive và còn chậm hơn target tracking.</span></li>
+              <li data-k="C"><span class="tv">Một predictive scaling policy ở chế độ forecast and scale có cấu hình pre-launch instances (scheduling buffer time), kết hợp với một target tracking policy</span><span class="why">Đúng: predictive scaling tự học quy luật theo ngày/tuần từ lịch sử và scale out trước khi tải đến; buffer time cho instance đủ 15 phút khởi động; target tracking lo scale in và tải bất ngờ.</span></li>
+              <li data-k="D"><span class="tv">Tăng health check grace period lên 15 phút</span><span class="why">Sai: grace period chỉ liên quan tới health check của instance mới, không thêm capacity trước giờ cao điểm.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,D">
+          <div class="qh">A company's Auto Scaling group runs an application that writes important log files to the instance store. When the group scales in, the logs are lost. The company also wants new instances to download a large configuration bundle and pass validation before the load balancer sends them traffic. Which TWO actions meet these requirements? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Add an EC2_INSTANCE_TERMINATING lifecycle hook and use an Amazon EventBridge rule to invoke an AWS Lambda function that copies the logs to Amazon S3 and then completes the lifecycle action.</li>
+            <li data-k="B">Enable instance scale-in protection on all instances in the group.</li>
+            <li data-k="C">Increase the default cooldown period to 1 hour.</li>
+            <li data-k="D">Add an EC2_INSTANCE_LAUNCHING lifecycle hook so the instance stays in Pending:Wait until the bootstrap script finishes and calls complete-lifecycle-action with CONTINUE.</li>
+            <li data-k="E">Change the termination policy to OldestInstance.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, D.</b> <b>Termination lifecycle hook</b> giữ instance ở <code>Terminating:Wait</code> (mặc định tới 1 giờ) để EventBridge ⇒ Lambda (hoặc Run Command) chép log ra S3 trước khi instance bị terminate. <b>Launch lifecycle hook</b> giữ instance ở <code>Pending:Wait</code> tới khi bootstrap xong; chỉ khi CONTINUE instance mới vào service và được đăng ký vào load balancer. <b>B sai</b>: bảo vệ mọi instance thì ASG không scale in được – mất lợi ích co giãn. <b>C sai</b>: cooldown không giữ instance sắp terminate. <b>E sai</b>: termination policy chỉ chọn instance nào bị terminate, log vẫn mất.</div>
+          <div class="trans">
+            <div class="tq">Auto Scaling group của một công ty chạy một ứng dụng ghi các file log quan trọng vào instance store. Khi group scale in, log bị mất. Công ty cũng muốn các instance mới tải xuống một gói cấu hình lớn và vượt qua bước kiểm tra (validation) trước khi load balancer gửi traffic tới chúng. HAI hành động nào đáp ứng các yêu cầu này? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Thêm một lifecycle hook EC2_INSTANCE_TERMINATING và dùng một rule Amazon EventBridge để gọi một hàm AWS Lambda chép log lên Amazon S3 rồi hoàn tất lifecycle action.</span><span class="why">Đúng: termination hook giữ instance ở Terminating:Wait đủ lâu để chép log ra S3 trước khi instance (và instance store) bị xóa.</span></li>
+              <li data-k="B"><span class="tv">Bật instance scale-in protection cho tất cả instance trong group.</span><span class="why">Sai: bảo vệ mọi instance khiến ASG không scale in được nữa – mất lợi ích co giãn, và không xử lý yêu cầu validation.</span></li>
+              <li data-k="C"><span class="tv">Tăng default cooldown lên 1 giờ.</span><span class="why">Sai: cooldown chỉ làm chậm các hoạt động scaling kế tiếp, không giữ lại instance sắp bị terminate để lưu log.</span></li>
+              <li data-k="D"><span class="tv">Thêm một lifecycle hook EC2_INSTANCE_LAUNCHING để instance ở trạng thái Pending:Wait cho tới khi script bootstrap chạy xong và gọi complete-lifecycle-action với CONTINUE.</span><span class="why">Đúng: launch hook giữ instance ở Pending:Wait; chỉ khi nhận CONTINUE instance mới InService và được đăng ký vào load balancer – đảm bảo tải cấu hình và validation xong trước.</span></li>
+              <li data-k="E"><span class="tv">Đổi termination policy sang OldestInstance.</span><span class="why">Sai: termination policy chỉ quyết định instance nào bị terminate, log trên instance đó vẫn bị mất.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">An Auto Scaling group uses target tracking. During traffic spikes, the group launches far more instances than needed because newly launched instances report very high CPU utilization for the first 4 minutes while they initialize. What should the solutions architect configure?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the default cooldown to 600 seconds.</li>
+            <li data-k="B">Set the health check grace period to 240 seconds.</li>
+            <li data-k="C">Enable the default instance warmup for the group and set it to about 240 seconds.</li>
+            <li data-k="D">Switch to a simple scaling policy.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Default instance warmup</b> là khoảng thời gian sau khi instance <code>InService</code> mà nó <b>chưa đóng góp</b> vào metric tổng hợp; instance đang warmup được tính vào desired capacity nên không scale out quá tay. AWS “strongly recommend” bật cho target tracking/step. <b>A sai</b>: cooldown chỉ áp dụng cho <b>simple scaling</b>; target tracking không chờ cooldown (chỉ dùng nó làm warmup dự phòng khi chưa đặt warmup, nhưng 600 giây vừa sai giá trị vừa không phải cách khuyến nghị). <b>B sai</b>: grace period liên quan health check, không liên quan metric. <b>D sai</b>: simple scaling chậm hơn và không được khuyến nghị.</div>
+          <div class="trans">
+            <div class="tq">Một Auto Scaling group dùng target tracking. Trong các đợt traffic tăng đột biến, group khởi chạy nhiều instance hơn mức cần thiết rất nhiều vì các instance mới khởi chạy báo CPU utilization rất cao trong 4 phút đầu khi đang khởi tạo. Solutions architect nên cấu hình gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng default cooldown lên 600 giây.</span><span class="why">Sai: cooldown chủ yếu áp dụng cho simple scaling; với target tracking, cách đúng là instance warmup, và 600 giây cũng không khớp với 4 phút khởi tạo.</span></li>
+              <li data-k="B"><span class="tv">Đặt health check grace period là 240 giây.</span><span class="why">Sai: grace period chỉ hoãn health check, không loại metric CPU của instance mới khỏi phép tính scaling.</span></li>
+              <li data-k="C"><span class="tv">Bật default instance warmup cho group và đặt khoảng 240 giây.</span><span class="why">Đúng: trong thời gian warmup, instance mới chưa đóng góp vào metric tổng hợp nhưng vẫn được tính vào capacity, nên CPU cao lúc khởi tạo không kích hoạt scale out quá tay.</span></li>
+              <li data-k="D"><span class="tv">Chuyển sang simple scaling policy.</span><span class="why">Sai: simple scaling phản ứng chậm hơn và không được AWS khuyến nghị; không giải quyết gốc rễ metric bị nhiễu khi khởi tạo.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company wants to use both On-Demand Instances and Spot Instances across several instance types in a single Auto Scaling group. The group currently uses a launch configuration. What must the solutions architect do first?</div>
+          <ol class="opts">
+            <li data-k="A">Modify the existing launch configuration to add the Spot purchase option and additional instance types.</li>
+            <li data-k="B">Create a launch template and update the Auto Scaling group to use it with a mixed instances policy.</li>
+            <li data-k="C">Create a second Auto Scaling group with a Spot-only launch configuration and attach both groups to the same target group.</li>
+            <li data-k="D">Enable Capacity Rebalancing on the existing group.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Tài liệu nêu rõ: không thể tạo ASG launch <b>cả Spot và On-Demand</b> hoặc <b>nhiều instance type</b> bằng launch configuration – <b>bắt buộc launch template</b>. Có thể dùng instance refresh để chuyển instance hiện có sang template mới. <b>A sai</b>: launch configuration <b>không sửa được</b> sau khi tạo. <b>C sai</b>: hai ASG tăng công vận hành, không phải “single Auto Scaling group”. <b>D sai</b>: Capacity Rebalancing chỉ chủ động thay Spot có rủi ro, không cho phép trộn purchase option.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn dùng cả On-Demand Instances và Spot Instances trên nhiều instance type trong một Auto Scaling group duy nhất. Group hiện đang dùng launch configuration. Solutions architect phải làm gì trước tiên?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Sửa launch configuration hiện có để thêm tùy chọn mua Spot và các instance type bổ sung.</span><span class="why">Sai: launch configuration không thể sửa sau khi tạo, và nó không hỗ trợ trộn Spot/On-Demand hay nhiều instance type.</span></li>
+              <li data-k="B"><span class="tv">Tạo một launch template và cập nhật Auto Scaling group để dùng nó với một mixed instances policy.</span><span class="why">Đúng: chỉ launch template mới hỗ trợ mixed instances policy (nhiều instance type, kết hợp Spot và On-Demand) trong một ASG.</span></li>
+              <li data-k="C"><span class="tv">Tạo Auto Scaling group thứ hai với launch configuration chỉ dùng Spot và gắn cả hai group vào cùng một target group.</span><span class="why">Sai: hai ASG làm tăng công vận hành và trái yêu cầu "một Auto Scaling group duy nhất".</span></li>
+              <li data-k="D"><span class="tv">Bật Capacity Rebalancing trên group hiện có.</span><span class="why">Sai: Capacity Rebalancing chỉ chủ động thay Spot Instance có nguy cơ bị thu hồi, không cho phép trộn các tùy chọn mua.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An Auto Scaling group spans two Availability Zones. AZ-a has 3 instances and AZ-b has 4 instances. All instances use the current launch template version except one instance in AZ-a, which uses an older version. The group uses the default termination policy. Which instance is terminated during the next scale-in event?</div>
+          <ol class="opts">
+            <li data-k="A">The instance in AZ-a that uses the older launch template version</li>
+            <li data-k="B">The newest instance in the group, regardless of Availability Zone</li>
+            <li data-k="C">A random instance in AZ-a</li>
+            <li data-k="D">An instance in AZ-b, chosen by the remaining default termination criteria</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Default termination policy luôn <b>cân bằng AZ trước</b>: chọn AZ có <b>nhiều instance nhất</b> (AZ-b, 4 instance) rồi mới áp dụng tiêu chí cấu hình cũ ⇒ gần giờ tính tiền ⇒ ngẫu nhiên <b>trong AZ-b</b>. <b>A sai</b>: tiêu chí “version cũ” chỉ xét sau khi đã chọn AZ. <b>B sai</b>: đó là policy <code>NewestInstance</code>, không phải default. <b>C sai</b>: AZ-a đang ít instance hơn.</div>
+          <div class="trans">
+            <div class="tq">Một Auto Scaling group trải trên hai Availability Zone. AZ-a có 3 instance và AZ-b có 4 instance. Tất cả instance đều dùng phiên bản launch template hiện tại, trừ một instance ở AZ-a dùng phiên bản cũ hơn. Group dùng default termination policy. Instance nào sẽ bị terminate trong lần scale-in tiếp theo?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Instance ở AZ-a đang dùng phiên bản launch template cũ hơn</span><span class="why">Sai: tiêu chí "cấu hình cũ" chỉ được xét sau khi đã chọn AZ; AZ-a có ít instance hơn nên không được chọn.</span></li>
+              <li data-k="B"><span class="tv">Instance mới nhất trong group, bất kể Availability Zone</span><span class="why">Sai: đó là hành vi của termination policy NewestInstance, không phải default.</span></li>
+              <li data-k="C"><span class="tv">Một instance ngẫu nhiên ở AZ-a</span><span class="why">Sai: default policy ưu tiên cân bằng AZ, mà AZ-a đang ít instance hơn AZ-b.</span></li>
+              <li data-k="D"><span class="tv">Một instance ở AZ-b, được chọn theo các tiêu chí còn lại của default termination policy</span><span class="why">Đúng: default termination policy cân bằng AZ trước, chọn AZ có nhiều instance nhất (AZ-b), rồi mới áp dụng các tiêu chí khác trong AZ đó.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A retail company runs its storefront on an Auto Scaling group behind an Application Load Balancer. The security team requires every instance to run a newly patched AMI within 24 hours, without reducing healthy capacity below 90% and with the ability to stop and revert automatically if error rates rise. Which combination of actions meets these requirements with the LEAST operational overhead? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Modify the launch configuration to reference the new AMI ID.</li>
+            <li data-k="B">Create a new launch template version that uses the patched AMI and set it as the version used by the Auto Scaling group.</li>
+            <li data-k="C">Manually terminate instances one at a time so that the group replaces them.</li>
+            <li data-k="D">Detach all instances from the Auto Scaling group and launch new instances manually.</li>
+            <li data-k="E">Start an instance refresh with a minimum healthy percentage of 90%, a CloudWatch alarm, and auto rollback enabled.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Tạo <b>launch template version mới</b> với AMI vá lỗi, rồi <b>instance refresh</b> để thay instance <b>cuốn chiếu</b>: minimum healthy percentage (mặc định 90%) giữ đủ capacity; gắn <b>CloudWatch alarm + auto rollback</b> để tự dừng và quay về cấu hình cũ nếu lỗi tăng. <b>A sai</b>: launch configuration bất biến. <b>C sai</b>: thủ công, nhiều công vận hành, dễ sai sót. <b>D sai</b>: detach làm instance ra khỏi ASG, mất khả năng tự quản lý – nhiều công nhất.</div>
+          <div class="trans">
+            <div class="tq">Một công ty bán lẻ chạy cửa hàng trực tuyến trên một Auto Scaling group phía sau một Application Load Balancer. Nhóm bảo mật yêu cầu mọi instance phải chạy AMI mới được vá lỗi trong vòng 24 giờ, không để capacity khỏe mạnh giảm dưới 90%, và có khả năng tự động dừng và quay lui nếu tỉ lệ lỗi tăng. Kết hợp các hành động nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Sửa launch configuration để tham chiếu tới AMI ID mới.</span><span class="why">Sai: launch configuration là bất biến, không sửa được sau khi tạo.</span></li>
+              <li data-k="B"><span class="tv">Tạo một launch template version mới dùng AMI đã vá và đặt nó làm version được Auto Scaling group sử dụng.</span><span class="why">Đúng: version mới của launch template chứa AMI đã vá là cấu hình đích để ASG khởi chạy instance mới.</span></li>
+              <li data-k="C"><span class="tv">Terminate thủ công từng instance một để group thay thế chúng.</span><span class="why">Sai: làm thủ công tốn công, dễ sai sót và không có cơ chế tự động rollback khi lỗi tăng.</span></li>
+              <li data-k="D"><span class="tv">Tách (detach) tất cả instance khỏi Auto Scaling group và khởi chạy instance mới thủ công.</span><span class="why">Sai: detach đưa instance ra khỏi sự quản lý của ASG – nhiều công nhất và không đảm bảo capacity 90%.</span></li>
+              <li data-k="E"><span class="tv">Bắt đầu một instance refresh với minimum healthy percentage là 90%, một CloudWatch alarm và bật auto rollback.</span><span class="why">Đúng: instance refresh thay instance cuốn chiếu, giữ ít nhất 90% capacity khỏe; CloudWatch alarm + auto rollback tự dừng và quay về cấu hình cũ khi lỗi tăng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company runs a batch-processing Auto Scaling group whose instances take 12 minutes to boot because they load a large dataset into memory at startup. Scale-out events cause long delays, but keeping extra running instances all day is too expensive. Which solution reduces scale-out latency MOST cost-effectively?</div>
+          <ol class="opts">
+            <li data-k="A">Configure a warm pool with instances in the Hibernated state.</li>
+            <li data-k="B">Configure a warm pool with instances in the Running state.</li>
+            <li data-k="C">Increase the minimum capacity of the Auto Scaling group to the maximum capacity.</li>
+            <li data-k="D">Decrease the health check grace period to 0 seconds.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Warm pool</b> giữ instance đã khởi tạo sẵn để scale out nhanh (warm start). Trạng thái <b>Hibernated</b> lưu nội dung RAM xuống EBS root – khi start lại, dữ liệu đã nạp trong bộ nhớ được khôi phục – và bạn chỉ trả tiền EBS (kể cả phần lưu RAM) và Elastic IP, không trả tiền instance. <b>B sai</b>: Running trong warm pool bị tài liệu “highly discouraged” vì tốn tiền instance. <b>C sai</b>: tương đương chạy max capacity cả ngày – đắt nhất. <b>D sai</b>: grace period không làm instance boot nhanh hơn.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một Auto Scaling group xử lý batch, các instance của nó mất 12 phút để khởi động vì phải nạp một tập dữ liệu lớn vào bộ nhớ khi start. Các lần scale-out gây trễ lâu, nhưng giữ thêm instance chạy cả ngày thì quá tốn kém. Giải pháp nào giảm độ trễ scale-out một cách MOST cost-effectively (tiết kiệm chi phí nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Cấu hình một warm pool với các instance ở trạng thái Hibernated.</span><span class="why">Đúng: Hibernated lưu nội dung RAM (dữ liệu đã nạp) xuống EBS root nên khi start lại instance sẵn sàng nhanh; chỉ trả phí EBS (và Elastic IP nếu có), không trả phí instance.</span></li>
+              <li data-k="B"><span class="tv">Cấu hình một warm pool với các instance ở trạng thái Running.</span><span class="why">Sai: instance Running trong warm pool vẫn bị tính phí instance đầy đủ – tốn kém, AWS không khuyến khích.</span></li>
+              <li data-k="C"><span class="tv">Tăng minimum capacity của Auto Scaling group bằng maximum capacity.</span><span class="why">Sai: tương đương chạy capacity tối đa cả ngày – phương án đắt nhất, trái yêu cầu tiết kiệm.</span></li>
+              <li data-k="D"><span class="tv">Giảm health check grace period xuống 0 giây.</span><span class="why">Sai: grace period không làm instance khởi động nhanh hơn, còn có thể khiến instance bị đánh dấu unhealthy khi chưa sẵn sàng.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/as-scaling-target-tracking.html" target="_blank" rel="noopener">Target tracking scaling policies for Amazon EC2 Auto Scaling</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/as-scaling-simple-step.html" target="_blank" rel="noopener">Step and simple scaling policies</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-scaling-cooldowns.html" target="_blank" rel="noopener">Scaling cooldowns for Amazon EC2 Auto Scaling</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-default-instance-warmup.html" target="_blank" rel="noopener">Set the default instance warmup for an Auto Scaling group</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/as-using-sqs-queue.html" target="_blank" rel="noopener">Scaling policy based on Amazon SQS</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-scheduled-scaling.html" target="_blank" rel="noopener">Scheduled scaling for Amazon EC2 Auto Scaling</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-predictive-scaling.html" target="_blank" rel="noopener">Predictive scaling for Amazon EC2 Auto Scaling</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/predictive-scaling-policy-overview.html" target="_blank" rel="noopener">How predictive scaling works</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/launch-configurations.html" target="_blank" rel="noopener">Auto Scaling launch configurations</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-health-checks.html" target="_blank" rel="noopener">Health checks for instances in an Auto Scaling group</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/health-checks-overview.html" target="_blank" rel="noopener">About the health checks for your Auto Scaling group</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/health-check-grace-period.html" target="_blank" rel="noopener">Set the health check grace period for an Auto Scaling group</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-lifecycle.html" target="_blank" rel="noopener">Amazon EC2 Auto Scaling instance lifecycle</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/lifecycle-hooks.html" target="_blank" rel="noopener">Amazon EC2 Auto Scaling lifecycle hooks</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-warm-pools.html" target="_blank" rel="noopener">Decrease latency for applications with long boot times using warm pools</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-termination-policies.html" target="_blank" rel="noopener">Configure termination policies for Amazon EC2 Auto Scaling</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-instance-refresh.html" target="_blank" rel="noopener">Use an instance refresh to update instances in an Auto Scaling group</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/understand-instance-refresh-default-values.html" target="_blank" rel="noopener">Understand the default values for an instance refresh</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-mixed-instances-groups.html" target="_blank" rel="noopener">Auto Scaling groups with multiple instance types and purchase options</a></li>
+        <li><a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/allocation-strategies.html" target="_blank" rel="noopener">Allocation strategies for multiple instance types</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

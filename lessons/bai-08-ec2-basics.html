@@ -1,0 +1,946 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 8 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-EC2.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="8" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Nắm các thành phần cốt lõi của Amazon EC2: <span class="t" data-vi="Máy chủ ảo">instance</span>, <span class="t" data-vi="Loại máy chủ">instance type</span>, <span class="t" data-vi="Ảnh máy">AMI</span>, EBS volume, instance store, key pair, security group.</li>
+          <li>Đọc được tên instance type (vd <code>c7gn.xlarge</code>) và chọn đúng <span class="t" data-vi="Họ máy chủ">instance family</span> cho từng loại workload; hiểu cơ chế <b>CPU credits</b> của dòng T (burstable).</li>
+          <li>Hiểu vòng đời <b>AMI</b>: tạo, copy sang Region khác, chia sẻ (kể cả AMI mã hóa bằng KMS), deprecate, disable, deregister; phân biệt EBS-backed và S3-backed (instance store) AMI.</li>
+          <li>Dùng <span class="t" data-vi="Dữ liệu người dùng">user data</span> để bootstrap máy chủ và biết khi nào nên “nướng sẵn” vào <b>golden AMI</b>.</li>
+          <li>Truy cập <span class="t" data-vi="Siêu dữ liệu của máy chủ">instance metadata</span> và vì sao phải bắt buộc <b>IMDSv2</b> (session token, hop limit).</li>
+          <li>Phân biệt reboot / stop / <span class="t" data-vi="Ngủ đông">hibernate</span> / terminate: điều gì xảy ra với RAM, instance store, IP, tiền phí.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 2 – Compute</span>
+        <p>Đây là bài mở đầu về EC2. Để không bị chồng chéo: các phương thức mua (On-Demand, Reserved, Savings Plans, Spot, Dedicated Hosts) học ở <b>Bài 9</b>; Security Group, ENI, Elastic IP, Placement Group ở <b>Bài 10</b>; chi tiết EBS và instance store ở <b>Bài 11</b>; Auto Scaling ở <b>Bài 13</b>. Cách gắn IAM role vào EC2 qua <b>instance profile</b> đã học ở Bài 4–5 – bài này chỉ nhắc lại chỗ nó gặp instance metadata.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/Amazon-EC2.svg" alt="">Amazon EC2 là gì? Các thành phần cốt lõi</h2>
+      <p class="lead"><span class="t" data-vi="Đám mây điện toán co giãn">Amazon Elastic Compute Cloud (Amazon EC2)</span> cung cấp năng lực tính toán <b>theo nhu cầu, mở rộng được</b> trên AWS Cloud. Bạn khởi chạy bao nhiêu máy chủ ảo cũng được, tự cấu hình bảo mật, mạng và lưu trữ; tăng năng lực (<i>scale up</i>) khi có tác vụ nặng hoặc lưu lượng tăng đột biến, rồi giảm lại (<i>scale down</i>) khi nhu cầu giảm.</p>
+
+      <p>Một <span class="t" data-vi="Máy chủ ảo">EC2 instance</span> là một máy chủ ảo trên AWS Cloud. Khi khởi chạy, <span class="t" data-vi="Loại máy chủ">instance type</span> bạn chọn quyết định <b>phần cứng</b> của máy chủ host – mỗi loại có tỉ lệ compute, memory, network, storage khác nhau. Theo trang “What is Amazon EC2?”, EC2 có các tính năng cấp cao sau:</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">
+          <div><h4>Instances</h4><span class="vi">Máy chủ ảo</span><p>Đơn vị tính toán bạn trả tiền theo giây (tối thiểu 60 giây) khi ở trạng thái <code>running</code>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_AMI.svg" alt="">
+          <div><h4>Amazon Machine Images (AMIs)</h4><span class="vi">Khuôn mẫu cấu hình sẵn</span><p>Đóng gói hệ điều hành + phần mềm cần thiết để boot instance. Bắt buộc chọn khi launch.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">
+          <div><h4>Instance types</h4><span class="vi">Cấu hình phần cứng</span><p>Các tổ hợp CPU, memory, storage, network, GPU khác nhau – gom thành <b>family</b> và <b>size</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume.svg" alt="">
+          <div><h4>Amazon EBS volumes</h4><span class="vi">Ổ đĩa bền vững (Bài 11)</span><p>Lưu trữ <b>persistent</b> qua mạng; tồn tại độc lập với vòng đời instance (tùy cờ <code>DeleteOnTermination</code>).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Elastic-Block-Store.svg" alt="">
+          <div><h4>Instance store volumes</h4><span class="vi">Ổ đĩa tạm thời</span><p>Gắn vật lý trên host; dữ liệu <b>bị xóa</b> khi stop, hibernate hoặc terminate.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">
+          <div><h4>Key pairs</h4><span class="vi">Cặp khóa đăng nhập</span><p>AWS giữ <b>public key</b>, bạn giữ <b>private key</b> ở nơi an toàn để SSH/RDP vào instance.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/Amazon-VPC_Internet-Gateway.svg" alt="">
+          <div><h4>Security groups</h4><span class="vi">Tường lửa ảo (Bài 10)</span><p>Chỉ định protocol, port, dải IP nguồn được vào instance và dải IP đích instance được kết nối tới.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Systems-Manager_Run-Command.svg" alt="">
+          <div><h4>User data &amp; Instance metadata</h4><span class="vi">Bootstrap &amp; tự mô tả</span><p>Script chạy lúc khởi động và dịch vụ IMDS cho instance tự đọc thông tin về chính nó.</p></div></div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><b>60 giây</b><span>mức tính phí tối thiểu, sau đó tính theo giây (On-Demand, Linux)</span></div>
+        <div class="stat"><b>16 KB</b><span>giới hạn user data (dạng thô, trước khi base64)</span></div>
+        <div class="stat"><b>169.254.169.254</b><span>địa chỉ IPv4 link-local của IMDS (IPv6: <code>fd00:ec2::254</code>)</span></div>
+        <div class="stat"><b>6 giờ</b><span>TTL tối đa của session token IMDSv2 (21.600 giây)</span></div>
+      </div>
+
+      <h3>Các dịch vụ thường đi cùng EC2</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Dịch vụ</th><th>Vai trò với EC2 (theo tài liệu “Related services”)</th></tr></thead>
+        <tbody>
+          <tr><td>Amazon EC2 Auto Scaling</td><td>Đảm bảo luôn có đúng số instance cần thiết cho tải của ứng dụng (Bài 13).</td></tr>
+          <tr><td>Elastic Load Balancing</td><td>Phân phối lưu lượng tới nhiều instance (Bài 12).</td></tr>
+          <tr><td>AWS Backup</td><td>Tự động sao lưu instance và EBS volume đi kèm.</td></tr>
+          <tr><td>Amazon CloudWatch</td><td>Giám sát instance và EBS volume.</td></tr>
+          <tr><td>Amazon GuardDuty</td><td>Phát hiện sử dụng trái phép/độc hại trên instance.</td></tr>
+          <tr><td>EC2 Image Builder</td><td>Tự động tạo, quản lý, triển khai server image (AMI) tùy biến, an toàn, luôn cập nhật.</td></tr>
+          <tr><td>AWS Systems Manager</td><td>Vận hành instance quy mô lớn (patch, run command, session…).</td></tr>
+          <tr><td>Amazon Lightsail</td><td>Lựa chọn thay EC2 cho website/app đơn giản với giá <b>thấp, cố định hằng tháng</b>.</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Hãy hình dung bạn thuê <b>căn hộ dịch vụ</b>. <b>Instance type</b> là <i>loại phòng</i> (studio, 2 phòng ngủ, penthouse…) – quyết định diện tích (RAM), số bếp (vCPU). <b>AMI</b> là <i>bộ nội thất đóng gói sẵn</i>: chọn gói nào thì vào ở có ngay bàn ghế, tủ lạnh (OS + phần mềm). <b>User data</b> là <i>tờ dặn dò cho lễ tân</i> lúc nhận phòng lần đầu: “cắm sẵn hoa, mở điều hòa 25°C”. <b>Instance metadata</b> là <i>tấm thẻ thông tin dán sau cửa</i>: số phòng, tầng, mật khẩu Wi-Fi tạm thời – chỉ người ở trong phòng mới đọc được. <b>Hibernate</b> giống bạn đi công tác nhưng giữ nguyên mọi thứ đang bày trên bàn; về là làm tiếp ngay.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – EC2 trong SAA-C03</span>
+        <ul>
+          <li>Đề hiếm khi hỏi “EC2 là gì”, mà hỏi <b>chọn instance family</b> đúng workload, <b>giảm thời gian khởi động</b> (golden AMI vs user data), <b>dùng AMI ở Region/account khác</b>, <b>bảo mật metadata</b> (IMDSv2) và <b>giữ trạng thái RAM</b> (hibernate).</li>
+          <li>Thấy “<i>simple website, predictable low monthly price, minimal configuration</i>” ⇒ cân nhắc <b>Amazon Lightsail</b> thay vì EC2.</li>
+          <li>Thấy “<i>automate creation, patching and distribution of AMIs</i>” ⇒ <b>EC2 Image Builder</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: INSTANCE TYPES ===================== -->
+      <h2 id="instance-types"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">Instance types &amp; instance families</h2>
+      <p class="lead">Mỗi <span class="t" data-vi="Loại máy chủ">instance type</span> cung cấp khả năng compute, memory, storage khác nhau và được gom vào một <span class="t" data-vi="Họ máy chủ">instance family</span> theo các khả năng đó. Mỗi type có một hoặc nhiều <b>size</b> để bạn scale theo nhu cầu workload.</p>
+
+      <p>Tài liệu nêu một chi tiết quan trọng về cách EC2 chia tài nguyên của host: <b>CPU, memory, instance storage</b> được <b>dành riêng</b> cho từng instance; còn <b>network và disk subsystem</b> được <b>chia sẻ</b> giữa các instance trên cùng host. Khi mọi instance cùng dùng hết tài nguyên chia sẻ, mỗi instance nhận phần bằng nhau; khi tài nguyên rảnh, một instance có thể dùng nhiều hơn. Instance type có I/O cao được cấp phần tài nguyên chia sẻ lớn hơn và ít biến động hơn.</p>
+
+      <h3>Đọc tên instance type</h3>
+      <p>Tên gồm <b>instance family</b> và <b>instance size</b>. Vị trí đầu của family là <b>series</b> (vd <code>c</code>), vị trí thứ hai là <b>generation</b> (vd <code>7</code>), phần còn lại là <b>options</b> (vd <code>gn</code>). Sau dấu chấm là size: <code>nano</code>, <code>micro</code>, <code>small</code>, <code>large</code>, <code>4xlarge</code>… hoặc <code>metal</code> cho bare metal.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 760 250" width="760" role="img" aria-label="Phân tích tên instance type c7gn.xlarge">
+          <defs><marker id="ah8a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Amazon-EC2_C5-Instance.svg" x="40" y="40" width="64" height="64"/>
+          <text x="250" y="88" font-size="46" font-weight="800" text-anchor="middle">c</text>
+          <text x="300" y="88" font-size="46" font-weight="800" text-anchor="middle">7</text>
+          <text x="370" y="88" font-size="46" font-weight="800" text-anchor="middle">gn</text>
+          <text x="420" y="88" font-size="46" font-weight="800" text-anchor="middle">.</text>
+          <text x="530" y="88" font-size="46" font-weight="800" text-anchor="middle">xlarge</text>
+          <rect x="226" y="36" width="48" height="66" rx="6" fill="none" stroke="#DD344C" stroke-width="2.5"/>
+          <rect x="278" y="36" width="44" height="66" rx="6" fill="none" stroke="#147EBA" stroke-width="2.5"/>
+          <rect x="330" y="36" width="80" height="66" rx="6" fill="none" stroke="#7AA116" stroke-width="2.5"/>
+          <rect x="440" y="36" width="182" height="66" rx="6" fill="none" stroke="#ED7100" stroke-width="2.5"/>
+          <path class="line-o" d="M250 104 L170 160" marker-end="url(#ah8a)"/>
+          <path class="line-o" d="M300 104 L300 160" marker-end="url(#ah8a)"/>
+          <path class="line-o" d="M370 104 L440 160" marker-end="url(#ah8a)"/>
+          <path class="line-o" d="M530 104 L620 160" marker-end="url(#ah8a)"/>
+          <text x="150" y="182" font-size="14" font-weight="700" text-anchor="middle">Series</text>
+          <text x="150" y="200" font-size="12" text-anchor="middle" class="muted">C = Compute optimized</text>
+          <text x="300" y="182" font-size="14" font-weight="700" text-anchor="middle">Generation</text>
+          <text x="300" y="200" font-size="12" text-anchor="middle" class="muted">thế hệ 7 (càng cao càng mới)</text>
+          <text x="460" y="182" font-size="14" font-weight="700" text-anchor="middle">Options</text>
+          <text x="460" y="200" font-size="12" text-anchor="middle" class="muted">g = Graviton · n = network &amp; EBS optimized</text>
+          <text x="640" y="182" font-size="14" font-weight="700" text-anchor="middle">Size</text>
+          <text x="640" y="200" font-size="12" text-anchor="middle" class="muted">nano → … → 48xlarge, metal</text>
+          <text x="72" y="124" font-size="11" text-anchor="middle" class="muted">instance family = c7gn</text>
+        </svg>
+        <figcaption><b>Hình 1.</b> Quy ước đặt tên theo <i>Amazon EC2 Instance Types Guide</i>: <code>c7gn.xlarge</code> = series <b>C</b> (compute optimized), thế hệ <b>7</b>, chạy chip <b>Graviton</b> (g), tối ưu <b>network &amp; EBS</b> (n), size <b>xlarge</b>. Trong cùng family, mỗi bước size thường gấp đôi vCPU và memory.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Chữ cái series</th><th>Ý nghĩa</th><th>Chữ cái option</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td>M</td><td>General purpose</td><td>a</td><td>AMD processors</td></tr>
+          <tr><td>T</td><td>Burstable performance</td><td>g</td><td>AWS Graviton processors (Arm)</td></tr>
+          <tr><td>C</td><td>Compute optimized</td><td>i</td><td>Intel processors</td></tr>
+          <tr><td>R</td><td>Memory optimized</td><td>d</td><td>Có <b>instance store</b> volumes</td></tr>
+          <tr><td>X, U, Z</td><td>Memory intensive / High memory (U: 3–32 TiB)</td><td>n</td><td>Network and EBS optimized</td></tr>
+          <tr><td>I, Im, Is, D</td><td>Storage optimized / Dense storage</td><td>e</td><td>Extra storage / extra memory / extra GPU memory (tùy family)</td></tr>
+          <tr><td>P, G</td><td>GPU accelerated / Graphics intensive</td><td>z</td><td>High CPU frequency</td></tr>
+          <tr><td>Inf, Trn</td><td>AWS Inferentia / AWS Trainium (machine learning)</td><td>b</td><td>Block storage optimization</td></tr>
+          <tr><td>F, VT</td><td>FPGA / Video transcoding</td><td>flex</td><td>Flex instance</td></tr>
+          <tr><td>Hpc, Mac</td><td>High performance computing / macOS</td><td>metal</td><td>Bare metal (size)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Năm nhóm chính + HPC – chọn theo workload</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhóm</th><th>Ví dụ family</th><th>Đặc điểm</th><th>Workload điển hình trong đề</th></tr></thead>
+        <tbody>
+          <tr><td><img src="../assets/icons/res/Amazon-EC2_M5-Instance.svg" alt="" width="28"> General purpose</td><td>M5, M6i, M7g, M8g, <b>T3, T3a, T4g</b></td><td>Cân bằng compute / memory / network</td><td>Web server, app server, microservice, môi trường dev/test, code repository, DB nhỏ–vừa</td></tr>
+          <tr><td><img src="../assets/icons/res/Amazon-EC2_C5-Instance.svg" alt="" width="28"> Compute optimized</td><td>C5, C6i, C7g, C7gn, C8g</td><td>Tỉ lệ vCPU/memory cao, CPU hiệu năng cao</td><td>Batch processing, media transcoding, web server hiệu năng cao, HPC, scientific modeling, máy chủ game, ML inference trên CPU</td></tr>
+          <tr><td><img src="../assets/icons/res/Amazon-EC2_R5-Instance.svg" alt="" width="28"> Memory optimized</td><td>R5, R6i, R7g, X2idn, X8g, U7i, z1d</td><td>Nhiều RAM trên mỗi vCPU</td><td>In-memory database/cache (Redis, Memcached tự quản), DB quan hệ lớn, <b>SAP HANA</b>, phân tích big data thời gian thực</td></tr>
+          <tr><td><img src="../assets/icons/res/Amazon-EC2_I3-Instance.svg" alt="" width="28"> Storage optimized</td><td>I3en, I4i, I7i, Im4gn, Is4gen, D3, D3en</td><td>Instance store NVMe SSD/HDD dung lượng lớn, IOPS cao, độ trễ thấp</td><td>NoSQL (Cassandra, MongoDB), OLTP cần IOPS cực cao, data warehouse, Elasticsearch/OpenSearch tự quản, HDFS/MapReduce</td></tr>
+          <tr><td><img src="../assets/icons/res/Amazon-EC2_P4-Instance.svg" alt="" width="28"> Accelerated computing</td><td>P4d, P5, G5, G6, Inf2, Trn1, Trn2, F2, VT1</td><td>GPU, FPGA, chip ML chuyên dụng</td><td>Training/inference deep learning, đồ họa 3D, render, mã hóa video, genomics</td></tr>
+          <tr><td><img src="../assets/icons/res/Amazon-EC2_C5n-Instance.svg" alt="" width="28"> High-performance computing</td><td>Hpc6a, Hpc7g, Hpc8a</td><td>Tối ưu cho mô phỏng HPC quy mô lớn</td><td>Mô phỏng thời tiết, tính toán khoa học chặt chẽ (tightly coupled) – xem thêm EFA ở Bài 10</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted">Danh sách family lấy từ mục “Hypervisor type” của tài liệu Instance types; cột “workload điển hình” là kiến thức phổ biến (trang Amazon EC2 Instance Types) dùng nhiều trong đề.</p>
+
+      <h3>Bộ xử lý, hypervisor và virtualization</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-EC2_M5-Instance.svg" alt="">Intel &amp; AMD (x86)</h4>
+          <ul>
+            <li><b>Intel</b>: AES-NI (mọi instance current generation đều hỗ trợ), AVX/AVX2/AVX-512, Turbo Boost, DL Boost (VNNI).</li>
+            <li><b>AMD EPYC</b> (chữ <code>a</code>): tối ưu chi phí và hiệu năng; hỗ trợ SME, TSME, <b>SEV-SNP</b> (mã hóa bộ nhớ).</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-EC2_M6g-Instance.svg" alt="">AWS Graviton (Arm)</h4>
+          <ul>
+            <li>Họ chip Arm do AWS thiết kế, mang lại <b>best price performance</b> cho workload trên EC2 (chữ <code>g</code>).</li>
+            <li>Cần phần mềm/AMI hỗ trợ kiến trúc <b>arm64</b> – AMI x86 không chạy được trên Graviton.</li>
+          </ul></div>
+        <div style="--accent:#DD344C"><h4><img src="../assets/icons/res/Amazon-EC2_Trainium-Instance.svg" alt="">AWS Trainium &amp; Inferentia</h4>
+          <ul>
+            <li><b>Trainium (Trn)</b>: chip chuyên cho <b>training</b> deep learning hiệu năng cao, tiết kiệm chi phí (PyTorch, TensorFlow).</li>
+            <li><b>Inferentia (Inf)</b>: tăng tốc <b>inference</b> ML với độ trễ thấp; dùng AWS Neuron SDK.</li>
+          </ul></div>
+      </div>
+
+      <ul>
+        <li><b>Hypervisor</b>: EC2 hỗ trợ <b>Xen</b> (thế hệ cũ: M4, C4, R4, T2, I3…) và <b>Nitro</b> (hầu hết thế hệ hiện tại: M5+, C5+, R5+, T3, T4g…). Một số tính năng mới chỉ có trên Nitro-based instance (vd IMDS qua IPv6).</li>
+        <li><b>Virtualization type</b> do AMI quyết định: <span class="t" data-vi="Máy ảo phần cứng">HVM</span> và <span class="t" data-vi="Ảo hóa song song">PV</span>. Mọi instance type <b>current generation chỉ hỗ trợ HVM</b>. HVM bắt buộc để dùng <b>enhanced networking</b> và <b>GPU</b>. Windows AMI luôn là HVM.</li>
+        <li>Muốn thử nhiều type? Tài liệu khuyên chạy benchmark ứng dụng của chính bạn – vì tính tiền theo giây nên thử rất rẻ. Gợi ý chọn type: <b>EC2 instance type finder</b> và <b>AWS Compute Optimizer</b>. Đổi instance type sau này được: với EBS-backed instance, <b>stop</b> instance rồi đổi.</li>
+      </ul>
+
+      <h3>Burstable performance instances (dòng T) và CPU credits</h3>
+      <p>Nhiều workload phổ thông trung bình rất rảnh, chỉ thỉnh thoảng tăng vọt CPU. <span class="t" data-vi="Máy chủ hiệu năng bùng nổ">Burstable performance instances</span> (T8i, T4g, T3a, T3 và T2 thế hệ trước) cho một mức <span class="t" data-vi="Mức sử dụng nền">baseline</span> CPU, có thể <b>burst</b> vượt baseline khi cần. Tài liệu nêu T instance có thể tiết kiệm tới <b>15%</b> so với M instance, nhỏ nhất chỉ <b>2 vCPU, 0,5 GiB</b> memory.</p>
+      <ul>
+        <li><b>1 CPU credit</b> = 1 vCPU × 100% × 1 phút (hoặc 1 vCPU × 50% × 2 phút…). Instance <b>kiếm credit</b> liên tục khi chạy dưới baseline và <b>tiêu credit</b> khi vượt baseline (tính ở mức mili-giây).</li>
+        <li>Ví dụ <code>t3.nano</code>: 2 vCPU, baseline 5% ⇒ kiếm 2 × 5% × 60 = <b>6 credit/giờ</b>; tích lũy tối đa = credit kiếm được trong <b>24 giờ</b> = 144 credit. <code>t3.large</code> kiếm 36 credit/giờ ⇒ baseline 30%.</li>
+        <li>Credit trên instance đang chạy <b>không hết hạn</b>. Khi stop: <b>T2 mất hết</b> credit; <b>T3/T3a/T4g/T8i</b> giữ credit <b>7 ngày</b>.</li>
+      </ul>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-EC2_T2-Instance.svg" alt="">Standard mode</h4>
+          <ul>
+            <li>Burst bằng credit đã tích lũy. Hết credit ⇒ CPU <b>tụt dần về baseline</b>, không burst được cho tới khi tích lũy lại.</li>
+            <li><b>Mặc định của T2</b>; chỉ T2 standard có <b>launch credits</b>.</li>
+            <li>T3 trên Dedicated Host chỉ chạy được standard.</li>
+          </ul></div>
+        <div style="--accent:#ED7100"><h4><img src="../assets/icons/res/Amazon-EC2_T3-Instance.svg" alt="">Unlimited mode</h4>
+          <ul>
+            <li>Hết credit tích lũy vẫn burst bằng <b>surplus credits</b>, duy trì CPU cao bao lâu cũng được.</li>
+            <li>EC2 tính trung bình CPU trong <b>24 giờ</b> cuộn: nếu trung bình &gt; baseline ⇒ trả thêm <b>phí cố định theo vCPU-giờ</b>.</li>
+            <li><b>Mặc định của T3, T3a, T4g, T8i</b>.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp với dòng T</span>
+        <ul>
+          <li>Ứng dụng “<i>chạy nhanh lúc đầu rồi chậm dần, CloudWatch <code>CPUCreditBalance</code> về 0</i>” ⇒ instance T ở <b>standard mode</b> đã hết credit. Cách sửa: bật <b>unlimited mode</b> hoặc chuyển sang family có CPU cố định (M, C) nếu CPU cao <b>liên tục</b>.</li>
+          <li>Workload CPU cao <b>suốt ngày</b> mà vẫn dùng T unlimited ⇒ trả phí surplus thường xuyên, có thể <b>đắt hơn</b> M/C cùng cỡ. Dòng T chỉ hợp với CPU thấp–trung bình, có đỉnh ngắn.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – chọn instance family</span>
+        <ul>
+          <li>“<i>In-memory database, real-time big data analytics, SAP HANA, large caches</i>” ⇒ <b>Memory optimized (R, X, U)</b>.</li>
+          <li>“<i>Batch processing, video encoding, high-performance web servers, scientific modeling, gaming servers</i>” ⇒ <b>Compute optimized (C)</b>.</li>
+          <li>“<i>High sequential/random I/O to local storage, NoSQL like Cassandra, data warehousing, millions of IOPS</i>” ⇒ <b>Storage optimized (I, D)</b>.</li>
+          <li>“<i>Machine learning training / graphics rendering / GPU</i>” ⇒ <b>Accelerated computing (P, G, Trn, Inf)</b>. “<i>Lowest cost ML inference</i>” ⇒ <b>Inferentia</b>.</li>
+          <li>“<i>Low average CPU with occasional spikes, dev/test, small websites, most cost-effective</i>” ⇒ <b>T3/T4g</b>. “<i>Best price performance, workload supports Arm</i>” ⇒ <b>Graviton</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: AMI ===================== -->
+      <h2 id="ami"><img src="../assets/icons/res/Amazon-EC2_AMI.svg" alt="">Amazon Machine Images (AMI)</h2>
+      <p class="lead">Một <span class="t" data-vi="Ảnh máy Amazon">Amazon Machine Image (AMI)</span> chứa phần mềm cần thiết để thiết lập và boot một EC2 instance, kèm một <span class="t" data-vi="Bản đồ thiết bị khối">block device mapping</span> chỉ định các ổ đĩa sẽ gắn vào instance. Bạn <b>bắt buộc</b> chọn AMI khi launch, và AMI phải <b>tương thích</b> với instance type đã chọn.</p>
+
+      <p>Nguồn AMI: AMI do <b>AWS</b> cung cấp (Amazon Linux 2023, Windows Server…), <b>public AMI</b> của cộng đồng, AMI người khác <b>chia sẻ</b> với bạn, hoặc AMI <b>mua trên AWS Marketplace</b> (có thể tính thêm phí phần mềm). Public AMI của Amazon hoặc đối tác đã xác minh được gắn nhãn <b>Verified provider</b> (owner alias <code>amazon</code>, <code>aws-marketplace</code>, <code>aws-backup-vault</code>). Tài liệu nhấn mạnh: dùng shared AMI là <b>tự chịu rủi ro</b> – hãy đối xử như code lạ và kiểm tra kỹ.</p>
+
+      <h3>AMI gắn chặt với 5 đặc tính</h3>
+      <div class="stats">
+        <div class="stat"><b>Region</b><span>AMI là tài nguyên cấp Region – muốn dùng ở Region khác phải <b>copy</b></span></div>
+        <div class="stat"><b>OS</b><span>Linux, Windows, macOS…</span></div>
+        <div class="stat"><b>Architecture</b><span>x86_64, arm64 (Graviton), i386</span></div>
+        <div class="stat"><b>Root volume</b><span>EBS-backed hoặc S3-backed (instance store)</span></div>
+        <div class="stat"><b>Virtualization</b><span>HVM (hiện tại) hoặc PV (cũ)</span></div>
+      </div>
+
+      <h3>Launch permissions – ai được dùng AMI?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Launch permission</th><th>Ý nghĩa</th></tr></thead>
+        <tbody>
+          <tr><td><b>public</b></td><td>Owner cấp quyền launch cho <b>mọi AWS account</b>.</td></tr>
+          <tr><td><b>explicit</b></td><td>Owner cấp quyền cho <b>account cụ thể</b>, <b>organization</b> hoặc <b>OU</b> trong AWS Organizations.</td></tr>
+          <tr><td><b>implicit</b></td><td>Owner luôn có quyền launch AMI của chính mình.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>EBS-backed AMI vs Amazon S3-backed (instance store) AMI</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Đặc điểm</th><th>Amazon EBS-backed AMI</th><th>Amazon S3-backed AMI</th></tr></thead>
+        <tbody>
+          <tr><td>Root volume</td><td>EBS volume (tạo từ EBS snapshot)</td><td>Instance store volume (tạo từ template trên S3)</td></tr>
+          <tr><td>Thời gian boot</td><td>Thường <b>dưới 1 phút</b></td><td>Thường <b>dưới 5 phút</b></td></tr>
+          <tr><td>Dữ liệu bền vững</td><td>Root volume mặc định bị xóa khi terminate (<code>DeleteOnTermination=true</code>); EBS volume khác mặc định <b>được giữ</b></td><td>Dữ liệu instance store chỉ tồn tại <b>trong vòng đời instance</b></td></tr>
+          <tr><td>Trạng thái stopped</td><td class="yes">Có thể stop; root volume vẫn lưu trên EBS</td><td class="no">Không stop được – chỉ running hoặc terminated</td></tr>
+          <tr><td>Thay đổi thuộc tính</td><td>Đổi instance type, kernel, RAM disk, user data khi instance đang stopped</td><td>Thuộc tính cố định suốt đời instance</td></tr>
+          <tr><td>Chi phí</td><td>Instance + EBS volume + lưu AMI dưới dạng EBS snapshot</td><td>Instance + lưu AMI trên Amazon S3</td></tr>
+          <tr><td>Tạo AMI</td><td>Một lệnh / API call (<code>CreateImage</code>)</td><td>Phải cài và dùng AMI tools</td></tr>
+          <tr><td>Hệ điều hành</td><td>Linux và Windows</td><td>Chỉ Linux</td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout note"><span class="ttl">Thực tế ngày nay</span>
+        <p>Tài liệu ghi rõ: <b>S3-backed AMI đã end of life</b>, không khuyến nghị dùng mới, chỉ hỗ trợ một số type cũ (C1, C3, D2, I2, M1, M2, M3, R3, X1). Gần như mọi AMI bạn gặp là <b>EBS-backed</b>. Nhưng đề vẫn có thể hỏi “instance nào không stop được?” ⇒ instance có <b>root là instance store</b>.</p></div>
+
+      <h3>Vòng đời AMI</h3>
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_AMI.svg" alt="">AMI gốc<small>AWS / Marketplace / VM Import</small></div>
+          <span class="arrow">① launch</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">Instance #1<small>cài phần mềm, cấu hình, copy dữ liệu</small></div>
+          <span class="arrow">② Create image<br>(reboot mặc định)</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Snapshot.svg" alt="">EBS snapshots<small>root + data volumes</small></div>
+          <span class="arrow">③ register</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-EC2_AMI.svg" alt="">Golden AMI<small>block device mapping</small></div>
+          <span class="arrow">④ copy / share</span>
+          <div class="node"><img src="../assets/icons/cat/Compute.svg" alt="">Region khác / account khác<small>AMI ID mới ở Region đích</small></div>
+          <span class="arrow dashed">⑤ deprecate → disable → deregister</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Amazon-Data-Lifecycle-Manager.svg" alt="">Recycle Bin / xóa<small>xóa snapshot để hết phí</small></div>
+        </div>
+        <figcaption><b>Hình 2.</b> Vòng đời AMI theo tài liệu “AMI lifecycle”: tạo AMI từ instance đã tùy biến → EC2 chụp snapshot cho root và mọi EBS volume → tự động register AMI → copy sang Region khác hoặc chia sẻ → khi lỗi thời thì deprecate, tạm khóa bằng disable, cuối cùng deregister. Tự động hóa toàn bộ bằng <b>EC2 Image Builder</b> (tạo/patch/phân phối) hoặc <b>Amazon Data Lifecycle Manager</b> (tạo, giữ, copy, deprecate, deregister EBS-backed AMI).</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thao tác</th><th>Điều cần nhớ</th></tr></thead>
+        <tbody>
+          <tr><td><b>Create image</b></td><td>Mặc định EC2 <b>tắt nguồn và reboot</b> instance để snapshot ở trạng thái nhất quán. Bỏ chọn <b>Reboot instance</b> (<code>--no-reboot</code>) thì không bị gián đoạn, nhưng AWS <b>không đảm bảo file system integrity</b>. Có thể mất vài phút tới <b>24 giờ</b> tùy dung lượng – mẹo: chụp snapshot trước để lúc tạo AMI chỉ còn snapshot incremental nhỏ. Bạn trả tiền snapshot cho tới khi deregister AMI <b>và</b> xóa snapshot.</td></tr>
+          <tr><td><b>Create from snapshot</b></td><td>Tạo AMI từ snapshot root volume (<code>RegisterImage</code>). Với Windows/RHEL/SUSE/SQL Server phải kiểm tra trường <b>Platform details</b> để đảm bảo thông tin license đúng.</td></tr>
+          <tr><td><b>Copy</b></td><td>Copy trong cùng partition giữa các Region, sang Local Zone/Outpost, hoặc copy AMI người khác share cho bạn. Copy <b>miễn phí</b> (chỉ trả storage snapshot mới + data transfer); tùy chọn <b>time-based copy</b> (15 phút – 48 giờ) tốn thêm phí. <b>Không copy</b> launch permissions, S3 bucket permissions, system tags (<code>aws:</code>). Có thể <b>mã hóa hoặc đổi KMS key</b> lúc copy.</td></tr>
+          <tr><td><b>Deprecate</b></td><td>Đánh dấu lỗi thời (ngay hoặc ngày tương lai) – bị ẩn khỏi danh sách, nhưng ai biết AMI ID vẫn launch được.</td></tr>
+          <tr><td><b>Disable</b></td><td>Tạm thời <b>không cho launch</b> instance mới; re-enable được. Không ảnh hưởng instance đang chạy.</td></tr>
+          <tr><td><b>Deregister</b></td><td>Xóa AMI. Nếu khớp retention rule của <b>Recycle Bin</b> thì khôi phục được trước khi hết hạn. Không ảnh hưởng instance đã launch. Snapshot <b>không tự xóa</b>.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Chia sẻ AMI và AMI được mã hóa</h3>
+      <ul>
+        <li>Chỉ <b>owner</b> mới chia sẻ được. Chia sẻ với <b>account ID</b> (12 chữ số), <b>organization</b> hoặc <b>OU</b> mà không cần public. Người nhận chỉ <b>launch</b> được – không xóa, không chia sẻ lại, không sửa – nhưng có thể tạo AMI riêng từ instance của họ.</li>
+        <li>AMI là tài nguyên <b>Region</b>: share ở Region nào chỉ dùng được ở Region đó ⇒ muốn dùng Region khác thì <b>copy rồi share</b>.</li>
+        <li>Không cần share EBS snapshot đi kèm, nhưng <b>phải share KMS key</b> đã mã hóa snapshot. AMI có snapshot mã hóa bằng <b>AWS managed key mặc định (<code>aws/ebs</code>) không chia sẻ được</b> ⇒ copy AMI và re-encrypt bằng <b>customer managed key</b>, rồi cấp quyền key cho account đích.</li>
+        <li>Người launch AMI trả tiền instance; owner <b>không bị tính phí</b> khi người khác dùng AMI của mình.</li>
+        <li><span class="t" data-vi="Chặn truy cập công khai cho AMI">Block public access for AMIs</span>: cài ở cấp account <b>cho từng Region</b>; <b>bật mặc định</b> với account mới (và account cũ chưa từng có public AMI). Khi bật, mọi thao tác public AMI bị chặn – AMI đã public từ trước vẫn public. Dùng <b>declarative policy</b> của AWS Organizations để áp nhiều account/Region cùng lúc.</li>
+      </ul>
+
+      <h3>Mã hóa khi launch và khi copy</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tình huống (không truyền tham số mã hóa)</th><th>Kết quả</th></tr></thead>
+        <tbody>
+          <tr><td>Snapshot <b>không mã hóa</b></td><td>Volume/snapshot mới không mã hóa – <b>trừ khi bật EBS encryption by default</b> thì mọi volume mới đều mã hóa.</td></tr>
+          <tr><td>Snapshot mã hóa, <b>bạn sở hữu</b></td><td>Mã hóa bằng <b>cùng KMS key</b>.</td></tr>
+          <tr><td>Snapshot mã hóa, AMI <b>được share cho bạn</b></td><td>Mã hóa bằng <b>default KMS key của account bạn</b>.</td></tr>
+          <tr><td>Truyền <code>Encrypted</code> + <code>KmsKeyId</code></td><td>Mã hóa / re-encrypt bằng key chỉ định (chỉ truyền <code>KmsKeyId</code> mà thiếu <code>Encrypted</code> ⇒ lỗi).</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – AMI</span>
+        <ul>
+          <li>“<i>Launch identical instances in another Region for DR</i>” ⇒ <b>Copy AMI</b> sang Region đó (AMI ID ở Region đích sẽ khác).</li>
+          <li>“<i>Share an encrypted AMI with another account</i>” ⇒ snapshot phải mã hóa bằng <b>customer managed KMS key</b>, sửa <b>key policy</b> cho account đích, rồi thêm launch permission. Nếu đang dùng <code>aws/ebs</code> ⇒ <b>copy + re-encrypt</b> trước.</li>
+          <li>“<i>Encrypt an existing unencrypted AMI</i>” ⇒ <b>copy AMI</b> với tùy chọn encrypt (không có nút “encrypt in place”).</li>
+          <li>“<i>Prevent anyone from making AMIs public across all accounts</i>” ⇒ <b>block public access for AMIs</b> qua declarative policy của Organizations (hoặc SCP chặn <code>ModifyImageAttribute</code>).</li>
+          <li>“<i>Prevent use of an outdated AMI without deleting it</i>” ⇒ <b>disable</b> (chặn launch) hoặc <b>deprecate</b> (ẩn khỏi danh sách).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: USER DATA ===================== -->
+      <h2 id="user-data"><img src="../assets/icons/res/AWS-Systems-Manager_Run-Command.svg" alt="">User data – bootstrap instance lúc khởi động</h2>
+      <p class="lead">Khi launch, bạn có thể truyền <span class="t" data-vi="Dữ liệu người dùng">user data</span> cho instance để chạy các tác vụ cấu hình tự động hoặc chạy script sau khi instance khởi động – gọi là <span class="t" data-vi="Khởi tạo tự động">bootstrapping</span>. Với kịch bản tự động hóa phức tạp hơn, tài liệu gợi ý dùng <b>AWS CloudFormation</b>.</p>
+
+      <h3>Hai loại user data trên Linux</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/AWS-Systems-Manager_Documents.svg" alt="">Shell script</h4>
+          <ul>
+            <li>Bắt đầu bằng <code>#!</code> + đường dẫn interpreter (thường <code>#!/bin/bash</code>).</li>
+            <li>Cách dễ và đầy đủ nhất nếu đã quen shell.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/AWS-Systems-Manager_State-Manager.svg" alt="">cloud-init directives</h4>
+          <ul>
+            <li>Dòng đầu bắt buộc <code>#cloud-config</code>; khai báo <code>packages</code>, <code>runcmd</code>, <code>write_files</code>…</li>
+            <li>Gói <b>cloud-init</b> cũng là thứ cấu hình <code>.ssh/authorized_keys</code> cho <code>ec2-user</code>.</li>
+            <li>Kết hợp cả hai bằng file <b>MIME multi-part</b>.</li>
+          </ul></div>
+      </div>
+
+<pre><span class="c">#!/bin/bash</span>
+<span class="c"># Chạy bằng root ⇒ KHÔNG cần sudo; không có lệnh hỏi tương tác (yum cần -y)</span>
+dnf update -y
+dnf install -y httpd
+systemctl enable --now httpd
+<span class="c"># Gọi AWS CLI ⇒ instance phải có instance profile (IAM role), KHÔNG nhúng access key</span>
+aws s3 cp <span class="s">s3://my-site-content/index.html</span> /var/www/html/index.html
+<span class="c"># Đọc metadata bằng IMDSv2</span>
+TOKEN=$(curl -s -X PUT <span class="s">"http://169.254.169.254/latest/api/token"</span> -H <span class="s">"X-aws-ec2-metadata-token-ttl-seconds: 21600"</span>)
+AZ=$(curl -s -H <span class="s">"X-aws-ec2-metadata-token: $TOKEN"</span> http://169.254.169.254/latest/meta-data/placement/availability-zone)
+echo <span class="s">"&lt;h1&gt;Hello from $AZ&lt;/h1&gt;"</span> &gt;&gt; /var/www/html/index.html</pre>
+
+      <h3>Những quy tắc tài liệu nhấn mạnh</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Quy tắc</th><th>Chi tiết</th></tr></thead>
+        <tbody>
+          <tr><td>Kích thước</td><td>Tối đa <b>16 KB</b> ở dạng thô, <b>trước</b> khi base64 (sau base64, chuỗi dài n thành ceil(n/3)×4). Windows EC2Launch v2 hỗ trợ user data <b>nén .zip</b> để vượt giới hạn này.</td></tr>
+          <tr><td>Mã hóa base64</td><td>User data phải base64. Console, AWS CLI (<code>run-instances</code>), Boto3 tự làm; <code>modify-instance-attribute</code> thì <b>không</b> tự làm. Đọc qua IMDS/console thì tự giải mã.</td></tr>
+          <tr><td>Khi nào chạy</td><td>Mặc định script và cloud-init <b>chỉ chạy một lần ở lần boot đầu tiên</b>. Muốn chạy mỗi lần khởi động: cấu hình cloud-init (Linux) hoặc thêm <code>&lt;persist&gt;true&lt;/persist&gt;</code> (Windows).</td></tr>
+          <tr><td>Quyền chạy</td><td>Linux: chạy bằng <b>root</b> (file tạo ra thuộc root). Windows: chạy bằng tài khoản local administrator (khi sinh mật khẩu ngẫu nhiên) hoặc System account.</td></tr>
+          <tr><td>Thay đổi</td><td>Chỉ sửa được khi instance <b>stopped</b> (và root là EBS). Start lại thì user data mới hiển thị nhưng <b>không tự chạy</b> trên Linux.</td></tr>
+          <tr><td>Log &amp; vị trí</td><td>Linux: <code>/var/log/cloud-init-output.log</code>; script được copy vào <code>/var/lib/cloud/instances/&lt;instance-id&gt;/</code> và <b>không bị xóa</b> ⇒ xóa trước khi tạo AMI. Windows EC2Launch v2: <code>C:\ProgramData\Amazon\EC2Launch\log\agent.log</code>.</td></tr>
+          <tr><td>Windows</td><td>Bọc trong <code>&lt;script&gt;</code> (batch) hoặc <code>&lt;powershell&gt;</code> (phân biệt hoa thường); batch luôn chạy trước PowerShell. EC2Launch v2 hỗ trợ YAML (<code>frequency: once | always</code>).</td></tr>
+          <tr><td>Không nằm trong AMI</td><td>User data là <b>thuộc tính của instance</b> – tạo AMI từ instance thì user data <b>không đi theo</b>.</td></tr>
+          <tr><td>Bảo mật</td><td>User data và metadata <b>không được bảo vệ bằng xác thực hay mã hóa</b>: ai/ phần mềm nào truy cập được instance đều đọc được ⇒ <b>không lưu mật khẩu, khóa dài hạn</b> trong user data.</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Compute.svg" alt="">AWS Cloud – Region</span>
+          <div class="row center">
+            <div class="grp vpc"><span class="lbl">VPC</span>
+              <div class="grp pub"><span class="lbl">Public subnet</span>
+                <div class="flow">
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_AMI.svg" alt="">AMI<small>Amazon Linux 2023</small></div>
+                  <span class="arrow">launch + user data<br>(base64)</span>
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 instance<small>cloud-init chạy script bằng root ở lần boot đầu</small></div>
+                  <span class="arrow">đọc user data<br>&amp; credentials</span>
+                  <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance-with-CloudWatch.svg" alt="">IMDS<small>169.254.169.254<br>(link-local)</small></div>
+                </div>
+              </div>
+            </div>
+            <span class="arrow">aws s3 cp<br>(instance profile)</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_Bucket.svg" alt="">Amazon S3<small>nội dung riêng cho từng khách hàng</small></div>
+            <div class="node"><img src="../assets/icons/res/AWS-Systems-Manager_Parameter-Store.svg" alt="">Parameter Store / Secrets Manager<small>lấy bí mật lúc chạy, không ghi vào user data</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 3.</b> Bootstrapping bằng user data – ví dụ trong tài liệu: dùng <b>một AMI generic</b> cho nhiều doanh nghiệp nhỏ, user data chỉ truyền <b>tên bucket S3</b> riêng của từng khách; script tải nội dung khi khởi động. Script gọi AWS API bằng credentials tạm thời của <b>instance profile</b> (lấy qua IMDS) và đọc bí mật từ <b>Parameter Store / Secrets Manager</b> thay vì ghi thẳng vào user data.</figcaption>
+      </figure>
+
+      <h3>Golden AMI hay user data?</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/res/Amazon-EC2_AMI.svg" alt="">Golden AMI (nướng sẵn)</h4>
+          <ul>
+            <li>Cài sẵn OS patch, runtime, agent, ứng dụng vào AMI.</li>
+            <li><b>Boot nhanh</b> – rất quan trọng với Auto Scaling phải scale-out gấp.</li>
+            <li>Mỗi lần đổi phần mềm phải build AMI mới (tự động bằng EC2 Image Builder).</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/AWS-Systems-Manager_Run-Command.svg" alt="">User data (cấu hình lúc chạy)</h4>
+          <ul>
+            <li>Linh hoạt: một AMI chung, khác nhau ở tham số (môi trường, bucket, cluster name).</li>
+            <li>Boot <b>chậm</b> nếu cài nhiều gói; phụ thuộc kho phần mềm bên ngoài lúc khởi động.</li>
+            <li>Kết hợp tốt nhất: <b>golden AMI + user data ngắn</b> cho phần cấu hình động.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – user data</span>
+        <ul>
+          <li>“<i>Instances take 15 minutes to install software at boot; Auto Scaling must respond faster</i>” ⇒ tạo <b>golden AMI</b> chứa phần mềm cài sẵn, giữ user data cho cấu hình động (có thể kết hợp warm pool ở Bài 13).</li>
+          <li>“<i>Run a script automatically when an instance first launches</i>” ⇒ <b>user data</b>. “<i>Run commands on a fleet of running instances</i>” ⇒ <b>Systems Manager Run Command</b>, không phải user data.</li>
+          <li>“<i>Script in user data needs to call S3</i>” ⇒ gắn <b>IAM role qua instance profile</b> – không bao giờ chọn đáp án nhúng access key vào user data.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: INSTANCE METADATA / IMDSv2 ===================== -->
+      <h2 id="imds"><img src="../assets/icons/res/Amazon-EC2_Instance-with-CloudWatch.svg" alt="">Instance metadata &amp; IMDSv2</h2>
+      <p class="lead"><span class="t" data-vi="Siêu dữ liệu của máy chủ">Instance metadata</span> là dữ liệu <b>về chính instance</b> mà bạn dùng để cấu hình hoặc quản lý instance đang chạy. Nó được phục vụ bởi <span class="t" data-vi="Dịch vụ siêu dữ liệu của máy chủ">Instance Metadata Service (IMDS)</span> chạy cục bộ trên mọi EC2 instance, chỉ truy cập được <b>từ bên trong instance</b> qua địa chỉ link-local.</p>
+
+      <p>Instance metadata gồm ba phần:</p>
+      <ul>
+        <li><b>Metadata properties</b> theo category: <code>http://169.254.169.254/latest/meta-data/</code></li>
+        <li><b>Dynamic data</b> sinh lúc launch, vd <b>instance identity document</b> (kèm chữ ký pkcs7 để bên thứ ba xác minh): <code>…/latest/dynamic/</code></li>
+        <li><b>User data</b>: <code>…/latest/user-data</code> (không có thì trả <code>404 - Not Found</code>)</li>
+      </ul>
+      <p>IPv6: <code>http://[fd00:ec2::254]/latest/meta-data/</code> – phải bật riêng, chỉ trên <b>Nitro-based instance</b> trong subnet hỗ trợ IPv6. Dùng đường dẫn <code>latest</code> thay số version để không phải sửa code khi AWS phát hành build mới. Gọi IMDS <b>không tốn phí</b>.</p>
+
+      <h3>Các category hay dùng (và hay xuất hiện trong đề)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Category</th><th>Trả về</th></tr></thead>
+        <tbody>
+          <tr><td><code>ami-id</code>, <code>instance-id</code>, <code>instance-type</code></td><td>AMI dùng để launch, ID và type của instance.</td></tr>
+          <tr><td><code>ami-launch-index</code></td><td>Thứ tự launch khi nhiều instance cùng một lệnh <code>RunInstances</code> (bắt đầu từ 0) – dùng để instance đầu tiên tự “bầu” làm node chính. Với Auto Scaling/EC2 Fleet luôn là 0.</td></tr>
+          <tr><td><code>local-ipv4</code>, <code>public-ipv4</code>, <code>hostname</code>, <code>mac</code></td><td>IP private/public (trả Elastic IP nếu có gắn), hostname, MAC của eth0.</td></tr>
+          <tr><td><code>placement/availability-zone</code>, <code>placement/availability-zone-id</code>, <code>placement/region</code></td><td>AZ, AZ ID (nhất quán giữa các account – Bài 1), Region.</td></tr>
+          <tr><td><code>iam/security-credentials/<i>role-name</i></code></td><td><b>Temporary security credentials</b> của IAM role gắn qua instance profile – SDK/CLI tự lấy từ đây.</td></tr>
+          <tr><td><code>instance-life-cycle</code></td><td>Phương thức mua (on-demand, spot…).</td></tr>
+          <tr><td><code>spot/instance-action</code>, <code>spot/termination-time</code></td><td>Thông báo Spot sắp bị hibernate/stop/terminate (Bài 9).</td></tr>
+          <tr><td><code>events/recommendations/rebalance</code></td><td>Thời điểm phát rebalance recommendation cho Spot.</td></tr>
+          <tr><td><code>autoscaling/target-lifecycle-state</code></td><td>Trạng thái lifecycle Auto Scaling mà instance đang chuyển tới (Bài 13).</td></tr>
+          <tr><td><code>public-keys/0/openssh-key</code></td><td>Public key của key pair chỉ định lúc launch.</td></tr>
+          <tr><td><code>tags/instance</code></td><td>Tag của instance – chỉ khi <b>bật “Allow tags in instance metadata”</b>.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>IMDSv1 vs IMDSv2</h3>
+      <div class="compare">
+        <div style="--accent:#D91515"><h4><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">IMDSv1 – request/response</h4>
+          <ul>
+            <li>Một lệnh <code>GET</code> đơn giản, <b>không cần token</b>.</li>
+            <li>Nếu ứng dụng có lỗ hổng <b>SSRF</b>, reverse proxy hoặc firewall cấu hình mở, kẻ tấn công có thể khiến server tự gọi <code>169.254.169.254</code> và <b>lấy cắp credentials của IAM role</b>.</li>
+          </ul></div>
+        <div style="--accent:#037F0C"><h4><img src="../assets/icons/res/Amazon-EC2_Instance-with-CloudWatch.svg" alt="">IMDSv2 – session-oriented</h4>
+          <ul>
+            <li>Bước 1: <code>PUT /latest/api/token</code> với header <code>X-aws-ec2-metadata-token-ttl-seconds</code> (<b>1 giây – 6 giờ</b>).</li>
+            <li>Bước 2: mọi <code>GET</code> gửi kèm header <code>X-aws-ec2-metadata-token</code>. Token chỉ hợp lệ trên <b>đúng instance</b> sinh ra nó.</li>
+            <li><code>PUT</code> chứa header <code>X-Forwarded-For</code> bị <b>từ chối</b> (chặn đi qua proxy).</li>
+            <li>Phản hồi PUT có <b>hop limit</b> (IP TTL) mặc định <b>1</b> ⇒ token không “bay” ra khỏi instance.</li>
+          </ul></div>
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 330" width="780" role="img" aria-label="Luồng IMDSv2 lấy token rồi đọc metadata">
+          <defs><marker id="ah8b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="10" y="10" width="760" height="310" rx="8" fill="none" stroke="#ED7100" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="24" y="32" font-size="13" font-weight="700">EC2 instance (Nitro / Xen host)</text>
+          <!-- App -->
+          <rect x="40" y="60" width="200" height="230" rx="8" fill="none" stroke="#147EBA" stroke-width="2.5"/>
+          <image href="../assets/icons/res/Client.svg" x="118" y="74" width="44" height="44"/>
+          <text x="140" y="138" font-size="13.5" font-weight="700" text-anchor="middle">Ứng dụng / AWS SDK</text>
+          <text x="140" y="156" font-size="11" text-anchor="middle" class="muted">cache token tới gần hết hạn</text>
+          <!-- IMDS -->
+          <rect x="540" y="60" width="200" height="230" rx="8" fill="none" stroke="#7AA116" stroke-width="2.5"/>
+          <image href="../assets/icons/res/Amazon-EC2_Instance-with-CloudWatch.svg" x="618" y="74" width="44" height="44"/>
+          <text x="640" y="138" font-size="13.5" font-weight="700" text-anchor="middle">IMDS</text>
+          <text x="640" y="156" font-size="11" text-anchor="middle" class="muted">169.254.169.254</text>
+          <text x="640" y="172" font-size="11" text-anchor="middle" class="muted">[fd00:ec2::254]</text>
+          <!-- arrows -->
+          <path class="line-o" d="M240 190 L538 190" marker-end="url(#ah8b)"/>
+          <text x="390" y="182" font-size="11.5" font-weight="700" text-anchor="middle">① PUT /latest/api/token</text>
+          <text x="390" y="206" font-size="10.5" text-anchor="middle" class="muted">X-aws-ec2-metadata-token-ttl-seconds: 21600</text>
+          <path class="line-o" d="M538 226 L242 226" marker-end="url(#ah8b)"/>
+          <text x="390" y="220" font-size="11.5" font-weight="700" text-anchor="middle">② token (hop limit mặc định = 1)</text>
+          <path class="line-o" d="M240 256 L538 256" marker-end="url(#ah8b)"/>
+          <text x="390" y="250" font-size="11.5" font-weight="700" text-anchor="middle">③ GET /latest/meta-data/… + X-aws-ec2-metadata-token</text>
+          <path class="line-o" d="M538 284 L242 284" marker-end="url(#ah8b)"/>
+          <text x="390" y="278" font-size="11.5" font-weight="700" text-anchor="middle">④ dữ liệu (text/plain) · sai/hết hạn token ⇒ 401</text>
+          <!-- attacker -->
+          <image href="../assets/icons/res/Internet.svg" x="366" y="58" width="40" height="40"/>
+          <text x="386" y="114" font-size="11.5" font-weight="700" text-anchor="middle">Request SSRF từ Internet</text>
+          <text x="386" y="130" font-size="10.5" text-anchor="middle" class="muted">không gửi được PUT + header ⇒ không có token</text>
+          <text x="386" y="146" font-size="10.5" text-anchor="middle" class="muted">PUT có X-Forwarded-For ⇒ bị từ chối</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> Luồng IMDSv2: ứng dụng tạo session token bằng <code>PUT</code> (TTL tối đa 21.600 giây), rồi gửi token trong mọi <code>GET</code>. Khi đặt <b>HttpTokens = required</b>, request không có token (kiểu IMDSv1) sẽ thất bại – đây là lớp <i>defense in depth</i> chống SSRF, open firewall và reverse proxy lấy trộm credentials của IAM role.</figcaption>
+      </figure>
+
+      <h3>Cấu hình IMDS options</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Option</th><th>Giá trị</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td>Instance metadata service (<code>HttpEndpoint</code>)</td><td>enabled | disabled</td><td>Tắt hẳn ⇒ không code nào đọc được metadata (agent phụ thuộc metadata sẽ hỏng).</td></tr>
+          <tr><td>IMDS IPv6 endpoint</td><td>enabled | disabled</td><td>Bật thì IPv4 vẫn bật; chỉ Nitro + subnet IPv6.</td></tr>
+          <tr><td>Metadata version (<code>HttpTokens</code>)</td><td><code>optional</code> (V1 hoặc V2) | <code>required</code> (V2 only)</td><td>Mặc định dùng được cả hai. <code>required</code> ⇒ IMDSv1 trả lỗi/không phản hồi.</td></tr>
+          <tr><td>Response hop limit (<code>HttpPutResponseHopLimit</code>)</td><td><b>1 – 64</b></td><td>Mặc định 1. Môi trường <b>container</b> (Docker, ECS/EKS trên EC2) nên đặt <b>2</b> vì đi vào container tính thêm một hop.</td></tr>
+          <tr><td>Access to tags in metadata</td><td>enabled | disabled</td><td>Cho phép đọc tag qua <code>tags/instance</code>.</td></tr>
+        </tbody>
+      </table></div>
+
+      <p>Thứ tự ưu tiên khi launch: <b>(1)</b> giá trị chỉ định lúc launch / trong launch template → <b>(2)</b> <span class="t" data-vi="Mặc định cấp tài khoản">account-level defaults</span> (đặt <b>theo từng Region</b>, không ảnh hưởng instance đã có) → <b>(3)</b> cấu hình AMI: đặt <code>imds-support = v2.0</code> khi register/modify AMI thì instance launch từ AMI đó tự có <code>HttpTokens=required</code> và hop limit 2 (chỉ áp cho <code>HttpTokens</code> và hop limit). Ngoài ra có <b>IMDSv2 enforcement</b> ở cấp account (<code>HttpTokensEnforced</code>): bật lên thì mọi lệnh launch có IMDSv1 đều <b>thất bại</b>. Có thể ép bằng IAM policy/SCP với condition key (vd <code>ec2:MetadataHttpTokens</code>) để chỉ cho launch instance yêu cầu IMDSv2.</p>
+
+      <div class="callout warn"><span class="ttl">Bẫy &amp; lưu ý vận hành</span>
+        <ul>
+          <li>Metadata và user data <b>không có xác thực/mã hóa</b> – IMDSv2 chỉ chống truy cập gián tiếp, không biến user data thành nơi cất bí mật.</li>
+          <li>Chuyển sang <code>required</code> trước khi mọi phần mềm hỗ trợ IMDSv2 ⇒ ứng dụng/agent cũ dùng IMDSv1 sẽ hỏng. Các AWS SDK bản mới đều dùng IMDSv2 mặc định (vd AWS CLI ≥ 1.16.289, Boto3 ≥ 1.12.6).</li>
+          <li>IMDS bị <b>throttle theo instance</b>; dịch vụ link-local (DNS Route 53 Resolver, IMDS, NTP, Windows licensing) chung giới hạn <b>1024 packets/giây</b>. Đừng gọi lấy credentials ở mọi transaction – hãy <b>cache</b> và retry với exponential backoff.</li>
+          <li>Container trên EC2 không lấy được token? Kiểm tra <b>hop limit = 1</b> ⇒ tăng lên 2.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – metadata</span>
+        <ul>
+          <li>“<i>Protect against SSRF stealing IAM role credentials from the metadata endpoint</i>”, “<i>require session tokens for metadata</i>” ⇒ <b>IMDSv2 required</b> (<code>HttpTokens=required</code>), áp diện rộng bằng account default/SCP.</li>
+          <li>“<i>Application needs to know its own instance ID / AZ / private IP at runtime</i>” ⇒ đọc <b>instance metadata</b> (không cần gọi API EC2, không cần quyền IAM).</li>
+          <li>“<i>Third party must verify that a request comes from a specific EC2 instance</i>” ⇒ <b>instance identity document</b> + chữ ký.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: INSTANCE LIFECYCLE ===================== -->
+      <h2 id="lifecycle"><img src="../assets/icons/res/Amazon-EC2_Rescue.svg" alt="">Vòng đời instance: pending → running → stopped → terminated</h2>
+      <p class="lead">Một EC2 instance đi qua nhiều <span class="t" data-vi="Trạng thái máy chủ">instance states</span> từ lúc launch đến khi terminate. Mỗi trạng thái quyết định bạn <b>có bị tính tiền instance hay không</b> – còn EBS volume và Elastic IP thì có thể tính phí bất kể trạng thái.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 780 330" width="780" role="img" aria-label="Sơ đồ chuyển trạng thái của EC2 instance">
+          <defs><marker id="ah8c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <!-- states -->
+          <rect x="20" y="40" width="130" height="54" rx="27" fill="none" stroke="#7D8998" stroke-width="2.5"/>
+          <text x="85" y="66" font-size="14" font-weight="700" text-anchor="middle">pending</text>
+          <text x="85" y="83" font-size="10.5" text-anchor="middle" class="muted">không tính phí</text>
+          <rect x="300" y="40" width="150" height="54" rx="27" fill="none" stroke="#037F0C" stroke-width="3"/>
+          <text x="375" y="66" font-size="14" font-weight="700" text-anchor="middle">running</text>
+          <text x="375" y="83" font-size="10.5" text-anchor="middle" class="muted">TÍNH PHÍ (theo giây)</text>
+          <rect x="300" y="160" width="150" height="54" rx="27" fill="none" stroke="#ED7100" stroke-width="2.5"/>
+          <text x="375" y="186" font-size="14" font-weight="700" text-anchor="middle">stopping</text>
+          <text x="375" y="203" font-size="10.5" text-anchor="middle" class="muted">tính phí chỉ khi hibernate</text>
+          <rect x="20" y="160" width="130" height="54" rx="27" fill="none" stroke="#147EBA" stroke-width="2.5"/>
+          <text x="85" y="186" font-size="14" font-weight="700" text-anchor="middle">stopped</text>
+          <text x="85" y="203" font-size="10.5" text-anchor="middle" class="muted">chỉ trả EBS</text>
+          <rect x="590" y="40" width="170" height="54" rx="27" fill="none" stroke="#D91515" stroke-width="2.5"/>
+          <text x="675" y="66" font-size="14" font-weight="700" text-anchor="middle">shutting-down</text>
+          <text x="675" y="83" font-size="10.5" text-anchor="middle" class="muted">không tính phí</text>
+          <rect x="590" y="160" width="170" height="54" rx="27" fill="none" stroke="#D91515" stroke-width="3"/>
+          <text x="675" y="186" font-size="14" font-weight="700" text-anchor="middle">terminated</text>
+          <text x="675" y="203" font-size="10.5" text-anchor="middle" class="muted">xóa vĩnh viễn</text>
+          <!-- arrows -->
+          <path class="line-o" d="M150 67 L298 67" marker-end="url(#ah8c)"/>
+          <text x="224" y="58" font-size="11.5" font-weight="700" text-anchor="middle">launch / start</text>
+          <path class="line-o" d="M375 94 L375 158" marker-end="url(#ah8c)"/>
+          <text x="384" y="132" font-size="11.5" font-weight="700">stop / hibernate</text>
+          <path class="line-o" d="M298 187 L152 187" marker-end="url(#ah8c)"/>
+          <path class="line-o" d="M85 158 L85 96" marker-end="url(#ah8c)"/>
+          <text x="94" y="132" font-size="11.5" font-weight="700">start</text>
+          <path class="line-o" d="M450 67 L588 67" marker-end="url(#ah8c)"/>
+          <text x="519" y="58" font-size="11.5" font-weight="700" text-anchor="middle">terminate</text>
+          <path class="line-o" d="M675 94 L675 158" marker-end="url(#ah8c)"/>
+          <path class="line-o" d="M85 214 C 85 290, 560 290, 640 216" marker-end="url(#ah8c)"/>
+          <text x="360" y="284" font-size="11.5" font-weight="700" text-anchor="middle">terminate (từ stopped)</text>
+          <path class="line-o" d="M330 40 C 330 4, 420 4, 420 38" marker-end="url(#ah8c)"/>
+          <text x="375" y="16" font-size="11.5" font-weight="700" text-anchor="middle">reboot (vẫn running)</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Các trạng thái của instance và phí. Mỗi lần chuyển <code>stopped → running</code> bắt đầu một chu kỳ tính phí mới với <b>tối thiểu 1 phút</b>; reboot <b>không</b> mở chu kỳ mới. Reserved Instance gắn với instance đã terminate vẫn bị tính tới hết kỳ hạn (Bài 9).</figcaption>
+      </figure>
+
+      <h3>So sánh reboot, stop, hibernate, terminate</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Đặc điểm</th><th>Reboot</th><th>Stop / start<br><span class="muted">(chỉ EBS-backed)</span></th><th>Hibernate<br><span class="muted">(chỉ EBS-backed)</span></th><th>Terminate</th></tr></thead>
+        <tbody>
+          <tr><td>Host vật lý</td><td>Giữ nguyên host</td><td>Thường chuyển sang <b>host mới</b></td><td>Thường chuyển sang host mới</td><td>–</td></tr>
+          <tr><td>Private IPv4</td><td class="yes">Giữ</td><td class="yes">Giữ</td><td class="yes">Giữ</td><td class="no">Mất</td></tr>
+          <tr><td>Public IPv4 (tự cấp)</td><td class="yes">Giữ</td><td class="no">Nhận IP mới</td><td class="no">Nhận IP mới</td><td class="no">Mất</td></tr>
+          <tr><td>Elastic IP</td><td class="yes">Vẫn gắn</td><td class="yes">Vẫn gắn</td><td class="yes">Vẫn gắn</td><td class="no">Bị gỡ (disassociate)</td></tr>
+          <tr><td>IPv6</td><td class="yes">Giữ</td><td class="yes">Giữ</td><td class="yes">Giữ</td><td class="no">Mất</td></tr>
+          <tr><td>Instance store</td><td class="yes">Giữ dữ liệu</td><td class="no">Bị xóa</td><td class="no">Bị xóa</td><td class="no">Bị xóa</td></tr>
+          <tr><td>Root EBS volume</td><td class="yes">Giữ</td><td class="yes">Giữ</td><td class="yes">Giữ</td><td class="no">Mặc định bị xóa</td></tr>
+          <tr><td>RAM</td><td class="no">Bị xóa</td><td class="no">Bị xóa</td><td class="yes">Lưu xuống root EBS</td><td class="no">Bị xóa</td></tr>
+          <tr><td>Tính phí instance</td><td>Không đổi chu kỳ</td><td>Ngừng tính từ <code>stopping</code></td><td>Vẫn tính trong <code>stopping</code>, ngừng khi <code>stopped</code></td><td>Ngừng từ <code>shutting-down</code></td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Các thuộc tính bảo vệ &amp; hành vi khi tắt máy</h3>
+      <ul>
+        <li><b>Termination protection</b> (<code>DisableApiTermination</code>): bật lên thì <b>không terminate được</b> qua console, CLI, API – chống xóa nhầm.</li>
+        <li><span class="t" data-vi="Hành vi khi tắt máy từ bên trong">InstanceInitiatedShutdownBehavior</span>: khi chạy lệnh <code>shutdown</code> trong OS, instance EBS-backed sẽ <b>stop</b> (mặc định) hoặc <b>terminate</b>. Instance có root là instance store thì shutdown trong OS <b>luôn terminate</b>.</li>
+        <li><b>DeleteOnTermination</b> (theo từng EBS volume): mặc định <b>xóa root volume</b> và <b>giữ</b> các volume khác. Muốn giữ root volume sau khi terminate ⇒ đặt cờ này = <code>false</code>.</li>
+        <li>Sau terminate, instance còn hiện trong console một lúc rồi tự biến mất; <b>không kết nối hay khôi phục được</b>.</li>
+        <li>AWS khuyên reboot bằng EC2 (console/API) thay vì lệnh reboot trong OS. Stop/start là cách khắc phục phổ biến khi instance <b>fail status check</b> vì instance thường được dời sang host mới.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – lifecycle</span>
+        <ul>
+          <li>“<i>Public IP changes every time the instance is stopped and started</i>” ⇒ gắn <b>Elastic IP</b> (Bài 10).</li>
+          <li>“<i>Data on instance store lost after stopping</i>” ⇒ hành vi đúng thiết kế; dữ liệu cần bền ⇒ EBS/EFS/S3.</li>
+          <li>“<i>Protect production instances from accidental termination</i>” ⇒ <b>termination protection</b> (+ IAM/SCP chặn <code>ec2:TerminateInstances</code>). “<i>Keep the root volume after termination</i>” ⇒ <code>DeleteOnTermination=false</code>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: HIBERNATE ===================== -->
+      <h2 id="hibernate"><img src="../assets/icons/res/Amazon-Elastic-Block-Store_Volume-gp3.svg" alt="">EC2 Hibernate – giữ nguyên RAM qua lần khởi động</h2>
+      <p class="lead">Khi <span class="t" data-vi="Ngủ đông">hibernate</span>, EC2 báo hệ điều hành thực hiện <b>suspend-to-disk</b>: nội dung <b>RAM được lưu xuống root EBS volume</b>. Khi start lại: root volume về đúng trạng thái trước, RAM được nạp lại, <b>các tiến trình đang chạy tiếp tục</b>, data volume được gắn lại và instance <b>giữ nguyên instance ID</b>.</p>
+
+      <p>Ứng dụng nào mất nhiều thời gian bootstrap và “làm nóng” bộ nhớ (nạp cache lớn, JVM warm-up…) thì dùng hibernate để <span class="t" data-vi="Làm nóng trước">pre-warm</span>: launch có bật hibernation → đưa về trạng thái mong muốn → hibernate → khi cần chỉ việc start là có ngay trạng thái đó.</p>
+
+      <div class="stats">
+        <div class="stat"><b>&lt; 150 GiB</b><span>RAM tối đa của instance Linux để hibernate</span></div>
+        <div class="stat"><b>≤ 16 GiB</b><span>RAM tối đa của instance Windows</span></div>
+        <div class="stat"><b>Encrypted</b><span>root EBS volume bắt buộc mã hóa</span></div>
+        <div class="stat"><b>Lúc launch</b><span>chỉ bật được khi launch – không bật cho instance có sẵn</span></div>
+      </div>
+
+      <h3>Điều kiện tiên quyết (Prerequisites)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu</th><th>Chi tiết theo tài liệu</th></tr></thead>
+        <tbody>
+          <tr><td>Purchasing option</td><td><b>On-Demand</b> hoặc <b>Spot</b> (Spot request phải là <code>persistent</code>, không dùng launch group).</td></tr>
+          <tr><td>Thời điểm bật</td><td>Chỉ khi <b>launch</b>; không bật được cho instance đang chạy hay đang stop.</td></tr>
+          <tr><td>AMI</td><td>HVM AMI hỗ trợ hibernation: Amazon Linux 2023/2, Ubuntu 20.04/22.04, RHEL 8/9 (cấu hình thêm), Windows Server 2012–2022…</td></tr>
+          <tr><td>Instance family</td><td>Nhiều family General purpose, Compute, Memory, Storage optimized (M5, C5, R5, T3, M7g…). <b>Không hỗ trợ bare metal</b>.</td></tr>
+          <tr><td>RAM</td><td>Linux <b>&lt; 150 GiB</b>; Windows <b>≤ 16 GiB</b> (T3/T3a Windows nên ≥ 1 GiB).</td></tr>
+          <tr><td>Root volume</td><td>Phải là <b>EBS</b> (không phải instance store), <b>đủ lớn để chứa RAM</b> + OS/ứng dụng (dung lượng cho RAM được cấp sẵn lúc launch), và <b>được mã hóa</b>.</td></tr>
+          <tr><td>Loại EBS</td><td><b>gp2, gp3, io1, io2</b>.</td></tr>
+          <tr><td>Region</td><td>Mọi AWS Region.</td></tr>
+        </tbody>
+      </table></div>
+
+      <p>Ba cách đảm bảo root volume được mã hóa: bật <b>EBS encryption by default</b>; dùng <b>single-step encryption</b> (launch instance mã hóa từ AMI không mã hóa); hoặc dùng <b>AMI đã mã hóa</b> (copy AMI và chọn encrypt). Lưu ý: EC2 chỉ kiểm tra điều kiện khi bạn hibernate <b>qua EC2</b> (console/CLI/API); nếu tự suspend-to-disk trong OS thì việc mã hóa thuộc trách nhiệm của bạn (shared responsibility – Bài 3).</p>
+
+      <p><b>Chi phí:</b> không tính phí instance khi đã ở trạng thái <code>stopped</code> (hibernated) và không tính phí truyền RAM xuống EBS; nhưng <b>có tính</b> trong lúc <code>stopping</code> và tính phí lưu trữ mọi EBS volume, kể cả phần chứa RAM.</p>
+
+      <div class="callout warn"><span class="ttl">Bẫy: hibernate ≠ stop ≠ reboot</span>
+        <ul>
+          <li>Đề hỏi “<i>preserve in-memory state / resume running processes quickly</i>” ⇒ <b>hibernate</b>. Stop/start mất RAM; reboot cũng mất RAM (chỉ giữ instance store).</li>
+          <li>Instance <b>root instance store</b> không hibernate được; instance có RAM <b>256 GiB</b> (vd r5.8xlarge) cũng <b>không</b> hibernate được (vượt 150 GiB).</li>
+          <li>Quên mã hóa root volume, hoặc quên bật hibernation lúc launch ⇒ phải <b>launch instance mới</b>.</li>
+        </ul></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – hibernate</span>
+        <ul>
+          <li>“<i>Application takes a long time to load data into memory at startup; stop instances at night to save cost and resume quickly in the morning</i>” ⇒ <b>EC2 hibernation</b> (encrypted EBS root đủ lớn, bật lúc launch).</li>
+          <li>“<i>Long-running process on an instance must survive a stop</i>” ⇒ hibernate giữ tiến trình; hoặc thiết kế lại ứng dụng stateless.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải nhớ</span>
+        <ul>
+          <li><b>EC2</b> = instance + instance type + AMI + EBS/instance store + key pair + security group. On-Demand tính theo giây, tối thiểu 60 giây; chỉ tính phí instance khi <code>running</code> (và <code>stopping</code> nếu hibernate).</li>
+          <li>Tên type: <b>series + generation + options . size</b> (<code>c7gn.xlarge</code>). M/T = general, C = compute, R/X/U/z = memory, I/D = storage, P/G/Inf/Trn/F = accelerated, Hpc = HPC; <code>g</code> = Graviton, <code>a</code> = AMD, <code>d</code> = instance store, <code>n</code> = network.</li>
+          <li><b>Dòng T</b>: CPU credit (1 vCPU × 100% × 1 phút), tích lũy tối đa 24 giờ; <b>standard</b> hết credit thì về baseline (mặc định T2), <b>unlimited</b> burst tiếp và trả phí surplus (mặc định T3/T3a/T4g/T8i). T2 mất credit khi stop, T3+ giữ 7 ngày.</li>
+          <li><b>AMI</b> gắn với Region, OS, architecture, root volume type, virtualization. Copy sang Region khác (miễn phí, có thể mã hóa/đổi key); share với account/org/OU; AMI mã hóa bằng <code>aws/ebs</code> không share được ⇒ re-encrypt bằng customer managed key. Deprecate (ẩn) · disable (chặn launch) · deregister (xóa, snapshot vẫn còn). Block public access for AMIs bật mặc định cho account mới.</li>
+          <li><b>EBS-backed AMI</b>: boot &lt; 1 phút, stop được; <b>S3-backed</b>: boot &lt; 5 phút, không stop được, end of life. Create image mặc định reboot; no-reboot không đảm bảo file system integrity.</li>
+          <li><b>User data</b>: ≤ 16 KB, base64, chạy bằng root, <b>chỉ lần boot đầu</b>, sửa khi stopped, không nằm trong AMI, <b>không chứa bí mật</b>. Boot chậm ⇒ golden AMI (EC2 Image Builder).</li>
+          <li><b>IMDS</b> tại 169.254.169.254 / [fd00:ec2::254]. <b>IMDSv2</b>: PUT lấy token (1 giây – 6 giờ), GET kèm token, hop limit mặc định 1 (container: 2), chặn X-Forwarded-For ⇒ chống SSRF. Ép bằng <code>HttpTokens=required</code>, account default theo Region, AMI <code>imds-support v2.0</code>, IAM/SCP condition key.</li>
+          <li><b>Reboot</b> giữ host, IP, instance store; <b>stop/start</b> đổi host, đổi public IP, mất instance store; <b>hibernate</b> lưu RAM vào root EBS mã hóa (Linux &lt; 150 GiB RAM, Windows ≤ 16 GiB, bật lúc launch, On-Demand/Spot); <b>terminate</b> xóa root volume mặc định, gỡ Elastic IP.</li>
+        </ul></div>
+
+      <!-- ===================== GLOSSARY ===================== -->
+      <h2 id="glossary">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Amazon EC2 (Elastic Compute Cloud)</dt><dd><b>Đám mây điện toán co giãn</b> – dịch vụ máy chủ ảo theo nhu cầu.</dd></div>
+        <div><dt>Instance</dt><dd><b>Máy chủ ảo</b> trên AWS Cloud.</dd></div>
+        <div><dt>Instance type / Instance family / Instance size</dt><dd><b>Loại / họ / kích cỡ máy chủ</b> – quyết định phần cứng (vCPU, RAM, network, storage).</dd></div>
+        <div><dt>Series / Generation / Options</dt><dd><b>Chuỗi / thế hệ / tùy chọn</b> trong tên instance type (c · 7 · gn).</dd></div>
+        <div><dt>General purpose / Compute / Memory / Storage optimized / Accelerated computing</dt><dd><b>Đa dụng / tối ưu tính toán / tối ưu bộ nhớ / tối ưu lưu trữ / tăng tốc phần cứng</b>.</dd></div>
+        <div><dt>Bare metal (metal)</dt><dd><b>Máy chủ vật lý không qua hypervisor</b> – size <code>metal</code>.</dd></div>
+        <div><dt>AWS Graviton / Trainium / Inferentia</dt><dd><b>Chip Arm do AWS thiết kế / chip huấn luyện ML / chip suy luận ML</b>.</dd></div>
+        <div><dt>Nitro / Xen hypervisor</dt><dd><b>Trình ảo hóa thế hệ mới / cũ</b> của EC2.</dd></div>
+        <div><dt>HVM / PV (virtualization type)</dt><dd><b>Máy ảo phần cứng / ảo hóa song song</b> – current generation chỉ hỗ trợ HVM.</dd></div>
+        <div><dt>Burstable performance instance</dt><dd><b>Máy chủ hiệu năng bùng nổ</b> – dòng T, dùng CPU credit.</dd></div>
+        <div><dt>CPU credit / Baseline utilization</dt><dd><b>Tín dụng CPU / mức sử dụng nền</b> – 1 credit = 1 vCPU × 100% × 1 phút.</dd></div>
+        <div><dt>Accrued / Launch / Surplus credits</dt><dd><b>Credit tích lũy / credit khởi động (T2 standard) / credit vượt mức (unlimited, tính phí)</b>.</dd></div>
+        <div><dt>Standard mode / Unlimited mode</dt><dd><b>Chế độ tiêu chuẩn / không giới hạn</b> của burstable instance.</dd></div>
+        <div><dt>Amazon Machine Image (AMI)</dt><dd><b>Ảnh máy</b> – template phần mềm để boot instance.</dd></div>
+        <div><dt>Block device mapping</dt><dd><b>Bản đồ thiết bị khối</b> – danh sách volume gắn vào instance khi launch.</dd></div>
+        <div><dt>Launch permission (public / explicit / implicit)</dt><dd><b>Quyền khởi chạy AMI</b>.</dd></div>
+        <div><dt>EBS-backed AMI / Amazon S3-backed (instance store-backed) AMI</dt><dd><b>AMI có root là EBS / root là instance store</b>.</dd></div>
+        <div><dt>Golden AMI</dt><dd><b>AMI chuẩn đã cài sẵn</b> phần mềm, patch, cấu hình của tổ chức.</dd></div>
+        <div><dt>Deprecate / Disable / Deregister AMI</dt><dd><b>Đánh dấu lỗi thời / tạm vô hiệu hóa / hủy đăng ký (xóa)</b> AMI.</dd></div>
+        <div><dt>Recycle Bin</dt><dd><b>Thùng rác</b> – khôi phục AMI/snapshot đã xóa trong thời gian giữ.</dd></div>
+        <div><dt>Block public access for AMIs</dt><dd><b>Chặn chia sẻ công khai AMI</b> – cấp account, từng Region.</dd></div>
+        <div><dt>Verified provider</dt><dd><b>Nhà cung cấp đã xác minh</b> – AMI công khai của Amazon/đối tác.</dd></div>
+        <div><dt>EC2 Image Builder</dt><dd><b>Dịch vụ tự động dựng image</b> – tạo, patch, phân phối AMI.</dd></div>
+        <div><dt>User data</dt><dd><b>Dữ liệu người dùng</b> – script/cấu hình truyền vào lúc launch.</dd></div>
+        <div><dt>Bootstrapping</dt><dd><b>Khởi tạo tự động</b> instance lúc khởi động.</dd></div>
+        <div><dt>cloud-init / <code>#cloud-config</code></dt><dd><b>Gói khởi tạo của Linux</b> xử lý user data / dòng đánh dấu chỉ thị cloud-init.</dd></div>
+        <div><dt>EC2Launch v2</dt><dd><b>Agent khởi tạo của Windows</b> – xử lý <code>&lt;powershell&gt;</code>, <code>&lt;persist&gt;</code>.</dd></div>
+        <div><dt>Instance metadata / Dynamic data</dt><dd><b>Siêu dữ liệu của instance / dữ liệu động</b> sinh lúc launch.</dd></div>
+        <div><dt>Instance Metadata Service (IMDS)</dt><dd><b>Dịch vụ siêu dữ liệu</b> chạy cục bộ trên instance.</dd></div>
+        <div><dt>IMDSv1 / IMDSv2</dt><dd><b>Kiểu request/response / kiểu phiên có token</b>.</dd></div>
+        <div><dt>Session token / Hop limit</dt><dd><b>Token phiên / giới hạn số bước mạng</b> của phản hồi PUT (1–64, mặc định 1).</dd></div>
+        <div><dt>Link-local address</dt><dd><b>Địa chỉ nội bộ liên kết</b> – chỉ dùng được từ instance (169.254.x.x).</dd></div>
+        <div><dt>SSRF (Server-side request forgery)</dt><dd><b>Giả mạo yêu cầu phía máy chủ</b> – lỗ hổng IMDSv2 giúp giảm thiểu.</dd></div>
+        <div><dt>Instance identity document</dt><dd><b>Tài liệu định danh instance</b> có chữ ký để bên thứ ba xác minh.</dd></div>
+        <div><dt>Instance state (pending / running / stopping / stopped / shutting-down / terminated)</dt><dd><b>Trạng thái của instance</b>.</dd></div>
+        <div><dt>Termination protection</dt><dd><b>Bảo vệ chống xóa</b> instance.</dd></div>
+        <div><dt>InstanceInitiatedShutdownBehavior</dt><dd><b>Hành vi khi tắt máy từ trong OS</b> – stop (mặc định) hoặc terminate.</dd></div>
+        <div><dt>DeleteOnTermination</dt><dd><b>Xóa volume khi terminate</b> – mặc định true với root volume.</dd></div>
+        <div><dt>Hibernate / Suspend-to-disk</dt><dd><b>Ngủ đông</b> – lưu RAM xuống root EBS volume.</dd></div>
+        <div><dt>Pre-warm</dt><dd><b>Làm nóng trước</b> – đưa instance về trạng thái sẵn sàng rồi hibernate.</dd></div>
+      </dl>
+
+      <!-- ===================== CÂU HỎI ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company is migrating a self-managed in-memory caching cluster and a real-time analytics engine to Amazon EC2. Both applications need a very large amount of RAM relative to vCPU and must keep their working datasets fully in memory. Which instance family is the MOST appropriate?</div>
+          <ol class="opts">
+            <li data-k="A">C7g (compute optimized)</li>
+            <li data-k="B">R7i (memory optimized)</li>
+            <li data-k="C">I4i (storage optimized)</li>
+            <li data-k="D">T3 (burstable general purpose)</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Memory optimized (R, X, U) có nhiều RAM trên mỗi vCPU, phù hợp in-memory cache/database và phân tích big data thời gian thực. <b>A sai</b>: C tối ưu tỉ lệ vCPU cao – dành cho batch, transcoding, HPC. <b>C sai</b>: I tối ưu instance store NVMe IOPS cao cho NoSQL/data warehouse, không phải RAM. <b>D sai</b>: T là burstable, RAM nhỏ và CPU dựa vào credit – không hợp workload nặng liên tục.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang di chuyển một cụm caching in-memory tự quản lý và một engine phân tích thời gian thực lên Amazon EC2. Cả hai ứng dụng cần lượng RAM rất lớn so với số vCPU và phải giữ toàn bộ tập dữ liệu làm việc trong bộ nhớ. Instance family nào là MOST appropriate (phù hợp nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">C7g (compute optimized – tối ưu tính toán)</span><span class="why">Sai: dòng C có tỉ lệ vCPU cao so với RAM, dành cho batch, transcoding, HPC – không đáp ứng nhu cầu RAM lớn.</span></li>
+              <li data-k="B"><span class="tv">R7i (memory optimized – tối ưu bộ nhớ)</span><span class="why">Đúng: dòng memory optimized (R, X, U) có nhiều RAM trên mỗi vCPU, phù hợp in-memory cache và phân tích dữ liệu thời gian thực trong bộ nhớ.</span></li>
+              <li data-k="C"><span class="tv">I4i (storage optimized – tối ưu lưu trữ)</span><span class="why">Sai: dòng I tối ưu instance store NVMe với IOPS cao cho NoSQL/data warehouse, không phải tối ưu RAM.</span></li>
+              <li data-k="D"><span class="tv">T3 (burstable general purpose – đa dụng có burst)</span><span class="why">Sai: dòng T là burstable, RAM nhỏ và CPU phụ thuộc credit – không hợp workload nặng, liên tục cần nhiều RAM.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An application runs on Amazon EC2 instances in an Auto Scaling group. Each new instance runs a user data script that installs packages and application code, which takes about 15 minutes. During traffic spikes, new instances are not ready in time. What should a solutions architect do to reduce the time it takes for new instances to start serving traffic?</div>
+          <ol class="opts">
+            <li data-k="A">Increase the size of the user data script limit to 64 KB.</li>
+            <li data-k="B">Move the user data script to the instance metadata so that it runs faster.</li>
+            <li data-k="C">Use a larger instance type so that the user data script runs in parallel on more vCPUs.</li>
+            <li data-k="D">Create a custom AMI that has the packages and application code preinstalled, and keep only dynamic configuration in user data.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Golden AMI</b> cài sẵn phần mềm nên instance boot gần như sẵn sàng ngay; user data chỉ giữ phần cấu hình động. <b>A sai</b>: user data giới hạn 16 KB và kích thước không phải nguyên nhân chậm. <b>B sai</b>: user data vốn được đọc qua IMDS; không có cách “chạy nhanh hơn” như vậy. <b>C sai</b>: thời gian chủ yếu là tải và cài gói, instance lớn hơn tốn tiền mà không giải quyết gốc rễ.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng chạy trên các Amazon EC2 instance trong một Auto Scaling group. Mỗi instance mới chạy một user data script cài đặt các gói phần mềm và code ứng dụng, mất khoảng 15 phút. Trong các đợt tăng đột biến lưu lượng, instance mới không sẵn sàng kịp. Solutions architect nên làm gì để giảm thời gian cần thiết để instance mới bắt đầu phục vụ lưu lượng?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tăng giới hạn kích thước user data script lên 64 KB.</span><span class="why">Sai: user data bị giới hạn 16 KB và không tăng được; hơn nữa kích thước script không phải nguyên nhân gây chậm.</span></li>
+              <li data-k="B"><span class="tv">Chuyển user data script vào instance metadata để nó chạy nhanh hơn.</span><span class="why">Sai: user data vốn được đọc qua IMDS; không có cách nào làm script "chạy nhanh hơn" như vậy, thời gian cài gói vẫn giữ nguyên.</span></li>
+              <li data-k="C"><span class="tv">Dùng instance type lớn hơn để user data script chạy song song trên nhiều vCPU hơn.</span><span class="why">Sai: thời gian chủ yếu là tải và cài gói; instance lớn hơn tốn tiền mà không giải quyết gốc rễ.</span></li>
+              <li data-k="D"><span class="tv">Tạo một custom AMI có cài sẵn các gói phần mềm và code ứng dụng, và chỉ giữ phần cấu hình động trong user data.</span><span class="why">Đúng: golden AMI đã cài sẵn phần mềm nên instance boot lên gần như sẵn sàng ngay, giảm mạnh thời gian phục vụ lưu lượng.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A security audit found that a web application running on Amazon EC2 has a server-side request forgery (SSRF) vulnerability. The security team is concerned that attackers could use the vulnerability to retrieve the IAM role credentials of the instance from the instance metadata. Which action provides the MOST effective protection for the instance metadata?</div>
+          <ol class="opts">
+            <li data-k="A">Modify the instance metadata options to require IMDSv2 (HttpTokens set to required) and keep the PUT response hop limit at 1.</li>
+            <li data-k="B">Store the IAM role credentials in the user data instead of the instance metadata.</li>
+            <li data-k="C">Add a security group rule that denies outbound traffic to 169.254.169.254.</li>
+            <li data-k="D">Change the IMDS endpoint to the IPv6 address so that attackers cannot reach it.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> IMDSv2 bắt buộc session token lấy bằng <code>PUT</code> có header riêng, từ chối PUT có <code>X-Forwarded-For</code>, và hop limit 1 giữ token trong instance – chặn hầu hết kiểu tấn công SSRF/open proxy. <b>B sai</b>: user data không được mã hóa/xác thực, và còn tệ hơn vì là credentials dài hạn. <b>C sai</b>: security group không có rule deny, và IMDS là link-local không đi qua security group. <b>D sai</b>: IPv6 endpoint chỉ là địa chỉ khác, vẫn đọc được bằng IMDSv1 nếu không bắt buộc token.</div>
+          <div class="trans">
+            <div class="tq">Một cuộc kiểm toán bảo mật phát hiện một ứng dụng web chạy trên Amazon EC2 có lỗ hổng server-side request forgery (SSRF). Đội bảo mật lo ngại kẻ tấn công có thể lợi dụng lỗ hổng để lấy IAM role credentials của instance từ instance metadata. Hành động nào bảo vệ instance metadata MOST effective (hiệu quả nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Sửa instance metadata options để bắt buộc IMDSv2 (đặt HttpTokens là required) và giữ PUT response hop limit ở mức 1.</span><span class="why">Đúng: IMDSv2 yêu cầu session token lấy bằng PUT kèm header riêng, từ chối request có X-Forwarded-For, và hop limit 1 giữ token trong instance – chặn hầu hết kiểu tấn công SSRF.</span></li>
+              <li data-k="B"><span class="tv">Lưu IAM role credentials trong user data thay vì instance metadata.</span><span class="why">Sai: user data không được mã hóa hay xác thực và cũng đọc được qua IMDS; còn tệ hơn vì phải dùng credentials dài hạn.</span></li>
+              <li data-k="C"><span class="tv">Thêm một rule security group từ chối lưu lượng outbound tới 169.254.169.254.</span><span class="why">Sai: security group không có rule deny, và lưu lượng tới IMDS (link-local) không đi qua security group.</span></li>
+              <li data-k="D"><span class="tv">Đổi IMDS endpoint sang địa chỉ IPv6 để kẻ tấn công không truy cập được.</span><span class="why">Sai: IPv6 endpoint chỉ là một địa chỉ khác, vẫn đọc được bằng IMDSv1 nếu không bắt buộc token.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs a Java application on a Linux EC2 instance with 64 GiB of RAM. After each start, the application spends 30 minutes loading reference data into memory before it can serve requests. The company stops the instance every night to save costs and wants the application to be ready immediately each morning. What should the solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Reboot the instance each morning instead of stopping it at night.</li>
+            <li data-k="B">Store the reference data on an instance store volume so that it is reloaded faster after a stop.</li>
+            <li data-k="C">Launch a new instance with hibernation enabled and an encrypted EBS root volume large enough to hold the RAM, then hibernate it at night instead of stopping it.</li>
+            <li data-k="D">Enable hibernation on the existing instance and hibernate it at night.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Hibernate lưu RAM xuống root EBS và khôi phục tiến trình khi start; điều kiện: bật lúc <b>launch</b>, root EBS <b>mã hóa</b> và đủ chứa RAM, RAM Linux &lt; 150 GiB (64 GiB thỏa). Không tính phí instance khi đã hibernated. <b>A sai</b>: nếu không stop thì vẫn trả phí cả đêm; reboot cũng xóa RAM. <b>B sai</b>: instance store bị xóa khi stop. <b>D sai</b>: không thể bật hibernation cho instance đã tồn tại.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một ứng dụng Java trên một Linux EC2 instance có 64 GiB RAM. Sau mỗi lần khởi động, ứng dụng mất 30 phút nạp dữ liệu tham chiếu vào bộ nhớ trước khi có thể phục vụ request. Công ty stop instance mỗi đêm để tiết kiệm chi phí và muốn ứng dụng sẵn sàng ngay lập tức mỗi sáng. Solutions architect nên đề xuất gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Reboot instance mỗi sáng thay vì stop nó vào ban đêm.</span><span class="why">Sai: không stop thì vẫn trả phí instance cả đêm (trái mục tiêu tiết kiệm), và reboot cũng xóa nội dung RAM.</span></li>
+              <li data-k="B"><span class="tv">Lưu dữ liệu tham chiếu trên một instance store volume để nó được nạp lại nhanh hơn sau khi stop.</span><span class="why">Sai: dữ liệu trên instance store bị mất khi instance stop.</span></li>
+              <li data-k="C"><span class="tv">Khởi chạy một instance mới có bật hibernation và một EBS root volume được mã hóa đủ lớn để chứa RAM, rồi hibernate nó vào ban đêm thay vì stop.</span><span class="why">Đúng: hibernate lưu RAM xuống root EBS và khôi phục tiến trình khi start; đáp ứng đủ điều kiện (bật lúc launch, root EBS mã hóa, RAM 64 GiB &lt; 150 GiB) và không tính phí instance khi hibernated.</span></li>
+              <li data-k="D"><span class="tv">Bật hibernation trên instance hiện có và hibernate nó vào ban đêm.</span><span class="why">Sai: hibernation chỉ bật được lúc launch, không thể bật cho instance đã tồn tại.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">Which TWO requirements must be met to hibernate an Amazon EC2 Linux instance? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">The root volume must be an encrypted Amazon EBS volume.</li>
+            <li data-k="B">The instance must be a bare metal instance.</li>
+            <li data-k="C">Hibernation must be enabled when the instance is launched.</li>
+            <li data-k="D">The root volume must be an instance store volume.</li>
+            <li data-k="E">The instance must be purchased as a Dedicated Host.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> Tài liệu yêu cầu root volume là EBS <b>được mã hóa</b> (gp2/gp3/io1/io2) và hibernation chỉ bật được <b>lúc launch</b>. <b>B sai</b>: bare metal <b>không</b> hỗ trợ hibernation. <b>D sai</b>: root phải là EBS, không phải instance store. <b>E sai</b>: hibernation hỗ trợ On-Demand và Spot, không phải điều kiện về Dedicated Host.</div>
+          <div class="trans">
+            <div class="tq">HAI yêu cầu nào phải được đáp ứng để hibernate một Amazon EC2 Linux instance? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Root volume phải là một Amazon EBS volume được mã hóa.</span><span class="why">Đúng: nội dung RAM được ghi xuống root EBS volume, nên root volume phải là EBS và phải được mã hóa.</span></li>
+              <li data-k="B"><span class="tv">Instance phải là bare metal instance.</span><span class="why">Sai: bare metal instance không hỗ trợ hibernation.</span></li>
+              <li data-k="C"><span class="tv">Hibernation phải được bật khi khởi chạy (launch) instance.</span><span class="why">Đúng: hibernation chỉ bật được lúc launch, không bật được sau đó.</span></li>
+              <li data-k="D"><span class="tv">Root volume phải là instance store volume.</span><span class="why">Sai: root phải là EBS; instance store mất dữ liệu khi stop nên không chứa được RAM đã lưu.</span></li>
+              <li data-k="E"><span class="tv">Instance phải được mua dưới dạng Dedicated Host.</span><span class="why">Sai: hibernation hỗ trợ On-Demand và Spot; Dedicated Host không phải là điều kiện.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company created a custom AMI in Account A. The AMI's EBS snapshots are encrypted with the AWS managed key (aws/ebs). A development team in Account B must launch instances from this AMI. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Share the AMI with Account B and share the aws/ebs key with Account B.</li>
+            <li data-k="B">Copy the AMI in Account A and re-encrypt the snapshots with a customer managed KMS key. Update the key policy to allow Account B, and share the new AMI with Account B.</li>
+            <li data-k="C">Make the AMI public so that Account B can launch it.</li>
+            <li data-k="D">Share only the EBS snapshots with Account B. Account B can launch instances directly from the snapshots.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Không thể chia sẻ AMI có snapshot mã hóa bằng <b>AWS managed key</b>; phải copy và re-encrypt bằng <b>customer managed key</b>, cho phép account đích dùng key (key policy/grant), rồi thêm launch permission. <b>A sai</b>: key policy của AWS managed key không chỉnh được để chia sẻ. <b>C sai</b>: AMI mã hóa không public được, và public là rủi ro bảo mật (block public access thường đang bật). <b>D sai</b>: không launch instance trực tiếp từ snapshot; cần AMI, và snapshot mã hóa bằng aws/ebs cũng không share được.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đã tạo một custom AMI trong Account A. Các EBS snapshot của AMI được mã hóa bằng AWS managed key (aws/ebs). Một đội phát triển trong Account B phải khởi chạy instance từ AMI này. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Chia sẻ AMI với Account B và chia sẻ key aws/ebs với Account B.</span><span class="why">Sai: không thể sửa key policy của AWS managed key để chia sẻ cho account khác.</span></li>
+              <li data-k="B"><span class="tv">Copy AMI trong Account A và mã hóa lại các snapshot bằng một customer managed KMS key. Cập nhật key policy để cho phép Account B, và chia sẻ AMI mới với Account B.</span><span class="why">Đúng: AMI mã hóa bằng AWS managed key không chia sẻ được; phải re-encrypt bằng customer managed key, cho Account B quyền dùng key rồi cấp launch permission.</span></li>
+              <li data-k="C"><span class="tv">Đặt AMI ở chế độ public để Account B có thể khởi chạy nó.</span><span class="why">Sai: AMI có snapshot mã hóa không thể public, và public AMI là rủi ro bảo mật.</span></li>
+              <li data-k="D"><span class="tv">Chỉ chia sẻ các EBS snapshot với Account B. Account B có thể khởi chạy instance trực tiếp từ snapshot.</span><span class="why">Sai: không thể launch instance trực tiếp từ snapshot (cần AMI), và snapshot mã hóa bằng aws/ebs cũng không chia sẻ được.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company has a hardened AMI in the us-east-1 Region. As part of a disaster recovery plan, the company must be able to launch identical instances in the eu-west-1 Region. What is the MOST operationally efficient way to meet this requirement?</div>
+          <ol class="opts">
+            <li data-k="A">Use the same AMI ID in eu-west-1 because AMI IDs are global.</li>
+            <li data-k="B">Share the AMI with the eu-west-1 Region by adding a launch permission.</li>
+            <li data-k="C">Launch an instance in eu-west-1 from a base AMI and rerun all hardening steps manually.</li>
+            <li data-k="D">Copy the AMI from us-east-1 to eu-west-1 and launch instances from the new AMI ID in eu-west-1.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> AMI là tài nguyên <b>Region</b>; <code>CopyImage</code> tạo bản sao ở Region đích (AMI ID mới), có thể tự động hóa bằng Data Lifecycle Manager hoặc EC2 Image Builder. <b>A sai</b>: AMI ID chỉ có nghĩa trong Region chứa nó. <b>B sai</b>: launch permission cấp cho account/org/OU, không cấp cho Region. <b>C sai</b>: làm thủ công tốn công, dễ sai lệch cấu hình.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có một AMI đã được hardening (gia cố bảo mật) ở Region us-east-1. Trong kế hoạch khôi phục thảm họa (disaster recovery), công ty phải có khả năng khởi chạy các instance giống hệt ở Region eu-west-1. Cách MOST operationally efficient (hiệu quả vận hành nhất) để đáp ứng yêu cầu này là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng cùng AMI ID ở eu-west-1 vì AMI ID là global.</span><span class="why">Sai: AMI là tài nguyên theo Region; AMI ID chỉ có nghĩa trong Region chứa nó.</span></li>
+              <li data-k="B"><span class="tv">Chia sẻ AMI với Region eu-west-1 bằng cách thêm launch permission.</span><span class="why">Sai: launch permission cấp cho account, organization hoặc OU, không cấp cho Region.</span></li>
+              <li data-k="C"><span class="tv">Khởi chạy một instance ở eu-west-1 từ một AMI cơ bản và chạy lại thủ công toàn bộ các bước hardening.</span><span class="why">Sai: làm thủ công tốn công và dễ sai lệch cấu hình, không đảm bảo instance giống hệt.</span></li>
+              <li data-k="D"><span class="tv">Copy AMI từ us-east-1 sang eu-west-1 và khởi chạy instance từ AMI ID mới ở eu-west-1.</span><span class="why">Đúng: CopyImage tạo bản sao AMI ở Region đích (AMI ID mới), có thể tự động hóa – đơn giản và đảm bảo instance giống hệt.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A small internal web application runs on a t2.micro instance. Users report that the application is fast in the morning but becomes very slow after a few hours of heavy use. Amazon CloudWatch shows that CPUCreditBalance drops to zero and CPU utilization is capped at a low level. The company wants to keep using the same instance with minimal changes. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Stop and start the instance to reset the CPU credit balance.</li>
+            <li data-k="B">Attach an additional EBS volume to increase CPU credits.</li>
+            <li data-k="C">Change the credit specification of the instance to unlimited mode.</li>
+            <li data-k="D">Enable hibernation so that the instance keeps its credits.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> T2 mặc định <b>standard mode</b>: hết credit thì CPU tụt về baseline. <b>Unlimited mode</b> cho phép burst tiếp bằng surplus credits (trả phí thêm nếu trung bình 24 giờ vượt baseline). Nếu CPU cao liên tục, nên cân nhắc đổi sang M/C. <b>A sai</b>: T2 <b>mất hết</b> credit tích lũy khi stop – không “nạp lại”. <b>B sai</b>: EBS không liên quan tới CPU credit. <b>D sai</b>: không thể bật hibernation cho instance có sẵn và nó không tạo thêm credit.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng web nội bộ nhỏ chạy trên một instance t2.micro. Người dùng phản ánh ứng dụng chạy nhanh vào buổi sáng nhưng trở nên rất chậm sau vài giờ sử dụng nhiều. Amazon CloudWatch cho thấy CPUCreditBalance giảm về 0 và mức sử dụng CPU bị giới hạn ở mức thấp. Công ty muốn tiếp tục dùng cùng instance với thay đổi tối thiểu. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Stop rồi start instance để đặt lại số dư CPU credit.</span><span class="why">Sai: T2 mất toàn bộ credit tích lũy khi stop, không được "nạp lại" credit.</span></li>
+              <li data-k="B"><span class="tv">Gắn thêm một EBS volume để tăng CPU credit.</span><span class="why">Sai: EBS volume không liên quan gì tới CPU credit.</span></li>
+              <li data-k="C"><span class="tv">Đổi credit specification của instance sang unlimited mode.</span><span class="why">Đúng: ở unlimited mode, instance có thể tiếp tục burst khi hết credit (trả thêm phí nếu vượt baseline), giữ nguyên instance với thay đổi tối thiểu.</span></li>
+              <li data-k="D"><span class="tv">Bật hibernation để instance giữ lại credit.</span><span class="why">Sai: không thể bật hibernation cho instance có sẵn, và hibernation không tạo thêm credit.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">Which TWO statements about Amazon EC2 user data on Linux instances are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">By default, user data scripts run every time the instance is rebooted.</li>
+            <li data-k="B">User data scripts run as the root user, so the sudo command is not required.</li>
+            <li data-k="C">User data can be modified while the instance is running.</li>
+            <li data-k="D">User data is encrypted by default, so it is a secure place to store database passwords.</li>
+            <li data-k="E">User data is limited to 16 KB in raw form before it is base64-encoded.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Script user data chạy bằng <b>root</b> và giới hạn <b>16 KB</b> trước khi base64. <b>A sai</b>: mặc định chỉ chạy <b>ở lần boot đầu tiên</b>. <b>C sai</b>: chỉ sửa được khi instance <b>stopped</b>. <b>D sai</b>: tài liệu cảnh báo user data/metadata <b>không được bảo vệ bằng xác thực hay mã hóa</b> – không lưu mật khẩu; dùng Secrets Manager/Parameter Store.</div>
+          <div class="trans">
+            <div class="tq">HAI phát biểu nào về Amazon EC2 user data trên Linux instance là đúng? (Select TWO – chọn HAI.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Theo mặc định, user data script chạy mỗi lần instance được reboot.</span><span class="why">Sai: theo mặc định user data script chỉ chạy ở lần boot đầu tiên.</span></li>
+              <li data-k="B"><span class="tv">User data script chạy với quyền root user, nên không cần lệnh sudo.</span><span class="why">Đúng: script user data được thực thi bằng root nên không cần sudo.</span></li>
+              <li data-k="C"><span class="tv">User data có thể được sửa khi instance đang chạy.</span><span class="why">Sai: chỉ sửa được user data khi instance ở trạng thái stopped.</span></li>
+              <li data-k="D"><span class="tv">User data được mã hóa theo mặc định, nên là nơi an toàn để lưu mật khẩu cơ sở dữ liệu.</span><span class="why">Sai: user data không được bảo vệ bằng xác thực hay mã hóa; nên lưu mật khẩu trong Secrets Manager hoặc Parameter Store.</span></li>
+              <li data-k="E"><span class="tv">User data bị giới hạn 16 KB ở dạng thô, trước khi được mã hóa base64.</span><span class="why">Đúng: giới hạn của user data là 16 KB tính trên dữ liệu thô trước khi base64.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company runs containers with Docker on Amazon EC2 instances. The instances are configured to require IMDSv2. Applications inside the containers use the AWS SDK and fail to retrieve the instance's IAM role credentials, while the same SDK works directly on the host. What is the MOST likely solution?</div>
+          <ol class="opts">
+            <li data-k="A">Change the instance metadata options to allow IMDSv1 only.</li>
+            <li data-k="B">Attach an Elastic IP address to the instance so that containers can reach the IMDS.</li>
+            <li data-k="C">Store access keys for an IAM user in environment variables of each container.</li>
+            <li data-k="D">Increase the PUT response hop limit for the instance metadata to 2.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Phản hồi PUT của IMDSv2 có hop limit mặc định <b>1</b>; đi vào container tính thêm một hop nên token không tới được container. Tài liệu khuyến nghị tăng hop limit lên <b>2</b> trong môi trường container. <b>A sai</b>: quay lại IMDSv1 làm yếu bảo mật (SSRF), và không có tùy chọn “IMDSv1 only”. <b>B sai</b>: IMDS là địa chỉ link-local, Elastic IP không liên quan. <b>C sai</b>: dùng access key dài hạn là anti-pattern; trên ECS nên dùng task IAM role (Bài 34).</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy container bằng Docker trên các Amazon EC2 instance. Các instance được cấu hình bắt buộc IMDSv2. Ứng dụng bên trong container dùng AWS SDK và không lấy được IAM role credentials của instance, trong khi cùng SDK đó chạy trực tiếp trên host thì hoạt động bình thường. Giải pháp MOST likely (khả dĩ nhất) là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Đổi instance metadata options để chỉ cho phép IMDSv1.</span><span class="why">Sai: quay lại IMDSv1 làm suy yếu bảo mật (dễ bị SSRF), và không có tùy chọn "chỉ IMDSv1".</span></li>
+              <li data-k="B"><span class="tv">Gắn một Elastic IP address vào instance để container truy cập được IMDS.</span><span class="why">Sai: IMDS là địa chỉ link-local trong instance, Elastic IP không liên quan.</span></li>
+              <li data-k="C"><span class="tv">Lưu access key của một IAM user trong biến môi trường của mỗi container.</span><span class="why">Sai: dùng access key dài hạn là anti-pattern; trên ECS nên dùng task IAM role.</span></li>
+              <li data-k="D"><span class="tv">Tăng PUT response hop limit của instance metadata lên 2.</span><span class="why">Đúng: hop limit mặc định là 1, đi vào container tính thêm một hop nên token IMDSv2 không tới được container; AWS khuyến nghị đặt 2 cho môi trường container.</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/ec2/latest/instancetypes/instance-type-names.html" target="_blank" rel="noopener">Amazon EC2 instance type naming conventions</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-performance-instances.html" target="_blank" rel="noopener">Burstable performance instances</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-credits-baseline-concepts.html" target="_blank" rel="noopener">Key concepts for burstable performance instances</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ComponentsAMIs.html" target="_blank" rel="noopener">AMI types and characteristics</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ami-lifecycle.html" target="_blank" rel="noopener">Amazon EC2 AMI lifecycle</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/creating-an-ami-ebs.html" target="_blank" rel="noopener">Create an Amazon EBS-backed AMI</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/CopyingAMIs.html" target="_blank" rel="noopener">Copy an Amazon EC2 AMI</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/AMIEncryption.html" target="_blank" rel="noopener">Use encryption with EBS-backed AMIs</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/sharing-amis.html" target="_blank" rel="noopener">Understand shared AMI usage</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/sharingamis-explicit.html" target="_blank" rel="noopener">Share an AMI with specific AWS accounts</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-public-access-to-amis.html" target="_blank" rel="noopener">Understand block public access for AMIs</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/user-data.html" target="_blank" rel="noopener">Run commands when you launch an EC2 instance with user data input</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-data-retrieval.html" target="_blank" rel="noopener">Access instance metadata for an EC2 instance</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html" target="_blank" rel="noopener">Use the Instance Metadata Service to access instance metadata</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html" target="_blank" rel="noopener">Configure the Instance Metadata Service options</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-lifecycle.html" target="_blank" rel="noopener">Amazon EC2 instance state changes</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Hibernate.html" target="_blank" rel="noopener">Hibernate your Amazon EC2 instance</a></li>
+        <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/hibernating-prerequisites.html" target="_blank" rel="noopener">Prerequisites for EC2 instance hibernation</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

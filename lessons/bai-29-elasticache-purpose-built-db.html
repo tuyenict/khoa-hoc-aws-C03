@@ -1,0 +1,847 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 29 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-ElastiCache.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="29" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Hiểu tư duy <b>purpose-built databases</b> của AWS: mỗi mô hình dữ liệu (in-memory, document, graph, wide-column, time series, ledger) có một dịch vụ chuyên dụng – và đọc đề để <b>map từ khóa ⇒ dịch vụ</b> trong vài giây.</li>
+          <li>Giải thích <b>Amazon ElastiCache</b>: cache in-memory <b>micro-giây</b>, hai cách triển khai <b>Serverless</b> và <b>node-based cluster</b>, ba engine <b>Valkey / Redis OSS / Memcached</b>.</li>
+          <li>Chọn đúng engine: <b>Valkey/Redis OSS</b> (replication, Multi-AZ failover, backup, pub/sub, sorted set, Global Datastore) vs <b>Memcached</b> (đơn giản, multi-threaded, không replication).</li>
+          <li>Áp dụng chiến lược cache <b>lazy loading</b>, <b>write-through</b>, <b>TTL</b> – biết ưu/nhược điểm từng cái (stale data, cache miss penalty, missing data, cache churn) và các use case <b>session store</b>, <b>leaderboard</b>.</li>
+          <li>Nhận diện <b>Amazon DocumentDB</b> (MongoDB), <b>Amazon Neptune</b> (graph), <b>Amazon Keyspaces</b> (Cassandra), <b>Amazon Timestream</b> (time series), <b>Amazon MemoryDB</b> (in-memory bền) và tình trạng <b>Amazon QLDB</b> (ledger).</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 5 – Databases</span>
+        <p><b>Bài 26–27</b> đã dạy CSDL quan hệ (RDS, Aurora – cluster volume 6 bản sao/3 AZ, reader endpoint…), <b>Bài 28</b> dạy DynamoDB và <b>DAX</b>. Bài này hoàn tất bức tranh CSDL bằng <b>tầng cache</b> và các CSDL <b>chuyên dụng</b>. Những phần học ở bài khác chỉ nhắc ngắn: <b>sticky sessions</b> của ALB (Bài 12), <b>CloudFront</b> cache ở biên (Bài 25), <b>Lambda</b> (Bài 32), <b>Kinesis</b> (Bài 35), <b>Redshift / OpenSearch</b> cho analytics (các bài Module 7), <b>DMS</b> để migrate CSDL (Bài về migration).</p></div>
+
+      <!-- ===================== PHẦN 1: PURPOSE-BUILT ===================== -->
+      <h2 id="purpose-built"><img src="../assets/icons/cat/Database.svg" alt="">Purpose-built databases: “dùng đúng CSDL cho đúng việc”</h2>
+      <p class="lead">Theo decision guide “Choosing an AWS database service”, AWS cung cấp <b>hơn 15</b> lựa chọn CSDL với nhiều mô hình dữ liệu: <span class="t" data-vi="Quan hệ">relational</span>, <span class="t" data-vi="Khóa – giá trị">key-value</span>, <span class="t" data-vi="Tài liệu">document</span>, <span class="t" data-vi="Trong bộ nhớ">in-memory</span>, <span class="t" data-vi="Đồ thị">graph</span>, <span class="t" data-vi="Chuỗi thời gian">time series</span>, <span class="t" data-vi="Véc-tơ">vector</span> và <span class="t" data-vi="Cột rộng">wide-column</span>.</p>
+
+      <p>Thay vì nhồi mọi thứ vào một CSDL quan hệ, AWS khuyến khích chọn <span class="t" data-vi="CSDL chuyên dụng">purpose-built database</span> – CSDL được thiết kế tối ưu cho một kiểu dữ liệu và kiểu truy cập cụ thể. Guide chia CSDL cho <b>OLTP</b> thành hai nhóm lớn:</p>
+      <ul>
+        <li><b>Relational</b>: Amazon Aurora (MySQL, PostgreSQL, Aurora DSQL) và Amazon RDS (PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, Db2) – đã học ở Bài 26–27.</li>
+        <li><b>Non-relational</b>: thiết kế cho từng mô hình riêng – key-value, document, caching, in-memory, graph, time series, wide-column. Đây là trọng tâm bài này (trừ DynamoDB đã học ở Bài 28).</li>
+        <li>Nhu cầu <b>OLAP</b> (phân tích lượng dữ liệu khổng lồ) ⇒ <b>Amazon Redshift</b> (data warehouse) – nằm ngoài phạm vi decision guide này, sẽ học ở Module 7.</li>
+      </ul>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-ElastiCache.svg" alt="">
+          <div><h4>Amazon ElastiCache</h4><span class="vi">Bộ nhớ đệm in-memory</span><p>Valkey, Memcached, Redis OSS; đọc <b>micro-giây</b>, ghi sub-millisecond; cache “phù du” (ephemeral) cho dữ liệu đọc nhiều.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/cat/Database.svg" alt="">
+          <div><h4>Amazon MemoryDB</h4><span class="vi">CSDL in-memory bền vững</span><p>Tương thích Valkey/Redis OSS, <b>bền Multi-AZ</b>; đọc micro-giây, ghi single-digit ms; dùng làm <b>primary database</b>.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-DocumentDB.svg" alt="">
+          <div><h4>Amazon DocumentDB</h4><span class="vi">CSDL tài liệu (tương thích MongoDB)</span><p>Lưu tài liệu JSON, truy vấn phong phú trên các field; dùng lại driver/tool MongoDB.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Neptune.svg" alt="">
+          <div><h4>Amazon Neptune</h4><span class="vi">CSDL đồ thị</span><p>Tỉ quan hệ, truy vấn mili-giây; Gremlin, openCypher, SPARQL; mạng xã hội, gian lận, gợi ý.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Keyspaces.svg" alt="">
+          <div><h4>Amazon Keyspaces</h4><span class="vi">CSDL cột rộng (tương thích Cassandra)</span><p>Serverless, dùng CQL và driver Cassandra sẵn có; 3 bản sao trên nhiều AZ.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Timestream.svg" alt="">
+          <div><h4>Amazon Timestream</h4><span class="vi">CSDL chuỗi thời gian</span><p>IoT, metrics ứng dụng, telemetry công nghiệp; memory store + magnetic store.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/Amazon-Quantum-Ledger-Database.svg" alt="">
+          <div><h4>Amazon QLDB</h4><span class="vi">CSDL sổ cái</span><p>Journal bất biến, kiểm chứng bằng mật mã. <b>Đã ngừng hỗ trợ</b> – xem phần 8.</p></div></div>
+      </div>
+
+      <h3>Bảng tra nhanh: mô hình dữ liệu ⇒ dịch vụ (theo decision guide)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Dịch vụ</th><th>Data model</th><th>Khi nào dùng</th><th>Tối ưu cho</th></tr></thead>
+        <tbody>
+          <tr><td><b>Aurora / RDS</b></td><td>Relational</td><td>Migrate/hiện đại hóa CSDL quan hệ on-prem; query pattern khó đoán trước</td><td>Dữ liệu có cấu trúc (bảng, hàng, cột), JOIN phức tạp</td></tr>
+          <tr><td><b>DynamoDB</b></td><td>Key-value</td><td>Session store, giỏ hàng; hàng triệu người dùng đồng thời</td><td>Serverless NoSQL, single-digit ms ở mọi quy mô</td></tr>
+          <tr><td><b>DocumentDB</b></td><td>Document</td><td>Lưu tài liệu dạng JSON với khả năng truy vấn phong phú trên các field</td><td>Dữ liệu bán cấu trúc, thuộc tính nhiều tầng</td></tr>
+          <tr><td><b>Keyspaces</b></td><td>Wide-column</td><td>Migrate workload Cassandra on-prem; cần single-digit ms ở tốc độ cao</td><td>Đọc/ghi nặng, throughput cao, scale tuyến tính</td></tr>
+          <tr><td><b>Neptune</b></td><td>Graph</td><td>Mạng lưới đối tượng phức tạp: mạng xã hội, phát hiện gian lận, gợi ý</td><td>Duyệt và đánh giá số lượng lớn quan hệ, tìm mẫu với độ trễ thấp</td></tr>
+          <tr><td><b>ElastiCache</b></td><td>In-memory</td><td>Cần tầng cache để tăng hiệu năng đọc</td><td>Đọc micro-giây, ghi sub-ms; cache <b>ephemeral</b> cho dữ liệu truy cập thường xuyên</td></tr>
+          <tr><td><b>MemoryDB</b></td><td>In-memory</td><td>Cần <b>bền dữ liệu hoàn toàn</b> mà vẫn đọc sub-ms; primary DB cho microservices</td><td>In-memory bền, đọc micro-giây, ghi single-digit ms, Multi-AZ durability</td></tr>
+          <tr><td><b>Timestream</b></td><td>Time series</td><td>Lượng lớn dữ liệu chuỗi thời gian từ nhiều nguồn: IoT, metrics, asset tracking</td><td>Dữ liệu gắn timestamp và đường xu hướng</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p>Một nhà hàng không dùng một con dao cho mọi việc: dao phay chặt xương, dao gọt tỉa hoa quả, kéo cắt rau. Purpose-built databases cũng vậy – <b>giỏ hàng</b> để DynamoDB, <b>catalog sản phẩm</b> nhiều thuộc tính để DocumentDB, <b>đơn hàng & tồn kho</b> cần transaction để Aurora, <b>“người mua X cũng mua Y”</b> để Neptune, và mọi thứ đọc nhiều thì đặt <b>ElastiCache</b> phía trước.</p></div>
+
+      <p>Chính decision guide đưa ví dụ e-commerce: DocumentDB cho <b>product catalog và user profile</b> (dữ liệu bán cấu trúc linh hoạt), DynamoDB cho độ trễ thấp ổn định khi người dùng duyệt catalog, Aurora cho <b>inventory và order processing</b> cần mô hình quan hệ và transaction. Đây là kiến trúc <span class="t" data-vi="Đa CSDL (polyglot persistence)">polyglot persistence</span>.</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Database.svg" alt="">AWS Cloud – ứng dụng e-commerce</span>
+          <div class="flow">
+            <div class="node"><img src="../assets/icons/res/Users.svg" alt="">Users</div>
+            <span class="arrow">HTTPS</span>
+            <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">ALB</div>
+            <span class="arrow">request</span>
+            <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instances.svg" alt="">App tier<small>microservices</small></div>
+          </div>
+          <div class="row center">
+            <div class="node"><img src="../assets/icons/svc/Amazon-ElastiCache.svg" alt="">ElastiCache<small>session + cache</small></div>
+            <div class="node"><img src="../assets/icons/svc/Amazon-DocumentDB.svg" alt="">DocumentDB<small>catalog, profile</small></div>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Aurora.svg" alt="">Aurora<small>orders, inventory</small></div>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Neptune.svg" alt="">Neptune<small>recommendations</small></div>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Timestream.svg" alt="">Timestream<small>metrics / IoT</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Polyglot persistence: mỗi microservice chọn CSDL khớp với mô hình dữ liệu của nó. ElastiCache đứng trước các CSDL để giảm độ trễ đọc và giữ session cho tầng ứng dụng stateless.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – map từ khóa ⇒ dịch vụ</span>
+        <ul>
+          <li>“<i>MongoDB-compatible</i>”, “<i>JSON documents</i>”, “<i>migrate MongoDB with minimal code changes</i>” ⇒ <b>Amazon DocumentDB</b>.</li>
+          <li>“<i>highly connected data</i>”, “<i>social network</i>”, “<i>friends of friends</i>”, “<i>fraud rings</i>”, “<i>knowledge graph</i>”, “<i>Gremlin / SPARQL / openCypher</i>” ⇒ <b>Amazon Neptune</b>.</li>
+          <li>“<i>Apache Cassandra</i>”, “<i>CQL</i>” + “<i>serverless / no servers to manage</i>” ⇒ <b>Amazon Keyspaces</b>.</li>
+          <li>“<i>IoT sensor data</i>”, “<i>time series</i>”, “<i>trillions of events per day</i>”, “<i>DevOps metrics with timestamps</i>” ⇒ <b>Amazon Timestream</b>.</li>
+          <li>“<i>microsecond latency</i>”, “<i>cache frequently accessed query results</i>”, “<i>reduce load on the database</i>”, “<i>session state</i>” ⇒ <b>Amazon ElastiCache</b>.</li>
+          <li>“<i>immutable, cryptographically verifiable transaction log</i>” ⇒ (đề cũ) <b>Amazon QLDB</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 2: ELASTICACHE ===================== -->
+      <h2 id="elasticache"><img src="../assets/icons/svc/Amazon-ElastiCache.svg" alt="">Amazon ElastiCache: tổng quan</h2>
+      <p class="lead">Theo tài liệu AWS, <b>Amazon ElastiCache</b> là web service giúp dễ dàng dựng, quản lý và scale một <span class="t" data-vi="Kho dữ liệu trong bộ nhớ phân tán">distributed in-memory data store</span> hoặc môi trường <span class="t" data-vi="Bộ nhớ đệm">cache</span> trên cloud – hiệu năng cao, scalable, cost-effective, và gỡ bỏ sự phức tạp của việc tự vận hành cache phân tán.</p>
+
+      <p>ElastiCache là một kho <b>key-value in-memory</b> nằm <b>giữa ứng dụng và data store</b> (CSDL). Vì dữ liệu nằm trong RAM, đọc một key từ cache luôn nhanh và rẻ hơn truy vấn CSDL – đặc biệt các truy vấn JOIN nhiều bảng hoặc tính toán nặng: <b>trả giá truy vấn một lần</b>, đọc lại từ cache nhiều lần.</p>
+
+      <div class="stats">
+        <div class="stat"><b>µs</b><span>đọc micro-giây, ghi sub-millisecond (decision guide)</span></div>
+        <div class="stat"><b>&lt; 1 phút</b><span>tạo một serverless cache highly available</span></div>
+        <div class="stat"><b>3</b><span>engine: Valkey, Memcached, Redis OSS</span></div>
+        <div class="stat"><b>250 ms</b><span>chênh lệch người dùng đã cảm nhận được giữa 2 website</span></div>
+        <div class="stat"><b>1%</b><span>doanh số mất cho mỗi 100 ms tăng thêm (thử nghiệm của Amazon)</span></div>
+      </div>
+
+      <h3>Hai cách triển khai: Serverless vs node-based cluster</h3>
+      <div class="compare">
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-ElastiCache.svg" alt="">ElastiCache Serverless</h4>
+          <ul>
+            <li>Tạo cache <b>highly available trong dưới 1 phút</b>, chỉ cần đặt tên cache (console, SDK, CLI).</li>
+            <li><b>Không</b> cấp phát instance, <b>không</b> cấu hình node hay cluster, <b>không</b> lập kế hoạch capacity.</li>
+            <li>ElastiCache liên tục theo dõi memory, compute, network bandwidth và <b>tự scale</b> theo nhu cầu ứng dụng.</li>
+            <li><b>Một endpoint</b> đơn giản, che giấu thiết kế cluster bên dưới; AWS tự lo provisioning, monitoring, thay node, patch phần mềm.</li>
+            <li>Hai kiểu kết nối: <b>VPC</b> hoặc <b>Public</b> endpoint (kết nối qua internet, bắt buộc <b>IAM authentication + TLS 1.3</b>; chỉ có với Valkey 9.0+).</li>
+            <li>Tương thích Valkey 7.2+, Memcached 1.6.22+, Redis OSS 7.1.</li>
+          </ul></div>
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-ElastiCache_Cache-Node.svg" alt="">Node-based cluster</h4>
+          <ul>
+            <li>Khi cần <b>kiểm soát chi tiết</b>: tự chọn <b>node type</b>, <b>số node</b> và <b>đặt node trên các AZ</b>.</li>
+            <li>Vẫn fully managed: AWS lo phần cứng, monitoring, thay node hỏng, patch – nhưng <b>bạn chịu trách nhiệm chọn đúng loại và số node</b> để đủ capacity.</li>
+            <li>Chọn <b>single-AZ hoặc Multi-AZ</b>; chọn <b>cluster mode</b> (scale ngang) hoặc không (chỉ scale dọc).</li>
+            <li>Tự chọn thời điểm áp dụng patch cho Valkey/Redis OSS; chọn engine version (chỉ nâng cấp, <b>không hạ cấp</b> được).</li>
+            <li>Valkey node-based có thể bật <b>durability</b>: ghi vào <b>transactional log Multi-AZ</b>, dữ liệu an toàn kể cả khi <b>mọi node</b> hỏng.</li>
+          </ul></div>
+      </div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp</span>
+        <ul>
+          <li>ElastiCache <b>không phải</b> là CSDL nguồn (system of record) mặc định – decision guide gọi nó là <b>ephemeral cache</b>. Cần lưu bền dữ liệu in-memory làm DB chính ⇒ <b>MemoryDB</b> (hoặc Valkey node-based bật durability).</li>
+          <li>Engine version chỉ <b>upgrade</b>, không <b>downgrade</b>: muốn version cũ phải xóa cache/cluster và tạo lại.</li>
+          <li>Ứng dụng phải <b>sửa code</b> để dùng cache (gọi cache trước rồi mới tới DB). Khác với <b>DAX</b> (Bài 28) – API tương thích DynamoDB nên gần như không đổi code, nhưng DAX <b>chỉ dành cho DynamoDB</b>. Cache cho RDS/Aurora ⇒ ElastiCache.</li>
+        </ul></div>
+
+      <h3>Nên cache cái gì? (theo tài liệu)</h3>
+      <ul>
+        <li><b>Tốc độ và chi phí</b>: lấy dữ liệu từ DB luôn chậm và đắt hơn từ cache; truy vấn JOIN nhiều bảng là ứng viên số một.</li>
+        <li><b>Dữ liệu và kiểu truy cập</b>: nên cache dữ liệu <b>tương đối tĩnh và được truy cập thường xuyên</b> (ví dụ profile cá nhân trên mạng xã hội). <b>Không</b> nên cache dữ liệu đổi liên tục hoặc hiếm khi đọc, hay kết quả tìm kiếm (mỗi truy vấn gần như là duy nhất).</li>
+        <li><b>Độ cũ (staleness)</b>: dữ liệu trong cache <b>luôn phải coi là cũ</b>. Xác định ứng dụng chấp nhận dữ liệu cũ tới mức nào – giá cổ phiếu hiển thị cho khách có thể trễ <i>n</i> phút, nhưng giá cho broker đặt lệnh phải là thời gian thực.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>RDS read replicas are overloaded by the same repeated queries</i>”, “<i>improve read performance and reduce database cost</i>” ⇒ thêm <b>ElastiCache</b> trước RDS/Aurora (cache kết quả query).</li>
+          <li>“<i>least operational overhead</i>” + “<i>no capacity planning</i>” cho cache ⇒ <b>ElastiCache Serverless</b>.</li>
+          <li>Cache cho <b>DynamoDB</b> mà “<i>without application rewrite</i>” ⇒ <b>DAX</b>; cache cho RDS/Aurora/kết quả API ⇒ <b>ElastiCache</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: ENGINES ===================== -->
+      <h2 id="engines"><img src="../assets/icons/res/Amazon-ElastiCache_ElastiCache-for-Redis.svg" alt="">Valkey / Redis OSS vs Memcached</h2>
+      <p class="lead">Bề ngoài ba engine giống nhau – đều là <b>in-memory key-value store</b>. Nhưng thực tế chúng khác biệt lớn. <span class="t" data-vi="Phiên bản mã nguồn mở của Redis do Linux Foundation duy trì">Valkey</span> là nhánh mã nguồn mở tương thích Redis OSS; AWS khuyến nghị dùng phiên bản mới nhất của engine đã chọn.</p>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/Amazon-ElastiCache_ElastiCache-for-Memcached.svg" alt="">Chọn Memcached khi…</h4>
+          <ul>
+            <li>Cần <b>mô hình đơn giản nhất</b> có thể.</li>
+            <li>Cần chạy <b>node lớn nhiều core/thread</b> – Memcached là engine <span class="t" data-vi="Đa luồng">multi-threaded</span> duy nhất.</li>
+            <li>Cần <b>scale out / scale in</b> bằng cách thêm/bớt node theo tải.</li>
+            <li>Cần <b>cache object</b> (string, object như kết quả truy vấn DB).</li>
+          </ul></div>
+        <div style="--accent:#C7131F"><h4><img src="../assets/icons/res/Amazon-ElastiCache_ElastiCache-for-Redis.svg" alt="">Chọn Valkey / Redis OSS khi…</h4>
+          <ul>
+            <li>Cần <b>kiểu dữ liệu phức tạp</b>: string, set, <b>sorted set</b>, list, hash, bitmap, hyperloglog, geospatial index.</li>
+            <li>Cần <b>high availability</b>: replication + <b>automatic failover</b> Multi-AZ.</li>
+            <li>Cần <b>backup & restore</b> (snapshot), <b>pub/sub</b>, <b>geospatial</b>, <b>Global Datastore</b> đa Region.</li>
+            <li>Cần các tính năng mới: <b>RBAC</b> (Redis OSS 6.0+), <b>data tiering</b> RAM + SSD (6.2+, node r6gd), <b>vector search</b> (Valkey 8.2), full-text search & <b>durability</b> (Valkey 9.0).</li>
+          </ul></div>
+      </div>
+
+      <h3>Bảng so sánh chi tiết (node-based)</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tính năng</th><th>Memcached</th><th>Valkey / Redis OSS<br>(cluster mode disabled)</th><th>Valkey / Redis OSS<br>(cluster mode enabled)</th></tr></thead>
+        <tbody>
+          <tr><td>Kiểu dữ liệu</td><td>Đơn giản (string, object)</td><td>Phức tạp</td><td>Phức tạp</td></tr>
+          <tr><td>Data partitioning (sharding)</td><td class="yes">Có</td><td class="no">Không (1 shard)</td><td class="yes">Có</td></tr>
+          <tr><td>Online resharding</td><td class="no">Không</td><td class="no">Không</td><td class="yes">Có</td></tr>
+          <tr><td>Multi-threaded</td><td class="yes">Có</td><td class="no">Không</td><td class="no">Không</td></tr>
+          <tr><td>High availability (replication)</td><td class="no">Không</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Automatic failover</td><td class="no">Không</td><td>Tùy chọn</td><td class="yes">Bắt buộc</td></tr>
+          <tr><td>Backup and restore</td><td class="no">Chỉ với serverless cache</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Pub/Sub</td><td class="no">Không</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Sorted sets</td><td class="no">Không</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Geospatial indexing</td><td class="no">Không</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Encryption in-transit</td><td>1.6.12 trở lên</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+          <tr><td>Data tiering (RAM + SSD)</td><td class="no">Không</td><td>6.2 trở lên</td><td>6.2 trở lên</td></tr>
+          <tr><td>Vector search</td><td class="no">Không</td><td>Valkey 8.2+</td><td>Valkey 8.2+</td></tr>
+          <tr><td>Durability (transactional log Multi-AZ)</td><td class="no">Không</td><td class="no">Không</td><td>Valkey 9.0+</td></tr>
+          <tr><td>Compliance FedRAMP / HIPAA / PCI DSS</td><td class="yes">Có (1.6.12+)</td><td class="yes">Có</td><td class="yes">Có</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Cluster mode: disabled vs enabled</h3>
+      <ul>
+        <li><b>Cluster mode disabled</b>: toàn bộ dữ liệu nằm trong <b>một</b> <span class="t" data-vi="Phân mảnh">shard</span> gồm 1 <b>primary node</b> (đọc + ghi) và các <b>read replica</b> (chỉ đọc). Scale <b>dọc</b> (đổi node type) và scale đọc bằng thêm replica. Automatic failover là <i>tùy chọn</i>.</li>
+        <li><b>Cluster mode enabled</b>: dữ liệu được <b>chia nhiều shard</b>, mỗi shard có primary + replica riêng ⇒ scale <b>ngang</b> cả đọc lẫn ghi, hỗ trợ <b>online resharding</b>. Automatic failover <i>bắt buộc</i>.</li>
+        <li>Khi bật <b>Multi-AZ</b>, primary hỏng ⇒ ElastiCache tự <b>promote</b> một replica ở AZ khác thành primary; endpoint không đổi nên ứng dụng không cần sửa cấu hình.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="grp region"><span class="lbl">Region – VPC</span>
+          <div class="row">
+            <div class="grp az"><span class="lbl">Availability Zone A</span>
+              <div class="grp priv"><span class="lbl">Private subnet</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-ElastiCache_ElastiCache-for-Redis.svg" alt="">Shard 1 – Primary<small>read + write</small></div>
+                <div class="node"><img src="../assets/icons/res/Amazon-ElastiCache_Cache-Node.svg" alt="">Shard 2 – Replica<small>read</small></div></div></div>
+            </div>
+            <div class="grp az"><span class="lbl">Availability Zone B</span>
+              <div class="grp priv"><span class="lbl">Private subnet</span>
+                <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-ElastiCache_Cache-Node.svg" alt="">Shard 1 – Replica<small>read</small></div>
+                <div class="node"><img src="../assets/icons/res/Amazon-ElastiCache_ElastiCache-for-Redis.svg" alt="">Shard 2 – Primary<small>read + write</small></div></div></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 2.</b> Valkey/Redis OSS <b>cluster mode enabled</b> với 2 shard, Multi-AZ: mỗi shard có primary ở một AZ và replica ở AZ khác (sao chép bất đồng bộ). Primary hỏng ⇒ replica được promote tự động. Memcached không có replica – node hỏng là mất phần dữ liệu trên node đó.</figcaption>
+      </figure>
+
+      <h3>Global Datastore – nhân bản cache đa Region</h3>
+      <p><span class="t" data-vi="Kho dữ liệu toàn cầu">Global Datastore</span> cho phép sao chép cluster Valkey/Redis OSS <b>xuyên Region</b>, fully managed. Hiện <b>chỉ có cho node-based cluster</b> (không cho serverless).</p>
+      <ul>
+        <li><b>Primary (active) cluster</b>: nhận ghi (và đọc), sao chép tới mọi cluster trong global datastore.</li>
+        <li><b>Secondary (passive) cluster</b>: chỉ nhận đọc, phải ở <b>Region khác</b> primary. ElastiCache dựng và quản lý sao chép <b>bất đồng bộ</b>.</li>
+        <li>Lợi ích: <b>geolocal reads</b> độ trễ thấp ở Region xa, và <b>disaster recovery</b> – primary suy giảm ⇒ <b>promote</b> secondary thành primary mới.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>multi-threaded</i>”, “<i>simplest caching</i>”, “<i>data loss is acceptable</i>”, “<i>add/remove nodes</i>” ⇒ <b>Memcached</b>.</li>
+          <li>“<i>highly available cache</i>”, “<i>automatic failover</i>”, “<i>backup / snapshot</i>”, “<i>persist</i>”, “<i>sorted sets / leaderboard</i>”, “<i>pub/sub</i>”, “<i>geospatial</i>”, “<i>cross-Region replication</i>” ⇒ <b>Valkey / Redis OSS</b>.</li>
+          <li>“<i>cache must survive an AZ failure</i>” ⇒ Valkey/Redis OSS với <b>replica + Multi-AZ automatic failover</b> (không phải Memcached).</li>
+        </ul></div>
+
+      <div class="callout note"><span class="ttl">Bảo mật ElastiCache – tóm tắt cho đề thi</span>
+        <ul>
+          <li>Node-based cluster chạy <b>trong VPC</b>, đặt ở <b>private subnet</b>; kiểm soát truy cập bằng <b>security group</b> (chỉ cho SG của tầng app vào port cache).</li>
+          <li>Mã hóa <b>in-transit (TLS)</b> và <b>at-rest</b> (KMS) với Valkey/Redis OSS; Memcached hỗ trợ TLS từ 1.6.12.</li>
+          <li>Xác thực: <b>AUTH token</b> / <b>RBAC</b> (Redis OSS 6.0+, Valkey), và <b>IAM authentication</b> (bắt buộc với public endpoint của serverless).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 4: CACHING STRATEGIES ===================== -->
+      <h2 id="caching-strategies"><img src="../assets/icons/res/Amazon-ElastiCache_Cache-Node.svg" alt="">Chiến lược cache: lazy loading, write-through, TTL</h2>
+      <p class="lead">Chiến lược nạp và duy trì cache phụ thuộc vào <b>dữ liệu nào được cache</b> và <b>kiểu truy cập</b>. Bảng xếp hạng top-10 của game và tin tức đang hot không nên dùng cùng một chiến lược. Tài liệu AWS mô tả ba kỹ thuật chính: <span class="t" data-vi="Nạp lười – chỉ nạp khi cần">lazy loading</span>, <span class="t" data-vi="Ghi xuyên">write-through</span> và <span class="t" data-vi="Thời gian sống của key">TTL</span>.</p>
+
+      <h3>1. Lazy loading (cache-aside)</h3>
+      <p>Đúng như tên gọi, lazy loading <b>chỉ nạp dữ liệu vào cache khi cần</b>. Ứng dụng luôn hỏi cache trước:</p>
+      <ul>
+        <li><span class="t" data-vi="Trúng cache">Cache hit</span> – dữ liệu có trong cache và chưa hết hạn: (1) app hỏi cache, (2) cache trả dữ liệu.</li>
+        <li><span class="t" data-vi="Trượt cache">Cache miss</span> – dữ liệu không có hoặc đã hết hạn: (1) app hỏi cache, (2) cache trả <code>null</code>, (3) app truy vấn DB và nhận dữ liệu, (4) app <b>ghi dữ liệu đó vào cache</b> để lần sau đọc nhanh.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 680 300" width="680" role="img" aria-label="Luồng lazy loading: cache hit và cache miss">
+          <defs><marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="40" y="110" width="64" height="64"/>
+          <text x="72" y="196" font-size="13" text-anchor="middle" font-weight="600">Application</text>
+          <image href="../assets/icons/svc/Amazon-ElastiCache.svg" x="300" y="30" width="64" height="64"/>
+          <text x="332" y="112" font-size="13" text-anchor="middle" font-weight="600">ElastiCache</text>
+          <image href="../assets/icons/svc/Amazon-RDS.svg" x="300" y="196" width="64" height="64"/>
+          <text x="332" y="282" font-size="13" text-anchor="middle" font-weight="600">Amazon RDS / Aurora</text>
+          <path class="line-o" d="M110 120 L292 64" marker-end="url(#ah1)"/>
+          <text x="150" y="80" font-size="12" class="muted">① GET key</text>
+          <path class="line-o" d="M292 84 L112 136" marker-end="url(#ah1)" stroke-dasharray="5 4"/>
+          <text x="196" y="128" font-size="12" class="muted">② hit: data / miss: null</text>
+          <path class="line-o" d="M112 160 L292 222" marker-end="url(#ah1)"/>
+          <text x="140" y="220" font-size="12" class="muted">③ miss ⇒ SELECT</text>
+          <path class="line-o" d="M292 242 L112 176" marker-end="url(#ah1)" stroke-dasharray="5 4"/>
+          <text x="196" y="262" font-size="12" class="muted">data</text>
+          <text x="420" y="60" font-size="12" class="muted">④ app SET key vào cache (kèm TTL)</text>
+          <text x="420" y="140" font-size="12">Hit: 1 vòng – micro-giây</text>
+          <text x="420" y="160" font-size="12">Miss: 3 vòng (cache → DB → cache)</text>
+          <text x="420" y="180" font-size="12">= cache miss penalty</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Lazy loading: ứng dụng (không phải cache) chịu trách nhiệm đọc DB khi miss rồi ghi lại vào cache (bước ④). Chỉ dữ liệu thực sự được đọc mới vào cache.</figcaption>
+      </figure>
+
+<pre><code>// Lazy loading – pseudocode theo tài liệu AWS
+get_customer(customer_id)
+    customer_record = cache.get(customer_id)
+    if (customer_record == null)
+        customer_record = db.query("SELECT * FROM Customers WHERE id = {0}", customer_id)
+        cache.set(customer_id, customer_record)
+    return customer_record</code></pre>
+
+      <h3>2. Write-through</h3>
+      <p>Write-through <b>thêm hoặc cập nhật dữ liệu trong cache mỗi khi ghi xuống DB</b>. Mỗi lần ghi gồm 2 bước: ghi DB và ghi cache.</p>
+<pre><code>// Write-through – pseudocode theo tài liệu AWS
+save_customer(customer_id, values)
+    customer_record = db.query("UPDATE Customers WHERE id = {0}", customer_id, values)
+    cache.set(customer_id, customer_record)
+    return success</code></pre>
+
+      <h3>So sánh ưu – nhược điểm</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Lazy loading</th><th>Write-through</th></tr></thead>
+        <tbody>
+          <tr><td>Dữ liệu trong cache</td><td class="yes">Chỉ dữ liệu <b>được yêu cầu</b> – không lấp đầy cache bằng dữ liệu không ai đọc</td><td class="no"><b>Cache churn</b>: phần lớn dữ liệu ghi vào cache không bao giờ được đọc ⇒ lãng phí tài nguyên</td></tr>
+          <tr><td>Độ mới của dữ liệu</td><td class="no"><b>Stale data</b>: DB thay đổi nhưng cache không được cập nhật</td><td class="yes">Cache <b>không bao giờ cũ</b> – cập nhật mỗi lần ghi DB</td></tr>
+          <tr><td>Chi phí độ trễ</td><td class="no"><b>Cache miss penalty</b>: 3 lượt (đọc cache, query DB, ghi cache)</td><td><b>Write penalty</b>: mỗi lần ghi tốn 2 lượt – nhưng người dùng thường chấp nhận ghi chậm hơn đọc</td></tr>
+          <tr><td>Node hỏng / node mới</td><td class="yes"><b>Không chết ứng dụng</b>: node mới rỗng ⇒ chỉ tăng độ trễ, cache tự đầy dần qua các miss</td><td class="no"><b>Missing data</b>: node mới (thay thế hoặc scale out) thiếu dữ liệu cho tới khi dữ liệu được ghi/cập nhật lại</td></tr>
+          <tr><td>Cách khắc phục</td><td>Kết hợp write-through và/hoặc TTL</td><td>Kết hợp lazy loading (bù missing data) + TTL (giảm churn)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>3. Adding TTL – kết hợp ưu điểm của cả hai</h3>
+      <p><b>Time to live (TTL)</b> là số nguyên chỉ số giây tới khi key hết hạn (Valkey/Redis OSS cho phép giây hoặc mili-giây; Memcached tính bằng giây). Khi đọc một key đã hết hạn, nó được coi như <b>không tồn tại</b> ⇒ app truy vấn DB và cập nhật lại cache.</p>
+      <ul>
+        <li>Lazy loading cho phép dữ liệu cũ nhưng không “chết” với node rỗng; write-through luôn mới nhưng hỏng với node rỗng và nhồi dữ liệu thừa. <b>Thêm TTL vào mỗi lần ghi</b> ⇒ có ưu điểm của cả hai và phần lớn tránh làm rối cache.</li>
+        <li>TTL <b>không đảm bảo</b> dữ liệu không bao giờ cũ – nó giới hạn <b>độ cũ tối đa</b> và buộc cache thỉnh thoảng làm mới từ DB. Ví dụ tài liệu: <code>cache.set(customer_id, record, 300)</code> ⇒ hết hạn sau <b>300 giây (5 phút)</b>.</li>
+      </ul>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường</span>
+        <p><b>Lazy loading</b> như học sinh chỉ chép bài vào sổ tay khi bị hỏi mà không nhớ – sổ gọn nhưng ghi chép có thể đã lỗi thời. <b>Write-through</b> như thư ký chép <i>mọi</i> thông báo mới vào sổ ngay khi có – luôn mới nhưng sổ đầy những thứ chẳng ai tra. <b>TTL</b> là quy tắc “trang nào quá 5 phút thì gạch đi, cần thì hỏi lại”.</p></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>“<i>cache only data that is requested</i>”, “<i>tolerate node failure</i>” ⇒ <b>lazy loading</b>.</li>
+          <li>“<i>cache must always contain the latest data / never stale</i>” ⇒ <b>write-through</b>.</li>
+          <li>“<i>minimize stale data while keeping cache size small</i>” ⇒ lazy loading/write-through <b>+ TTL</b>.</li>
+          <li>Cache đầy ⇒ engine áp dụng <span class="t" data-vi="Chính sách loại bỏ key">eviction policy</span> (ví dụ LRU – loại key ít được dùng gần đây nhất). Eviction tăng cao ⇒ scale up/out cache.</li>
+        </ul></div>
+
+      <h3>Use case: session store</h3>
+      <p>Ứng dụng web chạy sau ALB trên Auto Scaling group cần <b>stateless</b>: instance có thể bị scale in hoặc thay thế bất cứ lúc nào. Nếu session (đăng nhập, giỏ hàng tạm) lưu trong RAM của instance, người dùng sẽ <b>bị đăng xuất</b> khi instance biến mất. <b>Sticky sessions</b> (Bài 12) chỉ giảm nhẹ vấn đề và làm tải phân bổ không đều. Giải pháp chuẩn: đưa session ra một <span class="t" data-vi="Kho lưu phiên tập trung">session store</span> dùng chung – <b>ElastiCache (Valkey/Redis OSS)</b> cho độ trễ sub-ms, đặt TTL bằng thời hạn phiên; hoặc DynamoDB (Bài 28) khi cần bền và serverless.</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Database.svg" alt="">AWS Cloud</span>
+          <div class="grp region"><span class="lbl">Region</span>
+            <div class="row center"><div class="node"><img src="../assets/icons/res/Users.svg" alt="">Users</div>
+              <span class="arrow">HTTPS</span>
+              <div class="node"><img src="../assets/icons/res/Elastic-Load-Balancing_Application-Load-Balancer.svg" alt="">Application Load Balancer<small>không cần sticky</small></div></div>
+            <div class="row">
+              <div class="grp az"><span class="lbl">Availability Zone A</span>
+                <div class="grp priv"><span class="lbl">Private subnet – app</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 (stateless)</div></div></div>
+                <div class="grp priv"><span class="lbl">Private subnet – data</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-ElastiCache_ElastiCache-for-Redis.svg" alt="">Valkey primary<small>session:abc → {user, cart}</small></div></div></div>
+              </div>
+              <div class="grp az"><span class="lbl">Availability Zone B</span>
+                <div class="grp priv"><span class="lbl">Private subnet – app</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 (stateless)</div></div></div>
+                <div class="grp priv"><span class="lbl">Private subnet – data</span>
+                  <div class="row center"><div class="node"><img src="../assets/icons/res/Amazon-ElastiCache_Cache-Node.svg" alt="">Valkey replica<small>auto failover</small></div></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Hình 4.</b> Session store tập trung: mọi instance đọc/ghi session ở ElastiCache, nên request có thể tới bất kỳ instance nào; scale in hay instance hỏng không làm người dùng mất phiên. Replica ở AZ khác + Multi-AZ failover giữ session khi một AZ sự cố.</figcaption>
+      </figure>
+
+      <h3>Các use case khác (theo tài liệu)</h3>
+      <ul>
+        <li><b>Gaming leaderboard</b>: <b>sorted set</b> của Valkey/Redis OSS đảm bảo vừa duy nhất vừa có thứ tự; mỗi phần tử mới được <b>xếp hạng lại theo thời gian thực</b>. Ví dụ: <code>ZADD leaderboard 381 Adam</code>, <code>ZREVRANGEBYSCORE leaderboard +inf -inf</code> (liệt kê điểm cao → thấp), <code>ZREVRANK leaderboard June</code> (thứ hạng, đếm từ 0). Chuyển độ phức tạp tính toán từ app sang cache.</li>
+        <li><b>Messaging (pub/sub)</b>: gửi message vào <b>channel</b> mà không cần biết ai nhận; ai <code>SUBSCRIBE</code> channel thì nhận. <code>PSUBSCRIBE news.sports.*</code> theo pattern (không có trên ElastiCache Serverless). Pub/sub không liên quan key space.</li>
+        <li><b>Recommendation data</b>: <code>INCR item:38923:likes</code> đếm like/dislike; <b>hash</b> lưu danh sách ai đã like.</li>
+        <li><b>Generative AI</b>: <b>semantic caching</b> (trả lại câu trả lời LLM đã cache khi prompt tương tự về ngữ nghĩa ⇒ giảm chi phí và độ trễ inference), memory cho AI agent, <b>RAG</b> với vector search.</li>
+        <li><b>System-of-record</b>: bật <b>durability + synchronous writes</b> (Valkey 9.0) cho payment tokenization, inventory real-time – nơi không chấp nhận mất dữ liệu.</li>
+      </ul>
+
+      <!-- ===================== PHẦN 5: DOCUMENTDB ===================== -->
+      <h2 id="documentdb"><img src="../assets/icons/svc/Amazon-DocumentDB.svg" alt="">Amazon DocumentDB (with MongoDB compatibility)</h2>
+      <p class="lead"><b>Amazon DocumentDB</b> là dịch vụ CSDL nhanh, tin cậy, <span class="t" data-vi="Được quản lý hoàn toàn">fully managed</span>, giúp dựng, vận hành và scale CSDL <span class="t" data-vi="Tương thích MongoDB">MongoDB-compatible</span> trên cloud – chạy <b>cùng application code, driver và tool</b> bạn đang dùng với MongoDB.</p>
+
+      <p><span class="t" data-vi="CSDL tài liệu">Document database</span> lưu dữ liệu dạng tài liệu JSON (bán cấu trúc, thuộc tính lồng nhiều tầng), mỗi tài liệu có thể có cấu trúc khác nhau, và hỗ trợ <b>truy vấn/đánh index trên các field</b> của tài liệu – điểm khác với key-value thuần (DynamoDB tối ưu truy cập theo khóa).</p>
+
+      <h3>Kiến trúc: tách compute và storage (giống Aurora)</h3>
+      <ul>
+        <li>Một <b>cluster</b> gồm <b>0 – 16 instance</b> và một <span class="t" data-vi="Ổ đĩa ảo dùng chung của cụm">cluster storage volume</span>. <b>Mọi ghi đi qua primary instance</b>; mọi instance (primary và replica) đều phục vụ đọc.</li>
+        <li>Lớp storage sao chép <b>6 bản dữ liệu trên 3 AZ</b> – kể cả khi Region chỉ cho compute ở 2 AZ.</li>
+        <li>Storage <b>tự tăng</b> theo bước <b>10 GB</b>, tối đa <b>256 TiB</b> (engine 8.0 trở lên; <b>128 TiB</b> với engine cũ hơn) – không cần cấp phát dư.</li>
+        <li>Tới <b>15 replica</b> chia sẻ cùng storage ⇒ replica lag thường chỉ <b>vài mili-giây</b>, thêm replica trong vài phút bất kể dung lượng; có <b>reader endpoint</b> để app không phải theo dõi replica.</li>
+        <li><b>Failover tự động</b> sang một trong tối đa 15 replica ở AZ khác; nếu không có replica, DocumentDB cố gắng tự tạo instance mới.</li>
+        <li>Không cần replay redo log khi khởi động lại; cache tách khỏi tiến trình DB nên <b>cache sống sót qua restart</b>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 680 280" width="680" role="img" aria-label="Cluster DocumentDB: primary và replica trên 3 AZ chia sẻ cluster volume 6 bản sao">
+          <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="20" y="20" width="200" height="150" rx="6" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="32" y="40" font-size="13" font-weight="700" style="fill:#147EBA">AZ 1</text>
+          <rect x="240" y="20" width="200" height="150" rx="6" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="252" y="40" font-size="13" font-weight="700" style="fill:#147EBA">AZ 2</text>
+          <rect x="460" y="20" width="200" height="150" rx="6" fill="none" stroke="#147EBA" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="472" y="40" font-size="13" font-weight="700" style="fill:#147EBA">AZ 3</text>
+          <image href="../assets/icons/svc/Amazon-DocumentDB.svg" x="88" y="52" width="60" height="60"/>
+          <text x="118" y="132" font-size="13" text-anchor="middle" font-weight="600">Primary</text>
+          <text x="118" y="150" font-size="11" text-anchor="middle" class="muted">read + write</text>
+          <image href="../assets/icons/svc/Amazon-DocumentDB.svg" x="308" y="52" width="60" height="60"/>
+          <text x="338" y="132" font-size="13" text-anchor="middle" font-weight="600">Replica</text>
+          <text x="338" y="150" font-size="11" text-anchor="middle" class="muted">read only</text>
+          <image href="../assets/icons/svc/Amazon-DocumentDB.svg" x="528" y="52" width="60" height="60"/>
+          <text x="558" y="132" font-size="13" text-anchor="middle" font-weight="600">Replica</text>
+          <text x="558" y="150" font-size="11" text-anchor="middle" class="muted">read only</text>
+          <rect x="20" y="205" width="640" height="56" rx="6" fill="none" stroke="#7AA116" stroke-width="2"/>
+          <text x="340" y="228" font-size="13" text-anchor="middle" font-weight="700" style="fill:#7AA116">Cluster volume – 6 bản sao trên 3 AZ, tự tăng theo bước 10 GB tới 256 TiB</text>
+          <text x="340" y="248" font-size="11" text-anchor="middle" class="muted">2 bản sao ở AZ 1 · 2 bản sao ở AZ 2 · 2 bản sao ở AZ 3</text>
+          <path class="line-o" d="M118 158 V200" marker-end="url(#ah2)"/>
+          <path class="line-o" d="M338 200 V158" marker-end="url(#ah2)" stroke-dasharray="5 4"/>
+          <path class="line-o" d="M558 200 V158" marker-end="url(#ah2)" stroke-dasharray="5 4"/>
+        </svg>
+        <figcaption><b>Hình 5.</b> Cluster DocumentDB instance-based: primary ghi vào cluster volume dùng chung; replica đọc từ cùng volume nên không phải tự ghi lại dữ liệu. Kiến trúc này rất giống Aurora (Bài 27).</figcaption>
+      </figure>
+
+      <h3>Các tính năng khác</h3>
+      <ul>
+        <li><b>Elastic clusters</b>: loại cluster thứ hai, hỗ trợ workload <b>hàng triệu read/write mỗi giây</b> và storage cỡ <b>petabyte</b>.</li>
+        <li><b>Backup</b>: tự động, incremental, liên tục, không ảnh hưởng hiệu năng; <b>PITR</b> tới bất kỳ giây nào trong retention, gần nhất là <b>5 phút</b> trước; retention tối đa <b>35 ngày</b>; lưu trên S3.</li>
+        <li><b>Bảo mật</b>: instance <b>chỉ chạy trong VPC</b>; mã hóa at-rest bằng <b>KMS</b> (backup, snapshot, replica trong cluster cũng được mã hóa).</li>
+        <li><b>Storage configuration</b>: <i>standard</i> hoặc <i>I/O-optimized</i> (engine 5.0). Tính tiền theo instance-hour (theo giây, tối thiểu 10 phút), I/O request, backup storage, data transfer.</li>
+        <li>Hỗ trợ <b>vector search</b> (index HNSW/IVFFlat) cho ứng dụng MongoDB-compatible cần tìm kiếm véc-tơ.</li>
+      </ul>
+
+      <div class="stats">
+        <div class="stat"><b>15</b><span>replica tối đa mỗi cluster</span></div>
+        <div class="stat"><b>6 / 3</b><span>bản sao dữ liệu / AZ</span></div>
+        <div class="stat"><b>256 TiB</b><span>storage tối đa (engine 8.0+)</span></div>
+        <div class="stat"><b>35 ngày</b><span>backup retention tối đa, PITR</span></div>
+      </div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Công ty chạy <b>MongoDB on-prem / trên EC2</b>, muốn chuyển sang managed với <b>ít thay đổi code nhất</b> ⇒ <b>DocumentDB</b> (migrate bằng AWS DMS).</li>
+          <li>“<i>JSON documents</i>” + “<i>rich queries across fields</i>” ⇒ DocumentDB; “<i>key-value at any scale, serverless</i>” ⇒ DynamoDB.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: NEPTUNE ===================== -->
+      <h2 id="neptune"><img src="../assets/icons/svc/Amazon-Neptune.svg" alt="">Amazon Neptune – CSDL đồ thị</h2>
+      <p class="lead"><b>Amazon Neptune</b> là dịch vụ <span class="t" data-vi="CSDL đồ thị">graph database</span> nhanh, tin cậy, fully managed cho dữ liệu <span class="t" data-vi="Kết nối dày đặc">highly connected</span>. Engine được tối ưu để lưu <b>hàng tỉ quan hệ</b> và truy vấn đồ thị với độ trễ <b>mili-giây</b>.</p>
+
+      <p>Đồ thị gồm <b>đỉnh</b> (vertex – người, tài khoản, sản phẩm) và <b>cạnh</b> (edge – “là bạn của”, “đã mua”, “dùng chung thẻ”). Theo tài liệu, truy vấn SQL cho dữ liệu kết nối dày đặc <b>phức tạp và khó tối ưu</b>; với graph query, “bạn của bạn của bạn” chỉ là <b>duyệt cạnh</b> (traversal), giảm mạnh độ phức tạp code.</p>
+
+      <h3>Hai mô hình đồ thị và ngôn ngữ truy vấn</h3>
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/svc/Amazon-Neptune.svg" alt="">Property Graph (PG)</h4>
+          <ul>
+            <li>Đỉnh và cạnh mang <b>thuộc tính</b> (key-value).</li>
+            <li>Truy vấn bằng <b>Apache TinkerPop Gremlin</b> và/hoặc <b>openCypher</b> (của Neo4j) – trên cùng một đồ thị.</li>
+          </ul></div>
+        <div style="--accent:#7AA116"><h4><img src="../assets/icons/svc/Amazon-Neptune.svg" alt="">RDF (chuẩn W3C)</h4>
+          <ul>
+            <li><b>Resource Description Framework</b> – mô hình chuẩn W3C cho dữ liệu ngữ nghĩa, knowledge graph.</li>
+            <li>Truy vấn bằng <b>SPARQL</b>.</li>
+          </ul></div>
+      </div>
+
+      <h3>Kiến trúc và độ sẵn sàng</h3>
+      <ul>
+        <li><b>Primary DB instance</b>: đọc + ghi, thực hiện mọi thay đổi lên cluster volume (mỗi cluster có đúng 1 primary).</li>
+        <li><b>Neptune Replica</b>: kết nối cùng storage volume, <b>chỉ đọc</b>; tối đa <b>15 replica</b> đặt ở các AZ khác nhau để HA và chia tải đọc.</li>
+        <li><b>Cluster volume</b>: dữ liệu được sao chép qua <b>nhiều AZ</b> trong một Region; storage SSD <b>tự sửa lỗi</b> (self-healing), lỗi đĩa được sửa nền không mất availability.</li>
+        <li>Thiết kế cho availability <b>&gt; 99,99%</b>; instance hỏng ⇒ tự failover sang một trong tối đa 15 read replica. Có PITR, backup liên tục lên S3, mã hóa at-rest (KMS) và in-transit, cô lập mạng bằng VPC.</li>
+        <li><b>Neptune Analytics</b>: engine phân tích bổ trợ, phân tích nhanh lượng lớn dữ liệu đồ thị <b>trong bộ nhớ</b> bằng thuật toán đồ thị; hỗ trợ vector similarity cho <b>GraphRAG</b>. <b>Neptune Serverless</b> cũng nằm trong danh sách dịch vụ serverless của AWS.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <ul>
+          <li>Use case Neptune theo tài liệu: <b>recommendation engines, fraud detection, knowledge graphs, drug discovery, network security</b>. Thấy “<i>relationships</i>”, “<i>connections between</i>”, “<i>graph</i>” ⇒ Neptune.</li>
+          <li>Bẫy: đề mô tả mạng xã hội nhưng chỉ cần lưu <b>profile/post</b> theo user ID ở quy mô lớn ⇒ DynamoDB; cần <b>truy vấn quan hệ nhiều bước</b> (bạn của bạn, vòng gian lận) ⇒ Neptune.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: KEYSPACES & TIMESTREAM ===================== -->
+      <h2 id="keyspaces-timestream"><img src="../assets/icons/svc/Amazon-Keyspaces.svg" alt="">Amazon Keyspaces và Amazon Timestream</h2>
+
+      <h3>Amazon Keyspaces (for Apache Cassandra)</h3>
+      <p class="lead"><b>Amazon Keyspaces</b> là dịch vụ CSDL <span class="t" data-vi="Tương thích Apache Cassandra">Apache Cassandra–compatible</span>, scalable, highly available và managed. Bạn <b>không</b> phải cấp phát, patch hay quản lý server, <b>không</b> cài đặt hay vận hành phần mềm.</p>
+      <p>Apache Cassandra là datastore mã nguồn mở kiểu <span class="t" data-vi="Cột rộng">wide-column</span> cho lượng dữ liệu rất lớn. Cassandra tự vận hành có thể gồm <b>hàng trăm node</b> trên nhiều data center – gánh nặng vận hành lớn. Keyspaces gỡ bỏ gánh nặng đó:</p>
+      <ul>
+        <li><b>Serverless</b>: chỉ trả cho tài nguyên dùng, bảng <b>tự scale lên/xuống</b> theo traffic; throughput và storage gần như không giới hạn.</li>
+        <li>Dùng <b>CQL</b> (Cassandra Query Language – giống SQL nhưng <b>không có JOIN</b>) và <b>cùng driver, cùng code</b> Cassandra: chỉ đổi endpoint (vd <code>cassandra.us-east-1.amazonaws.com</code>, port <b>9142</b>) và thêm cấu hình TLS.</li>
+        <li>Hai <b>capacity mode</b> giống DynamoDB: <b>on-demand</b> (trả theo read/write thực tế, hợp traffic khó đoán) và <b>provisioned</b> (+ automatic scaling, hợp traffic dự đoán được); đổi mode <b>1 lần/ngày</b>.</li>
+        <li>Lưu <b>3 bản sao</b> dữ liệu trên nhiều AZ; mã hóa at-rest <b>bật sẵn</b>, mọi kết nối bắt buộc <b>TLS</b>; tích hợp IAM, VPC endpoint, CloudWatch.</li>
+        <li>Mô hình dữ liệu: <b>primary key</b> = <b>partition key</b> (bắt buộc, quyết định partition) + <b>clustering column</b> (tùy chọn, sắp xếp trong partition); thiết kế bảng theo <b>query first</b>, chấp nhận denormalize.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>migrate an on-premises Apache Cassandra cluster</i>” + “<i>without managing servers / minimal code changes</i>” ⇒ <b>Amazon Keyspaces</b>. Tự cài Cassandra trên EC2 (dù dùng partition placement group – Bài 10) là phương án <b>nhiều overhead</b> hơn.</p></div>
+
+      <h3>Amazon Timestream</h3>
+      <p><b>Amazon Timestream for LiveAnalytics</b> là CSDL <span class="t" data-vi="Chuỗi thời gian">time series</span> nhanh, scalable, fully managed, <b>serverless</b>, lưu và phân tích <b>hàng nghìn tỉ (trillions) điểm dữ liệu mỗi ngày</b>.</p>
+      <ul>
+        <li><b>Data lifecycle management</b>: <span class="t" data-vi="Kho bộ nhớ – dữ liệu gần đây">memory store</span> cho dữ liệu gần đây, <span class="t" data-vi="Kho từ tính – dữ liệu lịch sử, chi phí thấp">magnetic store</span> cho dữ liệu lịch sử; tự chuyển dữ liệu giữa hai tầng theo <b>chính sách do người dùng cấu hình</b>.</li>
+        <li>Query engine truy cập <b>cả dữ liệu mới lẫn lịch sử</b> mà không cần chỉ định vị trí; dùng <b>SQL</b> với hàm time series dựng sẵn (smoothing, approximation, interpolation).</li>
+        <li><b>Luôn mã hóa</b> at-rest và in-transit; có thể dùng KMS customer managed key cho magnetic store.</li>
+        <li>HA: dữ liệu và tài nguyên phân bổ trên <b>ít nhất 3 AZ</b> trong Region; mọi ghi được lưu xuống đĩa trước khi xác nhận.</li>
+        <li>Tích hợp: nạp dữ liệu từ <b>AWS IoT Core, Amazon Kinesis, Amazon MSK</b>, Telegraf; trực quan hóa bằng <b>Grafana</b>, Amazon Quick, BI tool qua JDBC; ML với SageMaker AI.</li>
+        <li>Use case: metrics hiệu năng ứng dụng, <b>telemetry công nghiệp</b>, theo dõi tương tác người dùng theo thời gian, <b>dữ liệu cảm biến IoT</b>.</li>
+        <li>AWS hiện giới thiệu <b>Amazon Timestream for InfluxDB</b> (engine InfluxDB mã nguồn mở, query single-digit ms) là lựa chọn có khả năng tương tự cho khách hàng mới.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/svc/AWS-IoT-Core.svg" alt="">IoT sensors<small>AWS IoT Core</small></div>
+          <span class="arrow">ingest</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg" alt="">Kinesis<small>tùy chọn</small></div>
+          <span class="arrow">write</span>
+          <div class="node"><img src="../assets/icons/svc/Amazon-Timestream.svg" alt="">Timestream<small>memory → magnetic</small></div>
+          <span class="arrow dashed">SQL query</span>
+          <div class="node"><img src="../assets/icons/res/Client.svg" alt="">Grafana / BI<small>dashboard</small></div>
+        </div>
+        <figcaption><b>Hình 6.</b> Pipeline IoT điển hình: cảm biến gửi dữ liệu qua IoT Core/Kinesis vào Timestream; dữ liệu mới nằm ở memory store để truy vấn nhanh, dữ liệu cũ tự chuyển sang magnetic store rẻ hơn; dashboard truy vấn cả hai tầng bằng một câu SQL.</figcaption>
+      </figure>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip)</span>
+        <p>“<i>store and analyze time-stamped data from millions of IoT devices</i>”, “<i>keep recent data hot and move older data to cheaper storage automatically</i>”, “<i>serverless</i>” ⇒ <b>Amazon Timestream</b>. Nếu đề nhấn mạnh <b>data warehouse / BI trên petabyte</b> ⇒ Redshift; <b>log search</b> ⇒ OpenSearch.</p></div>
+
+      <!-- ===================== PHẦN 8: MEMORYDB & QLDB ===================== -->
+      <h2 id="memorydb-qldb"><img src="../assets/icons/svc/Amazon-Quantum-Ledger-Database.svg" alt="">Amazon MemoryDB và Amazon QLDB</h2>
+
+      <h3>Amazon MemoryDB – in-memory nhưng bền vững</h3>
+      <p>Theo decision guide, <b>Amazon MemoryDB</b> là CSDL <span class="t" data-vi="Trong bộ nhớ, bền vững">durable in-memory</span> tương thích <b>Valkey và Redis OSS</b>: đọc <b>micro-giây</b>, ghi <b>single-digit millisecond</b>, <b>Multi-AZ durability</b>. Dùng khi cần <b>bền dữ liệu hoàn toàn</b> với độ trễ đọc sub-ms – phù hợp làm <b>primary database</b> hiệu năng cao cho kiến trúc microservices. MemoryDB cũng có <b>vector search</b> (hiệu năng và quy mô cao nhất, ví dụ semantic caching, real-time inference).</p>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>ElastiCache (cache)</th><th>MemoryDB</th><th>DAX (Bài 28)</th></tr></thead>
+        <tbody>
+          <tr><td>Vai trò</td><td>Cache <b>ephemeral</b> trước một CSDL bất kỳ</td><td class="yes"><b>Primary database</b> in-memory bền vững</td><td>Cache chỉ cho DynamoDB</td></tr>
+          <tr><td>API</td><td>Valkey / Redis OSS / Memcached</td><td>Valkey / Redis OSS</td><td>Tương thích DynamoDB API</td></tr>
+          <tr><td>Độ trễ</td><td>Đọc µs, ghi sub-ms</td><td>Đọc µs, ghi single-digit ms (vì ghi bền Multi-AZ)</td><td>Đọc µs</td></tr>
+          <tr><td>Mất dữ liệu khi sự cố</td><td class="no">Có thể (trừ khi bật durability của Valkey 9.0)</td><td class="yes">Không – Multi-AZ durability</td><td>Không ảnh hưởng – dữ liệu gốc ở DynamoDB</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Amazon QLDB (Quantum Ledger Database) – đã ngừng hỗ trợ</h3>
+      <p><span class="t" data-vi="CSDL sổ cái">Ledger database</span> QLDB lưu lịch sử thay đổi trong một <b>journal</b> chỉ-ghi-thêm (append-only), <b>bất biến</b> (immutable) và có thể <b>kiểm chứng bằng mật mã</b> (cryptographically verifiable, chuỗi hash SHA-256) – do <b>một cơ quan trung tâm</b> sở hữu (khác blockchain phi tập trung). Use case kinh điển: lịch sử giao dịch tài chính, chuỗi cung ứng, hồ sơ đăng ký cần audit.</p>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – trạng thái QLDB</span>
+        <ul>
+          <li>AWS đã thông báo <b>end of support</b> cho Amazon QLDB (ngày <b>31/07/2025</b>); trang tài liệu QLDB không còn truy cập được và QLDB <b>không còn</b> trong decision guide hiện tại. AWS khuyến nghị chuyển sang <b>Amazon Aurora PostgreSQL</b> (kết hợp bảng audit/history).</li>
+          <li>Đề SAA-C03 cũ vẫn có thể nhắc “<i>immutable, cryptographically verifiable ledger, centrally owned</i>” ⇒ đáp án QLDB. Nếu đề mới không có QLDB, chọn giải pháp thay thế được AWS khuyến nghị. Nếu đề nói <b>“decentralized / multiple parties without a trusted central authority”</b> ⇒ blockchain (Amazon Managed Blockchain), không phải QLDB.</li>
+        </ul></div>
+
+      <h3>Tổng hợp: chọn CSDL nào?</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Từ khóa trong đề</th><th>Dịch vụ</th><th>Ghi chú</th></tr></thead>
+        <tbody>
+          <tr><td>SQL, JOIN, ACID, ERP/CRM, migrate Oracle/SQL Server</td><td><b>RDS / Aurora</b></td><td>Bài 26–27</td></tr>
+          <tr><td>Key-value, serverless, single-digit ms, scale vô hạn</td><td><b>DynamoDB</b></td><td>Bài 28; cache micro-giây ⇒ DAX</td></tr>
+          <tr><td>Cache kết quả query, session store, leaderboard, giảm tải DB</td><td><b>ElastiCache</b></td><td>Valkey/Redis OSS (HA) hoặc Memcached (đơn giản)</td></tr>
+          <tr><td>In-memory nhưng là DB chính, không được mất dữ liệu</td><td><b>MemoryDB</b></td><td>Multi-AZ durability</td></tr>
+          <tr><td>MongoDB, JSON document, catalog, content management</td><td><b>DocumentDB</b></td><td>6 bản sao/3 AZ, 15 replica</td></tr>
+          <tr><td>Graph, relationships, social network, fraud, recommendation</td><td><b>Neptune</b></td><td>Gremlin, openCypher, SPARQL</td></tr>
+          <tr><td>Apache Cassandra, CQL, wide-column</td><td><b>Keyspaces</b></td><td>Serverless, 3 bản sao</td></tr>
+          <tr><td>Time series, IoT telemetry, metrics theo timestamp</td><td><b>Timestream</b></td><td>Memory store + magnetic store</td></tr>
+          <tr><td>Ledger bất biến, kiểm chứng mật mã, sở hữu tập trung</td><td><b>QLDB</b> (đề cũ)</td><td>Đã end of support ⇒ Aurora PostgreSQL</td></tr>
+          <tr><td>OLAP, data warehouse, BI trên petabyte</td><td><b>Redshift</b></td><td>Module 7</td></tr>
+        </tbody>
+      </table></div>
+
+      <!-- 3. TÓM TẮT -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Key takeaways</span>
+        <ul>
+          <li><b>Purpose-built</b>: chọn CSDL theo mô hình dữ liệu và access pattern; một ứng dụng có thể dùng nhiều CSDL (polyglot persistence).</li>
+          <li><b>ElastiCache</b> = cache in-memory (đọc µs, ghi sub-ms) đặt giữa app và DB; <b>Serverless</b> (không capacity planning, tạo &lt; 1 phút) hoặc <b>node-based</b> (tự chọn node type, số node, AZ). App phải sửa code để dùng cache.</li>
+          <li><b>Memcached</b>: đơn giản, multi-threaded, sharding, <b>không replication/failover/backup</b> (node-based). <b>Valkey/Redis OSS</b>: kiểu dữ liệu phức tạp, replica + Multi-AZ auto failover, backup, pub/sub, sorted set, geospatial, Global Datastore (cross-Region, primary ghi – secondary chỉ đọc).</li>
+          <li><b>Lazy loading</b>: chỉ cache dữ liệu được đọc, chịu node hỏng, nhưng có cache miss penalty (3 lượt) và stale data. <b>Write-through</b>: không bao giờ stale, nhưng missing data với node mới và cache churn. <b>TTL</b> kết hợp ưu điểm của cả hai.</li>
+          <li><b>Session store</b> ở ElastiCache giúp tầng web stateless, không cần sticky sessions.</li>
+          <li><b>DocumentDB</b>: MongoDB-compatible, 0–16 instance, 15 replica, 6 bản sao/3 AZ, storage tự tăng tới 256 TiB, PITR 35 ngày, elastic clusters.</li>
+          <li><b>Neptune</b>: graph, hàng tỉ quan hệ, ms; Gremlin/openCypher (property graph) và SPARQL (RDF); 15 replica; &gt; 99,99% availability.</li>
+          <li><b>Keyspaces</b>: Cassandra serverless, CQL, on-demand/provisioned, 3 bản sao. <b>Timestream</b>: time series serverless, memory store → magnetic store. <b>MemoryDB</b>: in-memory bền làm DB chính. <b>QLDB</b>: ledger – đã end of support.</li>
+        </ul></div>
+
+      <!-- 4. THUẬT NGỮ -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>Purpose-built database</dt><dd><b>CSDL chuyên dụng</b> – CSDL tối ưu cho một mô hình dữ liệu/kiểu truy cập cụ thể.</dd></div>
+        <div><dt>Polyglot persistence</dt><dd><b>Đa CSDL</b> – một ứng dụng dùng nhiều loại CSDL, mỗi phần dùng loại phù hợp nhất.</dd></div>
+        <div><dt>In-memory data store</dt><dd><b>Kho dữ liệu trong bộ nhớ</b> – lưu dữ liệu trong RAM để có độ trễ micro-giây.</dd></div>
+        <div><dt>Amazon ElastiCache</dt><dd><b>Bộ nhớ đệm in-memory được quản lý</b> – Valkey, Memcached, Redis OSS; serverless hoặc node-based.</dd></div>
+        <div><dt>ElastiCache Serverless</dt><dd><b>Cache không máy chủ</b> – tự scale, một endpoint, không chọn node; tạo trong dưới 1 phút.</dd></div>
+        <div><dt>Node-based cluster</dt><dd><b>Cụm theo node</b> – tự chọn node type, số node, AZ, cluster mode.</dd></div>
+        <div><dt>Valkey / Redis OSS / Memcached</dt><dd><b>Các engine cache</b> – Valkey/Redis OSS: kiểu dữ liệu phức tạp, replication; Memcached: đơn giản, multi-threaded.</dd></div>
+        <div><dt>Cluster mode (disabled / enabled)</dt><dd><b>Chế độ cụm</b> – 1 shard, scale dọc / nhiều shard, scale ngang, online resharding.</dd></div>
+        <div><dt>Shard</dt><dd><b>Phân mảnh</b> – nhóm 1 primary + 0..n replica giữ một phần keyspace.</dd></div>
+        <div><dt>Global Datastore</dt><dd><b>Kho dữ liệu toàn cầu</b> – sao chép cluster Valkey/Redis OSS bất đồng bộ sang Region khác; secondary chỉ đọc, có thể promote.</dd></div>
+        <div><dt>Durability (ElastiCache Valkey)</dt><dd><b>Độ bền dữ liệu</b> – ghi vào transactional log Multi-AZ, an toàn ngay cả khi mọi node hỏng.</dd></div>
+        <div><dt>Data tiering</dt><dd><b>Phân tầng dữ liệu</b> – dữ liệu tràn từ RAM xuống SSD (node r6gd) để giảm chi phí.</dd></div>
+        <div><dt>Lazy loading (cache-aside)</dt><dd><b>Nạp lười</b> – chỉ nạp dữ liệu vào cache khi cache miss.</dd></div>
+        <div><dt>Write-through (ElastiCache)</dt><dd><b>Ghi xuyên</b> – ghi DB đồng thời cập nhật cache.</dd></div>
+        <div><dt>Cache hit / Cache miss</dt><dd><b>Trúng / trượt cache</b> – dữ liệu có / không có (hoặc đã hết hạn) trong cache.</dd></div>
+        <div><dt>Cache miss penalty</dt><dd><b>Hình phạt trượt cache</b> – 3 lượt: đọc cache, query DB, ghi cache.</dd></div>
+        <div><dt>Stale data</dt><dd><b>Dữ liệu cũ</b> – dữ liệu trong cache không còn khớp DB.</dd></div>
+        <div><dt>Cache churn</dt><dd><b>Xáo trộn cache</b> – ghi vào cache dữ liệu không bao giờ được đọc, lãng phí bộ nhớ.</dd></div>
+        <div><dt>Eviction</dt><dd><b>Loại bỏ key</b> – khi cache đầy, engine xóa key theo chính sách (vd LRU).</dd></div>
+        <div><dt>Session store</dt><dd><b>Kho lưu phiên tập trung</b> – lưu session ngoài web server để tầng web stateless.</dd></div>
+        <div><dt>Sorted set</dt><dd><b>Tập có thứ tự</b> – cấu trúc Valkey/Redis OSS dùng cho leaderboard.</dd></div>
+        <div><dt>Pub/Sub (ElastiCache)</dt><dd><b>Xuất bản / đăng ký</b> – gửi message vào channel cho mọi subscriber.</dd></div>
+        <div><dt>Semantic caching</dt><dd><b>Cache ngữ nghĩa</b> – trả lại câu trả lời LLM đã cache cho prompt tương tự về ý nghĩa.</dd></div>
+        <div><dt>Amazon MemoryDB</dt><dd><b>CSDL in-memory bền vững</b> – tương thích Valkey/Redis OSS, Multi-AZ durability, làm DB chính.</dd></div>
+        <div><dt>Amazon DocumentDB</dt><dd><b>CSDL tài liệu tương thích MongoDB</b> – JSON, 15 replica, 6 bản sao/3 AZ.</dd></div>
+        <div><dt>Document database</dt><dd><b>CSDL tài liệu</b> – lưu dữ liệu bán cấu trúc dạng JSON.</dd></div>
+        <div><dt>Elastic cluster (DocumentDB)</dt><dd><b>Cụm co giãn</b> – sharding tới hàng triệu read/write/giây, storage petabyte.</dd></div>
+        <div><dt>Amazon Neptune</dt><dd><b>CSDL đồ thị</b> – hàng tỉ quan hệ, truy vấn mili-giây.</dd></div>
+        <div><dt>Property graph / RDF</dt><dd><b>Đồ thị thuộc tính / Khung mô tả tài nguyên</b> – hai mô hình đồ thị của Neptune.</dd></div>
+        <div><dt>Gremlin / openCypher / SPARQL</dt><dd><b>Ngôn ngữ truy vấn đồ thị</b> – Gremlin, openCypher cho property graph; SPARQL cho RDF.</dd></div>
+        <div><dt>Neptune Analytics</dt><dd><b>Neptune phân tích</b> – phân tích đồ thị lớn trong bộ nhớ, GraphRAG.</dd></div>
+        <div><dt>Amazon Keyspaces</dt><dd><b>CSDL cột rộng tương thích Cassandra</b> – serverless, CQL.</dd></div>
+        <div><dt>Wide-column</dt><dd><b>Cột rộng</b> – mô hình dữ liệu của Cassandra: partition key + clustering column.</dd></div>
+        <div><dt>CQL (Cassandra Query Language)</dt><dd><b>Ngôn ngữ truy vấn Cassandra</b> – giống SQL nhưng không JOIN.</dd></div>
+        <div><dt>Clustering column</dt><dd><b>Cột phân cụm</b> – sắp xếp dữ liệu trong partition của Cassandra/Keyspaces.</dd></div>
+        <div><dt>Amazon Timestream</dt><dd><b>CSDL chuỗi thời gian</b> – serverless, trillions điểm dữ liệu/ngày.</dd></div>
+        <div><dt>Memory store / Magnetic store</dt><dd><b>Kho bộ nhớ / Kho từ tính</b> – tầng dữ liệu gần đây / lịch sử chi phí thấp của Timestream.</dd></div>
+        <div><dt>Ledger database (QLDB)</dt><dd><b>CSDL sổ cái</b> – journal bất biến, kiểm chứng mật mã; QLDB đã end of support.</dd></div>
+      </dl>
+
+      <!-- 5. CÂU HỎI ÔN TẬP -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="B">
+          <div class="qh">A company runs an e-commerce website on Amazon EC2 instances behind an Application Load Balancer. The product pages are generated from complex SQL queries with multiple joins against an Amazon RDS for MySQL database. During sales events, the database CPU reaches 100% because the same queries run repeatedly. The product data changes only a few times per day. Which solution will MOST improve performance and reduce the load on the database?</div>
+          <ol class="opts">
+            <li data-k="A">Enable Multi-AZ on the RDS DB instance.</li>
+            <li data-k="B">Deploy Amazon ElastiCache and cache the query results in the application using lazy loading with a TTL.</li>
+            <li data-k="C">Add Amazon DynamoDB Accelerator (DAX) in front of the RDS database.</li>
+            <li data-k="D">Migrate the database to Amazon Neptune.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Dữ liệu ít thay đổi, đọc lặp lại nhiều, query JOIN đắt – đúng ứng viên cache theo tài liệu. Lazy loading chỉ cache dữ liệu được đọc, TTL giới hạn độ cũ. <b>A sai</b>: Multi-AZ standby không phục vụ đọc, chỉ tăng HA. <b>C sai</b>: DAX chỉ dùng cho DynamoDB, không đặt trước RDS. <b>D sai</b>: Neptune là CSDL đồ thị, không giải quyết tải đọc của dữ liệu quan hệ.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy website thương mại điện tử trên các Amazon EC2 instance phía sau một Application Load Balancer. Các trang sản phẩm được tạo từ những truy vấn SQL phức tạp với nhiều phép JOIN trên cơ sở dữ liệu Amazon RDS for MySQL. Trong các đợt khuyến mãi, CPU của cơ sở dữ liệu lên tới 100% vì cùng một truy vấn được chạy lặp đi lặp lại. Dữ liệu sản phẩm chỉ thay đổi vài lần mỗi ngày. Giải pháp nào sẽ MOST (nhiều nhất) cải thiện hiệu năng và giảm tải cho cơ sở dữ liệu?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật Multi-AZ trên RDS DB instance.</span><span class="why">Sai: standby của Multi-AZ không phục vụ đọc, chỉ tăng high availability.</span></li>
+              <li data-k="B"><span class="tv">Triển khai Amazon ElastiCache và cache kết quả truy vấn trong ứng dụng theo chiến lược lazy loading kèm TTL.</span><span class="why">Đúng: dữ liệu ít thay đổi, đọc lặp lại nhiều, truy vấn JOIN đắt – lý tưởng để cache; lazy loading chỉ cache dữ liệu được đọc và TTL giới hạn độ cũ.</span></li>
+              <li data-k="C"><span class="tv">Thêm Amazon DynamoDB Accelerator (DAX) phía trước cơ sở dữ liệu RDS.</span><span class="why">Sai: DAX chỉ dùng cho DynamoDB, không thể đặt trước RDS.</span></li>
+              <li data-k="D"><span class="tv">Di chuyển cơ sở dữ liệu sang Amazon Neptune.</span><span class="why">Sai: Neptune là CSDL đồ thị, không giải quyết tải đọc lặp lại của dữ liệu quan hệ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A web application stores user session data in the memory of each EC2 instance. The instances run in an Auto Scaling group behind an Application Load Balancer. Users report being logged out when the Auto Scaling group scales in. The company wants a highly available solution with sub-millisecond latency for session data. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Enable sticky sessions on the Application Load Balancer.</li>
+            <li data-k="B">Store session data on an Amazon EBS volume attached to each instance.</li>
+            <li data-k="C">Use Amazon ElastiCache for Memcached with a single node to store session data.</li>
+            <li data-k="D">Use Amazon ElastiCache for Valkey with a replica in another Availability Zone and Multi-AZ automatic failover enabled to store session data.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Session store tập trung ở ElastiCache giúp tầng web stateless; Valkey có replica + Multi-AZ auto failover nên highly available, độ trễ sub-ms. <b>A sai</b>: sticky sessions vẫn mất session khi instance bị scale in. <b>B sai</b>: EBS gắn với từng instance (và một AZ), instance khác không đọc được. <b>C sai</b>: Memcached không có replication/failover, node đơn hỏng là mất hết session – không HA.</div>
+          <div class="trans">
+            <div class="tq">Một ứng dụng web lưu dữ liệu session của người dùng trong bộ nhớ của từng EC2 instance. Các instance chạy trong một Auto Scaling group phía sau Application Load Balancer. Người dùng phản ánh bị đăng xuất khi Auto Scaling group scale in. Công ty muốn một giải pháp highly available với độ trễ dưới một mili-giây cho dữ liệu session. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bật sticky sessions trên Application Load Balancer.</span><span class="why">Sai: sticky sessions vẫn làm mất session khi instance chứa nó bị scale in.</span></li>
+              <li data-k="B"><span class="tv">Lưu dữ liệu session trên một Amazon EBS volume gắn vào mỗi instance.</span><span class="why">Sai: EBS gắn với từng instance (và một AZ), instance khác không đọc được, mất khi instance bị terminate.</span></li>
+              <li data-k="C"><span class="tv">Dùng Amazon ElastiCache for Memcached với một node duy nhất để lưu dữ liệu session.</span><span class="why">Sai: Memcached không có replication/failover; node đơn hỏng là mất toàn bộ session – không highly available.</span></li>
+              <li data-k="D"><span class="tv">Dùng Amazon ElastiCache for Valkey với một replica ở Availability Zone khác và bật Multi-AZ automatic failover để lưu dữ liệu session.</span><span class="why">Đúng: session store tập trung giúp tầng web stateless; Valkey có replica và Multi-AZ auto failover nên highly available với độ trễ dưới mili-giây.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company wants to migrate its self-managed MongoDB database from on premises to AWS. The application uses MongoDB drivers to store JSON documents and run queries on multiple document fields. The company wants a fully managed service and minimal application code changes. Which AWS service should the company use?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon DocumentDB (with MongoDB compatibility)</li>
+            <li data-k="B">Amazon DynamoDB</li>
+            <li data-k="C">Amazon Keyspaces (for Apache Cassandra)</li>
+            <li data-k="D">Amazon RDS for PostgreSQL with JSON columns</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> DocumentDB tương thích MongoDB: dùng <b>cùng application code, driver và tool</b> như MongoDB, fully managed. <b>B sai</b>: DynamoDB có API khác, phải viết lại code truy cập dữ liệu. <b>C sai</b>: Keyspaces tương thích Cassandra (CQL), không phải MongoDB. <b>D sai</b>: phải viết lại toàn bộ lớp truy cập dữ liệu sang SQL.</div>
+          <div class="trans">
+            <div class="tq">Một công ty muốn di chuyển cơ sở dữ liệu MongoDB tự quản lý từ on-premises lên AWS. Ứng dụng dùng MongoDB driver để lưu các tài liệu JSON và chạy truy vấn trên nhiều trường của tài liệu. Công ty muốn một dịch vụ fully managed và thay đổi mã nguồn ứng dụng ít nhất. Công ty nên dùng dịch vụ AWS nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon DocumentDB (with MongoDB compatibility)</span><span class="why">Đúng: DocumentDB tương thích MongoDB – dùng cùng application code, driver và tool, lại fully managed.</span></li>
+              <li data-k="B"><span class="tv">Amazon DynamoDB</span><span class="why">Sai: DynamoDB có API riêng, phải viết lại code truy cập dữ liệu.</span></li>
+              <li data-k="C"><span class="tv">Amazon Keyspaces (for Apache Cassandra)</span><span class="why">Sai: Keyspaces tương thích Cassandra (CQL), không phải MongoDB.</span></li>
+              <li data-k="D"><span class="tv">Amazon RDS for PostgreSQL với các cột JSON</span><span class="why">Sai: phải viết lại toàn bộ lớp truy cập dữ liệu sang SQL, trái với yêu cầu ít thay đổi code.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A financial services company needs to detect fraud rings by analyzing relationships between accounts, devices, IP addresses, and credit cards in real time. Queries must traverse multiple levels of connections (for example, accounts that share a device with an account that shares a card with a known fraudster) with millisecond latency. Which database should a solutions architect recommend?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon Aurora PostgreSQL with recursive SQL queries</li>
+            <li data-k="B">Amazon Timestream</li>
+            <li data-k="C">Amazon Neptune</li>
+            <li data-k="D">Amazon ElastiCache for Memcached</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> Neptune tối ưu cho dữ liệu <b>highly connected</b>, lưu hàng tỉ quan hệ và truy vấn ms; fraud detection là use case được nêu trong tài liệu. <b>A sai</b>: tài liệu nêu rõ SQL cho dữ liệu kết nối dày đặc phức tạp và khó tối ưu (JOIN đệ quy nhiều tầng). <b>B sai</b>: Timestream cho dữ liệu chuỗi thời gian. <b>D sai</b>: Memcached là cache key-value đơn giản, không duyệt quan hệ.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dịch vụ tài chính cần phát hiện các đường dây gian lận (fraud ring) bằng cách phân tích mối quan hệ giữa tài khoản, thiết bị, địa chỉ IP và thẻ tín dụng theo thời gian thực. Các truy vấn phải duyệt qua nhiều cấp kết nối (ví dụ: các tài khoản dùng chung thiết bị với một tài khoản dùng chung thẻ với một kẻ gian lận đã biết) với độ trễ mili-giây. Solutions architect nên đề xuất cơ sở dữ liệu nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon Aurora PostgreSQL với các truy vấn SQL đệ quy</span><span class="why">Sai: SQL với JOIN đệ quy nhiều tầng trên dữ liệu kết nối dày đặc phức tạp, khó tối ưu và chậm.</span></li>
+              <li data-k="B"><span class="tv">Amazon Timestream</span><span class="why">Sai: Timestream dành cho dữ liệu chuỗi thời gian, không phải duyệt quan hệ.</span></li>
+              <li data-k="C"><span class="tv">Amazon Neptune</span><span class="why">Đúng: Neptune là CSDL đồ thị tối ưu cho dữ liệu highly connected, duyệt nhiều cấp quan hệ với độ trễ mili-giây; fraud detection là use case điển hình.</span></li>
+              <li data-k="D"><span class="tv">Amazon ElastiCache for Memcached</span><span class="why">Sai: Memcached là cache key-value đơn giản, không có khả năng duyệt quan hệ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A solutions architect is choosing between Memcached and Valkey for Amazon ElastiCache (node-based). The cache must remain available if a node or an Availability Zone fails, and the team needs to take snapshots of the cache data. Which TWO capabilities are available with Valkey but NOT with node-based Memcached? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Replication with automatic failover across Availability Zones</li>
+            <li data-k="B">Multi-threaded architecture that uses multiple cores</li>
+            <li data-k="C">Backup and restore of cluster data</li>
+            <li data-k="D">Data partitioning across multiple nodes</li>
+            <li data-k="E">In-memory key-value storage</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> Theo bảng so sánh của AWS, Memcached node-based <b>không có replication, không có automatic failover</b> và <b>backup/restore chỉ áp dụng cho serverless cache</b>; Valkey/Redis OSS có cả hai. <b>B sai</b>: multi-threaded là đặc điểm của <b>Memcached</b>, Valkey/Redis OSS thì không. <b>D sai</b>: cả Memcached và Valkey (cluster mode enabled) đều partition dữ liệu. <b>E sai</b>: cả hai đều là in-memory key-value store.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect đang lựa chọn giữa Memcached và Valkey cho Amazon ElastiCache (node-based). Cache phải luôn sẵn sàng nếu một node hoặc một Availability Zone gặp sự cố, và nhóm cần chụp snapshot dữ liệu cache. HAI khả năng nào có ở Valkey nhưng KHÔNG có ở Memcached node-based? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Replication với automatic failover giữa các Availability Zone</span><span class="why">Đúng: Valkey hỗ trợ replica và Multi-AZ auto failover, còn Memcached node-based không có replication hay failover.</span></li>
+              <li data-k="B"><span class="tv">Kiến trúc đa luồng (multi-threaded) tận dụng nhiều core</span><span class="why">Sai: multi-threaded là đặc điểm của Memcached, không phải lợi thế riêng của Valkey.</span></li>
+              <li data-k="C"><span class="tv">Backup và restore dữ liệu cluster</span><span class="why">Đúng: Valkey hỗ trợ snapshot backup/restore; với Memcached, backup/restore chỉ áp dụng cho serverless cache, không có ở node-based.</span></li>
+              <li data-k="D"><span class="tv">Phân mảnh (partition) dữ liệu trên nhiều node</span><span class="why">Sai: cả Memcached và Valkey (cluster mode enabled) đều phân mảnh dữ liệu được.</span></li>
+              <li data-k="E"><span class="tv">Lưu trữ key-value trong bộ nhớ (in-memory)</span><span class="why">Sai: cả hai đều là in-memory key-value store.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company uses Amazon ElastiCache in front of its database with a lazy loading strategy. Users complain that they sometimes see outdated product prices for a long time after prices are updated in the database. The company wants the cache to always reflect the latest data whenever an update is written, while still tolerating cache node replacement. Which approach should the company take?</div>
+          <ol class="opts">
+            <li data-k="A">Remove the cache and read directly from the database.</li>
+            <li data-k="B">Implement write-through so that the cache is updated whenever data is written to the database, and keep lazy loading for cache misses.</li>
+            <li data-k="C">Increase the TTL on all cache keys.</li>
+            <li data-k="D">Switch the cache engine from Valkey to Memcached.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> Lazy loading gây <b>stale data</b> vì cache không được cập nhật khi DB thay đổi; write-through cập nhật cache mỗi lần ghi nên cache không cũ. Giữ lazy loading để bù <b>missing data</b> khi node mới thay thế – đúng khuyến nghị của AWS. <b>A sai</b>: mất lợi ích hiệu năng, tăng tải DB. <b>C sai</b>: TTL dài hơn khiến dữ liệu càng cũ lâu hơn. <b>D sai</b>: engine không quyết định chiến lược cache.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng Amazon ElastiCache phía trước cơ sở dữ liệu với chiến lược lazy loading. Người dùng phàn nàn đôi khi thấy giá sản phẩm cũ trong thời gian dài sau khi giá đã được cập nhật trong cơ sở dữ liệu. Công ty muốn cache luôn phản ánh dữ liệu mới nhất mỗi khi có cập nhật được ghi, đồng thời vẫn chịu được việc thay thế cache node. Công ty nên áp dụng cách nào?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Bỏ cache và đọc trực tiếp từ cơ sở dữ liệu.</span><span class="why">Sai: mất toàn bộ lợi ích hiệu năng và làm tăng tải cho cơ sở dữ liệu.</span></li>
+              <li data-k="B"><span class="tv">Triển khai write-through để cache được cập nhật mỗi khi dữ liệu được ghi vào cơ sở dữ liệu, và giữ lazy loading cho các cache miss.</span><span class="why">Đúng: write-through cập nhật cache ở mỗi lần ghi nên không bị dữ liệu cũ; giữ lazy loading để nạp lại dữ liệu bị thiếu khi node mới thay thế.</span></li>
+              <li data-k="C"><span class="tv">Tăng TTL trên tất cả các cache key.</span><span class="why">Sai: TTL dài hơn khiến dữ liệu cũ tồn tại lâu hơn, làm vấn đề tệ hơn.</span></li>
+              <li data-k="D"><span class="tv">Chuyển cache engine từ Valkey sang Memcached.</span><span class="why">Sai: engine không quyết định chiến lược cache; Memcached vẫn bị dữ liệu cũ với lazy loading.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A manufacturing company collects temperature and vibration readings every second from 200,000 sensors. The company needs to store the data, query recent data with low latency for dashboards, and automatically move older data to lower-cost storage while still being able to query it with SQL. The company wants a serverless solution. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Store the readings in Amazon RDS for MySQL and archive older rows to Amazon S3 with a cron job.</li>
+            <li data-k="B">Store the readings in Amazon ElastiCache for Valkey with data tiering.</li>
+            <li data-k="C">Store the readings in Amazon Neptune.</li>
+            <li data-k="D">Store the readings in Amazon Timestream.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Timestream là CSDL time series serverless; <b>memory store</b> giữ dữ liệu gần đây, tự chuyển sang <b>magnetic store</b> theo chính sách, query engine truy vấn cả hai tầng bằng SQL. <b>A sai</b>: phải tự quản lý instance và script archive – nhiều overhead. <b>B sai</b>: ElastiCache là cache, không phải kho lưu dài hạn cho truy vấn lịch sử. <b>C sai</b>: Neptune dành cho dữ liệu đồ thị.</div>
+          <div class="trans">
+            <div class="tq">Một công ty sản xuất thu thập số đo nhiệt độ và độ rung mỗi giây từ 200.000 cảm biến. Công ty cần lưu dữ liệu, truy vấn dữ liệu gần đây với độ trễ thấp cho dashboard, và tự động chuyển dữ liệu cũ sang lưu trữ chi phí thấp hơn trong khi vẫn truy vấn được bằng SQL. Công ty muốn một giải pháp serverless. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Lưu số đo trong Amazon RDS for MySQL và lưu trữ các dòng cũ sang Amazon S3 bằng cron job.</span><span class="why">Sai: không serverless, phải tự quản lý instance và script archive – nhiều công vận hành.</span></li>
+              <li data-k="B"><span class="tv">Lưu số đo trong Amazon ElastiCache for Valkey với data tiering.</span><span class="why">Sai: ElastiCache là cache, không phải kho lưu dài hạn để truy vấn dữ liệu lịch sử bằng SQL.</span></li>
+              <li data-k="C"><span class="tv">Lưu số đo trong Amazon Neptune.</span><span class="why">Sai: Neptune dành cho dữ liệu đồ thị, không phải chuỗi thời gian.</span></li>
+              <li data-k="D"><span class="tv">Lưu số đo trong Amazon Timestream.</span><span class="why">Đúng: Timestream là CSDL time series serverless; memory store giữ dữ liệu gần đây, tự chuyển sang magnetic store theo chính sách và truy vấn cả hai tầng bằng SQL.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A gaming company needs to maintain a real-time global leaderboard that shows the top 100 players. Scores are updated thousands of times per second, and the ranking must be recalculated immediately with each update. Which solution is MOST suitable?</div>
+          <ol class="opts">
+            <li data-k="A">Amazon RDS for MySQL with an ORDER BY query on every request</li>
+            <li data-k="B">Amazon ElastiCache for Memcached storing each player's score as a string</li>
+            <li data-k="C">Amazon ElastiCache for Valkey using sorted sets</li>
+            <li data-k="D">Amazon DocumentDB with an index on the score field</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Sorted set</b> của Valkey/Redis OSS đảm bảo duy nhất và có thứ tự; mỗi phần tử mới được <b>xếp hạng lại theo thời gian thực</b> (ZADD, ZREVRANGEBYSCORE, ZREVRANK) – tài liệu AWS dùng chính ví dụ leaderboard. <b>A sai</b>: sắp xếp lại trên mỗi request tốn tài nguyên DB, độ trễ cao. <b>B sai</b>: Memcached không có sorted set, app phải tự sắp xếp. <b>D sai</b>: không đạt độ trễ in-memory và vẫn phải sort khi đọc.</div>
+          <div class="trans">
+            <div class="tq">Một công ty game cần duy trì bảng xếp hạng (leaderboard) toàn cầu theo thời gian thực hiển thị top 100 người chơi. Điểm số được cập nhật hàng nghìn lần mỗi giây, và thứ hạng phải được tính lại ngay với mỗi lần cập nhật. Giải pháp nào MOST suitable (phù hợp nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Amazon RDS for MySQL với truy vấn ORDER BY ở mỗi request</span><span class="why">Sai: sắp xếp lại ở mỗi request tốn tài nguyên cơ sở dữ liệu và có độ trễ cao.</span></li>
+              <li data-k="B"><span class="tv">Amazon ElastiCache for Memcached lưu điểm của mỗi người chơi dưới dạng string</span><span class="why">Sai: Memcached không có sorted set, ứng dụng phải tự sắp xếp.</span></li>
+              <li data-k="C"><span class="tv">Amazon ElastiCache for Valkey dùng sorted set</span><span class="why">Đúng: sorted set của Valkey tự giữ thứ tự và xếp hạng lại theo thời gian thực mỗi khi cập nhật (ZADD, ZREVRANGE…) – đúng mẫu leaderboard.</span></li>
+              <li data-k="D"><span class="tv">Amazon DocumentDB với index trên trường score</span><span class="why">Sai: không đạt độ trễ in-memory và vẫn phải sắp xếp khi đọc.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A company runs a large Apache Cassandra cluster on premises and wants to move it to AWS. The company also runs a separate Cassandra-based application on EC2 that requires significant effort to patch and scale. The company wants to eliminate server management and keep using its existing CQL code and Cassandra drivers. Which TWO statements about Amazon Keyspaces are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">Keyspaces requires the company to choose instance types and the number of nodes.</li>
+            <li data-k="B">Keyspaces is serverless and automatically scales tables up and down in response to traffic.</li>
+            <li data-k="C">Keyspaces supports JOIN operations across tables using CQL.</li>
+            <li data-k="D">Keyspaces stores a single copy of data in one Availability Zone to reduce cost.</li>
+            <li data-k="E">Applications connect by pointing existing Cassandra drivers to the Keyspaces service endpoint with TLS.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Keyspaces serverless, tự scale bảng theo traffic; ứng dụng chỉ cần đổi endpoint (port 9142) và thêm cấu hình TLS, giữ nguyên driver và CQL. <b>A sai</b>: không có node hay instance để chọn. <b>C sai</b>: CQL không có JOIN – phải thiết kế bảng theo query. <b>D sai</b>: Keyspaces lưu <b>3 bản sao</b> trên nhiều AZ.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy một cluster Apache Cassandra lớn ở on-premises và muốn chuyển lên AWS. Công ty cũng chạy một ứng dụng riêng dựa trên Cassandra trên EC2, vốn tốn nhiều công vá lỗi và mở rộng. Công ty muốn loại bỏ việc quản lý máy chủ và tiếp tục dùng mã CQL và Cassandra driver hiện có. HAI phát biểu nào về Amazon Keyspaces là đúng? (Select TWO.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Keyspaces yêu cầu công ty chọn instance type và số lượng node.</span><span class="why">Sai: Keyspaces là serverless, không có node hay instance để chọn.</span></li>
+              <li data-k="B"><span class="tv">Keyspaces là serverless và tự động scale bảng lên xuống theo lưu lượng.</span><span class="why">Đúng: Keyspaces serverless, tự co giãn bảng theo traffic, loại bỏ việc quản lý máy chủ.</span></li>
+              <li data-k="C"><span class="tv">Keyspaces hỗ trợ phép JOIN giữa các bảng bằng CQL.</span><span class="why">Sai: CQL không hỗ trợ JOIN – phải thiết kế bảng theo truy vấn.</span></li>
+              <li data-k="D"><span class="tv">Keyspaces lưu một bản sao dữ liệu duy nhất trong một Availability Zone để giảm chi phí.</span><span class="why">Sai: Keyspaces lưu 3 bản sao dữ liệu trên nhiều AZ.</span></li>
+              <li data-k="E"><span class="tv">Ứng dụng kết nối bằng cách trỏ Cassandra driver hiện có tới service endpoint của Keyspaces với TLS.</span><span class="why">Đúng: chỉ cần đổi endpoint (port 9142) và bật TLS, giữ nguyên driver và mã CQL.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company operates a latency-sensitive application in us-east-1 that uses Amazon ElastiCache for Valkey (node-based). The company is expanding to Europe and needs low-latency reads for European users, as well as the ability to recover the cache in another Region if us-east-1 becomes unavailable. Which solution meets these requirements with the LEAST operational effort?</div>
+          <ol class="opts">
+            <li data-k="A">Create an ElastiCache Global Datastore with a secondary cluster in a European Region.</li>
+            <li data-k="B">Create a second, independent cluster in Europe and write a script to copy keys every minute.</li>
+            <li data-k="C">Enable Multi-AZ with automatic failover on the existing cluster.</li>
+            <li data-k="D">Migrate the cache to Amazon ElastiCache for Memcached and add more nodes.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Global Datastore</b> sao chép bất đồng bộ fully managed sang secondary cluster ở Region khác: phục vụ <b>geolocal reads</b> và có thể <b>promote</b> secondary thành primary khi DR. <b>B sai</b>: tự viết script là overhead lớn và dễ lỗi. <b>C sai</b>: Multi-AZ chỉ bảo vệ trong một Region. <b>D sai</b>: Memcached không có replication, càng không có cross-Region.</div>
+          <div class="trans">
+            <div class="tq">Một công ty vận hành ứng dụng nhạy cảm với độ trễ ở us-east-1, dùng Amazon ElastiCache for Valkey (node-based). Công ty đang mở rộng sang châu Âu và cần đọc với độ trễ thấp cho người dùng châu Âu, cũng như khả năng khôi phục cache ở Region khác nếu us-east-1 không khả dụng. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational effort (ít công vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Tạo một ElastiCache Global Datastore với secondary cluster ở một Region châu Âu.</span><span class="why">Đúng: Global Datastore sao chép cross-Region fully managed, phục vụ đọc local cho châu Âu và có thể promote secondary thành primary khi DR.</span></li>
+              <li data-k="B"><span class="tv">Tạo một cluster thứ hai độc lập ở châu Âu và viết script sao chép key mỗi phút.</span><span class="why">Sai: tự viết script đồng bộ là overhead lớn, dễ lỗi và không nhất quán.</span></li>
+              <li data-k="C"><span class="tv">Bật Multi-AZ với automatic failover trên cluster hiện có.</span><span class="why">Sai: Multi-AZ chỉ bảo vệ trong một Region, không giảm độ trễ cho châu Âu.</span></li>
+              <li data-k="D"><span class="tv">Di chuyển cache sang Amazon ElastiCache for Memcached và thêm node.</span><span class="why">Sai: Memcached không có replication, càng không có sao chép cross-Region.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. NGUỒN -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/SelectEngine.html" target="_blank" rel="noopener">Comparing node-based Valkey, Memcached, and Redis OSS clusters</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/elasticache-use-cases.html" target="_blank" rel="noopener">Common ElastiCache use cases</a></li>
+        <li><a href="https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/Redis-Global-Datastore.html" target="_blank" rel="noopener">Replication across AWS Regions using global datastores</a></li>
+        <li><a href="https://docs.aws.amazon.com/keyspaces/latest/devguide/what-is-keyspaces.html" target="_blank" rel="noopener">What is Amazon Keyspaces (for Apache Cassandra)?</a></li>
+        <li><a href="https://docs.aws.amazon.com/keyspaces/latest/devguide/how-it-works.html" target="_blank" rel="noopener">Amazon Keyspaces: How it works</a></li>
+        <li><a href="https://docs.aws.amazon.com/timestream/latest/developerguide/what-is-timestream.html" target="_blank" rel="noopener">What is Amazon Timestream for LiveAnalytics?</a></li>
+        <li><a href="https://docs.aws.amazon.com/memorydb/latest/devguide/what-is-memorydb.html" target="_blank" rel="noopener">What is Amazon MemoryDB?</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>

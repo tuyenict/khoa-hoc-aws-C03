@@ -1,0 +1,910 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bài 19 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Backup.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+</head>
+<body data-page="lesson" data-lesson="19" data-root="..">
+  <header id="hero"></header>
+
+  <div class="wrap lesson-layout">
+    <main class="content">
+
+      <!-- 1. MỤC TIÊU BÀI HỌC -->
+      <div class="objectives">
+        <h4>Sau bài này bạn sẽ</h4>
+        <ul>
+          <li>Giải thích được vì sao cần <b>AWS Backup</b> – dịch vụ sao lưu <b>tập trung, theo chính sách</b> – thay cho việc viết script sao lưu riêng cho từng dịch vụ.</li>
+          <li>Thiết kế một <span class="t" data-vi="Kế hoạch sao lưu">backup plan</span>: backup rule (tần suất, backup window, lifecycle warm → cold, retention), copy rule, cách gán tài nguyên bằng tag.</li>
+          <li>Hiểu <span class="t" data-vi="Kho sao lưu">backup vault</span>, recovery point, mã hóa độc lập bằng KMS key của vault, vault access policy; phân biệt <b>Vault Lock</b> governance vs compliance mode và <b>logically air-gapped vault</b>.</li>
+          <li>Cấu hình <b>cross-Region</b> và <b>cross-account</b> backup trong AWS Organizations: điều kiện, KMS key, quyền <code>backup:CopyIntoBackupVault</code>, cách restore sang account khác.</li>
+          <li>Dùng <b>continuous backup</b> để <span class="t" data-vi="Khôi phục về một thời điểm">point-in-time recovery (PITR)</span> trong 35 ngày, và biết các giới hạn (không cold storage, bản copy trở thành snapshot).</li>
+          <li>Biết các công cụ quản trị: <b>Backup Audit Manager</b>, <b>restore testing</b>, <b>legal hold</b>, giám sát bằng CloudWatch / EventBridge / SNS / CloudTrail.</li>
+        </ul>
+      </div>
+
+      <div class="callout note"><span class="ttl">Vị trí của bài trong Module 3 – Storage</span>
+        <p>Các bài trước đã dạy cơ chế sao lưu <b>riêng</b> của từng dịch vụ: EBS snapshot, Amazon Data Lifecycle Manager, Snapshot lock, Recycle Bin (<b>Bài 11</b>); S3 Versioning, Replication, Object Lock (<b>Bài 14–16</b>); EFS/FSx backup và EFS Replication (<b>Bài 17</b>); Volume Gateway snapshot (<b>Bài 18</b>). <b>Bài 6</b> đã giới thiệu <i>backup policy</i> của AWS Organizations. Bài này gom tất cả lại dưới một “trung tâm điều khiển” là <b>AWS Backup</b>. Chiến lược DR tổng thể (backup &amp; restore, pilot light, warm standby, multi-site) sẽ học ở module Resilience.</p></div>
+
+      <!-- ===================== PHẦN 1: TỔNG QUAN ===================== -->
+      <h2 id="tong-quan"><img src="../assets/icons/svc/AWS-Backup.svg" alt="">Tổng quan: AWS Backup là gì và giải quyết vấn đề gì?</h2>
+      <p class="lead"><span class="t" data-vi="Dịch vụ sao lưu tập trung">AWS Backup</span> là dịch vụ <b>fully managed</b> giúp <b>tập trung hóa và tự động hóa</b> việc bảo vệ dữ liệu trên các dịch vụ AWS, trên cloud lẫn on-premises. Bạn cấu hình <span class="t" data-vi="Chính sách sao lưu">backup policy</span> và theo dõi hoạt động sao lưu của mọi tài nguyên <b>ở một nơi</b>, thay cho các tác vụ trước đây phải làm theo từng dịch vụ, và <b>không cần script tùy biến hay quy trình thủ công</b>.</p>
+
+      <p>Hãy hình dung một công ty có EC2, EBS, RDS, Aurora, DynamoDB, EFS, FSx và S3 trên hàng chục account. Nếu mỗi đội tự viết Lambda chụp snapshot, tự đặt lịch, tự xóa bản cũ, tự copy sang Region khác… thì kiểm toán viên sẽ hỏi: “<i>Chứng minh cho tôi rằng mọi database production đều được backup hằng ngày và giữ 35 ngày</i>” – và không ai trả lời được nhanh. AWS Backup giải quyết đúng bài toán đó: <b>một chính sách, áp cho nhiều dịch vụ, nhiều account, có báo cáo tuân thủ</b>.</p>
+
+      <div class="svc-grid">
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Backup.svg" alt="">
+          <div><h4>AWS Backup</h4><span class="vi">Sao lưu tập trung, theo chính sách</span><p>Console, API, CLI chung cho mọi dịch vụ được hỗ trợ; dashboard job backup/restore/copy; tích hợp Organizations.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Backup_Backup-Plan.svg" alt="">
+          <div><h4>Backup plan</h4><span class="vi">Kế hoạch sao lưu</span><p>Tập hợp <b>backup rule</b>: lịch, backup window, lifecycle, vault đích, copy sang Region/account khác.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Backup_Backup-Vault.svg" alt="">
+          <div><h4>Backup vault</h4><span class="vi">Kho sao lưu</span><p>Container chứa recovery point, có <b>KMS key</b> riêng và <b>access policy</b>; khóa được bằng <b>Vault Lock</b> (WORM).</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Backup_Backup-Restore.svg" alt="">
+          <div><h4>Recovery point &amp; restore</h4><span class="vi">Bản sao lưu &amp; khôi phục</span><p>Mỗi backup là một recovery point <b>bất biến</b> (immutable). Restore tạo tài nguyên mới; có <b>restore testing</b> tự động.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/res/AWS-Backup_Compliance-Reporting.svg" alt="">
+          <div><h4>Backup Audit Manager</h4><span class="vi">Kiểm toán sao lưu</span><p>Control dựng sẵn/tùy biến, tìm tài nguyên chưa tuân thủ, <b>báo cáo hằng ngày</b> làm bằng chứng; đẩy sang AWS Audit Manager.</p></div></div>
+        <div class="svc-card"><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">
+          <div><h4>Cross-account management</h4><span class="vi">Quản lý nhiều tài khoản</span><p><b>Backup policy</b> của Organizations tự áp backup plan xuống các account; copy backup sang account trung tâm.</p></div></div>
+      </div>
+
+      <h3>Các dịch vụ được hỗ trợ</h3>
+      <p>Theo tài liệu AWS Backup, các tài nguyên sau có thể backup và restore (ghi nhớ nhóm, không cần thuộc từng dòng):</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhóm</th><th>Tài nguyên được hỗ trợ</th></tr></thead>
+        <tbody>
+          <tr><td><b>Compute / block</b></td><td>Amazon EC2 instance (EBS-backed), Amazon EBS volume, Windows VSS (application-consistent trên EC2), SAP HANA trên EC2, Amazon EKS (cluster + persistent storage)</td></tr>
+          <tr><td><b>Object / file</b></td><td>Amazon S3, Amazon EFS, FSx for Windows File Server, FSx for Lustre, FSx for NetApp ONTAP, FSx for OpenZFS, Storage Gateway (Volume Gateway)</td></tr>
+          <tr><td><b>Database</b></td><td>Amazon RDS (mọi engine, Single-AZ và Multi-AZ instance; Multi-AZ cluster), Amazon Aurora, Aurora DSQL, Amazon DynamoDB, DocumentDB, Neptune, Redshift (provisioned &amp; Serverless), Timestream for LiveAnalytics</td></tr>
+          <tr><td><b>Khác</b></td><td>AWS CloudFormation stack (backup cả “ứng dụng” gồm nhiều tài nguyên), VMware Cloud on AWS / on-premises VMware (qua Backup gateway)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Tính năng chính (theo tài liệu AWS)</h3>
+      <ul>
+        <li><b>Centralized backup management</b> – một console, một bộ API cho mọi dịch vụ; xem tập trung job và log hoạt động để audit.</li>
+        <li><b>Policy-based backup</b> – định nghĩa yêu cầu sao lưu thành <i>backup plan</i>, áp cho tài nguyên trên nhiều dịch vụ một cách nhất quán.</li>
+        <li><b>Tag-based backup policies</b> – gán tài nguyên vào plan theo <b>tag</b>; tài nguyên mới gắn tag đúng là tự được bảo vệ.</li>
+        <li><b>Lifecycle management</b> – tự chuyển backup từ <b>warm storage</b> sang <b>cold storage</b> rẻ hơn theo lịch.</li>
+        <li><b>Cross-Region</b> và <b>cross-account backup</b> – copy theo lịch hoặc on-demand; “fan in” về một account kho, rồi “fan out” để tăng khả năng chống chịu.</li>
+        <li><b>Incremental backups</b> – lần đầu là bản đầy đủ, các lần sau chỉ lưu phần thay đổi (với tài nguyên hỗ trợ), giảm chi phí lưu trữ.</li>
+        <li><b>Backup Audit Manager</b>, <b>Vault Lock</b> (WORM), <b>legal hold</b>, <b>restore testing</b>, quét malware bằng <b>Amazon GuardDuty</b>.</li>
+      </ul>
+
+      <h3>“Full AWS Backup management” – vì sao quan trọng?</h3>
+      <p>Một số loại tài nguyên (ví dụ <b>Amazon S3, Amazon EFS, DynamoDB với advanced features, Timestream, VMware, SAP HANA, Aurora DSQL, EKS</b>) được AWS Backup <span class="t" data-vi="Quản lý hoàn toàn bởi AWS Backup">fully managed</span>. Lợi ích:</p>
+      <ul>
+        <li><b>Independent encryption</b> – backup được mã hóa bằng <b>KMS key của backup vault</b>, không dùng chung key với tài nguyên nguồn ⇒ thêm một lớp phòng thủ.</li>
+        <li><b>ARN riêng</b> bắt đầu bằng <code>arn:aws:backup</code> thay vì <code>arn:aws:&lt;dịch vụ nguồn&gt;</code> ⇒ viết được IAM policy chỉ áp cho backup, không đụng tài nguyên gốc.</li>
+        <li><b>Billing tập trung</b> – chi phí lưu trữ, transfer, restore, early deletion hiện dưới mục “Backup” trên hóa đơn; dùng được cost allocation tag trong Cost Explorer.</li>
+      </ul>
+      <p>Với tài nguyên không “fully managed” (ví dụ EBS, RDS), recovery point thực chất là snapshot của dịch vụ đó (ARN dạng <code>arn:aws:ec2:…:snapshot/…</code>), chi phí hiện dưới tên dịch vụ gốc, và mã hóa theo key của tài nguyên nguồn.</p>
+
+      <figure class="diagram">
+        <div class="grp cloud"><span class="lbl"><img src="../assets/icons/cat/Customer-Enablement.svg" alt="">AWS Cloud – Account workload (production)</span>
+          <div class="row">
+            <div class="grp region"><span class="lbl">Region: ap-southeast-1 (nguồn)</span>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/Amazon-EC2_Instance.svg" alt="">EC2 + EBS<small>tag backup=daily</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-RDS.svg" alt="">RDS / Aurora<small>tag backup=daily</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-DynamoDB.svg" alt="">DynamoDB<small>tag backup=daily</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Elastic-File-System.svg" alt="">EFS / FSx<small>tag backup=daily</small></div>
+                <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Storage-Service.svg" alt="">S3 bucket<small>tag backup=daily</small></div>
+              </div>
+              <div class="arrow down"><span>resource assignment theo tag</span></div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/AWS-Backup_Backup-Plan.svg" alt="">Backup plan<small>rule: daily 05:00, start within 8h, retain 35d</small></div>
+                <div class="node"><img src="../assets/icons/res/AWS-Identity-Access-Management_Role.svg" alt="">IAM role<small>AWSBackupDefaultServiceRole</small></div>
+              </div>
+              <div class="arrow down"><span>backup job ⇒ recovery point</span></div>
+              <div class="row center">
+                <div class="node"><img src="../assets/icons/res/AWS-Backup_Backup-Vault.svg" alt="">Backup vault<small>KMS key + access policy + Vault Lock</small></div>
+                <div class="node"><img src="../assets/icons/svc/AWS-Key-Management-Service.svg" alt="">AWS KMS<small>key của vault</small></div>
+              </div>
+            </div>
+            <div class="grp region"><span class="lbl">Region: ap-northeast-1 (DR)</span>
+              <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Backup_Backup-Vault.svg" alt="">DR vault<small>copy rule, re-encrypt bằng key đích</small></div></div>
+              <div class="arrow down dashed"><span>copy cross-account (cùng org)</span></div>
+              <div class="row center"><div class="node"><img src="../assets/icons/res/AWS-Organizations_Account.svg" alt="">Backup account<small>vault trung tâm, Vault Lock</small></div></div>
+            </div>
+          </div>
+          <div class="row center">
+            <div class="node"><img src="../assets/icons/svc/Amazon-CloudWatch.svg" alt="">CloudWatch<small>metrics, alarm</small></div>
+            <div class="node"><img src="../assets/icons/svc/Amazon-EventBridge.svg" alt="">EventBridge<small>sự kiện job</small></div>
+            <div class="node"><img src="../assets/icons/svc/Amazon-Simple-Notification-Service.svg" alt="">SNS<small>thông báo job</small></div>
+            <div class="node"><img src="../assets/icons/svc/AWS-CloudTrail.svg" alt="">CloudTrail<small>audit API</small></div>
+          </div>
+        </div>
+        <figcaption><b>Hình 1.</b> Kiến trúc tổng thể của AWS Backup trong một account: tài nguyên được gán vào <b>backup plan</b> bằng tag; plan dùng IAM role để tạo <b>recovery point</b> trong <b>backup vault</b> (mã hóa bằng KMS key của vault); <b>copy rule</b> đẩy bản sao sang vault ở Region khác và/hoặc account khác. Mọi hoạt động được giám sát qua CloudWatch, EventBridge, SNS và CloudTrail.</figcaption>
+      </figure>
+
+      <h3>AWS Backup và cơ chế backup “gốc” của từng dịch vụ</h3>
+      <p>Tài liệu AWS lưu ý: <b>AWS Backup không quản lý các backup bạn tạo bên ngoài AWS Backup</b>. Quan hệ với backup gốc khác nhau theo dịch vụ – có nơi dùng chung hạ tầng (ví dụ continuous backup của Amazon RDS), có nơi là một lớp backup riêng (ví dụ DynamoDB). Hiểu điều này giúp tránh trả tiền hai lần cho cùng một bản sao lưu.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Nhu cầu</th><th>Công cụ gốc của dịch vụ</th><th>Khi nào chọn AWS Backup</th></tr></thead>
+        <tbody>
+          <tr><td>Snapshot EBS / AMI theo lịch</td><td>Amazon Data Lifecycle Manager (Bài 11)</td><td>Cần chính sách <b>chung</b> cho EBS cùng RDS, DynamoDB, EFS…; cần cross-account, Vault Lock, audit</td></tr>
+          <tr><td>Database RDS / Aurora</td><td>Automated backups + manual snapshot</td><td>Cần retention dài (năm), copy cross-Region/account theo lịch, báo cáo tuân thủ tập trung</td></tr>
+          <tr><td>Bảng DynamoDB</td><td>On-demand backup, PITR của DynamoDB</td><td>Cần cold storage, cross-Region/account copy (dùng <b>AWS Backup advanced features</b> cho DynamoDB)</td></tr>
+          <tr><td>S3 bucket</td><td>Versioning, Replication, Object Lock (Bài 14–16)</td><td>Cần <b>backup thật sự</b> có thể restore bucket về thời điểm cũ (PITR 35 ngày), lưu tách khỏi bucket gốc</td></tr>
+          <tr><td>File system EFS / FSx</td><td>FSx automatic backup, EFS Replication</td><td>EFS: automatic backup mặc định dùng chính AWS Backup; cần lịch/retention/copy tùy biến</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – nhận diện AWS Backup</span>
+        <ul>
+          <li>“<i>Centralize and automate backups across multiple AWS services (EC2, RDS, DynamoDB, EFS…)</i>” + “<i>least operational overhead</i>” ⇒ <b>AWS Backup</b> + backup plan gán tài nguyên bằng <b>tag</b>.</li>
+          <li>“<i>Across all accounts in the organization</i>” ⇒ <b>AWS Backup</b> + <b>backup policies</b> của AWS Organizations.</li>
+          <li>“<i>Prove compliance of backup policies / generate daily audit reports</i>” ⇒ <b>AWS Backup Audit Manager</b>.</li>
+          <li>Chỉ có <b>EBS snapshot/AMI</b> và muốn đơn giản ⇒ Data Lifecycle Manager vẫn là đáp án hợp lệ; nhưng có nhiều dịch vụ ⇒ AWS Backup.</li>
+        </ul></div>
+
+      <div class="callout analogy"><span class="ttl">Ví dụ đời thường – công ty bảo vệ chuyên nghiệp</span>
+        <p>Trước đây mỗi phòng ban tự mua két sắt và tự nhớ khi nào cất tài liệu (script riêng từng dịch vụ). AWS Backup giống thuê một công ty bảo vệ: bạn đưa <b>bản nội quy</b> (backup plan), dán <b>nhãn</b> lên tủ hồ sơ cần giữ (tag), họ đến đúng giờ lấy bản sao cất vào <b>kho</b> (vault) có khóa riêng (KMS key). Muốn chắc chắn không ai – kể cả giám đốc – rút hồ sơ ra trước hạn, bạn niêm phong kho bằng <b>Vault Lock</b>. Kho dự phòng ở thành phố khác là <b>cross-Region copy</b>; kho của công ty mẹ là <b>cross-account copy</b>.</p></div>
+
+      <!-- ===================== PHẦN 2: BACKUP PLAN ===================== -->
+      <h2 id="backup-plan"><img src="../assets/icons/res/AWS-Backup_Backup-Plan.svg" alt="">Backup plan: lịch, backup window, lifecycle và gán tài nguyên</h2>
+      <p class="lead">Một <span class="t" data-vi="Kế hoạch sao lưu">backup plan</span> là chính sách định nghĩa <b>khi nào</b> và <b>bao lâu</b> sao lưu, gồm <b>một hoặc nhiều</b> <span class="t" data-vi="Quy tắc sao lưu">backup rule</span>. Bạn có thể tạo nhiều plan riêng cho từng yêu cầu nghiệp vụ hoặc quy định (ví dụ plan “gold” cho production, plan “bronze” cho dev). Tên plan tối đa <b>50 ký tự</b>.</p>
+
+      <h3>Các thành phần của một backup rule</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Thành phần</th><th>Ý nghĩa</th><th>Giá trị / giới hạn (theo docs)</th></tr></thead>
+        <tbody>
+          <tr><td><b>Backup frequency</b></td><td>Tần suất tạo <b>snapshot backup</b></td><td>Console: mỗi giờ, 12 giờ, hằng ngày, hằng tuần (chọn thứ), hằng tháng (chọn ngày) hoặc <b>cron</b>; nhanh nhất <b>mỗi giờ</b></td></tr>
+          <tr><td><b>Continuous backup</b></td><td>Checkbox “Enable continuous backups for supported resources” – bật PITR</td><td>Không đặt lịch bằng cron được (ghi nhận liên tục)</td></tr>
+          <tr><td><b>Backup window</b></td><td>Giờ bắt đầu + “Start within” + “Complete within”</td><td>Mặc định console: <b>12:30 AM</b>, start within <b>8 giờ</b>, complete within <b>7 ngày</b> (complete within không áp dụng cho FSx)</td></tr>
+          <tr><td><b>Backup vault</b></td><td>Vault chứa recovery point của rule</td><td>Vault mặc định hoặc vault tự tạo</td></tr>
+          <tr><td><b>Lifecycle</b></td><td>Thời gian ở warm, khi nào chuyển cold, tổng thời gian giữ</td><td>Snapshot: <b>1 ngày – 100 năm</b> (hoặc giữ vô thời hạn); continuous: <b>1 – 35 ngày</b></td></tr>
+          <tr><td><b>Copy to destination</b></td><td>Copy sang vault khác: cùng/khác Region, cùng/khác account</td><td>Có lifecycle riêng cho bản copy; không đặt thì theo lifecycle bản gốc</td></tr>
+          <tr><td><b>Tags added to recovery points</b></td><td>Tag tự gắn vào backup khi tạo</td><td>Khác với tag gắn vào chính backup plan</td></tr>
+          <tr><td><b>Advanced settings</b></td><td>Windows <b>VSS</b> cho EC2 (application-consistent); S3: loại trừ ACL / object tag</td><td>VSS loại trừ một số instance type</td></tr>
+          <tr><td><b>Malware scanning</b></td><td>Tích hợp <b>Amazon GuardDuty</b> quét recovery point</td><td>EC2, EBS, S3; scan incremental hoặc full</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Backup window và cron</h3>
+      <ul>
+        <li>Cron theo định dạng 6 trường của EventBridge; ví dụ <code>15 * ? * * *</code> = mỗi giờ phút thứ 15; <code>0 12 * * ? *</code> = 12:00 trưa UTC hằng ngày. AWS Backup chỉ đánh giá cron trong khoảng <b>00:00–23:59</b>: rule “mỗi 12 giờ” mà giờ bắt đầu sau 11:59 sẽ chỉ chạy <b>một lần/ngày</b>.</li>
+        <li>Trong start window, job ở trạng thái <code>CREATED</code>; nếu gặp lỗi có thể thử lại, AWS Backup <b>retry ít nhất mỗi 10 phút</b> tới khi job sang <code>RUNNING</code> hoặc hết window thì thành <code>EXPIRED</code>.</li>
+        <li>Database AWS <b>không bắt đầu backup trong vòng 1 giờ trước hoặc trong maintenance window</b>; Amazon FSx không bắt đầu backup <b>3 giờ trước hoặc trong</b> maintenance window / automatic backup window (Aurora được miễn). Snapshot đặt lịch vào khoảng đó sẽ <b>fail</b> – trừ khi bạn dùng AWS Backup cho cả snapshot lẫn continuous backup, khi đó dịch vụ tự xếp lịch tránh xung đột.</li>
+        <li>Múi giờ có daylight saving có thể bị lệch lịch khi đổi giờ ⇒ cân nhắc dùng UTC.</li>
+      </ul>
+
+      <h3>Rule chồng lấn (overlapping rules)</h3>
+      <p>Khi start window của các rule trong cùng plan chồng nhau, AWS Backup <b>chỉ giữ backup của rule có retention dài hơn</b>. Ví dụ trong docs: rule 1 chạy mỗi giờ (start window 1 giờ, giữ 1 ngày) và rule 2 chạy mỗi 12 giờ (start window 8 giờ, giữ 1 tuần). Sau 24 giờ, rule 2 tạo <b>2</b> backup, còn rule 1 chỉ tạo <b>8</b> backup – vì trong 2 khoảng 8 giờ của rule 2, backup hằng giờ bị “nhường”.</p>
+
+      <h3>Lifecycle: warm storage → cold storage</h3>
+      <p>Mọi backup được tạo và lưu ở <span class="t" data-vi="Tầng lưu trữ nóng">warm storage</span>. Với tài nguyên hỗ trợ, bạn có thể chuyển sang <span class="t" data-vi="Tầng lưu trữ lạnh">cold storage</span> – tầng rẻ hơn cho bản giữ lâu.</p>
+      <div class="stats">
+        <div class="stat"><b>≥ 90 ngày</b><span>thời gian tối thiểu ở cold storage (retention = cold-after + 90 trở lên)</span></div>
+        <div class="stat"><b>≥ 8 ngày</b><span>AWS Backup khuyến nghị giữ ở warm trước khi chuyển cold</span></div>
+        <div class="stat"><b>1 ngày – 100 năm</b><span>retention của snapshot backup</span></div>
+        <div class="stat"><b>1 – 35 ngày</b><span>retention của continuous backup</span></div>
+        <div class="stat"><b>8 giờ</b><span>backup hết hạn bị xóa vào thời điểm ngẫu nhiên trong 8 giờ sau</span></div>
+        <div class="stat"><b>Mỗi giờ</b><span>tần suất snapshot nhanh nhất</span></div>
+      </div>
+      <ul>
+        <li>Tài nguyên hỗ trợ cold storage: <b>Amazon EFS</b>, <b>EBS</b> (qua <i>EBS Snapshots Archive</i>, chỉ khi tần suất <b>hằng tháng hoặc thưa hơn</b>; bản incremental thành full sau khi chuyển), <b>DynamoDB advanced features</b> (full), <b>CloudFormation</b>, <b>SAP HANA trên EC2</b>, <b>Timestream</b>, <b>VMware</b>. <b>Không</b> có RDS, Aurora, S3, FSx, EC2.</li>
+        <li>Không đổi được giá trị “transition to cold after days” sau khi backup <b>đã</b> chuyển xuống cold.</li>
+        <li>Với backup incremental, phải có <b>ít nhất một bản full ở warm</b>; nếu chuyển bản full xuống cold quá sớm (vd sau 1 ngày) AWS Backup sẽ tạo thêm một bản full warm khác ⇒ tốn hơn. Đó là lý do khuyến nghị ≥ 8 ngày.</li>
+        <li><b>Continuous backup không chuyển cold được</b> (tối đa 35 ngày &lt; tối thiểu 90 ngày ở cold).</li>
+        <li>Bản copy cross-Region/cross-account <b>không</b> được copy từ backup đang ở cold tier.</li>
+      </ul>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="node"><img src="../assets/icons/res/Amazon-CloudWatch_Event-Time-Based.svg" alt="">Lịch (cron)<small>vd 05:00 UTC hằng ngày</small></div>
+          <span class="arrow">start within 8h</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Backup_Backup-Plan.svg" alt="">Backup job<small>CREATED → RUNNING → COMPLETED</small></div>
+          <span class="arrow">complete within 7d</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Backup_Backup-Vault.svg" alt="">Recovery point (warm)<small>≥ 8 ngày khuyến nghị</small></div>
+          <span class="arrow">MoveToColdStorageAfterDays</span>
+          <div class="node"><img src="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Glacier-Deep-Archive.svg" alt="">Cold storage<small>tối thiểu 90 ngày</small></div>
+          <span class="arrow dashed">DeleteAfterDays</span>
+          <div class="node"><img src="../assets/icons/res/AWS-Backup_Backup-Restore.svg" alt="">EXPIRED → xóa<small>trong vòng 8 giờ</small></div>
+        </div>
+        <figcaption><b>Hình 2.</b> Vòng đời một recovery point tạo theo lịch: job phải <b>bắt đầu</b> trong start window và <b>hoàn tất</b> trong complete window; backup nằm ở warm storage, có thể chuyển sang cold storage (chỉ với tài nguyên hỗ trợ) và bị xóa khi hết <code>DeleteAfterDays</code>. Ràng buộc: <code>DeleteAfterDays ≥ MoveToColdStorageAfterDays + 90</code>.</figcaption>
+      </figure>
+
+      <h3>Gán tài nguyên vào plan (resource assignment)</h3>
+      <ol class="steps">
+        <li><b>Service opt-in</b> (Settings → Service opt-in, hoặc <code>update-region-settings</code>): bật những loại tài nguyên mà AWS Backup được phép điều phối trong Region. Ví dụ opt-in tất cả, nhưng plan chỉ chọn S3 và Aurora. <b>Nếu chỉ gán bằng tag, cài đặt opt-in vẫn áp dụng</b> – tài nguyên có tag nhưng dịch vụ chưa opt-in sẽ không được backup.</li>
+        <li><b>Chọn cách gán</b>: chỉ định resource type / ARN cụ thể; “Include all resources” (AWS Backup quét mọi loại tài nguyên hỗ trợ); hoặc dùng <b>tag</b> để include / exclude.</li>
+        <li><b>Tinh chỉnh bằng condition</b>: <code>StringEquals</code>, <code>StringLike</code>, <code>StringNotEquals</code>, <code>StringNotLike</code> trên tag.</li>
+        <li><b>Chọn IAM role</b> mà AWS Backup assume để tạo backup (role mặc định <code>AWSBackupDefaultServiceRole</code> hoặc role tự tạo có trust <code>backup.amazonaws.com</code>).</li>
+      </ol>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Quota cho một resource assignment</th><th>Giá trị</th></tr></thead>
+        <tbody>
+          <tr><td>ARN không có wildcard</td><td><b>500</b></td></tr>
+          <tr><td>ARN có wildcard</td><td><b>30</b></td></tr>
+          <tr><td>Condition</td><td><b>30</b></td></tr>
+          <tr><td>Tag</td><td><b>30</b> (không giới hạn số tài nguyên mỗi tag)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>On-demand backup</h3>
+      <p>Ngoài lịch, bạn có thể tạo <span class="t" data-vi="Sao lưu theo yêu cầu">on-demand backup</span> bắt đầu <b>ngay lập tức</b> – ví dụ trước một đợt deploy rủi ro hoặc để thử nghiệm. On-demand backup ghi lại trạng thái tại một thời điểm nên <b>không thể là continuous backup</b>.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – backup plan</span>
+        <ul>
+          <li>“<i>New resources must be backed up automatically without manual action</i>” ⇒ gán tài nguyên vào plan bằng <b>tag</b> (và dùng tag policy / IaC để bắt buộc gắn tag).</li>
+          <li>“<i>Daily backups kept 30 days, monthly backups kept 7 years</i>” ⇒ <b>một plan, hai rule</b> (daily + monthly) với lifecycle khác nhau; monthly có thể chuyển cold.</li>
+          <li>“<i>Lowest cost long-term retention of EFS backups</i>” ⇒ lifecycle sang <b>cold storage</b>; nhớ retention ≥ cold-after + 90 ngày.</li>
+          <li>“<i>Application-consistent backup of Windows workloads (SQL Server) on EC2</i>” ⇒ bật <b>Windows VSS</b> trong advanced backup settings.</li>
+        </ul></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – backup plan</span>
+        <ul>
+          <li>Đặt chuyển cold sau 30 ngày nhưng retention 60 ngày ⇒ <b>không hợp lệ</b> (phải ≥ 120 ngày).</li>
+          <li>Chọn cold storage cho <b>RDS / S3 / FSx</b> ⇒ thiết lập cold bị bỏ qua vì loại tài nguyên này không hỗ trợ.</li>
+          <li>Đặt lịch snapshot RDS trùng maintenance window ⇒ job fail (“inside or too close to the weekly maintenance window”).</li>
+          <li>Gắn tag đúng nhưng chưa <b>opt-in</b> dịch vụ trong Region ⇒ tài nguyên không được backup.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 3: BACKUP VAULT ===================== -->
+      <h2 id="backup-vault"><img src="../assets/icons/res/AWS-Backup_Backup-Vault.svg" alt="">Backup vault và recovery point</h2>
+      <p class="lead"><span class="t" data-vi="Kho sao lưu">Backup vault</span> là <b>container</b> để tổ chức backup. Backup tạo bởi một rule được lưu trong vault mà rule đó chỉ định. Vault dùng để đặt <b>KMS key</b> mã hóa các backup bên trong và <b>kiểm soát truy cập</b> tới chúng; có thể gắn tag cho vault. Mỗi bản sao lưu trong vault gọi là một <span class="t" data-vi="Điểm khôi phục">recovery point</span>.</p>
+
+      <h3>Recovery point bất biến, tách khỏi tài nguyên nguồn</h3>
+      <ul>
+        <li>Nội dung mỗi backup là <b>immutable</b> – không ai sửa được nội dung đó.</li>
+        <li>Vault tách backup khỏi tài nguyên nguồn: vault vẫn giữ backup EC2/EBS theo lifecycle <b>kể cả khi bạn xóa EC2 instance và EBS volume gốc</b>.</li>
+        <li>Recovery point có trạng thái như <code>COMPLETED</code>, <code>EXPIRED</code>, <code>DELETING</code>; continuous recovery point có thể <code>STOPPED</code> khi luồng log bị gián đoạn.</li>
+        <li>Restore <b>tạo tài nguyên mới</b> từ recovery point (vd volume mới, DB instance mới, bucket/đối tượng được ghi lại); với EFS, FSx, S3, EBS có <b>item-level restore</b> (file, thư mục, object).</li>
+      </ul>
+
+      <h3>Ba lớp bảo vệ của vault</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Lớp</th><th>Cơ chế</th><th>Bảo vệ khỏi</th></tr></thead>
+        <tbody>
+          <tr><td><b>Mã hóa</b></td><td>KMS key của vault (customer managed key hoặc AWS managed key <code>aws/backup</code>); tài nguyên fully managed được mã hóa <b>độc lập</b> với key nguồn</td><td>Đọc trái phép dữ liệu backup</td></tr>
+          <tr><td><b>Vault access policy</b></td><td>Resource-based policy gắn vào vault: Allow/Deny ai được làm gì (vd Deny <code>backup:DeleteRecoveryPoint</code> cho mọi người trừ role admin)</td><td>Người có quyền IAM rộng nhưng không nên xóa backup</td></tr>
+          <tr><td><b>Vault Lock</b></td><td>WORM: chặn xóa backup và chặn đổi lifecycle, kể cả <b>root user</b></td><td>Xóa nhầm, insider, ransomware có quyền admin</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy – Vault Lock và quyền EC2 API</span>
+        <p>Vault Lock và vault access policy chỉ điều khiển hành động <b>đi qua AWS Backup</b>. EBS snapshot recovery point vẫn có thể bị <b>share</b> bằng <code>ModifySnapshotAttribute</code> hoặc đổi tier bằng <code>ModifySnapshotTier</code> qua EC2 API (EC2 vẫn <b>không xóa được</b> snapshot do AWS Backup quản lý). Muốn chặn, dùng IAM/SCP deny hai action đó (miễn trừ role của backup plan vì AWS Backup cần chúng cho cross-account copy và cold storage), bật <b>block public access for EBS snapshots</b>. Tương tự, nên deny <code>ec2:DisableImage</code> vì AMI bị disable sẽ không restore được.</p></div>
+
+      <!-- ===================== PHẦN 4: VAULT LOCK ===================== -->
+      <h2 id="vault-lock"><img src="../assets/icons/res/SSL-padlock.svg" alt="">AWS Backup Vault Lock: governance mode vs compliance mode</h2>
+      <p class="lead"><span class="t" data-vi="Khóa kho sao lưu">AWS Backup Vault Lock</span> là tính năng tùy chọn của backup vault, giúp áp mô hình <span class="t" data-vi="Ghi một lần, đọc nhiều lần">WORM (write-once-read-many)</span> cho mọi backup trong vault. Nếu bất kỳ user nào (<b>kể cả root user</b>) cố xóa backup hoặc đổi lifecycle trong vault đã khóa, AWS Backup sẽ <b>từ chối</b>. Vault Lock <b>không tính thêm phí</b> (chỉ trả phí lưu trữ bình thường) và đã được Cohasset Associates đánh giá cho môi trường chịu quy định <b>SEC 17a-4, CFTC, FINRA</b>.</p>
+
+      <div class="compare">
+        <div style="--accent:#147EBA"><h4><img src="../assets/icons/res/AWS-Identity-Access-Management_Permissions.svg" alt="">Governance mode</h4>
+          <ul>
+            <li>Mục đích: chỉ <b>người được chỉ định</b> (có đủ quyền IAM) mới quản lý/đổi được vault.</li>
+            <li>Lock <b>gỡ được</b> bởi user có IAM permission phù hợp.</li>
+            <li>Không có grace time. Tạo bằng API <b>không</b> truyền <code>ChangeableForDays</code>.</li>
+            <li>Dùng để thử nghiệm cấu hình, hoặc yêu cầu quản trị nội bộ (governance).</li>
+          </ul></div>
+        <div style="--accent:#D13212"><h4><img src="../assets/icons/res/SSL-padlock.svg" alt="">Compliance mode</h4>
+          <ul>
+            <li>Mục đích: vault và nội dung <b>không bao giờ</b> bị xóa/sửa trước khi hết retention.</li>
+            <li>Có <span class="t" data-vi="Thời gian ân hạn / làm nguội">grace time</span> (cooling-off) <b>tối thiểu 3 ngày (72 giờ)</b>; trong grace time vẫn xóa/đổi được lock.</li>
+            <li>Hết grace time ⇒ vault và lock <b>immutable</b>: <b>không user nào và cả AWS</b> cũng không gỡ được, chừng nào vault còn recovery point.</li>
+            <li>Tạo bằng API có <code>ChangeableForDays</code> (3 – 36.500 ngày).</li>
+          </ul></div>
+      </div>
+
+      <h3>Bốn tham số của <code>PutBackupVaultLockConfiguration</code></h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tham số</th><th>Ý nghĩa</th><th>Giá trị</th></tr></thead>
+        <tbody>
+          <tr><td><code>BackupVaultName</code></td><td>Vault cần khóa</td><td>Mỗi vault có tối đa <b>một</b> vault lock</td></tr>
+          <tr><td><code>ChangeableForDays</code></td><td>Có ⇒ compliance mode; là grace time trước khi lock bất biến</td><td><b>3 – 36.500</b> ngày</td></tr>
+          <tr><td><code>MinRetentionDays</code> (tùy chọn, bắt buộc với CloudFormation)</td><td>Retention tối thiểu; job backup/copy có retention <b>ngắn hơn</b> sẽ <b>fail</b></td><td>Nhỏ nhất <b>1</b> ngày; vd 7 năm ≈ <b>2.557</b> ngày</td></tr>
+          <tr><td><code>MaxRetentionDays</code> (tùy chọn)</td><td>Retention tối đa; job có retention <b>dài hơn</b> sẽ <b>fail</b></td><td>Lớn nhất <b>36.500</b> ngày (~100 năm)</td></tr>
+        </tbody>
+      </table></div>
+      <pre><code>aws backup put-backup-vault-lock-configuration \
+    --backup-vault-name finance-vault \
+    --changeable-for-days 3 \
+    --min-retention-days 2557 \
+    --max-retention-days 3650</code></pre>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 860 230" width="860" role="img" aria-label="Dòng thời gian Vault Lock compliance mode">
+          <defs><marker id="ah19a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <path class="line-o" d="M40 100 L820 100" marker-end="url(#ah19a)"/>
+          <circle cx="80" cy="100" r="7" fill="#147EBA"/>
+          <text x="80" y="76" font-size="12" text-anchor="middle" font-weight="700">Tạo lock</text>
+          <text x="80" y="128" font-size="10.5" text-anchor="middle" class="muted">Locked = true</text>
+          <rect x="90" y="84" width="250" height="32" rx="4" fill="none" stroke="#7AA116" stroke-width="2" stroke-dasharray="5 3"/>
+          <text x="215" y="76" font-size="12" text-anchor="middle" font-weight="700">Grace time (≥ 3 ngày)</text>
+          <text x="215" y="148" font-size="10.5" text-anchor="middle">Backup đã không xóa được;</text>
+          <text x="215" y="164" font-size="10.5" text-anchor="middle">nhưng vẫn DeleteBackupVaultLockConfiguration</text>
+          <text x="215" y="180" font-size="10.5" text-anchor="middle">hoặc sửa cấu hình lock</text>
+          <circle cx="340" cy="100" r="7" fill="#D13212"/>
+          <text x="340" y="128" font-size="10.5" text-anchor="middle" class="muted">LockDate</text>
+          <image href="../assets/icons/res/SSL-padlock.svg" x="520" y="40" width="40" height="40"/>
+          <text x="580" y="76" font-size="12" text-anchor="middle" font-weight="700">Immutable</text>
+          <text x="580" y="148" font-size="10.5" text-anchor="middle">Không user, root user hay AWS nào gỡ được lock;</text>
+          <text x="580" y="164" font-size="10.5" text-anchor="middle">recovery point chỉ mất khi hết retention của chính nó.</text>
+          <text x="580" y="180" font-size="10.5" text-anchor="middle">Vault chỉ xóa được khi đã rỗng.</text>
+          <text x="430" y="215" font-size="11" text-anchor="middle" class="muted">Ngoại lệ: đóng account ⇒ suspend 90 ngày; không mở lại ⇒ AWS xóa nội dung vault, kể cả khi có Vault Lock.</text>
+        </svg>
+        <figcaption><b>Hình 3.</b> Dòng thời gian Vault Lock ở compliance mode. Ngay khi tạo, thuộc tính <code>Locked</code> là <code>true</code> (xóa/sửa recovery point đã bị chặn); grace time là khoảng duy nhất còn gỡ hoặc chỉnh lock. Sau <code>LockDate</code>, cấu hình trở thành bất biến.</figcaption>
+      </figure>
+
+      <h3>Những điểm hay bị hỏi</h3>
+      <ul>
+        <li>Retention của từng backup được quyết định <b>khi backup được tạo</b> và độc lập với min/max của lock. Min/max chỉ áp cho <b>job mới</b>; recovery point có sẵn trước khi khóa vẫn theo lifecycle cũ.</li>
+        <li>Cẩn thận recovery point có retention “<b>Always</b>” (vô hạn): sau grace time chúng sẽ bị giữ <b>mãi mãi</b> và bạn trả phí mãi mãi.</li>
+        <li>Đóng AWS account có vault: AWS suspend account <b>90 ngày</b> với backup còn nguyên; không mở lại thì nội dung vault bị xóa <b>dù có Vault Lock</b>.</li>
+        <li>Aurora continuous backup được hỗ trợ trong vault có Vault Lock (min/max retention vẫn được cưỡng chế).</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tính năng WORM</th><th>Áp dụng cho</th><th>Đặc điểm phân biệt</th></tr></thead>
+        <tbody>
+          <tr><td><b>AWS Backup Vault Lock</b></td><td>Mọi recovery point trong một <b>backup vault</b> (đa dịch vụ)</td><td>Governance / compliance; grace time ≥ 3 ngày; min/max retention</td></tr>
+          <tr><td><b>S3 Object Lock</b> (Bài 16)</td><td>Từng <b>object version</b> trong bucket S3</td><td>Cần versioning; retention period + legal hold theo object</td></tr>
+          <tr><td><b>Glacier Vault Lock</b> (Bài 16)</td><td>Vault của Amazon Glacier (dịch vụ gốc)</td><td>Vault Lock policy; <b>khác hoàn toàn</b> với AWS Backup Vault Lock</td></tr>
+          <tr><td><b>EBS Snapshot lock</b> (Bài 11)</td><td>Từng EBS snapshot</td><td>Khóa snapshot riêng lẻ ngoài AWS Backup</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Logically air-gapped vault</h3>
+      <p><span class="t" data-vi="Kho sao lưu cách ly logic">Logically air-gapped vault</span> là loại vault thứ hai, bảo mật cao hơn vault chuẩn và <b>chia sẻ được</b> cho account khác để rút ngắn RTO khi có sự cố:</p>
+      <ul>
+        <li><b>Tự động có Vault Lock compliance mode</b>; mã hóa mặc định bằng <b>AWS owned key</b> (tùy chọn customer managed key).</li>
+        <li>Backup được lưu trong <b>account do dịch vụ AWS Backup sở hữu</b> (CloudTrail thấy như “shared outside your organization”).</li>
+        <li>Chia sẻ cho account khác (kể cả <b>khác organization</b>) qua <b>AWS Resource Access Manager (RAM)</b> để restore hoặc restore testing từ account đó.</li>
+        <li>Tích hợp <b>Multi-party approval (MPA)</b>: vẫn restore/copy được backup <b>kể cả khi account sở hữu vault bị chiếm quyền hoặc bị đóng</b> (trong post-closure period).</li>
+        <li>Thường chứa <b>bản copy</b> của backup từ vault chuẩn; có thể làm đích backup chính (primary backup) sau khi onboard MPA. AWS khuyến nghị thêm bản copy cross-Region.</li>
+        <li>Hạn chế: Aurora/DocumentDB/Neptune cluster <b>không mã hóa</b> không được hỗ trợ; <b>Aurora continuous backup</b> không dùng được với logically air-gapped vault (dùng snapshot).</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – Vault Lock &amp; air-gapped vault</span>
+        <ul>
+          <li>“<i>Backups must be immutable; no one, including the root user or administrators, can delete them before the retention period</i>” ⇒ <b>Vault Lock compliance mode</b>.</li>
+          <li>“<i>Only specific privileged users may change retention / remove the lock</i>” ⇒ <b>governance mode</b>.</li>
+          <li>“<i>Test the lock configuration before it becomes permanent</i>” ⇒ compliance mode có <b>grace time</b> (≥ 3 ngày) – hoặc thử bằng governance mode.</li>
+          <li>“<i>Ransomware protection, recover even if the production account is compromised, share backups with a separate recovery account</i>” ⇒ <b>logically air-gapped vault</b> + chia sẻ bằng <b>AWS RAM</b> / MPA.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 5: CROSS-REGION / CROSS-ACCOUNT ===================== -->
+      <h2 id="cross-region-account"><img src="../assets/icons/svc/AWS-Organizations.svg" alt="">Cross-Region và cross-account backup</h2>
+      <p class="lead">AWS Backup có thể copy backup sang <b>Region khác</b> và/hoặc <b>account khác</b>, theo lịch (copy rule trong backup plan) hoặc on-demand. <span class="t" data-vi="Sao lưu liên vùng">Cross-Region backup</span> đáp ứng yêu cầu lưu backup <b>cách xa</b> dữ liệu production cho business continuity; <span class="t" data-vi="Sao lưu liên tài khoản">cross-account backup</span> bảo vệ khi account nguồn bị xóa nhầm hoặc bị tấn công.</p>
+
+      <h3>Cơ chế copy chung</h3>
+      <ul>
+        <li><b>Lần copy đầu tiên là bản full</b>; nếu dịch vụ hỗ trợ incremental, các lần copy sau tới <b>cùng vault đích</b> là incremental.</li>
+        <li>Bản copy được <b>mã hóa lại bằng KMS key của vault đích</b>. Riêng EBS: copy sang vault dùng KMS key khác ⇒ bản full; copy đều đặn vào cùng vault cùng key ⇒ vẫn incremental.</li>
+        <li><b>Không</b> copy được backup đang ở <b>cold tier</b> (cả cross-Region lẫn cross-account).</li>
+        <li>Không có dấu ✓ cross-Region/cross-account trong bảng tính năng (vd <b>DynamoDB không bật advanced features</b>, <b>Redshift</b>) ⇒ không copy được trong <b>bất kỳ</b> trường hợp nào, kể cả sang vault khác cùng Region/account – phải dùng tính năng gốc của dịch vụ.</li>
+        <li>Copy của <b>continuous backup</b> trở thành <b>snapshot backup</b> ⇒ <b>không còn PITR</b> ở đích.</li>
+        <li>RDS: AWS Backup <b>không copy option group tùy biến</b>; nếu dùng persistent option phải tạo sẵn option group tương ứng ở Region đích, nếu không copy job fail.</li>
+      </ul>
+
+      <h3>Điều kiện để dùng cross-account backup</h3>
+      <ol class="steps">
+        <li>Account nguồn và đích phải <b>cùng một organization</b> trong <b>AWS Organizations</b>.</li>
+        <li><b>Management account</b> bật tính năng <i>Cross-account backup</i> (Settings, hoặc API <code>UpdateGlobalSettings</code>) – chỉ management account bật/tắt được.</li>
+        <li>Account đích tạo <b>backup vault</b> (không được là <b>default vault</b> – vì default vault dùng key không chia sẻ được), gán KMS key, và <b>vault access policy</b> “Allow” <code>backup:CopyIntoBackupVault</code> cho account nguồn / OU / cả org (<code>aws:PrincipalOrgID</code>).</li>
+        <li>Role ở account nguồn cần <code>backup:CopyFromBackupVault</code> và <code>backup:CopyIntoBackupVault</code> (managed policy <code>AWSBackupServiceRolePolicyForBackup</code> đã có).</li>
+        <li>Nếu tài nguyên nguồn mã hóa bằng <b>customer managed key</b> ⇒ phải <b>share key</b> đó cho account đích. Với tài nguyên <b>không</b> fully managed (vd EBS, RDS), <b>bắt buộc customer managed key</b> vì key policy của AWS managed key không sửa được nên không share cross-account được.</li>
+        <li>Trong backup plan: copy rule chọn “Copy to another account's vault”, nhập <b>ARN vault đích</b>.</li>
+      </ol>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 860 400" width="860" role="img" aria-label="Kiến trúc fan-in backup nhiều account và Region">
+          <defs><marker id="ah19b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <rect x="10" y="10" width="840" height="380" rx="8" fill="none" stroke="#E7157B" stroke-width="1.5"/>
+          <image href="../assets/icons/svc/AWS-Organizations.svg" x="20" y="18" width="28" height="28"/>
+          <text x="56" y="37" font-size="13" font-weight="700">AWS Organizations – cross-account backup bật ở management account</text>
+          <!-- workload accounts -->
+          <rect x="30" y="60" width="230" height="130" rx="6" fill="none" stroke="#7D8998" stroke-width="1.2"/>
+          <image href="../assets/icons/res/AWS-Organizations_Account.svg" x="40" y="68" width="26" height="26"/>
+          <text x="72" y="86" font-size="12" font-weight="700">Prod account A (us-east-1)</text>
+          <image href="../assets/icons/svc/Amazon-RDS.svg" x="45" y="105" width="36" height="36"/>
+          <image href="../assets/icons/svc/Amazon-Elastic-File-System.svg" x="90" y="105" width="36" height="36"/>
+          <image href="../assets/icons/res/AWS-Backup_Backup-Vault.svg" x="190" y="105" width="40" height="40"/>
+          <path class="line-o" d="M130 123 L185 123" marker-end="url(#ah19b)"/>
+          <text x="210" y="160" font-size="10.5" text-anchor="middle" class="muted">vault nguồn</text>
+          <text x="145" y="180" font-size="10.5" text-anchor="middle" class="muted">CMK share cho backup account</text>
+          <rect x="30" y="210" width="230" height="130" rx="6" fill="none" stroke="#7D8998" stroke-width="1.2"/>
+          <image href="../assets/icons/res/AWS-Organizations_Account.svg" x="40" y="218" width="26" height="26"/>
+          <text x="72" y="236" font-size="12" font-weight="700">Prod account B (us-east-1)</text>
+          <image href="../assets/icons/res/Amazon-EC2_Instance.svg" x="45" y="255" width="36" height="36"/>
+          <image href="../assets/icons/svc/Amazon-DynamoDB.svg" x="90" y="255" width="36" height="36"/>
+          <image href="../assets/icons/res/AWS-Backup_Backup-Vault.svg" x="190" y="255" width="40" height="40"/>
+          <path class="line-o" d="M130 273 L185 273" marker-end="url(#ah19b)"/>
+          <text x="210" y="310" font-size="10.5" text-anchor="middle" class="muted">vault nguồn</text>
+          <!-- central backup account -->
+          <rect x="330" y="60" width="250" height="280" rx="6" fill="none" stroke="#D13212" stroke-width="1.8"/>
+          <image href="../assets/icons/res/AWS-Organizations_Account.svg" x="340" y="68" width="26" height="26"/>
+          <text x="372" y="86" font-size="12" font-weight="700">Central backup account</text>
+          <image href="../assets/icons/res/AWS-Backup_Backup-Vault.svg" x="420" y="110" width="48" height="48"/>
+          <image href="../assets/icons/res/SSL-padlock.svg" x="474" y="122" width="26" height="26"/>
+          <text x="455" y="176" font-size="11" text-anchor="middle" font-weight="700">Vault us-east-1 (Vault Lock)</text>
+          <text x="455" y="192" font-size="10.5" text-anchor="middle" class="muted">policy: Allow CopyIntoBackupVault</text>
+          <text x="455" y="206" font-size="10.5" text-anchor="middle" class="muted">cho aws:PrincipalOrgID</text>
+          <path class="line-o" d="M235 125 L412 134" marker-end="url(#ah19b)"/>
+          <path class="line-o" d="M235 275 L412 145" marker-end="url(#ah19b)"/>
+          <text x="320" y="118" font-size="10.5" text-anchor="middle">fan-in copy</text>
+          <image href="../assets/icons/res/AWS-Backup_Backup-Vault.svg" x="420" y="240" width="48" height="48"/>
+          <text x="455" y="306" font-size="11" text-anchor="middle" font-weight="700">Vault us-west-2</text>
+          <text x="455" y="322" font-size="10.5" text-anchor="middle" class="muted">copy cross-Region (fan-out)</text>
+          <path class="line-o" d="M444 210 L444 235" marker-end="url(#ah19b)"/>
+          <!-- recovery account -->
+          <rect x="630" y="60" width="210" height="280" rx="6" fill="none" stroke="#7AA116" stroke-width="1.5" stroke-dasharray="6 4"/>
+          <image href="../assets/icons/res/AWS-Organizations_Account.svg" x="640" y="68" width="26" height="26"/>
+          <text x="672" y="86" font-size="12" font-weight="700">Recovery account</text>
+          <image href="../assets/icons/res/AWS-Backup_Backup-Vault.svg" x="710" y="110" width="48" height="48"/>
+          <text x="735" y="176" font-size="11" text-anchor="middle" font-weight="700">Logically air-gapped</text>
+          <text x="735" y="192" font-size="10.5" text-anchor="middle" class="muted">vault (compliance lock)</text>
+          <image href="../assets/icons/svc/AWS-Resource-Access-Manager.svg" x="712" y="220" width="40" height="40"/>
+          <text x="735" y="278" font-size="10.5" text-anchor="middle">Share qua AWS RAM / MPA</text>
+          <text x="735" y="294" font-size="10.5" text-anchor="middle" class="muted">restore khi account</text>
+          <text x="735" y="310" font-size="10.5" text-anchor="middle" class="muted">nguồn bị xâm nhập</text>
+          <path class="line-o" d="M500 134 L704 134" stroke-dasharray="6 4" marker-end="url(#ah19b)"/>
+          <text x="600" y="126" font-size="10.5" text-anchor="middle">copy</text>
+          <text x="430" y="372" font-size="11" text-anchor="middle" class="muted">Restore sang account khác = COPY recovery point sang vault của account đó, rồi restore tại đó (không restore trực tiếp A → B).</text>
+        </svg>
+        <figcaption><b>Hình 4.</b> Mô hình “fan in / fan out” trong tài liệu AWS: các account workload copy backup về một <b>central backup account</b> (vault có Vault Lock), từ đó copy tiếp sang Region khác; bản copy thêm vào <b>logically air-gapped vault</b> được share bằng AWS RAM để restore từ account phục hồi riêng.</figcaption>
+      </figure>
+
+      <h3>Restore sang account khác</h3>
+      <p>AWS Backup <b>không hỗ trợ restore trực tiếp</b> tài nguyên từ account A sang account B. Cách làm: <b>copy</b> backup từ A sang vault của B, rồi <b>restore trong B</b>. Account đích cần có service-linked role của dịch vụ được restore (dùng dịch vụ đó một lần là role được tạo). Nếu backup gốc bị xóa nhầm, bạn có thể copy ngược bản ở account đích về account nguồn rồi restore.</p>
+
+      <h3>Lưu ý bảo mật cho cross-account</h3>
+      <ul>
+        <li>Sau khi bật, <b>mọi member account</b> có thể tự cấu hình làm account đích ⇒ dùng <b>SCP</b> giới hạn đích (theo tag vault <code>DestinationBackupVault</code>, theo ARN vault qua <code>backup:CopyTargets</code>, hoặc theo OU qua <code>backup:CopyTargetOrgPaths</code>).</li>
+        <li>Account đích rời org vẫn <b>giữ backup</b> ⇒ SCP deny <code>organizations:LeaveOrganization</code> cho account đích để tránh rò rỉ dữ liệu.</li>
+        <li>Tắt cross-account backup: job có thể còn chạy tới <b>15 phút</b> do eventual consistency.</li>
+        <li>Nếu EC2 bật <i>Allowed AMIs</i>, thêm ID account nguồn (hoặc alias <code>aws-backup-vault</code> cho air-gapped vault) vào allowlist, nếu không copy/restore EC2 sẽ lỗi.</li>
+      </ul>
+
+      <h3>Backup policies trong AWS Organizations (nhắc lại Bài 6)</h3>
+      <p><b>Backup policy</b> là loại policy khai báo (declarative) của Organizations: định nghĩa backup plan ở management account (hoặc delegated administrator) và gắn vào root/OU/account ⇒ mỗi account con tự có plan, không phải tạo tay từng nơi. Kết hợp <b>cross-account monitoring</b> để xem trạng thái job backup/copy/restore của toàn tổ chức từ một chỗ.</p>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – cross-Region / cross-account</span>
+        <ul>
+          <li>“<i>Store backups in another Region for DR / compliance distance</i>” ⇒ <b>copy rule</b> sang vault ở Region khác trong backup plan.</li>
+          <li>“<i>Protect backups if the production account is compromised</i>” ⇒ <b>cross-account copy</b> sang account backup riêng (cùng org) + Vault Lock.</li>
+          <li>Copy cross-account của EBS/RDS mã hóa thất bại ⇒ nghĩ tới <b>AWS managed key</b> không share được ⇒ chuyển sang <b>customer managed key</b> và share key.</li>
+          <li>“<i>Apply the same backup plan to hundreds of accounts automatically</i>” ⇒ <b>backup policies</b> của AWS Organizations.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 6: PITR ===================== -->
+      <h2 id="pitr"><img src="../assets/icons/res/AWS-Backup_Recovery-Point-Objective.svg" alt="">Continuous backup và point-in-time recovery (PITR)</h2>
+      <p class="lead">Với một số tài nguyên, ngoài snapshot backup AWS Backup còn có <span class="t" data-vi="Sao lưu liên tục">continuous backup</span>: bạn có thể “tua ngược” tài nguyên về <b>một thời điểm bất kỳ</b> với độ chính xác <b>1 giây</b>, lùi tối đa <b>35 ngày</b>. Cơ chế: tạo một bản <b>full backup</b> trước, sau đó <b>liên tục sao lưu transaction log</b>; khi <span class="t" data-vi="Khôi phục về một thời điểm">point-in-time recovery (PITR)</span>, AWS Backup lấy bản full rồi <b>replay log</b> tới thời điểm bạn chọn.</p>
+
+      <div class="stats">
+        <div class="stat"><b>1 giây</b><span>độ chính xác khi chọn thời điểm restore</span></div>
+        <div class="stat"><b>35 ngày</b><span>retention tối đa của continuous backup</span></div>
+        <div class="stat"><b>~5 phút</b><span>RDS restore được tới 5 phút gần nhất; Aurora theo LatestRestorableTime (thường &lt; 5 phút)</span></div>
+        <div class="stat"><b>15 phút</b><span>S3 restore được tới 15 phút gần nhất</span></div>
+        <div class="stat"><b>100 năm</b><span>retention tối đa của snapshot backup (tần suất tới mỗi giờ)</span></div>
+        <div class="stat"><b>1</b><span>continuous backup cho mỗi tài nguyên</span></div>
+      </div>
+
+      <h3>Dịch vụ hỗ trợ continuous backup trong AWS Backup</h3>
+      <ul>
+        <li><b>Amazon RDS</b> (mọi DB instance mà RDS gốc hỗ trợ, Single-AZ và Multi-AZ instance) – <b>không</b> hỗ trợ <b>RDS Multi-AZ DB cluster</b>.</li>
+        <li><b>Amazon Aurora</b> – RPO thường <b>&lt; 5 phút</b> vì Aurora liên tục copy dữ liệu lên S3.</li>
+        <li><b>Amazon S3</b> – dựa vào sự kiện S3 gửi qua <b>Amazon EventBridge</b>; tắt EventBridge notification trên bucket (hoặc xóa rule EventBridge của AWS Backup) ⇒ continuous backup dừng.</li>
+        <li><b>SAP HANA trên Amazon EC2</b>.</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 860 260" width="860" role="img" aria-label="So sánh continuous backup và snapshot backup trên trục thời gian">
+          <defs><marker id="ah19c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EC7211"/></marker></defs>
+          <text x="20" y="26" font-size="13" font-weight="700">Continuous backup (PITR) – cửa sổ trượt 35 ngày</text>
+          <image href="../assets/icons/svc/Amazon-RDS.svg" x="20" y="44" width="36" height="36"/>
+          <rect x="70" y="52" width="40" height="20" rx="3" fill="#147EBA"/>
+          <text x="90" y="92" font-size="10" text-anchor="middle" class="muted">full backup</text>
+          <rect x="110" y="56" width="660" height="12" rx="3" fill="none" stroke="#147EBA" stroke-width="2"/>
+          <path d="M110 62 L770 62" stroke="#147EBA" stroke-width="1" stroke-dasharray="2 3"/>
+          <text x="440" y="92" font-size="10.5" text-anchor="middle" class="muted">transaction log được sao lưu liên tục</text>
+          <path class="line-o" d="M540 30 L540 54" marker-end="url(#ah19c)"/>
+          <text x="540" y="24" font-size="11" text-anchor="middle" font-weight="700">Restore về 14:03:27 ngày 12</text>
+          <text x="800" y="66" font-size="10.5" text-anchor="middle">hiện tại</text>
+          <text x="440" y="112" font-size="10.5" text-anchor="middle">Chính xác tới 1 giây; không chuyển cold; copy sang Region/account khác ⇒ thành snapshot</text>
+          <text x="20" y="152" font-size="13" font-weight="700">Snapshot backup – các điểm rời rạc, giữ tới 100 năm</text>
+          <image href="../assets/icons/svc/Amazon-RDS.svg" x="20" y="170" width="36" height="36"/>
+          <path d="M70 188 L800 188" stroke="#7D8998" stroke-width="1.5"/>
+          <circle cx="110" cy="188" r="7" fill="#7AA116"/>
+          <circle cx="230" cy="188" r="7" fill="#7AA116"/>
+          <circle cx="350" cy="188" r="7" fill="#7AA116"/>
+          <circle cx="470" cy="188" r="7" fill="#7AA116"/>
+          <circle cx="590" cy="188" r="7" fill="#7AA116"/>
+          <circle cx="710" cy="188" r="7" fill="#7AA116"/>
+          <text x="410" y="222" font-size="10.5" text-anchor="middle" class="muted">vd hằng ngày ⇒ RPO tối đa ~24 giờ; có thể chuyển cold (tài nguyên hỗ trợ), copy cross-Region/account</text>
+          <text x="410" y="244" font-size="11" text-anchor="middle">AWS khuyến nghị dùng CẢ HAI: continuous cho RPO thấp gần đây, snapshot cho retention dài hạn.</text>
+        </svg>
+        <figcaption><b>Hình 5.</b> Continuous backup cho phép chọn thời điểm restore bất kỳ trong 35 ngày (RPO tính bằng phút), còn snapshot chỉ restore được về đúng các thời điểm đã chụp nhưng giữ được tới 100 năm. AWS khuyến nghị bảo vệ tài nguyên bằng <b>cả</b> rule continuous và rule snapshot.</figcaption>
+      </figure>
+
+      <h3>Các giới hạn quan trọng</h3>
+      <ul>
+        <li><b>Automatic fallback</b>: nếu không làm được continuous backup, AWS Backup thử tạo <b>snapshot</b> thay thế.</li>
+        <li><b>Không có on-demand continuous backup</b>.</li>
+        <li><b>Không chuyển cold storage</b> (35 ngày &lt; 90 ngày).</li>
+        <li><b>Mỗi tài nguyên chỉ một continuous backup</b>: nhiều rule cùng vault ⇒ theo rule có retention dài nhất; nhiều rule ở nhiều vault ⇒ rule xử lý đầu tiên tạo continuous, các rule sau tạo <b>snapshot</b> (có thể báo <i>Completed with issues</i>: “PITR already configured”).</li>
+        <li><b>RDS</b>: khi AWS Backup quản lý continuous backup, nó <b>tiếp quản automated backup window</b> của RDS (đặt gần maintenance window) – bạn không sửa cài đặt continuous backup trong RDS console nữa. RDS chỉ chụp snapshot <b>1 lần/ngày</b> dù plan đặt tần suất khác. Bật PITR lần đầu (retention 0 → khác 0) được xếp vào <b>maintenance window kế tiếp</b>; trong lúc chờ AWS Backup tạo snapshot để không hở bảo vệ.</li>
+        <li><b>RDS continuous backup không copy được</b> (không copy transaction log) – AWS Backup tạo snapshot và copy snapshot đó theo tần suất trong plan.</li>
+        <li>Trả quyền quản lý continuous backup về RDS: xóa backup plan continuous và recovery point (hoặc gọi <code>DisassociateRecoveryPoint</code>).</li>
+        <li>Legal hold <b>không</b> áp dụng cho continuous backup.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Tiêu chí</th><th>Continuous backup</th><th>Snapshot backup</th></tr></thead>
+        <tbody>
+          <tr><td>Thời điểm restore</td><td class="yes">Bất kỳ giây nào trong cửa sổ</td><td>Chỉ các thời điểm đã chụp</td></tr>
+          <tr><td>Retention</td><td>1 – 35 ngày</td><td class="yes">1 ngày – 100 năm (hoặc vô hạn)</td></tr>
+          <tr><td>Tần suất</td><td>Liên tục (không cron)</td><td>Tới mỗi giờ / cron</td></tr>
+          <tr><td>Cold storage</td><td class="no">Không</td><td>Có (tài nguyên hỗ trợ)</td></tr>
+          <tr><td>On-demand</td><td class="no">Không</td><td class="yes">Có</td></tr>
+          <tr><td>Copy cross-Region/account</td><td>Bản copy thành snapshot (mất PITR)</td><td class="yes">Có</td></tr>
+          <tr><td>Dịch vụ</td><td>RDS, Aurora, S3, SAP HANA trên EC2</td><td>Mọi tài nguyên được hỗ trợ</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – PITR</span>
+        <ul>
+          <li>“<i>Restore the database to a specific point in time within the last N days (N ≤ 35)</i>” / “<i>RPO of minutes</i>” ⇒ <b>continuous backup</b> (PITR).</li>
+          <li>“<i>Retain backups for 7 years</i>” ⇒ cần thêm <b>snapshot rule</b> (continuous tối đa 35 ngày).</li>
+          <li>“<i>Undo accidental deletion of S3 objects / restore whole bucket to yesterday 3 PM</i>” ⇒ AWS Backup cho S3 với continuous backup (hoặc S3 Versioning nếu đề chỉ nói khôi phục object).</li>
+          <li>“<i>Point-in-time restore in the DR Region</i>” ⇒ bản copy cross-Region <b>không có PITR</b>; cần cơ chế khác (vd Aurora Global Database, cross-Region automated backup replication của RDS – học ở bài Database).</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 7: GIÁM SÁT, AUDIT, RESTORE TESTING ===================== -->
+      <h2 id="giam-sat-audit"><img src="../assets/icons/res/AWS-Backup_Compliance-Reporting.svg" alt="">Giám sát, kiểm toán, restore testing và legal hold</h2>
+      <p class="lead">Backup chỉ có giá trị khi <b>restore được</b> và <b>chứng minh được</b>. AWS Backup có sẵn bộ công cụ để theo dõi job, kiểm toán chính sách, kiểm thử khôi phục định kỳ và giữ bản sao lưu phục vụ pháp lý.</p>
+
+      <h3>Giám sát hoạt động</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Công cụ</th><th>Dùng để</th></tr></thead>
+        <tbody>
+          <tr><td><b>Backup console dashboard / Jobs dashboard</b></td><td>Xem trạng thái job backup, copy, restore gần đây; với cross-account monitoring xem toàn organization</td></tr>
+          <tr><td><b>Amazon CloudWatch</b></td><td>Metrics (số job thành công/thất bại…), tạo <b>alarm</b></td></tr>
+          <tr><td><b>Amazon EventBridge</b></td><td>Bắt sự kiện AWS Backup (job state change…) để tự động xử lý (Lambda, ticket…)</td></tr>
+          <tr><td><b>Amazon SNS</b></td><td>Thông báo khi backup thành công/thất bại, restore bắt đầu…</td></tr>
+          <tr><td><b>AWS CloudTrail</b></td><td>Ghi lại mọi API call của AWS Backup để audit</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>AWS Backup Audit Manager</h3>
+      <p><span class="t" data-vi="Trình kiểm toán sao lưu">AWS Backup Audit Manager</span> cung cấp các <b>control</b> dựng sẵn, tùy biến được (gom thành <b>framework</b>) để tự động theo dõi hoạt động và tài nguyên backup, ví dụ: tài nguyên có nằm trong backup plan không, tần suất/retention tối thiểu, backup có được copy sang Region/account khác, tài nguyên có được bảo vệ bởi vault có <b>Vault Lock</b>, có ít nhất một bản trong <b>logically air-gapped vault</b>, <b>restore time</b> có đạt mục tiêu không. Audit Manager chỉ ra tài nguyên/hoạt động <b>chưa tuân thủ</b> và tạo <b>báo cáo hằng ngày</b> làm bằng chứng; có thể đẩy kết quả sang <b>AWS Audit Manager</b> để gộp vào bức tranh tuân thủ chung.</p>
+
+      <h3>Restore testing</h3>
+      <p><span class="t" data-vi="Kiểm thử khôi phục">Restore testing</span> đánh giá <b>tự động, định kỳ</b> khả năng restore và theo dõi <b>thời gian restore</b> (đối chiếu với RTO):</p>
+      <ol class="steps">
+        <li>Tạo <b>restore testing plan</b>: tên, tần suất, giờ bắt đầu, “start within” (1 – 168 giờ).</li>
+        <li>Chọn recovery point: vault nguồn, khoảng thời gian đủ điều kiện (tối đa 365 ngày), lấy bản <b>mới nhất</b> hoặc <b>ngẫu nhiên</b>; có thể gồm cả continuous recovery point.</li>
+        <li>Gán tài nguyên (selection) theo loại, ARN hoặc tag; AWS Backup <b>tự suy ra metadata</b> cần cho restore (có thể ghi đè subnet, KMS key, instance class…).</li>
+        <li>Đến lịch, AWS Backup chạy restore job (loại <b>Test</b>), có thể giữ tài nguyên <b>1 – 168 giờ</b> để chạy <b>validation</b> của bạn, rồi <b>tự xóa</b> tài nguyên đã restore (tag <code>awsbackup-restore-test</code>).</li>
+        <li>Kết quả và thời gian restore dùng làm bằng chứng; Audit Manager có control “restore time meets target”.</li>
+      </ol>
+      <p>Quota đáng nhớ: <b>100</b> restore testing plan, <b>30</b> selection mỗi plan, <b>30</b> ARN / condition mỗi selection. Hỗ trợ Aurora, DocumentDB, DynamoDB, EBS, EC2, EFS, FSx, Neptune, RDS, Redshift, S3. Best practice: dùng <b>một account riêng</b> để chạy restore test.</p>
+
+      <h3>Legal hold</h3>
+      <p><span class="t" data-vi="Giữ pháp lý">Legal hold</span> là công cụ hành chính ngăn backup bị xóa khi đang bị “giữ”: lifecycle muốn xóa sẽ <b>bị hoãn</b> tới khi gỡ hold. Khác với Vault Lock (bảo vệ <b>cả vault</b>), legal hold áp cho <b>từng recovery point</b> (lọc theo resource type, resource ID, vault, khoảng ngày tạo), <b>không có hạn</b>, tồn tại tới khi user có quyền <b>release</b>.</p>
+      <ul>
+        <li>Tối đa <b>50 legal hold đang active</b> mỗi account; quan hệ nhiều-nhiều với backup.</li>
+        <li>Không áp cho continuous backup; bản copy sang Region/account khác <b>không mang theo</b> legal hold.</li>
+        <li>Backup đã quá hạn trong lúc bị hold sẽ bị xóa <b>trong vòng 24 giờ</b> sau khi release.</li>
+      </ul>
+
+      <div class="callout exam"><span class="ttl">Mẹo thi (Exam Tip) – vận hành &amp; tuân thủ</span>
+        <ul>
+          <li>“<i>Regularly verify that backups can be restored and measure restore time against RTO, minimal effort</i>” ⇒ <b>restore testing</b>.</li>
+          <li>“<i>Auditors require evidence that all resources are backed up per policy</i>” ⇒ <b>Backup Audit Manager</b> (framework + report).</li>
+          <li>“<i>Litigation: preserve specific backups beyond their retention until released</i>” ⇒ <b>legal hold</b>.</li>
+          <li>“<i>Notify the operations team when a backup job fails</i>” ⇒ <b>SNS</b> notification hoặc <b>EventBridge</b> rule.</li>
+          <li>“<i>Scan backups for malware before restore</i>” ⇒ tích hợp <b>Amazon GuardDuty Malware Protection</b>.</li>
+        </ul></div>
+
+      <!-- ===================== PHẦN 8: CHỌN GIẢI PHÁP ===================== -->
+      <h2 id="chon-giai-phap"><img src="../assets/icons/res/AWS-Backup_Recovery-Time-Objective.svg" alt="">Chọn đúng giải pháp bảo vệ dữ liệu trong đề thi</h2>
+      <p class="lead">Đề SAA-C03 thường đặt AWS Backup cạnh các tính năng gốc của dịch vụ. Nguyên tắc: <b>nhiều dịch vụ / nhiều account / cần chứng minh tuân thủ</b> ⇒ AWS Backup; <b>một dịch vụ, nhu cầu đơn giản hoặc cần replica gần thời gian thực</b> ⇒ tính năng gốc.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Yêu cầu trong đề</th><th>Lựa chọn tốt nhất</th><th>Vì sao không phải AWS Backup (hoặc vì sao là)</th></tr></thead>
+        <tbody>
+          <tr><td>Backup tập trung EC2, RDS, DynamoDB, EFS với một chính sách</td><td><b>AWS Backup</b> plan + tag</td><td>Đúng mục đích thiết kế</td></tr>
+          <tr><td>Backup bất biến, không ai xóa được trước hạn (SEC 17a-4)</td><td><b>Vault Lock compliance mode</b></td><td>IAM deny chưa đủ – root/admin gỡ được</td></tr>
+          <tr><td>Chỉ tự động snapshot EBS/AMI theo lịch</td><td>Data Lifecycle Manager hoặc AWS Backup</td><td>DLM đơn giản, miễn phí (trả phí snapshot)</td></tr>
+          <tr><td>Bản sao S3 gần thời gian thực ở Region khác</td><td><b>S3 Cross-Region Replication</b></td><td>Backup là bản theo thời điểm, không phải replica liên tục</td></tr>
+          <tr><td>Bảo vệ object S3 khỏi ghi đè/xóa nhầm</td><td>S3 Versioning (+ Object Lock)</td><td>AWS Backup dùng khi cần restore cả bucket về thời điểm, lưu tách khỏi bucket</td></tr>
+          <tr><td>File system ở Region khác, RPO phút, failover nhanh</td><td><b>EFS Replication</b> / FSx replication</td><td>Backup copy cross-Region cho RTO dài hơn (phải restore)</td></tr>
+          <tr><td>Ransomware xóa backup trong account production</td><td>Cross-account copy + Vault Lock / <b>logically air-gapped vault</b></td><td>Backup cùng account dễ bị cùng kẻ tấn công xóa</td></tr>
+          <tr><td>Chứng minh định kỳ restore được trong RTO</td><td><b>Restore testing</b> + Audit Manager</td><td>Tự động, có báo cáo</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="ttl">Bẫy thường gặp – tổng hợp</span>
+        <ul>
+          <li>“Backup = replication”: <b>sai</b>. Backup cho phép quay về <b>quá khứ</b> (chống xóa nhầm, ransomware, lỗi logic); replication sao chép cả lỗi sang đích gần như ngay lập tức.</li>
+          <li>Restore trực tiếp backup của account A vào account B: <b>không được</b> – phải copy sang vault của B trước.</li>
+          <li>Default vault làm đích cross-account: <b>không được</b> (key không share được).</li>
+          <li>Copy backup đã ở cold tier sang Region khác: <b>không được</b>.</li>
+          <li>Nhầm <b>AWS Backup Vault Lock</b> với <b>Glacier Vault Lock</b>: hai tính năng khác nhau.</li>
+          <li>Vault Lock compliance mode với retention “Always” sau grace time: giữ <b>vĩnh viễn</b> và trả phí vĩnh viễn.</li>
+        </ul></div>
+
+      <!-- ===================== TÓM TẮT ===================== -->
+      <h2 id="tom-tat">Tóm tắt ghi nhớ</h2>
+      <div class="callout key"><span class="ttl">Những điều phải nhớ</span>
+        <ul>
+          <li><b>AWS Backup</b> = sao lưu <b>tập trung, theo chính sách</b> cho EC2, EBS, S3, RDS, Aurora, DynamoDB, EFS, FSx, Storage Gateway, DocumentDB, Neptune, Redshift, EKS, VMware, SAP HANA…; không quản lý backup tạo ngoài AWS Backup.</li>
+          <li><b>Backup plan</b> = 1+ <b>rule</b>: tần suất (tới mỗi giờ / cron), backup window (mặc định 12:30 AM, start within 8 h, complete within 7 ngày), vault, lifecycle, copy rule, tag. Gán tài nguyên bằng <b>tag</b>/ARN; nhớ <b>service opt-in</b>.</li>
+          <li><b>Lifecycle</b>: snapshot 1 ngày – 100 năm; cold storage ≥ <b>90 ngày</b> (retention ≥ cold-after + 90), khuyến nghị ≥ 8 ngày ở warm; cold chỉ cho EFS, EBS (archive), DynamoDB advanced, CloudFormation, SAP HANA, Timestream, VMware.</li>
+          <li><b>Backup vault</b>: KMS key riêng + access policy; recovery point <b>immutable</b>, tồn tại cả khi tài nguyên gốc bị xóa.</li>
+          <li><b>Vault Lock</b>: governance (gỡ được bằng IAM) vs <b>compliance</b> (grace time ≥ <b>3 ngày</b>, sau đó không ai kể cả AWS gỡ được); min retention ≥ 1 ngày, max ≤ 36.500 ngày; chỉ áp cho job mới; SEC 17a-4/FINRA/CFTC.</li>
+          <li><b>Logically air-gapped vault</b>: compliance lock sẵn, AWS owned key, share qua <b>RAM</b>, MPA ⇒ restore được khi account nguồn bị xâm nhập.</li>
+          <li><b>Cross-account</b>: cùng organization, bật ở management account, vault đích (không phải default) Allow <code>backup:CopyIntoBackupVault</code>, customer managed key cho tài nguyên không fully managed; restore sang account khác = copy rồi restore. <b>Cross-Region</b>: copy đầu full, sau incremental; re-encrypt bằng key đích; không copy từ cold tier.</li>
+          <li><b>Continuous backup / PITR</b>: RDS, Aurora, S3, SAP HANA; chính xác 1 giây, tối đa <b>35 ngày</b>; không on-demand, không cold, bản copy thành snapshot; 1 continuous backup/tài nguyên.</li>
+          <li>Vận hành: <b>Audit Manager</b> (control, báo cáo hằng ngày), <b>restore testing</b> (tự restore rồi tự xóa), <b>legal hold</b> (≤ 50/account, không hạn), CloudWatch / EventBridge / SNS / CloudTrail, GuardDuty malware scan.</li>
+        </ul></div>
+
+      <!-- ===================== THUẬT NGỮ ===================== -->
+      <h2 id="thuat-ngu">Thuật ngữ (Glossary)</h2>
+      <dl class="glossary">
+        <div><dt>AWS Backup</dt><dd><b>Dịch vụ sao lưu tập trung</b> – tự động hóa, theo chính sách, cho nhiều dịch vụ và account.</dd></div>
+        <div><dt>Backup plan</dt><dd><b>Kế hoạch sao lưu</b> – chính sách gồm một hoặc nhiều backup rule.</dd></div>
+        <div><dt>Backup rule</dt><dd><b>Quy tắc sao lưu</b> – tần suất, backup window, vault, lifecycle, copy.</dd></div>
+        <div><dt>Backup window (Start within / Complete within)</dt><dd><b>Cửa sổ sao lưu</b> – khoảng thời gian job phải bắt đầu / hoàn tất.</dd></div>
+        <div><dt>Backup job / Copy job / Restore job</dt><dd><b>Tác vụ sao lưu / sao chép / khôi phục</b>.</dd></div>
+        <div><dt>Resource assignment (backup selection)</dt><dd><b>Gán tài nguyên</b> vào backup plan theo ARN, loại tài nguyên hoặc tag.</dd></div>
+        <div><dt>Service opt-in</dt><dd><b>Chọn tham gia dịch vụ</b> – bật loại tài nguyên AWS Backup được phép sao lưu trong Region.</dd></div>
+        <div><dt>On-demand backup</dt><dd><b>Sao lưu theo yêu cầu</b> – chạy ngay, ngoài lịch.</dd></div>
+        <div><dt>Backup vault</dt><dd><b>Kho sao lưu</b> – container chứa recovery point, có KMS key và access policy.</dd></div>
+        <div><dt>Recovery point</dt><dd><b>Điểm khôi phục</b> – một bản sao lưu bất biến trong vault.</dd></div>
+        <div><dt>Vault access policy</dt><dd><b>Chính sách truy cập kho</b> – resource-based policy gắn vào backup vault.</dd></div>
+        <div><dt>Warm storage / Cold storage</dt><dd><b>Tầng lưu trữ nóng / lạnh</b> – cold rẻ hơn, tối thiểu 90 ngày.</dd></div>
+        <div><dt>Lifecycle (MoveToColdStorageAfterDays / DeleteAfterDays)</dt><dd><b>Vòng đời bản sao lưu</b> – khi nào chuyển cold, khi nào xóa.</dd></div>
+        <div><dt>Full AWS Backup management</dt><dd><b>Quản lý hoàn toàn bởi AWS Backup</b> – mã hóa độc lập, ARN <code>arn:aws:backup</code>, billing tập trung.</dd></div>
+        <div><dt>AWS Backup Vault Lock</dt><dd><b>Khóa kho sao lưu</b> – WORM cho backup vault (governance / compliance mode).</dd></div>
+        <div><dt>Grace time (cooling-off period)</dt><dd><b>Thời gian ân hạn</b> – ≥ 3 ngày trước khi lock compliance trở nên bất biến.</dd></div>
+        <div><dt>Min / Max retention days</dt><dd><b>Thời hạn lưu giữ tối thiểu / tối đa</b> mà vault lock cưỡng chế cho job mới.</dd></div>
+        <div><dt>Logically air-gapped vault</dt><dd><b>Kho sao lưu cách ly logic</b> – compliance lock sẵn, AWS owned key, share qua RAM.</dd></div>
+        <div><dt>Multi-party approval (MPA)</dt><dd><b>Phê duyệt nhiều bên</b> – truy cập air-gapped vault khi account sở hữu không dùng được.</dd></div>
+        <div><dt>Cross-Region backup / Cross-account backup</dt><dd><b>Sao lưu liên vùng / liên tài khoản</b> – copy recovery point sang vault khác.</dd></div>
+        <div><dt>Fan-in / Fan-out</dt><dd><b>Gom về / Tỏa ra</b> – gom backup về account kho trung tâm rồi copy tiếp đi nơi khác.</dd></div>
+        <div><dt>Continuous backup</dt><dd><b>Sao lưu liên tục</b> – full backup + transaction log, tối đa 35 ngày.</dd></div>
+        <div><dt>Point-in-time recovery (PITR)</dt><dd><b>Khôi phục về một thời điểm</b> – chính xác tới 1 giây.</dd></div>
+        <div><dt>Snapshot backup</dt><dd><b>Sao lưu dạng bản chụp</b> – thời điểm rời rạc, giữ tới 100 năm.</dd></div>
+        <div><dt>Windows VSS</dt><dd><b>Dịch vụ bản sao bóng của Windows</b> – backup application-consistent trên EC2.</dd></div>
+        <div><dt>Item-level restore</dt><dd><b>Khôi phục từng mục</b> – file, thư mục, object thay vì cả tài nguyên.</dd></div>
+        <div><dt>AWS Backup Audit Manager</dt><dd><b>Trình kiểm toán sao lưu</b> – control, framework, báo cáo tuân thủ hằng ngày.</dd></div>
+        <div><dt>Restore testing</dt><dd><b>Kiểm thử khôi phục</b> – tự restore định kỳ, đo thời gian, tự dọn dẹp.</dd></div>
+        <div><dt>Legal hold (AWS Backup)</dt><dd><b>Giữ pháp lý</b> – chặn xóa recovery point cụ thể tới khi release.</dd></div>
+      </dl>
+
+      <!-- ===================== CÂU HỎI LUYỆN TẬP ===================== -->
+      <h2 id="luyen-tap">Câu hỏi luyện tập</h2>
+      <p id="quiz-score"></p>
+      <div class="quiz">
+        <div class="q" data-answer="C">
+          <div class="qh">A company runs workloads that use Amazon EC2 instances with Amazon EBS volumes, Amazon RDS databases, Amazon DynamoDB tables, and Amazon EFS file systems. Each team currently uses custom scripts to back up its own resources. The company wants a single solution to schedule backups, define retention, and ensure that new resources are protected automatically. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Use Amazon Data Lifecycle Manager policies for all resources, targeted by tags.</li>
+            <li data-k="B">Create an Amazon EventBridge scheduled rule that invokes an AWS Lambda function to create snapshots of each resource type.</li>
+            <li data-k="C">Create an AWS Backup backup plan with the required schedule and retention, and assign resources to the plan by using tags.</li>
+            <li data-k="D">Enable automated backups in each service and use AWS Config rules to detect resources without backups.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> AWS Backup quản lý backup <b>tập trung</b> cho EC2/EBS, RDS, DynamoDB, EFS bằng một backup plan; gán bằng <b>tag</b> giúp tài nguyên mới gắn tag tự động được bảo vệ. <b>A sai</b>: Data Lifecycle Manager chỉ dành cho EBS snapshot và AMI, không backup RDS, DynamoDB, EFS. <b>B sai</b>: vẫn là script tự viết, nhiều vận hành. <b>D sai</b>: cấu hình rời rạc từng dịch vụ, Config chỉ phát hiện chứ không tự backup.</div>
+          <div class="trans">
+            <div class="tq">Một công ty chạy các workload dùng Amazon EC2 instance với Amazon EBS volume, cơ sở dữ liệu Amazon RDS, bảng Amazon DynamoDB và Amazon EFS file system. Hiện mỗi nhóm dùng script tự viết để backup tài nguyên của riêng mình. Công ty muốn một giải pháp duy nhất để lập lịch backup, định nghĩa thời gian lưu giữ và đảm bảo tài nguyên mới được bảo vệ tự động. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng các policy của Amazon Data Lifecycle Manager cho mọi tài nguyên, chọn mục tiêu theo tag.</span><span class="why">Sai: Data Lifecycle Manager chỉ quản lý EBS snapshot và AMI, không backup được RDS, DynamoDB hay EFS.</span></li>
+              <li data-k="B"><span class="tv">Tạo một Amazon EventBridge scheduled rule gọi một AWS Lambda function để tạo snapshot cho từng loại tài nguyên.</span><span class="why">Sai: vẫn là code tự viết phải bảo trì cho từng loại tài nguyên và tự xử lý retention – nhiều công vận hành.</span></li>
+              <li data-k="C"><span class="tv">Tạo một AWS Backup backup plan với lịch và thời gian lưu giữ cần thiết, và gán tài nguyên vào plan bằng tag.</span><span class="why">Đúng: AWS Backup quản lý tập trung backup cho EC2/EBS, RDS, DynamoDB, EFS trong một plan; gán theo tag giúp tài nguyên mới được gắn tag tự động được bảo vệ.</span></li>
+              <li data-k="D"><span class="tv">Bật automated backup trong từng dịch vụ và dùng AWS Config rule để phát hiện tài nguyên chưa có backup.</span><span class="why">Sai: cấu hình rời rạc theo từng dịch vụ, không có một nơi quản lý chung; Config chỉ phát hiện chứ không tự bật backup.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A financial services company must retain backups of its Amazon RDS databases and Amazon EFS file systems for 7 years to comply with SEC 17a-4. The backups must be immutable: no user, including the AWS account root user, can delete them or shorten their retention. Which solution meets these requirements?</div>
+          <ol class="opts">
+            <li data-k="A">Store the backups in an AWS Backup vault and apply AWS Backup Vault Lock in compliance mode with a minimum retention of 2,557 days.</li>
+            <li data-k="B">Store the backups in an AWS Backup vault and apply AWS Backup Vault Lock in governance mode.</li>
+            <li data-k="C">Attach an IAM policy to all users that denies backup:DeleteRecoveryPoint.</li>
+            <li data-k="D">Configure S3 Object Lock on the backup vault.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> <b>Compliance mode</b>: sau grace time, không user nào (kể cả root) hay AWS gỡ được lock; <code>MinRetentionDays</code> ≈ 2.557 ngày (7 năm) khiến job có retention ngắn hơn bị từ chối. Vault Lock đã được đánh giá cho SEC 17a-4. <b>B sai</b>: governance mode cho phép user có đủ quyền IAM gỡ lock. <b>C sai</b>: IAM policy không chặn được root user và admin có thể sửa policy. <b>D sai</b>: backup vault không phải S3 bucket; S3 Object Lock không áp dụng cho vault.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dịch vụ tài chính phải lưu giữ các bản backup của cơ sở dữ liệu Amazon RDS và Amazon EFS file system trong 7 năm để tuân thủ SEC 17a-4. Các bản backup phải bất biến (immutable): không user nào, kể cả AWS account root user, được xóa chúng hoặc rút ngắn thời gian lưu giữ. Giải pháp nào đáp ứng các yêu cầu này?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Lưu các bản backup trong một AWS Backup vault và áp dụng AWS Backup Vault Lock ở compliance mode với thời gian lưu giữ tối thiểu 2.557 ngày.</span><span class="why">Đúng: sau grace time, compliance mode không cho ai (kể cả root hay AWS) gỡ lock; MinRetentionDays 2.557 ngày (≈ 7 năm) từ chối job có retention ngắn hơn; Vault Lock đã được đánh giá cho SEC 17a-4.</span></li>
+              <li data-k="B"><span class="tv">Lưu các bản backup trong một AWS Backup vault và áp dụng AWS Backup Vault Lock ở governance mode.</span><span class="why">Sai: governance mode cho phép user có đủ quyền IAM gỡ lock hoặc xóa backup, nên không đáp ứng yêu cầu "không ai được xóa".</span></li>
+              <li data-k="C"><span class="tv">Gắn cho mọi user một IAM policy từ chối backup:DeleteRecoveryPoint.</span><span class="why">Sai: IAM policy không giới hạn được root user, và admin có thể sửa hoặc gỡ policy bất cứ lúc nào.</span></li>
+              <li data-k="D"><span class="tv">Cấu hình S3 Object Lock trên backup vault.</span><span class="why">Sai: backup vault không phải S3 bucket nên không thể áp S3 Object Lock; cơ chế tương ứng là Vault Lock.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">A company uses AWS Organizations. To protect against ransomware, a solutions architect must automatically copy AWS Backup recovery points of encrypted Amazon EBS volumes from production accounts to a dedicated backup account in the same organization. The first copy attempts fail. Which combination of configurations is required to make the copies succeed?</div>
+          <ol class="opts">
+            <li data-k="A">Use the default backup vault in the backup account as the destination and encrypt the EBS volumes with the AWS managed key (aws/ebs).</li>
+            <li data-k="B">Restore the recovery points directly into the backup account by specifying its account ID in the restore job.</li>
+            <li data-k="C">Enable S3 Cross-Region Replication between the accounts' backup vaults.</li>
+            <li data-k="D">Enable cross-account backup from the Organizations management account, create a non-default vault in the backup account with an access policy that allows backup:CopyIntoBackupVault, and encrypt the source volumes with a customer managed KMS key that is shared with the backup account.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> Cross-account backup yêu cầu: cùng organization, <b>management account bật tính năng</b>, vault đích (không phải default) có access policy Allow <code>backup:CopyIntoBackupVault</code>, và với EBS (không fully managed) phải dùng <b>customer managed key</b> được share. <b>A sai</b>: default vault không làm đích cross-account được; key policy của AWS managed key không sửa được nên không share được. <b>B sai</b>: AWS Backup không restore trực tiếp sang account khác. <b>C sai</b>: backup vault không phải S3 bucket, không dùng S3 CRR.</div>
+          <div class="trans">
+            <div class="tq">Một công ty dùng AWS Organizations. Để phòng chống ransomware, solutions architect phải tự động sao chép các AWS Backup recovery point của các Amazon EBS volume đã mã hóa từ các account production sang một account backup chuyên dụng trong cùng tổ chức. Các lần sao chép đầu tiên đều thất bại. Tổ hợp cấu hình nào là bắt buộc để việc sao chép thành công?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng default backup vault trong account backup làm đích và mã hóa các EBS volume bằng AWS managed key (aws/ebs).</span><span class="why">Sai: default vault không làm đích cross-account được, và key policy của AWS managed key không sửa được nên không share key cho account khác.</span></li>
+              <li data-k="B"><span class="tv">Restore trực tiếp các recovery point vào account backup bằng cách chỉ định account ID của nó trong restore job.</span><span class="why">Sai: AWS Backup không hỗ trợ restore trực tiếp sang account khác; đây cũng không phải sao chép backup.</span></li>
+              <li data-k="C"><span class="tv">Bật S3 Cross-Region Replication giữa các backup vault của các account.</span><span class="why">Sai: backup vault không phải S3 bucket nên không dùng được S3 Cross-Region Replication.</span></li>
+              <li data-k="D"><span class="tv">Bật cross-account backup từ management account của Organizations, tạo một vault không phải default trong account backup với access policy cho phép backup:CopyIntoBackupVault, và mã hóa các volume nguồn bằng customer managed KMS key được chia sẻ với account backup.</span><span class="why">Đúng: đủ các điều kiện cross-account copy – tính năng bật từ management account, vault đích (không default) cho phép CopyIntoBackupVault, và EBS phải dùng customer managed key được share.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A developer accidentally ran a script that corrupted data in a production Amazon RDS for PostgreSQL database at 14:03. The company needs to be able to restore the database to the state it was in a few seconds before such incidents, for any incident that occurred within the last 14 days. Backups must be managed centrally with AWS Backup. What should the solutions architect configure?</div>
+          <ol class="opts">
+            <li data-k="A">A backup rule that takes hourly snapshot backups and retains them for 14 days.</li>
+            <li data-k="B">A backup rule with continuous backups enabled and a retention period of 14 days.</li>
+            <li data-k="C">A backup rule with continuous backups that transitions to cold storage after 7 days.</li>
+            <li data-k="D">An on-demand continuous backup that is started before each deployment.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Continuous backup</b> cho phép PITR chính xác <b>1 giây</b>, retention 1–35 ngày ⇒ 14 ngày hợp lệ. <b>A sai</b>: snapshot hằng giờ chỉ restore về các mốc giờ – có thể mất tới gần 1 giờ dữ liệu. <b>C sai</b>: continuous backup <b>không chuyển cold</b> được (cold cần ≥ 90 ngày). <b>D sai</b>: không tồn tại on-demand continuous backup.</div>
+          <div class="trans">
+            <div class="tq">Một developer vô tình chạy một script làm hỏng dữ liệu trong một cơ sở dữ liệu production Amazon RDS for PostgreSQL lúc 14:03. Công ty cần có khả năng khôi phục cơ sở dữ liệu về trạng thái vài giây trước những sự cố như vậy, cho bất kỳ sự cố nào xảy ra trong 14 ngày gần nhất. Backup phải được quản lý tập trung bằng AWS Backup. Solutions architect nên cấu hình gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Một backup rule chụp snapshot backup hằng giờ và lưu giữ trong 14 ngày.</span><span class="why">Sai: snapshot hằng giờ chỉ khôi phục được về các mốc giờ, có thể mất gần 1 giờ dữ liệu – không đạt "vài giây trước sự cố".</span></li>
+              <li data-k="B"><span class="tv">Một backup rule có bật continuous backup với thời gian lưu giữ 14 ngày.</span><span class="why">Đúng: continuous backup cho phép point-in-time restore chính xác tới 1 giây, retention 1–35 ngày nên 14 ngày là hợp lệ.</span></li>
+              <li data-k="C"><span class="tv">Một backup rule có continuous backup, chuyển sang cold storage sau 7 ngày.</span><span class="why">Sai: continuous backup không thể chuyển sang cold storage (cold storage còn yêu cầu lưu tối thiểu 90 ngày).</span></li>
+              <li data-k="D"><span class="tv">Một continuous backup on-demand được khởi chạy trước mỗi lần triển khai.</span><span class="why">Sai: không tồn tại continuous backup on-demand; continuous backup chỉ cấu hình qua backup rule, và sự cố có thể xảy ra ngoài lúc triển khai.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A,C">
+          <div class="qh">A company protects Amazon RDS databases and Amazon S3 buckets with an AWS Backup plan that has continuous backups enabled in us-east-1. The plan also copies recovery points to a backup vault in us-west-2 for disaster recovery. Which TWO statements about this design are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">In us-east-1, the resources can be restored to any point in time within the continuous backup retention period, up to a maximum of 35 days.</li>
+            <li data-k="B">The copies in us-west-2 also support point-in-time restore with 1-second precision.</li>
+            <li data-k="C">The copies in us-west-2 are snapshot backups that restore to the time the copy was created.</li>
+            <li data-k="D">The continuous backups can be transitioned to cold storage after 30 days to reduce cost.</li>
+            <li data-k="E">Each resource can have several continuous backups, one for each backup rule.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A, C.</b> Continuous backup cho PITR tối đa <b>35 ngày</b> ở Region nguồn; khi copy sang Region/account khác, bản copy trở thành <b>snapshot</b> (không còn PITR). <b>B sai</b>: ngược với docs. <b>D sai</b>: continuous backup không chuyển cold. <b>E sai</b>: mỗi tài nguyên chỉ có <b>một</b> continuous backup; rule dư tạo snapshot thay thế.</div>
+          <div class="trans">
+            <div class="tq">Một công ty bảo vệ các cơ sở dữ liệu Amazon RDS và S3 bucket bằng một AWS Backup plan có bật continuous backup ở us-east-1. Plan này cũng sao chép recovery point sang một backup vault ở us-west-2 cho mục đích disaster recovery. HAI phát biểu nào về thiết kế này là đúng? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Ở us-east-1, tài nguyên có thể được khôi phục về bất kỳ thời điểm nào trong thời gian lưu giữ của continuous backup, tối đa 35 ngày.</span><span class="why">Đúng: continuous backup cho point-in-time restore ở Region nguồn với retention tối đa 35 ngày.</span></li>
+              <li data-k="B"><span class="tv">Các bản sao ở us-west-2 cũng hỗ trợ point-in-time restore với độ chính xác 1 giây.</span><span class="why">Sai: khi copy sang Region khác, bản sao trở thành snapshot và mất khả năng PITR.</span></li>
+              <li data-k="C"><span class="tv">Các bản sao ở us-west-2 là snapshot backup, khôi phục về thời điểm bản sao được tạo.</span><span class="why">Đúng: tài liệu nêu bản copy cross-Region/cross-account của continuous backup là snapshot, chỉ khôi phục về thời điểm tạo bản copy.</span></li>
+              <li data-k="D"><span class="tv">Continuous backup có thể được chuyển sang cold storage sau 30 ngày để giảm chi phí.</span><span class="why">Sai: continuous backup không hỗ trợ chuyển sang cold storage.</span></li>
+              <li data-k="E"><span class="tv">Mỗi tài nguyên có thể có nhiều continuous backup, mỗi backup rule một cái.</span><span class="why">Sai: mỗi tài nguyên chỉ có một continuous backup; các rule khác sẽ tạo snapshot backup thay thế.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="D">
+          <div class="qh">An auditor requires a company to prove every month that backups of its Amazon EBS volumes, Amazon RDS databases, and Amazon S3 buckets can actually be restored, and that each restore completes within the company's recovery time objective. The restored resources must not remain in the account after the test. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Write an AWS Step Functions workflow that restores the latest recovery points, measures the duration, and deletes the resources.</li>
+            <li data-k="B">Ask each application team to perform manual restores and document the results in a shared spreadsheet.</li>
+            <li data-k="C">Enable S3 Versioning and RDS automated backups, and review the AWS CloudTrail logs every month.</li>
+            <li data-k="D">Create an AWS Backup restore testing plan for the resources, and use an AWS Backup Audit Manager control to evaluate whether restore time meets the target.</li>
+          </ol>
+          <div class="explain"><b>Đáp án D.</b> <b>Restore testing</b> tự động restore định kỳ, ghi lại thời gian restore và <b>tự xóa</b> tài nguyên sau test (hoặc sau validation window); Audit Manager có control “restore time meets target” làm bằng chứng. <b>A sai</b>: tự xây workflow ⇒ nhiều vận hành. <b>B sai</b>: thủ công. <b>C sai</b>: bật backup không chứng minh được khả năng restore và thời gian restore.</div>
+          <div class="trans">
+            <div class="tq">Một kiểm toán viên yêu cầu công ty chứng minh mỗi tháng rằng các bản backup của Amazon EBS volume, cơ sở dữ liệu Amazon RDS và Amazon S3 bucket thực sự khôi phục được, và mỗi lần khôi phục hoàn tất trong recovery time objective (RTO) của công ty. Tài nguyên được khôi phục không được để lại trong account sau khi kiểm thử. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Viết một AWS Step Functions workflow khôi phục các recovery point mới nhất, đo thời gian và xóa tài nguyên.</span><span class="why">Sai: làm được nhưng phải tự xây dựng và bảo trì workflow cho từng loại tài nguyên – nhiều công vận hành hơn tính năng có sẵn.</span></li>
+              <li data-k="B"><span class="tv">Yêu cầu từng nhóm ứng dụng thực hiện khôi phục thủ công và ghi kết quả vào một bảng tính dùng chung.</span><span class="why">Sai: thủ công, tốn công, dễ sai sót và không tạo được bằng chứng kiểm toán đáng tin cậy.</span></li>
+              <li data-k="C"><span class="tv">Bật S3 Versioning và RDS automated backup, rồi xem lại log AWS CloudTrail mỗi tháng.</span><span class="why">Sai: bật backup và đọc log không chứng minh được bản backup khôi phục được cũng như thời gian khôi phục.</span></li>
+              <li data-k="D"><span class="tv">Tạo một AWS Backup restore testing plan cho các tài nguyên, và dùng một control của AWS Backup Audit Manager để đánh giá thời gian khôi phục có đạt mục tiêu hay không.</span><span class="why">Đúng: restore testing tự động khôi phục định kỳ, ghi lại thời gian và tự xóa tài nguyên sau test; Audit Manager có control "restore time meets target" làm bằng chứng kiểm toán.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B">
+          <div class="qh">A company is involved in litigation. Its legal team requires that all AWS Backup recovery points of a specific Amazon DynamoDB table created between March 1 and March 31 be preserved indefinitely, even though the backup plan's lifecycle would delete them after 35 days. Other backups in the same vault must continue to expire normally. What should the solutions architect do?</div>
+          <ol class="opts">
+            <li data-k="A">Apply AWS Backup Vault Lock in compliance mode to the vault.</li>
+            <li data-k="B">Create an AWS Backup legal hold that selects the table's resource ID and the March date range.</li>
+            <li data-k="C">Change the backup plan's retention period to "Always".</li>
+            <li data-k="D">Copy the recovery points to another account by using cross-account backup.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B.</b> <b>Legal hold</b> áp cho từng recovery point theo resource type/ID và khoảng ngày tạo, <b>không có hạn</b> tới khi được release; các backup khác vẫn hết hạn bình thường. <b>A sai</b>: Vault Lock áp cho cả vault, min retention chỉ áp cho job mới và không giữ “vô hạn” recovery point đã có. <b>C sai</b>: đổi plan ảnh hưởng backup mới, không phải các bản tháng 3 đã có; và áp cho mọi tài nguyên. <b>D sai</b>: bản copy vẫn theo lifecycle, legal hold cũng không đi theo bản copy.</div>
+          <div class="trans">
+            <div class="tq">Một công ty đang vướng vào kiện tụng. Nhóm pháp lý yêu cầu mọi AWS Backup recovery point của một bảng Amazon DynamoDB cụ thể được tạo trong khoảng từ 1 đến 31 tháng 3 phải được giữ lại vô thời hạn, mặc dù lifecycle của backup plan sẽ xóa chúng sau 35 ngày. Các bản backup khác trong cùng vault phải tiếp tục hết hạn bình thường. Solutions architect nên làm gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Áp dụng AWS Backup Vault Lock ở compliance mode cho vault.</span><span class="why">Sai: Vault Lock áp cho toàn bộ vault, min/max retention chỉ áp cho job mới và không giữ vô hạn các recovery point đã có của riêng một bảng.</span></li>
+              <li data-k="B"><span class="tv">Tạo một AWS Backup legal hold chọn resource ID của bảng và khoảng ngày tháng 3.</span><span class="why">Đúng: legal hold chọn recovery point theo resource ID và khoảng ngày tạo, giữ chúng vô thời hạn tới khi được release, còn các backup khác vẫn hết hạn bình thường.</span></li>
+              <li data-k="C"><span class="tv">Đổi thời gian lưu giữ của backup plan thành "Always".</span><span class="why">Sai: đổi plan chỉ ảnh hưởng backup mới chứ không phải các bản tháng 3 đã có, và áp cho mọi tài nguyên trong plan.</span></li>
+              <li data-k="D"><span class="tv">Sao chép các recovery point sang account khác bằng cross-account backup.</span><span class="why">Sai: bản copy vẫn tuân theo lifecycle, nên vẫn hết hạn; không đảm bảo giữ vô thời hạn theo yêu cầu pháp lý.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="C">
+          <div class="qh">A company has 300 AWS accounts in AWS Organizations. The security team wants every account to automatically receive the same backup plan for resources tagged backup=gold, including accounts that are created in the future, and wants to monitor backup job status for all accounts from one place. Which solution meets these requirements with the LEAST operational overhead?</div>
+          <ol class="opts">
+            <li data-k="A">Use AWS CloudFormation StackSets to deploy a Lambda function that creates EBS snapshots in every account.</li>
+            <li data-k="B">Log in to each account and create the backup plan in the AWS Backup console.</li>
+            <li data-k="C">Create an AWS Backup backup policy in AWS Organizations, attach it to the organization root, and use AWS Backup cross-account monitoring.</li>
+            <li data-k="D">Create a service control policy (SCP) that requires AWS Backup to be enabled in every account.</li>
+          </ol>
+          <div class="explain"><b>Đáp án C.</b> <b>Backup policy</b> của Organizations tự áp backup plan xuống mọi account dưới root/OU – kể cả account mới; <b>cross-account monitoring</b> xem tập trung job của toàn org. <b>A sai</b>: chỉ EBS và là code tự viết. <b>B sai</b>: thủ công, account mới không tự có. <b>D sai</b>: SCP chỉ giới hạn quyền, không tạo backup plan.</div>
+          <div class="trans">
+            <div class="tq">Một công ty có 300 AWS account trong AWS Organizations. Nhóm bảo mật muốn mọi account tự động nhận cùng một backup plan cho các tài nguyên gắn tag backup=gold, kể cả các account được tạo trong tương lai, và muốn giám sát trạng thái backup job của tất cả account từ một nơi. Giải pháp nào đáp ứng các yêu cầu này với LEAST operational overhead (ít công sức vận hành nhất)?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Dùng AWS CloudFormation StackSets để triển khai một Lambda function tạo EBS snapshot trong mọi account.</span><span class="why">Sai: chỉ backup EBS, là code tự viết phải bảo trì và không có giám sát tập trung.</span></li>
+              <li data-k="B"><span class="tv">Đăng nhập vào từng account và tạo backup plan trong AWS Backup console.</span><span class="why">Sai: làm thủ công cho 300 account, và account mới không tự động có backup plan.</span></li>
+              <li data-k="C"><span class="tv">Tạo một AWS Backup backup policy trong AWS Organizations, gắn vào organization root, và dùng AWS Backup cross-account monitoring.</span><span class="why">Đúng: backup policy gắn ở root tự áp backup plan cho mọi account, kể cả account mới; cross-account monitoring xem job của toàn tổ chức ở một nơi.</span></li>
+              <li data-k="D"><span class="tv">Tạo một service control policy (SCP) yêu cầu bật AWS Backup trong mọi account.</span><span class="why">Sai: SCP chỉ giới hạn quyền tối đa, không thể tạo backup plan hay "bật" dịch vụ.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="B,E">
+          <div class="qh">A solutions architect is configuring AWS Backup Vault Lock in compliance mode by running put-backup-vault-lock-configuration with --changeable-for-days 3. Which TWO statements are correct? (Select TWO.)</div>
+          <ol class="opts">
+            <li data-k="A">The AWS account root user can still delete recovery points in the vault before their retention ends, after the 3 days have passed.</li>
+            <li data-k="B">During the 3-day grace time, the vault lock can be removed with DeleteBackupVaultLockConfiguration or changed.</li>
+            <li data-k="C">The minimum grace time that can be configured is 24 hours.</li>
+            <li data-k="D">The minimum and maximum retention settings are applied retroactively to recovery points that already exist in the vault.</li>
+            <li data-k="E">After the grace time expires, no user and not even AWS can change or delete the lock while the vault contains recovery points.</li>
+          </ol>
+          <div class="explain"><b>Đáp án B, E.</b> Trong grace time vẫn gỡ/sửa được lock; hết grace time thì vault và lock <b>immutable</b>, không user nào và cả AWS cũng không thay đổi được khi vault còn recovery point. <b>A sai</b>: root user bị từ chối khi xóa backup trong vault đã khóa. <b>C sai</b>: grace time tối thiểu là <b>3 ngày (72 giờ)</b>; “24 giờ” là thời gian kiểm thử của Glacier Vault Lock. <b>D sai</b>: min/max chỉ áp cho job backup/copy <b>mới</b>; recovery point có sẵn giữ lifecycle cũ.</div>
+          <div class="trans">
+            <div class="tq">Một solutions architect đang cấu hình AWS Backup Vault Lock ở compliance mode bằng cách chạy put-backup-vault-lock-configuration với --changeable-for-days 3. HAI phát biểu nào là đúng? (Select TWO – chọn hai.)</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">AWS account root user vẫn có thể xóa recovery point trong vault trước khi hết thời gian lưu giữ, sau khi 3 ngày đã trôi qua.</span><span class="why">Sai: sau grace time, compliance mode từ chối mọi yêu cầu xóa backup trước hạn, kể cả từ root user.</span></li>
+              <li data-k="B"><span class="tv">Trong 3 ngày grace time, vault lock có thể được gỡ bằng DeleteBackupVaultLockConfiguration hoặc được thay đổi.</span><span class="why">Đúng: grace time là giai đoạn thử nghiệm, trong thời gian này vẫn gỡ hoặc sửa được cấu hình lock.</span></li>
+              <li data-k="C"><span class="tv">Grace time tối thiểu có thể cấu hình là 24 giờ.</span><span class="why">Sai: grace time tối thiểu là 3 ngày (72 giờ); 24 giờ là thời gian kiểm thử của Glacier Vault Lock.</span></li>
+              <li data-k="D"><span class="tv">Các thiết lập retention tối thiểu và tối đa được áp dụng hồi tố cho các recovery point đã có trong vault.</span><span class="why">Sai: min/max retention chỉ áp cho các job backup/copy mới; recovery point có sẵn giữ nguyên lifecycle cũ.</span></li>
+              <li data-k="E"><span class="tv">Sau khi grace time hết hạn, không user nào và kể cả AWS cũng không thể thay đổi hay xóa lock khi vault còn chứa recovery point.</span><span class="why">Đúng: hết grace time, vault và lock trở thành immutable, không ai (kể cả AWS) thay đổi được khi vault còn recovery point.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="q" data-answer="A">
+          <div class="qh">A company keeps AWS Backup recovery points of an Amazon EFS file system in Account A. The company needs to create a copy of the file system in Account B, which belongs to the same organization, to run analytics. What is the correct approach?</div>
+          <ol class="opts">
+            <li data-k="A">Copy the recovery point from Account A's backup vault to a backup vault in Account B, and then start the restore job in Account B.</li>
+            <li data-k="B">Start a restore job in Account A and specify Account B as the target account.</li>
+            <li data-k="C">Share Account A's default backup vault with Account B by using a vault access policy, and restore from Account B.</li>
+            <li data-k="D">Transition the recovery point to cold storage, and then copy it to Account B.</li>
+          </ol>
+          <div class="explain"><b>Đáp án A.</b> AWS Backup <b>không hỗ trợ restore trực tiếp</b> từ account này sang account khác; phải <b>copy</b> recovery point sang vault của account đích rồi restore ở đó. <b>B sai</b>: không có tùy chọn restore sang account khác. <b>C sai</b>: vault access policy cho phép <i>copy vào</i> vault, không cho restore từ account khác; default vault cũng không dùng cho cross-account. <b>D sai</b>: không copy được recovery point đang ở cold tier.</div>
+          <div class="trans">
+            <div class="tq">Một công ty giữ các AWS Backup recovery point của một Amazon EFS file system ở Account A. Công ty cần tạo một bản sao của file system ở Account B, thuộc cùng tổ chức, để chạy phân tích. Cách làm đúng là gì?</div>
+            <ul class="topts">
+              <li data-k="A"><span class="tv">Sao chép recovery point từ backup vault của Account A sang một backup vault ở Account B, rồi chạy restore job ở Account B.</span><span class="why">Đúng: AWS Backup không restore trực tiếp sang account khác; phải copy recovery point sang vault của account đích rồi restore tại đó.</span></li>
+              <li data-k="B"><span class="tv">Chạy một restore job ở Account A và chỉ định Account B làm account đích.</span><span class="why">Sai: restore job không có tùy chọn khôi phục sang account khác.</span></li>
+              <li data-k="C"><span class="tv">Chia sẻ default backup vault của Account A với Account B bằng vault access policy, và restore từ Account B.</span><span class="why">Sai: vault access policy chỉ cho phép copy vào vault, không cho account khác restore từ vault; default vault cũng không dùng cho cross-account.</span></li>
+              <li data-k="D"><span class="tv">Chuyển recovery point sang cold storage, rồi sao chép nó sang Account B.</span><span class="why">Sai: recovery point đang ở cold tier không thể copy; việc chuyển cold cũng không giúp gì cho việc tạo bản sao.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== NGUỒN ===================== -->
+      <h2 id="nguon">Tài liệu gốc AWS</h2>
+      <ul class="sources" id="sources">
+        <li><a href="https://docs.aws.amazon.com/aws-backup/latest/devguide/backup-feature-availability.html" target="_blank" rel="noopener">AWS Backup feature availability</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-backup/latest/devguide/plan-options-and-configuration.html" target="_blank" rel="noopener">Backup plan options and configuration</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-backup/latest/devguide/assigning-resources.html" target="_blank" rel="noopener">Select AWS services to back up (resource assignment)</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-backup/latest/devguide/point-in-time-recovery.html" target="_blank" rel="noopener">Continuous backups and point-in-time recovery (PITR)</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-backup/latest/devguide/cross-region-backup.html" target="_blank" rel="noopener">Creating backup copies across AWS Regions</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-backup/latest/devguide/create-cross-account-backup.html" target="_blank" rel="noopener">Creating backup copies across AWS accounts</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-backup/latest/devguide/logicallyairgappedvault.html" target="_blank" rel="noopener">Logically air-gapped vault</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-backup/latest/devguide/legalhold.html" target="_blank" rel="noopener">Legal holds and AWS Backup</a></li>
+        <li><a href="https://docs.aws.amazon.com/aws-backup/latest/devguide/restore-testing.html" target="_blank" rel="noopener">Restore testing</a></li>
+      </ul>
+
+      <nav id="lesson-nav"></nav>
+    </main>
+    <aside class="toc" id="toc"></aside>
+  </div>
+</body>
+</html>
