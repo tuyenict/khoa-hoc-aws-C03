@@ -77,6 +77,12 @@
   ];
 
   const STATUS_LABEL = { none: "Chưa học", learn: "Đang học", done: "Đã đạt" };
+  // icon trạng thái trên thẻ chứng chỉ: sách mở = đang học, dấu tích = đã đạt
+  const svg = (d) => `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const STATUS_ICON = {
+    learn: svg('<path d="M2 5h6a4 4 0 0 1 4 4v11a3 3 0 0 0-3-3H2z"/><path d="M22 5h-6a4 4 0 0 0-4 4v11a3 3 0 0 1 3-3h7z"/>'),
+    done: svg('<path d="M20 6 9 17l-5-5"/>')
+  };
   const state = {
     track: store.get("aws-cert-track", "architect"),
     sel: store.get("aws-cert-sel", COURSE),
@@ -207,7 +213,8 @@
       $$(".stepn,.status", el).forEach((x) => x.remove());
       if (i >= 0) el.insertAdjacentHTML("beforeend", `<span class="stepn">${i + 1}</span>`);
       else if (opt.includes(id)) el.insertAdjacentHTML("beforeend", `<span class="stepn opt">+</span>`);
-      if (s !== "none") el.insertAdjacentHTML("beforeend", `<span class="status ${s}">${STATUS_LABEL[s]}</span>`);
+      if (s !== "none") el.insertAdjacentHTML("beforeend",
+        `<span class="status ${s}" title="${STATUS_LABEL[s]}" role="img" aria-label="${STATUS_LABEL[s]}">${STATUS_ICON[s]}</span>`);
     });
     renderDetail(); renderPlan(); drawLines();
   }
