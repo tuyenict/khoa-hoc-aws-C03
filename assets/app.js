@@ -2,6 +2,7 @@
    AWS SAA-C03 – Tài liệu tiếng Việt  |  Script dùng chung
    - Trang chủ:  <body data-page="home" data-root=".">
    - Trang bài:  <body data-page="lesson" data-lesson="5" data-root="..">
+   - Trang game: <body data-page="games" data-lesson="5" data-root="..">  (xem assets/games.js)
    ========================================================= */
 (function () {
   "use strict";
@@ -46,11 +47,15 @@
     bar.innerHTML = `
       <a class="brand" href="${ROOT}/index.html"><span class="logo">aws</span><span>SAA-C03 <small>· Tiếng Việt</small></span></a>
       <div class="crumb">${crumb || ""}</div>
+      <a class="top-link" href="${ROOT}/exam.html">Thi thử</a>
       <a class="top-link" href="${ROOT}/about.html">Lộ trình chứng chỉ</a>
       <button class="icon-btn" id="themeBtn" title="Đổi giao diện sáng/tối">◐</button>`;
     document.body.prepend(bar);
     $("#themeBtn").onclick = toggleTheme;
   }
+
+  /* dùng lại trong assets/games.js */
+  window.SAA = { ROOT, ICON, $, $$, esc, store, toast, renderTopbar };
 
   /* =========================================================
      TRANG BÀI HỌC
@@ -78,8 +83,18 @@
         <p class="sub">${esc(L.vi)}</p>
         <div class="meta">${L.domains.map((d) => `<span class="chip"><span class="dot" style="background:${EXAM.domains[d].color}"></span>${d} · ${esc(EXAM.domains[d].en)}</span>`).join("")}</div>
         <div class="icons">${L.icons.map((p) => `<figure><img src="${ICON(p)}" alt=""><figcaption>${esc(iconName(p))}</figcaption></figure>`).join("")}</div>
+        ${L.games ? `<p style="margin:22px 0 0"><a class="btn" href="${ROOT}/games/${L.file}" style="text-decoration:none">🎮 Ôn tập bằng trò chơi ghi nhớ</a></p>` : ""}
       </div>`;
     }
+
+    /* khối mời chơi game ôn tập, đặt ngay trước phần câu hỏi luyện tập */
+    const qzHead = $("#quiz-score")?.previousElementSibling;
+    if (L.games && qzHead) qzHead.insertAdjacentHTML("beforebegin", `
+      <a class="games-cta" href="${ROOT}/games/${L.file}">
+        <span class="ic">🎮</span>
+        <span><b>Ôn tập bằng trò chơi ghi nhớ</b><small>Bản đồ kiến thức · Flashcard · Ghép cặp · Phân loại · Đúng/Sai 60 giây</small></span>
+        <span class="go">Chơi ngay →</span>
+      </a>`);
 
     /* đánh số h2 + mục lục phải */
     const h2s = $$("main.content h2");
@@ -117,7 +132,7 @@
     if (nav) {
       const i = SYLLABUS.indexOf(L), prev = SYLLABUS[i - 1], next = SYLLABUS[i + 1];
       const card = (x, cls, label) => x
-        ? `<a class="nav-card ${cls} ${x.ready ? "" : "disabled"}" href="${x.file}"><small>${label}${x.ready ? "" : " · chưa gen"}</small>Bài ${x.id}: ${esc(x.vi)}</a>`
+        ? `<a class="nav-card ${cls} ${x.ready ? "" : "disabled"}" href="${x.file}"><small>${label}</small>Bài ${x.id}: ${esc(x.vi)}</a>`
         : `<span></span>`;
       nav.className = "lesson-nav";
       nav.innerHTML = card(prev, "prev", "← Bài trước") +
@@ -191,7 +206,6 @@
   function initHome() {
     renderTopbar("Mục lục khóa học");
     const done = doneSet();
-    const ready = SYLLABUS.filter((l) => l.ready).length;
 
     /* thanh tỉ trọng domain */
     $("#domainBar").innerHTML = Object.values(EXAM.domains).map((d) => `<span style="width:${d.pct}%;background:${d.color}" title="${esc(d.en)} ${d.pct}%"></span>`).join("");
@@ -199,16 +213,13 @@
 
     const paintProgress = () => {
       const n = doneSet().size;
-      $("#progText").textContent = `Đã học ${n}/${SYLLABUS.length} bài · Đã gen ${ready}/${SYLLABUS.length} bài`;
+      $("#progText").textContent = `Đã học ${n}/${SYLLABUS.length} bài`;
       $("#progBar").style.width = (n / SYLLABUS.length * 100) + "%";
     };
     paintProgress();
 
-    const nextGen = SYLLABUS.find((l) => !l.ready);
     const nextLearn = SYLLABUS.find((l) => l.ready && !done.has(l.id));
-    $("#nextHint").innerHTML =
-      (nextLearn ? `▶ Học tiếp: <a href="lessons/${nextLearn.file}"><b>Bài ${nextLearn.id} – ${esc(nextLearn.vi)}</b></a>. ` : "") +
-      (nextGen ? `Bài tiếp theo cần gen: <code class="cmd-copy" data-cmd="/aws-bai ${nextGen.id}" style="cursor:pointer">/aws-bai ${nextGen.id}</code> (hoặc <code>/aws-bai next</code>)` : "🎉 Đã gen đủ toàn bộ bài học!");
+    $("#nextHint").innerHTML = nextLearn ? `▶ Học tiếp: <a href="lessons/${nextLearn.file}"><b>Bài ${nextLearn.id} – ${esc(nextLearn.vi)}</b></a>` : "";
 
     const box = $("#modules");
     box.innerHTML = MODULES.map((m) => {
@@ -220,14 +231,14 @@
 
     function cardHTML(l) {
       const isDone = done.has(l.id);
-      const badge = isDone ? `<span class="badge done">✓ Đã học</span>` : l.ready ? `<span class="badge ready">Sẵn sàng</span>` : `<span class="badge todo">Chưa gen</span>`;
+      const badge = isDone ? `<span class="badge done">✓ Đã học</span>` : l.ready ? `<span class="badge ready">Sẵn sàng</span>` : `<span class="badge todo">Sắp có</span>`;
       const doms = l.domains.map((d) => `<span style="background:${EXAM.domains[d].color}" title="${esc(EXAM.domains[d].en)}">${d}</span>`).join("");
       const inner = `
         <div class="top"><div class="no">${String(l.id).padStart(2, "0")}</div>
           <div><h3>${esc(l.title)}</h3><div class="vi">${esc(l.vi)}</div></div></div>
         <div class="ic">${l.icons.map((p) => `<img src="${ICON(p)}" alt="" title="${esc(iconName(p))}">`).join("")}</div>
         <div class="foot"><div class="doms">${doms}</div>
-          ${l.ready ? badge : `<span style="display:flex;gap:6px;align-items:center">${badge}<code class="cmd cmd-copy" data-cmd="/aws-bai ${l.id}" title="Bấm để copy lệnh">/aws-bai ${l.id}</code></span>`}</div>
+          ${badge}</div>
         ${l.ready ? "" : `<div class="docs">Tài liệu gốc: ${l.docs.map((d, i) => `<a href="${d.u}" target="_blank" rel="noopener" title="${esc(d.t)}">[${i + 1}]</a>`).join("")}</div>`}`;
       const search = esc((l.title + " " + l.vi + " " + l.topics.join(" ")).toLowerCase());
       return l.ready
@@ -235,22 +246,10 @@
         : `<div class="lesson-card locked" data-s="${search}">${inner}</div>`;
     }
 
-    document.addEventListener("click", (e) => {
-      const c = e.target.closest(".cmd-copy"); if (!c) return;
-      e.preventDefault();
-      const txt = c.dataset.cmd;
-      (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(
-        () => toast(`Đã copy “${txt}” — dán vào Claude Code để gen bài`),
-        () => toast(`Gõ trong Claude Code: ${txt}`));
-    });
-
     $("#search").addEventListener("input", (e) => {
       const q = e.target.value.trim().toLowerCase();
       $$(".lesson-card").forEach((c) => { c.style.display = !q || c.dataset.s.includes(q) ? "" : "none"; });
       $$(".module").forEach((m) => { m.style.display = $$(".lesson-card", m).some((c) => c.style.display !== "none") ? "" : "none"; });
-    });
-    $("#onlyReady").addEventListener("change", (e) => {
-      $$(".lesson-card.locked").forEach((c) => c.hidden = e.target.checked);
     });
   }
 
@@ -258,5 +257,6 @@
     if (document.body.dataset.page === "home") initHome();
     else if (document.body.dataset.page === "lesson") initLesson();
     else if (document.body.dataset.page === "about") renderTopbar("Giới thiệu & lộ trình chứng chỉ");
+    else if (document.body.dataset.page === "exam") renderTopbar("Thi thử SAA-C03");
   });
 })();

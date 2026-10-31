@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 5 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/cat/Security-Identity-Compliance.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="5" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-05-iam-advanced-sts.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "eval", name: "Policy evaluation logic" },
+      { id: "xacct", name: "Resource-based & cross-account" },
+      { id: "bound", name: "Permissions boundary & session policy" },
+      { id: "sts", name: "AWS STS & AssumeRole" },
+      { id: "fed", name: "Identity federation" },
+      { id: "aa", name: "IAM Access Analyzer" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Evaluation logic
+      { t: "eval", f: "Ba nguyên tắc nền tảng của policy evaluation?", b: "1. Mặc định <b>implicit deny</b> (trừ root user có full access)<br>2. Chỉ được phép khi có <b>Allow tường minh</b><br>3. <b>Explicit deny luôn ghi đè</b> explicit allow." },
+      { t: "eval", f: "Thứ tự đánh giá của enforcement code?", b: "<b>Explicit Deny</b> (mọi policy) → <b>RCP</b> → <b>SCP</b> → <b>resource-based</b> → <b>identity-based</b> → <b>permissions boundary</b> → <b>session policy</b>." },
+      { t: "eval", f: "Bước “Deny evaluation” làm gì?", b: "Quét <b>tất cả</b> policy áp dụng (SCP, RCP, resource-based, identity-based, boundary, session) tìm statement <b>Deny</b> khớp. Thấy dù chỉ một ⇒ <b>Deny cuối cùng</b>." },
+      { t: "eval", f: "Ba bước AWS xử lý một request?", b: "1. <b>Authentication</b> (S3 cho phép request ẩn danh nên có thể bỏ qua)<br>2. <b>Processing the request context</b><br>3. <b>Enforcement code</b> đánh giá policy ra quyết định." },
+      { t: "eval", f: "Khi bật RCP, vì sao vẫn luôn có một Allow mặc định?", b: "AWS tự gắn <b>RCPFullAWSAccess</b> (không gỡ được) vào root, mọi OU và account." },
+      { t: "eval", f: "SCP áp dụng cho gì, RCP áp dụng cho gì?", b: "<b>SCP</b>: <b>principals</b> của account được gắn.<br><b>RCP</b>: <b>resources</b> của account được gắn." },
+      { t: "eval", f: "Identity-based + resource-based (cùng account) kết hợp kiểu gì?", b: "<b>Hợp (union)</b>: Allow ở một bên hoặc cả hai ⇒ được phép. Explicit deny ở bất kỳ bên nào ghi đè." },
+      { t: "eval", f: "Identity-based kết hợp với boundary / SCP / RCP / session policy kiểu gì?", b: "<b>Giao (intersection)</b>: action phải được <b>tất cả</b> cùng cho phép." },
+      { t: "eval", f: "Policy nào <b>không bao giờ cấp quyền</b>, chỉ đặt quyền tối đa?", b: "<b>SCP, RCP, permissions boundary, session policy</b>.", x: "“Attach an SCP that allows S3 to grant the user access” là sai nếu user chưa có identity-based policy." },
+      { t: "eval", f: "Root user của member account trong Organizations có bị SCP giới hạn không?", b: "<b>Có.</b> Root của tài khoản standalone có full access; root của <b>member account</b> vẫn bị <b>SCP/RCP</b> giới hạn." },
+      { t: "eval", f: "Session policy cho kết quả gì khi principal <b>không</b> phải session principal?", b: "<b>Allow</b> (bước session policy được bỏ qua). Session principal = role session hoặc STS federated user session." },
+      { t: "eval", f: "Session principal không truyền session policy thì sao?", b: "AWS tạo <b>session policy mặc định</b> ⇒ Allow ở bước này." },
+
+      // ---- Resource-based & cross-account
+      { t: "xacct", f: "Cùng account: resource policy ghi principal là <b>IAM user</b> ⇒ có bị implicit deny ở identity/boundary giới hạn không?", b: "<b>Không.</b> Allow trong resource policy là đủ." },
+      { t: "xacct", f: "Cùng account: resource policy ghi principal là <b>IAM role ARN</b> ⇒ sao?", b: "<b>Có bị giới hạn</b> bởi implicit deny trong permissions boundary hoặc session policy (principal thật gửi request là role session)." },
+      { t: "xacct", f: "Cùng account: resource policy ghi <b>role session ARN</b> ⇒ sao?", b: "<b>Không bị giới hạn</b>: quyền cấp trực tiếp cho session.", x: "Dạng <code>arn:aws:sts::acct:assumed-role/role/session</code>." },
+      { t: "xacct", f: "Hai ngoại lệ phải <b>Allow tường minh</b> cho principal dù cùng account?", b: "<b>IAM role trust policy</b> và <b>AWS KMS key policy</b>.", x: "Có <code>sts:AssumeRole</code> hay <code>kms:Decrypt</code> trong identity policy là chưa đủ." },
+      { t: "xacct", f: "Ví dụ Nikhil: boundary Deny bucket logs, bucket policy cho PutObject vào logs ⇒ ?", b: "<b>Vẫn bị từ chối</b>: explicit deny thắng." },
+      { t: "xacct", f: "Ví dụ Nikhil: boundary không nhắc Secrets Manager, resource policy của secret cho GetSecretValue ⇒ ?", b: "<b>Lấy được secret</b>: implicit deny trong boundary không giới hạn resource-based policy cấp cho IAM user." },
+      { t: "xacct", f: "<i>Trusted account</i> và <i>trusting account</i> là gì?", b: "<b>Trusted</b>: chứa <b>principal</b>.<br><b>Trusting</b>: chứa <b>tài nguyên</b>." },
+      { t: "xacct", f: "Cross-account evaluation diễn ra thế nào?", b: "<b>Hai lần đánh giá</b>: ở trusted account (identity policy + boundary/session/SCP) và ở trusting account (resource policy + RCP). Chỉ Allow khi <b>cả hai Allow</b>." },
+      { t: "xacct", f: "Resource-based policy vs cross-account role: khác nhau về quyền gốc?", b: "<b>Resource-based</b>: principal <b>giữ nguyên quyền</b> của mình (đọc bucket B, ghi bucket A cùng lúc).<br><b>Role</b>: principal <b>tạm bỏ quyền gốc</b> khi dùng role." },
+      { t: "xacct", f: "Hạn chế của cách cấp cross-account bằng resource-based policy?", b: "Chỉ dùng được với dịch vụ <b>hỗ trợ resource-based policy</b> (S3, SQS, SNS, KMS, Lambda, Secrets Manager…)." },
+      { t: "xacct", f: "Đọc object SSE-KMS ở account khác cần gì?", b: "Quyền trên <b>KMS key policy</b> (Allow tường minh) + <b>kms:Decrypt</b> trong identity policy (cùng quyền S3)." },
+
+      // ---- Boundary & session policy
+      { t: "bound", f: "Permissions boundary là gì?", b: "<b>Managed policy</b> đặt <b>quyền tối đa</b> mà identity-based policy có thể cấp cho một <b>IAM user hoặc role</b>." },
+      { t: "bound", f: "Đặt permissions boundary được cho những gì?", b: "<b>Chỉ IAM user và IAM role</b>.", x: "Không cho group, không cho root user." },
+      { t: "bound", f: "Boundary có dùng inline policy được không?", b: "<b>Không.</b> Phải là <b>managed policy</b> (AWS managed hoặc customer managed)." },
+      { t: "bound", f: "Ví dụ Shirley: boundary <code>s3:*, cloudwatch:*, ec2:*</code> + identity policy chỉ có <code>iam:CreateUser</code> ⇒ làm được gì?", b: "<b>Không làm được gì cả</b>: phần giao của hai policy rỗng." },
+      { t: "bound", f: "Use case chính của boundary trong đề thi?", b: "<b>Ủy quyền quản trị IAM</b> (cho người khác tạo user/role) mà <b>không leo thang đặc quyền</b>." },
+      { t: "bound", f: "Ủy quyền tạo user an toàn (María & Zhang) cần những gì?", b: "Allow <code>iam:CreateUser</code>… chỉ khi condition <b>iam:PermissionsBoundary</b> = ARN boundary + <b>Deny sửa/xóa policy boundary</b> + <b>Deny iam:DeleteUserPermissionsBoundary</b>.", x: "Quên hai Deny ⇒ người được ủy quyền tự nới trần quyền." },
+      { t: "bound", f: "Zhang tạo user Nikhil mà quên chọn boundary ⇒ ?", b: "<b>Access denied</b>: condition iam:PermissionsBoundary không khớp." },
+      { t: "bound", f: "Vì sao không dùng resource policy <code>NotPrincipal</code> + Deny với principal có boundary?", b: "Nó <b>luôn deny</b> mọi principal có boundary, bất kể NotPrincipal. Dùng <b>ArnNotEquals</b> với <code>aws:PrincipalArn</code>." },
+      { t: "bound", f: "Boundary khác SCP về phạm vi?", b: "<b>Boundary</b>: <b>một entity</b>, trong một tài khoản.<br><b>SCP</b>: toàn bộ <b>account/OU</b>, kể cả root của member account." },
+      { t: "bound", f: "Session policy là gì?", b: "Policy truyền <b>như tham số</b> khi tạo phiên tạm thời cho role / STS federated user. Quyền phiên = <b>giao</b> với identity-based policy (và boundary)." },
+      { t: "bound", f: "API nào hỗ trợ session policy, API nào không?", b: "Có: <b>AssumeRole, AssumeRoleWithSAML, AssumeRoleWithWebIdentity, GetFederationToken</b>.<br>Không: <b>GetSessionToken</b>." },
+      { t: "bound", f: "Truyền được bao nhiêu session policy?", b: "<b>1 inline JSON policy</b> + tối đa <b>10 managed policy ARN</b>." },
+      { t: "bound", f: "Use case điển hình của session policy?", b: "Ứng dụng <b>dùng chung một role</b> nhưng thu hẹp quyền theo từng phiên, vd chỉ prefix <code>s3://bucket/userA/</code>." },
+
+      // ---- STS
+      { t: "sts", f: "Temporary credentials của STS gồm những gì?", b: "<b>Access key ID + secret access key + session token</b>." },
+      { t: "sts", f: "Temporary credentials khác access key dài hạn ở hai điểm nào?", b: "<b>Ngắn hạn</b> (vài phút–vài giờ) và <b>sinh động khi được yêu cầu</b>, không lưu cùng user." },
+      { t: "sts", f: "Thời lượng tối thiểu của mọi STS credentials?", b: "<b>15 phút</b> (DurationSeconds ≥ 900)." },
+      { t: "sts", f: "Thời lượng AssumeRole* mặc định và tối đa?", b: "Mặc định <b>1 giờ</b>; tối đa = <b>maximum session duration</b> của role (<b>≤ 12 giờ</b>)." },
+      { t: "sts", f: "GetFederationToken / GetSessionToken: thời lượng tối đa?", b: "IAM user: tối đa <b>36 giờ</b> (mặc định 12 giờ).<br>Root: tối đa <b>1 giờ</b>." },
+      { t: "sts", f: "Role chaining giới hạn session bao lâu?", b: "Tối đa <b>1 giờ</b>." },
+      { t: "sts", f: "STS API nào hỗ trợ MFA?", b: "<b>AssumeRole</b> và <b>GetSessionToken</b>.", x: "AssumeRoleWithSAML, AssumeRoleWithWebIdentity, GetFederationToken không hỗ trợ MFA." },
+      { t: "sts", f: "GetFederationToken dùng làm gì? Hạn chế?", b: "<b>Custom identity broker</b>, cho phép <b>SSO vào console</b>. Không gọi IAM API; không gọi STS trừ GetCallerIdentity." },
+      { t: "sts", f: "GetSessionToken dùng làm gì?", b: "Bảo vệ API bằng <b>MFA</b> cho IAM user. Không session policy, không SSO console; IAM API chỉ khi kèm MFA." },
+      { t: "sts", f: "<code>sts:GetCallerIdentity</code> có gì đặc biệt?", b: "<b>Không cần quyền</b>: kể cả có explicit Deny vẫn gọi được. Lệnh debug “Tôi là ai?”." },
+      { t: "sts", f: "STS endpoint: global hay regional?", b: "Mặc định global <code>https://sts.amazonaws.com</code>, có thêm <b>Regional endpoints</b> (giảm độ trễ, dự phòng). Credentials lấy ở Region nào cũng <b>dùng được mọi Region</b>." },
+      { t: "sts", f: "AssumeRole cross-account cần hai “nửa” nào?", b: "Identity policy ở <b>Account A</b> Allow <code>sts:AssumeRole</code> trên ARN role + <b>trust policy</b> của role ở <b>Account B</b> tin principal/Account A." },
+      { t: "sts", f: "Trust policy có <code>Principal: arn:aws:iam::111122223333:root</code> nghĩa là gì?", b: "Tin <b>cả tài khoản</b> 111122223333 (không chỉ root user); admin của tài khoản đó quyết định ai được AssumeRole bằng identity policy." },
+      { t: "sts", f: "Ứng dụng trên EC2 lấy credentials thế nào?", b: "<b>Role gắn qua instance profile</b>; credentials tạm thời có sẵn cho ứng dụng, không lưu key dài hạn." },
+      { t: "sts", f: "Vendor SaaS bên thứ ba cần truy cập tài khoản ⇒ ?", b: "<b>Cross-account role + External ID</b> (condition <code>sts:ExternalId</code>) chống <i>confused deputy</i>." },
+      { t: "sts", f: "Credentials của role bị lộ ⇒ xử lý thế nào?", b: "<b>Revoke active sessions</b>: gắn inline policy Deny mọi request có <code>aws:TokenIssueTime</code> cũ hơn thời điểm thu hồi.", x: "Credentials đã cấp vẫn hợp lệ tới khi hết hạn nếu chỉ sửa permissions/trust policy." },
+
+      // ---- Federation
+      { t: "fed", f: "Best practice cho người dùng là con người truy cập AWS?", b: "<b>Federation với identity provider (IdP)</b> thay vì tạo IAM user riêng lẻ." },
+      { t: "fed", f: "IAM Identity Center phù hợp khi nào?", b: "<b>Workforce</b> truy cập <b>nhiều account trong AWS Organizations</b>. Identity source: SAML 2.0, Managed AD, Identity Center directory." },
+      { t: "fed", f: "Federation với IAM (IAM identity provider) phù hợp khi nào?", b: "<b>Một account độc lập</b>, triển khai ngắn hạn/quy mô nhỏ, hoặc <b>machine users</b>. Hỗ trợ SAML 2.0, OIDC." },
+      { t: "fed", f: "Amazon Cognito identity pools dùng cho ai?", b: "<b>Người dùng ứng dụng</b> cần IAM authorization; hỗ trợ SAML, OIDC, social (Facebook, Google, Amazon), <b>guest</b>." },
+      { t: "fed", f: "Cognito user pool khác identity pool?", b: "<b>User pool</b>: sign-up/sign-in.<br><b>Identity pool</b>: đổi token lấy <b>IAM credentials</b> (qua AssumeRoleWithWebIdentity)." },
+      { t: "fed", f: "Trust policy của role SAML có Principal và Action gì?", b: "<code>Principal: {“Federated”: “arn:aws:iam::acct:saml-provider/name”}</code>, action <b>sts:AssumeRoleWithSAML</b>.", x: "SAML IdP trong trust policy phải cùng tài khoản với role." },
+      { t: "fed", f: "<code>saml:aud</code> là gì? AWS khuyến nghị gì?", b: "URL <b>sign-in endpoint</b>, phải khớp recipient của IdP. Dùng <b>Regional sign-in endpoint</b> (nhiều endpoint) để chịu lỗi." },
+      { t: "fed", f: "Tạo thư mục S3 riêng cho từng người dùng SAML dùng biến nào?", b: "<code>${saml:namequalifier}</code> + <code>${saml:sub}</code>, kèm <code>saml:sub_type = persistent</code>.", x: "Giá trị transient đổi mỗi phiên, không dùng làm định danh." },
+      { t: "fed", f: "Encrypted SAML assertion được hỗ trợ ở đâu?", b: "<b>IAM SAML federation</b> có. IAM Identity Center và Cognito <b>không</b> hỗ trợ encrypted assertion từ IAM SAML IdP." },
+      { t: "fed", f: "OIDC federation: GitHub Actions lấy credentials thế nào?", b: "Nhận <b>JWT</b> từ OIDC IdP ⇒ <b>AssumeRoleWithWebIdentity</b> ⇒ temporary credentials của role least-privilege." },
+      { t: "fed", f: "IAM chấp nhận JWT quá hạn thêm bao lâu?", b: "<b>5 phút</b> sau claim <code>exp</code> để bù lệch đồng hồ (clock skew)." },
+      { t: "fed", f: "Custom identity broker làm gì?", b: "Tự xác thực người dùng, gọi STS rồi gọi <code>https://signin.aws.amazon.com/federation</code> tạo <b>URL đăng nhập console</b> không cần mật khẩu." },
+      { t: "fed", f: "IAM Roles Anywhere dùng khi nào?", b: "Máy <b>ngoài AWS</b> lấy temporary credentials bằng <b>chứng chỉ X.509</b> (PKI có sẵn)." },
+
+      // ---- Access Analyzer
+      { t: "aa", f: "<i>Zone of trust</i> trong IAM Access Analyzer là gì?", b: "<b>Organization hoặc account</b> chọn khi tạo analyzer; truy cập từ principal trong đó được coi là tin cậy." },
+      { t: "aa", f: "External access analyzer làm gì?", b: "Tìm tài nguyên <b>chia sẻ ra ngoài zone of trust</b> (account khác, public). Mỗi tài nguyên ⇒ một finding." },
+      { t: "aa", f: "External access analyzer là Regional hay global?", b: "<b>Regional</b>: phải tạo ở <b>mỗi Region</b> có tài nguyên.", x: "Unused access analyzer thì không phụ thuộc Region." },
+      { t: "aa", f: "Internal access analyzer làm gì?", b: "Với tài nguyên quan trọng được chọn (S3, RDS snapshot, DynamoDB…), cho biết <b>principal nào trong org/account</b> truy cập được." },
+      { t: "aa", f: "Unused access analyzer tìm gì? Tính phí ra sao?", b: "<b>Unused roles, access keys, passwords</b>, dịch vụ/action không dùng. Phí theo <b>số role/user</b> mỗi tháng." },
+      { t: "aa", f: "Policy generation hoạt động thế nào?", b: "Phân tích <b>CloudTrail logs</b> để sinh policy chỉ gồm action thực sự dùng ⇒ least privilege." },
+      { t: "aa", f: "Custom policy checks dùng làm gì?", b: "Kiểm tra policy mới có <b>cấp thêm quyền</b> so với bản cũ (<b>CheckNoNewAccess</b>) hoặc cho phép action nhạy cảm." },
+      { t: "aa", f: "Policy mới/sửa được Access Analyzer phân tích trong bao lâu?", b: "Khoảng <b>30 phút</b>; quét định kỳ trong <b>24 giờ</b>; có thể Rescan (<code>StartResourceScan</code>)." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>allowed by IAM policy but still AccessDenied</i>” ⇒ ?", b: "Tìm <b>explicit Deny</b>, hoặc <b>SCP / boundary / session policy</b> thiếu Allow." },
+      { t: "kw", f: "Đề có “<i>delegate IAM administration without privilege escalation</i>” ⇒ ?", b: "<b>Permissions boundary</b> + condition <b>iam:PermissionsBoundary</b>." },
+      { t: "kw", f: "Đề có “<i>limit an assumed-role session to a subset of the role's permissions</i>” ⇒ ?", b: "<b>Session policy</b>." },
+      { t: "kw", f: "Đề có “<i>corporate Active Directory, SSO, multiple accounts</i>” ⇒ ?", b: "<b>IAM Identity Center</b>." },
+      { t: "kw", f: "Đề có “<i>SAML 2.0 IdP, single account</i>” ⇒ ?", b: "<b>IAM SAML provider + AssumeRoleWithSAML</b>." },
+      { t: "kw", f: "Đề có “<i>GitHub Actions / external CI without long-term keys</i>” ⇒ ?", b: "<b>IAM OIDC provider + AssumeRoleWithWebIdentity</b>." },
+      { t: "kw", f: "Đề có “<i>mobile app, social identity providers, guest users</i>” ⇒ ?", b: "<b>Amazon Cognito identity pools</b>." },
+      { t: "kw", f: "Đề có “<i>require MFA for CLI/API calls by IAM users</i>” ⇒ ?", b: "<b>GetSessionToken</b> kèm MFA + condition <code>aws:MultiFactorAuthPresent</code>." },
+      { t: "kw", f: "Đề có “<i>allow all accounts in our organization, without listing each account ID</i>” ⇒ ?", b: "Bucket policy với condition <b>aws:PrincipalOrgID</b>." },
+      { t: "kw", f: "Đề có “<i>resources shared outside the organization/account</i>” ⇒ ?", b: "<b>IAM Access Analyzer external access</b> (bật ở mọi Region)." },
+      { t: "kw", f: "Đề có “<i>least-privilege policy based on the role's activity over the last 90 days</i>” ⇒ ?", b: "<b>Policy generation</b> từ CloudTrail." },
+      { t: "kw", f: "Đề có “<i>maximum permissions</i>”, “<i>guardrail</i>”, “<i>cannot exceed</i>” ⇒ nghĩ tới gì?", b: "<b>Boundary / SCP / RCP / session policy</b> (không cấp quyền).", x: "Thấy “grant”, “allow access” ⇒ phải có identity-based hoặc resource-based policy." }
+    ],
+
+    pairs: [
+      ["Implicit deny", "Không có Allow ⇒ mặc định từ chối"],
+      ["Explicit deny", "Statement Deny khớp, luôn thắng"],
+      ["Enforcement code", "Thành phần AWS ra quyết định Allow/Deny"],
+      ["Request context", "Action, resource, principal, môi trường của request"],
+      ["Effective permissions", "Quyền thực sự sau khi kết hợp mọi policy"],
+      ["SCP", "Giới hạn quyền tối đa của principal trong account/OU"],
+      ["RCP", "Giới hạn quyền tối đa trên resource trong account/OU"],
+      ["Permissions boundary", "Managed policy đặt trần quyền cho user/role"],
+      ["Privilege escalation", "Tự cấp thêm quyền vượt mức cho phép"],
+      ["Session policy", "Policy truyền khi tạo session, thu hẹp quyền"],
+      ["Session principal", "Role session hoặc STS federated user session"],
+      ["Session token", "Phần thứ ba của temporary credentials"],
+      ["Trusted account", "Tài khoản chứa principal"],
+      ["Trusting account", "Tài khoản chứa tài nguyên"],
+      ["GetSessionToken", "Token cho IAM user/root, hỗ trợ MFA"],
+      ["GetFederationToken", "Cho custom identity broker, SSO console"],
+      ["AssumeRoleWithSAML", "Đổi SAML assertion lấy credentials tạm thời"],
+      ["AssumeRoleWithWebIdentity", "Đổi OIDC JWT lấy credentials tạm thời"],
+      ["SAML assertion", "Thông tin người dùng do IdP ký, gửi cho STS"],
+      ["Service provider (SP)", "Bên tin cậy IdP – ở đây là AWS"],
+      ["JWT", "Token do OIDC IdP cấp"],
+      ["Zone of trust", "Account/organization chọn khi tạo analyzer"],
+      ["External ID", "Condition chống confused deputy cho bên thứ ba"],
+      ["Revoke active sessions", "Deny request có token cấp trước thời điểm"]
+    ],
+
+    sorts: [
+      {
+        title: "Policy cấp quyền hay chỉ giới hạn?",
+        desc: "Loại policy nào có thể cấp quyền (grant), loại nào chỉ đặt quyền tối đa (guardrail)?",
+        buckets: ["Cấp quyền", "Chỉ giới hạn (không cấp)"],
+        items: [
+          ["Identity-based policy", 0, "gắn vào user, group, role để cấp quyền"],
+          ["Resource-based policy (bucket policy)", 0, "cấp quyền, kể cả cho principal ở account khác"],
+          ["KMS key policy", 0, "resource-based policy, phải Allow tường minh"],
+          ["Role trust policy", 0, "cho phép principal assume role"],
+          ["Permissions boundary", 1, "chỉ đặt trần quyền cho một user/role"],
+          ["SCP", 1, "giới hạn principal trong account/OU"],
+          ["RCP", 1, "giới hạn resource trong account/OU"],
+          ["Session policy", 1, "thu hẹp quyền của session"]
+        ]
+      },
+      {
+        title: "Chọn STS API theo tình huống",
+        desc: "Đọc tình huống và chọn AWS STS API phù hợp.",
+        buckets: ["AssumeRole", "AssumeRoleWithSAML", "AssumeRoleWithWebIdentity", "GetSessionToken", "GetFederationToken"],
+        items: [
+          ["Developer ở account A cần đọc tài nguyên ở account B", 0, "cross-account role"],
+          ["Nhân viên switch role giữa Dev và Prod", 0, "role switching"],
+          ["Vendor SaaS giám sát tài khoản với External ID", 0, "cross-account role + sts:ExternalId"],
+          ["Đăng nhập qua AD FS/Shibboleth, một tài khoản", 1, "federation doanh nghiệp bằng SAML assertion"],
+          ["Ứng dụng backup lên S3 dùng assertion từ IdP nội bộ", 1, "luồng SAML-based federation cho API"],
+          ["GitHub Actions deploy không lưu access key", 2, "đổi OIDC JWT lấy credentials"],
+          ["Cognito identity pool cấp credentials cho mobile app", 2, "bên dưới Cognito là AssumeRoleWithWebIdentity"],
+          ["IAM user phải nhập MFA trước khi gọi CLI", 3, "GetSessionToken hỗ trợ MFA"],
+          ["Custom identity broker tạo URL đăng nhập console", 4, "GetFederationToken cho phép SSO console"]
+        ]
+      },
+      {
+        title: "Kết hợp policy: hợp hay giao?",
+        desc: "Mỗi cặp/nhóm policy kết hợp theo kiểu hợp (union), giao (intersection) hay hai lần đánh giá?",
+        buckets: ["Hợp (union)", "Giao (intersection)", "Hai lần đánh giá"],
+        items: [
+          ["Identity-based + resource-based (cùng account)", 0, "Allow ở bên nào cũng được"],
+          ["Bucket policy hoặc IAM policy cùng account cho PutObject", 0, "chỉ cần một Allow"],
+          ["Identity-based + permissions boundary", 1, "thêm boundary có thể giảm quyền"],
+          ["Identity-based + SCP + RCP", 1, "phải được cả ba cho phép"],
+          ["Identity-based + boundary + session policy", 1, "session policy không cấp quá identity policy"],
+          ["Identity-based + boundary + SCP", 1, "chỉ Allow khi cả ba cho phép"],
+          ["Role ở account A ghi bucket ở account B", 2, "trusted và trusting đều phải Allow"],
+          ["User account A đọc SQS queue account B", 2, "cross-account luôn cần Allow ở cả hai phía"]
+        ]
+      },
+      {
+        title: "Chọn giải pháp định danh",
+        desc: "Tình huống đề thi ⇒ cơ chế định danh/truy cập phù hợp nhất.",
+        buckets: ["IAM Identity Center", "IAM SAML/OIDC provider", "Amazon Cognito", "IAM Roles Anywhere", "Cross-account role"],
+        items: [
+          ["25 account trong Organizations, nhân viên dùng AD on-prem, đăng nhập một lần", 0, "workforce nhiều account"],
+          ["Quản lý tập trung truy cập của nhân viên vào nhiều account", 0, "AWS khuyến nghị cho con người"],
+          ["Một account độc lập, đã có SAML 2.0 IdP", 1, "IAM SAML provider + role"],
+          ["CI/CD ngoài AWS cần deploy không lưu key", 1, "IAM OIDC provider + role"],
+          ["Mobile app đăng nhập Google/Facebook, có khách chưa đăng nhập", 2, "identity pools hỗ trợ guest"],
+          ["Web app cần sign-up/sign-in cho người dùng cuối", 2, "Cognito user pools"],
+          ["Server on-prem có PKI sẵn cần gọi AWS API", 3, "chứng chỉ X.509"],
+          ["Bên thứ ba truy cập tài khoản an toàn", 4, "role + External ID"],
+          ["Dev ở account A đọc DynamoDB ở account B", 4, "trust policy + sts:AssumeRole"]
+        ]
+      },
+      {
+        title: "Tính năng nào của IAM Access Analyzer?",
+        desc: "Yêu cầu đề ⇒ tính năng IAM Access Analyzer phù hợp.",
+        buckets: ["External access", "Internal access", "Unused access", "Policy validation / custom checks", "Policy generation"],
+        items: [
+          ["Phát hiện S3 bucket, KMS key chia sẻ với account ngoài tổ chức", 0, "tìm truy cập ngoài zone of trust"],
+          ["Preview tác động truy cập trước khi deploy bucket policy", 0, "external access cho phép preview"],
+          ["Principal nào trong org đọc được RDS snapshot quan trọng", 1, "internal access cho tài nguyên chọn"],
+          ["Tìm IAM role, access key không dùng trong toàn tổ chức", 2, "unused access analyzer"],
+          ["Chặn pipeline nếu thay đổi policy cấp quyền mới", 3, "CheckNoNewAccess"],
+          ["Kiểm tra policy theo grammar và best practices", 3, "policy validation"],
+          ["Tạo policy least privilege từ hoạt động 90 ngày qua", 4, "phân tích CloudTrail logs"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Mặc định mọi request đều bị implicit deny, trừ root user.", true, "Root user của tài khoản có full access."],
+      ["Một explicit Allow ở identity policy có thể ghi đè explicit Deny ở SCP.", false, "Explicit Deny ở bất kỳ policy nào luôn thắng."],
+      ["Gắn SCP cho phép S3 là đủ để user chưa có identity policy truy cập S3.", false, "SCP không cấp quyền, chỉ đặt quyền tối đa."],
+      ["Identity-based và resource-based policy trong cùng account kết hợp theo kiểu hợp.", true, "Allow ở một trong hai là đủ."],
+      ["Identity-based policy và permissions boundary kết hợp theo kiểu giao.", true, "Chỉ action được cả hai cho phép mới có hiệu lực."],
+      ["Root user của member account trong Organizations không bị SCP giới hạn.", false, "Root của member account vẫn bị SCP/RCP giới hạn."],
+      ["Khi bật RCP, AWS tự gắn RCPFullAWSAccess vào root, OU và account.", true, "Policy này không gỡ được."],
+      ["Cross-account access chỉ cần Allow ở resource-based policy phía tài khoản chứa tài nguyên.", false, "Cần Allow ở cả trusted account và trusting account."],
+      ["Cùng account, resource policy cấp cho IAM user ARN không bị implicit deny của boundary giới hạn.", true, "Allow trong resource policy là đủ."],
+      ["Cùng account, resource policy cấp cho IAM role ARN không bị session policy giới hạn.", false, "Cấp cho role ARN thì bị boundary/session policy giới hạn."],
+      ["KMS key policy phải Allow tường minh cho principal, kể cả cùng account.", true, "KMS key policy và role trust policy là ngoại lệ."],
+      ["Boundary của Nikhil Deny bucket logs; thêm bucket policy Allow PutObject thì Nikhil ghi được vào logs.", false, "Explicit deny trong boundary luôn thắng."],
+      ["Permissions boundary có thể gắn vào IAM group.", false, "Chỉ gắn cho IAM user và IAM role."],
+      ["Permissions boundary phải là managed policy.", true, "AWS managed hoặc customer managed, không inline."],
+      ["Permissions boundary tự nó không cấp quyền nào.", true, "Boundary chỉ là trần quyền."],
+      ["Ủy quyền tạo user an toàn cần Deny iam:DeleteUserPermissionsBoundary.", true, "Nếu không, người được ủy quyền có thể gỡ boundary."],
+      ["Session policy có thể cấp thêm quyền ngoài identity-based policy của role.", false, "Session policy chỉ thu hẹp quyền."],
+      ["GetSessionToken hỗ trợ session policy.", false, "GetSessionToken là API không hỗ trợ session policy."],
+      ["Có thể truyền 1 inline session policy và tối đa 10 managed policy ARN.", true, "Giới hạn đã học ở Bài 4."],
+      ["Thời lượng tối thiểu của mọi loại STS credentials là 15 phút.", true, "DurationSeconds ≥ 900."],
+      ["AssumeRole mặc định cấp credentials trong 12 giờ.", false, "Mặc định 1 giờ; tối đa = max session duration (≤ 12 giờ)."],
+      ["GetSessionToken gọi bằng IAM user có thể kéo dài tối đa 36 giờ.", true, "Mặc định 12 giờ, tối đa 36 giờ."],
+      ["Role chaining cho session tối đa 12 giờ.", false, "Role chaining giới hạn 1 giờ."],
+      ["GetFederationToken hỗ trợ MFA.", false, "Chỉ AssumeRole và GetSessionToken hỗ trợ MFA."],
+      ["AssumeRoleWithWebIdentity không hỗ trợ MFA.", true, "Dành cho OIDC JWT."],
+      ["Gắn explicit Deny cho sts:GetCallerIdentity sẽ chặn được lệnh này.", false, "GetCallerIdentity không cần quyền, luôn gọi được."],
+      ["Credentials lấy từ STS Regional endpoint chỉ dùng được trong Region đó.", false, "Credentials dùng được ở mọi Region."],
+      ["Trust policy có Principal arn:aws:iam::111122223333:root tin cả tài khoản đó, không chỉ root user.", true, "Admin tài khoản đó quyết định ai được AssumeRole."],
+      ["Sửa permissions policy của role đủ để vô hiệu ngay credentials đã bị lộ.", false, "Dùng Revoke active sessions (Deny theo aws:TokenIssueTime)."],
+      ["IAM Identity Center là cách AWS khuyến nghị cho workforce truy cập nhiều account.", true, "Cấp short-term credentials qua SSO."],
+      ["Google và Facebook được cấu hình như SAML 2.0 IdP trong IAM cho mobile app.", false, "Đó là social/OIDC provider; nên dùng Amazon Cognito."],
+      ["SAML IdP dùng trong trust policy phải cùng tài khoản với role.", true, "Theo tài liệu SAML federation."],
+      ["IAM chấp nhận JWT quá hạn thêm 5 phút để bù lệch đồng hồ.", true, "Theo chuẩn OIDC Core 1.0."],
+      ["External access analyzer bật ở một Region sẽ phân tích tài nguyên ở mọi Region.", false, "External access là Regional, phải tạo ở mỗi Region."],
+      ["Unused access analyzer tính phí theo số IAM role/user được phân tích mỗi tháng.", true, "Service-linked role không tính."],
+      ["Policy generation phân tích CloudTrail logs để sinh policy least privilege.", true, "Chỉ gồm action thực sự dùng."]
+    ],
+
+    map: {
+      t: "Bài 5 · IAM nâng cao & AWS STS",
+      c: [
+        { t: "Policy evaluation logic", icon: "res/AWS-Identity-Access-Management_Permissions.svg", c: [
+          { t: "Nền tảng", v: "implicit deny (trừ root) · explicit Deny luôn thắng" },
+          { t: "Thứ tự", v: "Deny → RCP → SCP → resource → identity → boundary → session" },
+          { t: "Kết hợp", c: [
+            { t: "Hợp", v: "identity + resource (cùng account)" },
+            { t: "Giao", v: "identity với boundary / SCP / RCP / session" }
+          ] },
+          { t: "Không cấp quyền", v: "SCP, RCP, boundary, session policy" },
+          { t: "RCP mặc định", v: "RCPFullAWSAccess, không gỡ được" },
+          { t: "Root member account", v: "vẫn bị SCP/RCP giới hạn" }
+        ] },
+        { t: "Resource-based & cross-account", icon: "res/AWS-Organizations_Account.svg", c: [
+          { t: "Principal IAM user / role session", v: "resource policy Allow là đủ" },
+          { t: "Principal role ARN", v: "bị boundary/session policy giới hạn" },
+          { t: "Ngoại lệ", v: "role trust policy & KMS key policy phải Allow tường minh" },
+          { t: "Cross-account", v: "2 lần đánh giá: trusted (principal) + trusting (resource)" },
+          { t: "Resource policy vs role", v: "giữ quyền gốc vs tạm bỏ quyền gốc" },
+          { t: "Cả tổ chức", v: "bucket policy + aws:PrincipalOrgID" }
+        ] },
+        { t: "Boundary & session policy", icon: "svc/AWS-Identity-and-Access-Management.svg", c: [
+          { t: "Boundary", c: [
+            { t: "Áp dụng", v: "chỉ IAM user & role, managed policy" },
+            { t: "Hiệu lực", v: "giao với identity policy, không cấp quyền" },
+            { t: "Ủy quyền", v: "iam:PermissionsBoundary + Deny sửa/gỡ boundary" }
+          ] },
+          { t: "Session policy", c: [
+            { t: "Hỗ trợ", v: "AssumeRole*, GetFederationToken (không GetSessionToken)" },
+            { t: "Giới hạn", v: "1 inline + 10 managed ARN" },
+            { t: "Use case", v: "một role, thu hẹp theo từng phiên/prefix" }
+          ] },
+          { t: "Boundary vs SCP", v: "một entity vs cả account/OU" }
+        ] },
+        { t: "AWS STS & AssumeRole", icon: "res/AWS-Identity-Access-Management_AWS-STS.svg", c: [
+          { t: "Credentials", v: "access key ID + secret + session token" },
+          { t: "Thời lượng", c: [
+            { t: "Tối thiểu", v: "15 phút" },
+            { t: "AssumeRole*", v: "mặc định 1 h, tối đa ≤ 12 h" },
+            { t: "GetSessionToken/FederationToken", v: "IAM user ≤ 36 h (mặc định 12 h), root ≤ 1 h" },
+            { t: "Role chaining", v: "≤ 1 h" }
+          ] },
+          { t: "MFA", v: "AssumeRole, GetSessionToken" },
+          { t: "Endpoint", v: "global sts.amazonaws.com + Regional; creds dùng mọi Region" },
+          { t: "Bên thứ ba", v: "cross-account role + External ID" },
+          { t: "Bị lộ", v: "Revoke active sessions (aws:TokenIssueTime)" }
+        ] },
+        { t: "Identity federation", icon: "svc/AWS-Single-Sign-On.svg", c: [
+          { t: "IAM Identity Center", v: "workforce, nhiều account trong Organizations" },
+          { t: "IAM SAML provider", v: "một account, AssumeRoleWithSAML" },
+          { t: "IAM OIDC provider", v: "GitHub Actions, AssumeRoleWithWebIdentity" },
+          { t: "Amazon Cognito", v: "mobile/web app, social login, guest" },
+          { t: "IAM Roles Anywhere", v: "máy ngoài AWS, chứng chỉ X.509" },
+          { t: "Custom identity broker", v: "GetFederationToken + URL console" }
+        ] },
+        { t: "IAM Access Analyzer", icon: "res/AWS-Identity-Access-Management_AWS-IAM-Access-Analyzer.svg", c: [
+          { t: "External access", v: "chia sẻ ra ngoài zone of trust · Regional" },
+          { t: "Internal access", v: "ai trong org truy cập tài nguyên quan trọng" },
+          { t: "Unused access", v: "role/key/password không dùng · tính phí" },
+          { t: "Custom checks", v: "CheckNoNewAccess, chặn pipeline" },
+          { t: "Policy generation", v: "từ CloudTrail ⇒ least privilege" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

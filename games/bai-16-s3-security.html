@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 16 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/res/AWS-Identity-Access-Management_Encrypted-Data.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="16" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-16-s3-security.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "pol", name: "Bucket policy & Object Ownership" },
+      { id: "bpa", name: "Block Public Access" },
+      { id: "enc", name: "Mã hóa" },
+      { id: "lock", name: "Object Lock & Vault Lock" },
+      { id: "url", name: "Presigned URL" },
+      { id: "ap", name: "Access Points & CORS" },
+      { id: "mon", name: "Giám sát" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Bucket policy
+      { t: "pol", f: "Mặc định bucket và object S3 có public không?", b: "<b>Không</b> – mặc định <b>private</b>, chỉ chủ sở hữu truy cập được." },
+      { t: "pol", f: "Bucket policy khác IAM policy thế nào?", b: "<b>Bucket policy</b>: resource-based, có <b>Principal</b>, cấp được cross-account, service principal.<br><b>IAM policy</b>: gắn user/role, không có Principal." },
+      { t: "pol", f: "S3 Object Ownership mặc định là gì?", b: "<b>Bucket owner enforced</b>: mọi ACL bị vô hiệu, bucket owner sở hữu mọi object, quyền chỉ dựa trên policy." },
+      { t: "pol", f: "Sau khi tắt ACL, PUT kèm ACL khác bucket-owner-full-control thì sao?", b: "Lỗi <b>400 AccessControlListNotSupported</b>." },
+      { t: "pol", f: "Bucket policy ép HTTPS dùng điều kiện gì?", b: "<b>Deny</b> khi <code>aws:SecureTransport</code> = <b>false</b>.", x: "Kiểm tra liên tục bằng Config rule s3-bucket-ssl-requests-only." },
+      { t: "pol", f: "Chỉ cho principal trong AWS Organization truy cập bucket?", b: "Điều kiện <code>aws:PrincipalOrgID</code> – tự áp dụng cho account mới, không phải liệt kê account ID." },
+      { t: "pol", f: "Chỉ cho truy cập qua VPC endpoint?", b: "Deny khi <code>aws:SourceVpce</code> (endpoint cụ thể) hoặc <code>aws:SourceVpc</code> không khớp.", x: "aws:SourceIp không dùng được với traffic qua VPC endpoint (IP private)." },
+      { t: "pol", f: "Lỗi Resource kinh điển trong bucket policy?", b: "<code>arn:aws:s3:::bucket</code> cho <b>s3:ListBucket</b>; <code>arn:aws:s3:::bucket/*</code> cho <b>GetObject/PutObject</b>." },
+      { t: "pol", f: "Account B muốn đọc bucket SSE-KMS của account A cần gì?", b: "<b>Bucket policy</b> của A + <b>IAM policy</b> trong B + <b>key policy</b> KMS cho B." },
+      { t: "pol", f: "Serve nội dung S3 private chỉ qua CloudFront?", b: "<b>Origin Access Control (OAC)</b> + bucket policy cho service principal CloudFront, giữ Block Public Access bật.", x: "OAI là cách cũ, migrate sang OAC." },
+      { t: "pol", f: "Cross-account upload khi bucket còn bật ACL – bucket owner phải có toàn quyền?", b: "Điều kiện <code>s3:x-amz-acl</code> = <b>bucket-owner-full-control</b>. Bucket owner enforced thì không cần." },
+
+      // ---- BPA
+      { t: "bpa", f: "4 thiết lập của S3 Block Public Access?", b: "<b>BlockPublicAcls</b> · <b>IgnorePublicAcls</b> · <b>BlockPublicPolicy</b> · <b>RestrictPublicBuckets</b>." },
+      { t: "bpa", f: "BPA áp dụng ở những cấp nào?", b: "<b>Organization</b> · <b>account</b> · <b>bucket</b> · <b>access point</b>. Không có cấp từng object." },
+      { t: "bpa", f: "Các cấp BPA xung đột thì sao?", b: "S3 áp dụng <b>tổ hợp chặt chẽ nhất</b>: chỉ cần một cấp bật là được bảo vệ." },
+      { t: "bpa", f: "BlockPublicAcls khác IgnorePublicAcls thế nào?", b: "<b>BlockPublicAcls</b>: chặn đặt ACL public mới, không sửa ACL cũ.<br><b>IgnorePublicAcls</b>: bỏ qua ngay mọi ACL public đang có (không xóa chúng)." },
+      { t: "bpa", f: "BlockPublicPolicy làm gì? Nên bật ở cấp nào?", b: "Từ chối PutBucketPolicy nếu policy public. Nên bật ở <b>cấp account</b> – người sửa được bucket policy có thể tự tắt BPA cấp bucket." },
+      { t: "bpa", f: "RestrictPublicBuckets làm gì?", b: "Bucket có policy public ⇒ chỉ AWS service principal và user trong account owner truy cập; <b>chặn ngay mọi cross-account</b>." },
+      { t: "bpa", f: "Organization-level BPA có lợi gì?", b: "Gắn ở root/OU, account thành viên <b>tự kế thừa (cả account mới)</b>, ghi đè setting cấp account; thay cho SCP phức tạp." },
+      { t: "bpa", f: "Gỡ một setting BPA thì bucket có policy public ra sao?", b: "<b>Public trở lại</b> – BPA không sửa policy/ACL gốc." },
+      { t: "bpa", f: "ACL nào bị S3 coi là public?", b: "Cấp quyền cho <b>AllUsers</b> hoặc <b>AuthenticatedUsers</b> (mọi account AWS)." },
+      { t: "bpa", f: "Điều kiện <code>aws:SourceVpc</code> = “vpc-*” (StringLike) có làm policy non-public không?", b: "<b>Không</b> – wildcard vẫn public. Phải StringEquals với giá trị cố định." },
+      { t: "bpa", f: "Website tĩnh qua website endpoint S3 cần gì về BPA?", b: "Tắt <b>BlockPublicPolicy</b> và <b>RestrictPublicBuckets</b> cho bucket đó. An toàn hơn: <b>CloudFront + OAC</b>, giữ bucket private." },
+
+      // ---- Mã hóa
+      { t: "enc", f: "Từ khi nào mọi object mới tự động mã hóa? Bằng gì?", b: "Từ <b>05/01/2023</b>, bằng <b>SSE-S3</b> – không thêm phí." },
+      { t: "enc", f: "Header x-amz-server-side-encryption của SSE-S3, SSE-KMS, DSSE-KMS?", b: "SSE-S3 <b>AES256</b> · SSE-KMS <b>aws:kms</b> · DSSE-KMS <b>aws:kms:dsse</b>." },
+      { t: "enc", f: "Lựa chọn mã hóa nào cho audit việc dùng key qua CloudTrail?", b: "<b>SSE-KMS</b> (và DSSE-KMS). SSE-S3, SSE-C không có audit key riêng." },
+      { t: "enc", f: "Envelope encryption của SSE-KMS hoạt động thế nào?", b: "Dữ liệu mã hóa bằng <b>data key</b>, data key mã hóa bằng <b>KMS key</b>. Upload cần <b>kms:GenerateDataKey</b>, download cần <b>kms:Decrypt</b>." },
+      { t: "enc", f: "Chia sẻ object SSE-KMS sang account khác phải dùng loại key nào?", b: "<b>Customer managed key</b> + key policy; AWS managed key <b>aws/s3</b> không chia sẻ cross-account được." },
+      { t: "enc", f: "Ràng buộc của KMS key dùng cho S3?", b: "<b>Cùng Region</b> với bucket và phải <b>symmetric</b>." },
+      { t: "enc", f: "S3 Bucket Keys giải quyết vấn đề gì?", b: "Giảm tới <b>99% chi phí request KMS</b> và tránh KMS throttling; chỉ áp dụng object mới.", x: "Không hỗ trợ DSSE-KMS; CloudTrail ghi ARN bucket thay vì ARN object." },
+      { t: "enc", f: "DSSE-KMS là gì? Khi nào dùng?", b: "<b>Hai lớp AES-256</b> độc lập (KMS data key + key do S3 quản lý). Khi compliance yêu cầu <b>mã hóa nhiều lớp</b>." },
+      { t: "enc", f: "SSE-C có đặc điểm gì?", b: "Khách hàng gửi key <b>mỗi request</b>, S3 không lưu key; <b>bắt buộc HTTPS</b>; console không hỗ trợ; mất key = mất dữ liệu." },
+      { t: "enc", f: "Thay đổi về SSE-C từ 04/2026?", b: "SSE-C bị <b>chặn mặc định</b> cho bucket mới (và bucket chưa từng có object SSE-C); muốn dùng phải bật bằng PutBucketEncryption." },
+      { t: "enc", f: "Khi nào chọn client-side encryption?", b: "Khi dữ liệu phải mã hóa <b>trước khi rời on-premises</b> hoặc <b>AWS không bao giờ thấy plaintext/key</b>." },
+      { t: "enc", f: "Đổi default encryption sang SSE-KMS có mã hóa lại object cũ không?", b: "<b>Không.</b> Dùng <b>S3 Batch Operations – Copy</b> (dựa trên S3 Inventory)." },
+      { t: "enc", f: "User có s3:GetObject vẫn bị AccessDenied với object SSE-KMS ⇒ ?", b: "Thiếu <b>kms:Decrypt</b> trên key." },
+      { t: "enc", f: "Bucket đích của server access logging nên dùng mã hóa gì?", b: "<b>SSE-S3</b> – SSE-KMS có thể mã hóa log bằng key bạn không truy cập được." },
+
+      // ---- Object Lock
+      { t: "lock", f: "S3 Object Lock là gì?", b: "Lưu trữ <b>WORM</b>: ngăn object version bị xóa/ghi đè trong thời hạn; đánh giá cho SEC 17a-4, CFTC, FINRA." },
+      { t: "lock", f: "Điều kiện và tính chất khi bật Object Lock?", b: "Bucket phải bật <b>Versioning</b>; bật rồi <b>không tắt được</b>, không suspend versioning được." },
+      { t: "lock", f: "Governance mode khác Compliance mode thế nào?", b: "<b>Governance</b>: user có <code>s3:BypassGovernanceRetention</code> + header bypass vượt được.<br><b>Compliance</b>: <b>không ai</b>, kể cả root, xóa được; chỉ kéo dài retention." },
+      { t: "lock", f: "Cách duy nhất xóa object Compliance mode trước hạn?", b: "<b>Xóa luôn AWS account.</b>" },
+      { t: "lock", f: "DELETE không version ID lên object bị khóa thì sao?", b: "<b>200 OK</b>, S3 chèn delete marker; version bị khóa vẫn còn. DELETE kèm version ID ⇒ <b>403</b>." },
+      { t: "lock", f: "Legal hold khác retention period thế nào?", b: "Legal hold <b>không có ngày hết hạn</b>, tồn tại tới khi gỡ (quyền s3:PutObjectLegalHold); <b>độc lập</b> với retention." },
+      { t: "lock", f: "Variable retention (event hold) dùng khi nào?", b: "Chưa biết ngày hết hạn lúc ghi: thời hạn tính từ <b>sự kiện</b> (hết hợp đồng, đóng tài khoản). Release ⇒ retain-until = lúc release + duration." },
+      { t: "lock", f: "Các bước Glacier Vault Lock?", b: "<b>Initiate</b> (nhận lock ID) ⇒ <b>kiểm thử trong 24 giờ</b> ⇒ <b>Complete</b> ⇒ policy bất biến." },
+      { t: "lock", f: "MFA Delete có phải WORM không?", b: "<b>Không</b> – chỉ thêm MFA khi xóa version, không có thời hạn lưu giữ." },
+
+      // ---- Presigned URL
+      { t: "url", f: "Presigned URL là gì?", b: "URL cấp quyền <b>có thời hạn</b> cho một object cụ thể (GET/PUT/HEAD…), dùng <b>credential của người ký</b>; người dùng không cần credential AWS." },
+      { t: "url", f: "Thời hạn tối đa của presigned URL?", b: "Console <b>12 giờ</b> · CLI/SDK (SigV4, IAM user) <b>7 ngày</b> (604800 giây)." },
+      { t: "url", f: "Presigned URL ký bằng IAM role / instance profile hết hạn khi nào?", b: "Khi <b>credential tạm hết hạn</b> (instance profile ~6 giờ, AssumeRole mặc định 1 giờ), dù đặt expiration dài hơn." },
+      { t: "url", f: "Người tạo URL không có quyền s3:GetObject thì sao?", b: "URL tạo được nhưng dùng sẽ bị <b>403</b>." },
+      { t: "url", f: "Hạn chế rủi ro presigned URL bằng gì?", b: "<code>s3:signatureAge</code>, giới hạn mạng (<code>aws:SourceIp</code>, <code>aws:SourceVpc/Vpce</code>), expiration ngắn, role quyền tối thiểu." },
+      { t: "url", f: "Thu hồi presigned URL sớm thế nào?", b: "<b>Revoke/vô hiệu credential</b> đã ký (hoặc session của role)." },
+
+      // ---- Access Points & CORS
+      { t: "ap", f: "S3 Access Points giải quyết vấn đề gì?", b: "Mỗi ứng dụng/nhóm một <b>endpoint + policy riêng</b> thay vì một bucket policy khổng lồ." },
+      { t: "ap", f: "Quota và giới hạn của access point?", b: "<b>10.000</b>/account/Region · policy <b>20 KB</b> · tên 3–50 ký tự · 1 bucket mỗi AP, không đổi được." },
+      { t: "ap", f: "Để access point policy có hiệu lực, bucket policy cần gì?", b: "Ủy quyền cho access point bằng điều kiện <code>s3:DataAccessPointAccount</code> (khuyến nghị) hoặc lặp lại quyền." },
+      { t: "ap", f: "Network origin của access point?", b: "<b>VPC</b> hoặc <b>Internet</b>, không đổi sau khi tạo. AP VPC origin luôn non-public." },
+      { t: "ap", f: "S3 Object Lambda Access Point dùng để làm gì?", b: "Chạy Lambda <b>biến đổi dữ liệu khi GET</b>, vd che PII, không lưu bản sao thứ hai." },
+      { t: "ap", f: "CORS cấu hình trên bucket nào?", b: "Trên bucket <b>chứa tài nguyên bị gọi tới</b> (bucket đích), không phải bucket chứa trang web." },
+      { t: "ap", f: "Các phần tử của CORS rule?", b: "AllowedOrigins, AllowedMethods (GET/PUT/POST/DELETE/HEAD), AllowedHeaders, ExposeHeaders, MaxAgeSeconds. Tối đa <b>100 rule</b>." },
+
+      // ---- Giám sát
+      { t: "mon", f: "Amazon Macie dùng để làm gì?", b: "Phát hiện <b>dữ liệu nhạy cảm (PII, tài chính, credential)</b> trong object S3 bằng ML + pattern matching." },
+      { t: "mon", f: "GuardDuty S3 Protection dùng để làm gì?", b: "Phát hiện <b>mối đe dọa</b>, truy cập bất thường/exfiltration từ CloudTrail management + data events." },
+      { t: "mon", f: "IAM Access Analyzer for S3 dùng để làm gì?", b: "Tìm bucket <b>public</b> hoặc <b>chia sẻ với account ngoài</b>; block public một click." },
+      { t: "mon", f: "CloudTrail data events của S3 có bật sẵn không?", b: "<b>Không</b> – management events có sẵn; data events (GetObject, PutObject, DeleteObject) phải bật trên trail." },
+      { t: "mon", f: "Kiểm tra liên tục bucket có SSL-only, versioning, không public và tự khắc phục?", b: "<b>AWS Config rules</b> + remediation (SSM Automation)." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>deny any request not sent over HTTPS</i>” ⇒ ?", b: "Bucket policy <b>Deny + aws:SecureTransport = false</b>." },
+      { t: "kw", f: "Đề có “<i>only accounts in our organization, as accounts are added</i>” ⇒ ?", b: "<b>aws:PrincipalOrgID</b>." },
+      { t: "kw", f: "Đề có “<i>accessible only from the VPC, not traverse the internet</i>” ⇒ ?", b: "<b>Gateway VPC endpoint</b> + bucket policy <b>aws:SourceVpce</b>." },
+      { t: "kw", f: "Đề có “<i>objects uploaded by partner accounts cannot be read by the bucket owner</i>” ⇒ ?", b: "Object Ownership = <b>Bucket owner enforced</b> (tắt ACL)." },
+      { t: "kw", f: "Đề có “<i>no bucket in any account can ever be public, including future accounts</i>” ⇒ ?", b: "<b>Organization-level Block Public Access</b>." },
+      { t: "kw", f: "Đề có “<i>KMS ThrottlingException / SSE-KMS costs are high</i>” ⇒ ?", b: "<b>S3 Bucket Keys</b>." },
+      { t: "kw", f: "Đề có “<i>dual-layer encryption required</i>” ⇒ ?", b: "<b>DSSE-KMS</b>." },
+      { t: "kw", f: "Đề có “<i>WORM, no one including root can delete for 7 years</i>” ⇒ ?", b: "<b>Object Lock – Compliance mode</b>." },
+      { t: "kw", f: "Đề có “<i>retain until litigation ends</i>” ⇒ ?", b: "<b>Legal hold</b>." },
+      { t: "kw", f: "Đề có “<i>users without AWS credentials download a private object for a limited time</i>” ⇒ ?", b: "<b>Presigned URL</b>." },
+      { t: "kw", f: "Đề có “<i>hundreds of teams share one bucket; policy too complex</i>” ⇒ ?", b: "<b>S3 Access Points</b>." },
+      { t: "kw", f: "Đề có “<i>browser shows No Access-Control-Allow-Origin header</i>” ⇒ ?", b: "Thêm <b>CORS configuration</b> trên bucket bị gọi tới." },
+      { t: "kw", f: "Đề có “<i>discover PII / credit card numbers in S3</i>” ⇒ ?", b: "<b>Amazon Macie</b>." },
+      { t: "kw", f: "Đề có “<i>who deleted this object and when?</i>” ⇒ ?", b: "<b>CloudTrail data events</b> (hoặc server access logs)." }
+    ],
+
+    pairs: [
+      ["Bucket policy", "Resource-based policy gắn vào bucket, có Principal"],
+      ["Bucket owner enforced", "Vô hiệu mọi ACL, owner sở hữu mọi object"],
+      ["aws:SecureTransport", "false nghĩa là request qua HTTP"],
+      ["aws:PrincipalOrgID", "Giới hạn truy cập trong một Organization"],
+      ["aws:SourceVpce", "Giới hạn theo VPC endpoint nguồn"],
+      ["BlockPublicPolicy", "Từ chối PutBucketPolicy nếu policy public"],
+      ["IgnorePublicAcls", "Bỏ qua mọi ACL public đang có"],
+      ["RestrictPublicBuckets", "Chặn cross-account khi policy public"],
+      ["SSE-S3", "Key do S3 quản lý, mặc định, AES256"],
+      ["SSE-KMS", "Key AWS KMS, có audit, header aws:kms"],
+      ["DSSE-KMS", "Hai lớp AES-256, header aws:kms:dsse"],
+      ["SSE-C", "Khách gửi key mỗi request, bắt buộc HTTPS"],
+      ["Client-side encryption", "Mã hóa trước khi upload"],
+      ["Envelope encryption", "Data key mã hóa dữ liệu, KMS key mã hóa data key"],
+      ["S3 Bucket Key", "Giảm tới 99% request/chi phí KMS"],
+      ["Governance mode", "Bypass được bằng s3:BypassGovernanceRetention"],
+      ["Compliance mode", "Không ai xóa được, kể cả root"],
+      ["Legal hold", "Bảo vệ không thời hạn tới khi gỡ"],
+      ["Event hold", "Retention tính từ lúc release + duration"],
+      ["Glacier Vault Lock", "Policy vault bất biến sau 24 giờ thử"],
+      ["Presigned URL", "Quyền có thời hạn cho một object"],
+      ["s3:signatureAge", "Giới hạn tuổi chữ ký presigned URL"],
+      ["S3 Access Point", "Endpoint có tên với policy riêng"],
+      ["CORS", "Cho JavaScript khác origin gọi S3"],
+      ["Amazon Macie", "Phát hiện PII trong S3"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn kiểu mã hóa theo yêu cầu",
+        desc: "Đọc yêu cầu của đề và chọn lựa chọn mã hóa phù hợp nhất.",
+        buckets: ["SSE-S3", "SSE-KMS", "DSSE-KMS", "SSE-C", "Client-side"],
+        items: [
+          ["Mã hóa at rest với least operational overhead", 0, "đã mặc định"],
+          ["Bucket đích của server access logging", 0, "tránh key không truy cập được"],
+          ["Audit ai dùng key, kiểm soát rotate key", 1, "CloudTrail ghi GenerateDataKey/Decrypt"],
+          ["Chia sẻ object mã hóa sang account khác", 1, "customer managed key + key policy"],
+          ["Tách quyền dữ liệu và quyền dùng key", 1, "key policy riêng"],
+          ["Quy định yêu cầu mã hóa hai lớp", 2, "2 lớp AES-256"],
+          ["Công ty quản lý key ngoài AWS, gửi kèm mỗi request", 3, "S3 không lưu key"],
+          ["Dữ liệu phải mã hóa trước khi rời on-premises", 4, "AWS chỉ lưu ciphertext"],
+          ["AWS không bao giờ được thấy plaintext hay key", 4, "tự mã hóa phía client"]
+        ]
+      },
+      {
+        title: "Object Lock: cơ chế nào?",
+        desc: "Chọn chế độ/cơ chế Object Lock (hoặc tính năng) phù hợp.",
+        buckets: ["Compliance mode", "Governance mode", "Legal hold", "Variable retention", "Glacier Vault Lock"],
+        items: [
+          ["SEC 17a-4, kể cả root không xóa được trong 7 năm", 0, "không ai bypass"],
+          ["Dữ liệu tài chính chịu kiểm toán, không rút ngắn retention", 0, "chỉ kéo dài được"],
+          ["Chặn đa số user nhưng vài admin vẫn rút ngắn được retention", 1, "s3:BypassGovernanceRetention"],
+          ["Thử nghiệm retention trước khi khóa vĩnh viễn", 1, "AWS khuyên thử bằng Governance"],
+          ["Giữ tới khi vụ kiện kết thúc, chưa biết bao lâu", 2, "không có ngày hết hạn"],
+          ["Dataset đang dùng cho cuộc kiểm toán sắp tới", 2, "legal hold"],
+          ["Thời hạn lưu tính từ ngày hợp đồng kết thúc", 3, "event hold"],
+          ["Vault policy của archive Glacier phải bất biến", 4, "initiate ⇒ 24 giờ ⇒ complete"]
+        ]
+      },
+      {
+        title: "Dịch vụ giám sát nào?",
+        desc: "Chọn dịch vụ phát hiện/giám sát bảo mật S3 phù hợp.",
+        buckets: ["IAM Access Analyzer", "Amazon Macie", "GuardDuty", "CloudTrail data events", "AWS Config"],
+        items: [
+          ["Bucket nào đang chia sẻ với account bên ngoài?", 0, "suy luận logic trên policy"],
+          ["Nhanh chóng tìm bucket public và block một click", 0, "Access Analyzer for S3"],
+          ["Tìm số thẻ tín dụng, PII trong object", 1, "ML + pattern matching"],
+          ["Phát hiện data exfiltration, API bất thường", 2, "threat intelligence + ML"],
+          ["Ai đã xóa object này và lúc nào?", 3, "ghi GetObject/PutObject/DeleteObject"],
+          ["Kiểm tra liên tục mọi bucket SSL-only và tự khắc phục", 4, "managed rule + remediation"],
+          ["Phát hiện bucket cho public read và auto-remediate", 4, "s3-bucket-public-read-prohibited"]
+        ]
+      },
+      {
+        title: "Kiểm soát truy cập bằng cơ chế nào?",
+        desc: "Chọn cơ chế kiểm soát truy cập S3 phù hợp với tình huống.",
+        buckets: ["Bucket policy", "Block Public Access", "Presigned URL", "Access Points", "CORS", "Object Ownership"],
+        items: [
+          ["Ép mọi request phải qua HTTPS", 0, "aws:SecureTransport"],
+          ["Chỉ cho truy cập từ một VPC endpoint", 0, "aws:SourceVpce"],
+          ["Không bucket nào trong tổ chức được public", 1, "Organization-level BPA"],
+          ["Ngăn người sửa bucket policy biến bucket thành public", 1, "BlockPublicPolicy cấp account"],
+          ["Người dùng không có credential tải một file private trong 1 giờ", 2, "URL có thời hạn"],
+          ["Client mobile upload thẳng lên S3 không qua server", 2, "presigned PUT URL"],
+          ["Hàng trăm ứng dụng dùng chung một bucket, mỗi app quyền riêng", 3, "mỗi app một endpoint + policy"],
+          ["JavaScript ở domain khác gọi S3 bị trình duyệt chặn", 4, "cấu hình trên bucket bị gọi"],
+          ["Bucket owner không đọc được object do account đối tác upload", 5, "Bucket owner enforced"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Mặc định bucket và object S3 là private.", true, "Chỉ chủ sở hữu truy cập được."],
+      ["S3 Object Ownership mặc định là Bucket owner enforced.", true, "Mọi ACL bị vô hiệu."],
+      ["AWS khuyến nghị dùng ACL cho phần lớn use case hiện đại.", false, "AWS khuyên tắt ACL."],
+      ["aws:SourceIp hoạt động tốt với traffic đi qua VPC endpoint.", false, "IP là private; dùng aws:SourceVpc/Vpce."],
+      ["aws:PrincipalOrgID giúp không phải liệt kê từng account ID.", true, "Account mới trong tổ chức tự áp dụng."],
+      ["s3:ListBucket dùng Resource dạng arn:aws:s3:::bucket/*.", false, "ListBucket dùng ARN bucket; object dùng /*."],
+      ["Cross-account cần cả bucket policy của bên sở hữu và IAM policy bên truy cập.", true, "Thêm key policy nếu SSE-KMS."],
+      ["BPA có thể đặt cho từng object.", false, "Không hỗ trợ cấp object."],
+      ["Khi Organization bật BPA nhưng bucket tắt, bucket vẫn được bảo vệ.", true, "Áp dụng tổ hợp chặt nhất."],
+      ["BlockPublicAcls xóa các ACL public đang có.", false, "Chỉ chặn ACL public mới; IgnorePublicAcls mới vô hiệu ACL cũ."],
+      ["RestrictPublicBuckets chặn cả account được nêu đích danh trong policy public.", true, "Chặn mọi cross-account."],
+      ["Gỡ BPA khiến bucket có policy public trở lại public.", true, "BPA không sửa policy gốc."],
+      ["Access point có network origin VPC luôn được coi là non-public.", true, "Theo tài liệu."],
+      ["Từ 05/01/2023 mọi object mới tự động mã hóa SSE-S3.", true, "Không thêm phí."],
+      ["SSE-S3 cho phép audit việc dùng key qua CloudTrail.", false, "Chỉ SSE-KMS/DSSE-KMS có audit key."],
+      ["AWS managed key aws/s3 chia sẻ được cho account khác.", false, "Cần customer managed key."],
+      ["KMS key dùng cho S3 có thể ở Region khác với bucket.", false, "Phải cùng Region."],
+      ["S3 hỗ trợ KMS key bất đối xứng (asymmetric).", false, "Chỉ symmetric."],
+      ["S3 Bucket Keys giảm tới 99% chi phí request KMS.", true, "Chỉ áp dụng object mới."],
+      ["DSSE-KMS hỗ trợ S3 Bucket Keys.", false, "DSSE-KMS không hỗ trợ Bucket Keys."],
+      ["SSE-C có thể gửi qua HTTP.", false, "Bắt buộc HTTPS."],
+      ["Đổi default encryption sang SSE-KMS tự mã hóa lại object cũ.", false, "Dùng S3 Batch Operations Copy."],
+      ["Object Lock yêu cầu bật Versioning.", true, "Và không suspend được nữa."],
+      ["Object Lock có thể tắt sau khi bật.", false, "Bật là vĩnh viễn."],
+      ["Ở Compliance mode, root user có thể xóa version trước hạn.", false, "Không ai xóa được, kể cả root."],
+      ["Compliance mode cho phép kéo dài retention period.", true, "Chỉ không rút ngắn được."],
+      ["Object Lock chặn mọi lệnh DELETE.", false, "DELETE không version ID vẫn thành công, tạo delete marker."],
+      ["Legal hold có ngày hết hạn cố định.", false, "Tồn tại tới khi bị gỡ."],
+      ["Glacier Vault Lock cho 24 giờ để kiểm thử trước khi complete.", true, "Quá hạn thì lock ID hết hiệu lực."],
+      ["Presigned URL tạo bằng CLI/SDK (SigV4, IAM user) hiệu lực tối đa 7 ngày.", true, "604800 giây."],
+      ["Có thể tạo presigned URL hiệu lực 30 ngày.", false, "Tối đa 7 ngày."],
+      ["Dùng presigned URL phải tắt Block Public Access.", false, "Presigned URL không mở public bucket."],
+      ["Presigned URL ký bằng instance profile có thể hết hạn sớm hơn expiration đặt.", true, "Hết khi credential tạm hết hạn."],
+      ["CORS được cấu hình trên bucket chứa trang web gọi đi.", false, "Cấu hình trên bucket bị gọi tới."],
+      ["CloudTrail data events của S3 được bật sẵn.", false, "Phải bật trên trail."],
+      ["Amazon Macie phát hiện PII trong object S3.", true, "ML + pattern matching."],
+      ["Mỗi account có tối đa 10.000 access point mỗi Region (xin tăng được).", true, "Quota mặc định."]
+    ],
+
+    map: {
+      t: "Bài 16 · Bảo mật Amazon S3",
+      c: [
+        { t: "Bucket policy & ownership", icon: "res/AWS-Identity-Access-Management_Permissions.svg", c: [
+          { t: "Mặc định", v: "private, ACL tắt (Bucket owner enforced)" },
+          { t: "HTTPS", v: "Deny aws:SecureTransport = false" },
+          { t: "Organization", v: "aws:PrincipalOrgID" },
+          { t: "VPC", v: "aws:SourceVpce / aws:SourceVpc" },
+          { t: "Cross-account", v: "bucket policy + IAM policy (+ key policy)" },
+          { t: "CloudFront", v: "OAC + bucket policy, giữ BPA bật" }
+        ] },
+        { t: "Block Public Access", icon: "svc/AWS-Shield.svg", c: [
+          { t: "4 setting", v: "BlockPublicAcls · IgnorePublicAcls · BlockPublicPolicy · RestrictPublicBuckets" },
+          { t: "4 cấp", v: "Organization · account · bucket · access point" },
+          { t: "Ưu tiên", v: "tổ hợp chặt chẽ nhất" },
+          { t: "Organization-level", v: "bảo vệ cả account tương lai" }
+        ] },
+        { t: "Mã hóa", icon: "svc/AWS-Key-Management-Service.svg", c: [
+          { t: "SSE-S3", v: "mặc định từ 05/01/2023, AES256" },
+          { t: "SSE-KMS", v: "audit, key policy, cùng Region, symmetric" },
+          { t: "Bucket Keys", v: "giảm tới 99% request KMS" },
+          { t: "DSSE-KMS", v: "hai lớp AES-256" },
+          { t: "SSE-C", v: "key mỗi request, HTTPS, chặn mặc định từ 04/2026" },
+          { t: "Client-side", v: "AWS không thấy plaintext" }
+        ] },
+        { t: "Object Lock & Vault Lock", icon: "res/Amazon-Simple-Storage-Service-Glacier_Vault.svg", c: [
+          { t: "Điều kiện", v: "versioning, bật là vĩnh viễn" },
+          { t: "Governance", v: "bypass bằng s3:BypassGovernanceRetention" },
+          { t: "Compliance", v: "kể cả root không xóa, chỉ kéo dài" },
+          { t: "Legal hold", v: "không thời hạn, độc lập retention" },
+          { t: "Vault Lock", v: "initiate ⇒ 24 giờ ⇒ complete" }
+        ] },
+        { t: "Presigned URL", icon: "res/AWS-Identity-Access-Management_Temporary-Security-Credential.svg", c: [
+          { t: "Bản chất", v: "quyền của người ký, cho một object" },
+          { t: "Thời hạn", v: "console 12 giờ · CLI/SDK 7 ngày" },
+          { t: "Hết sớm", v: "khi credential tạm hết hạn" },
+          { t: "Hạn chế", v: "s3:signatureAge, IP, VPC" }
+        ] },
+        { t: "Access Points & CORS", icon: "res/Amazon-Simple-Storage-Service_General-Access-Points.svg", c: [
+          { t: "Access Point", v: "endpoint + policy riêng, 10.000/account/Region" },
+          { t: "Ủy quyền", v: "bucket policy s3:DataAccessPointAccount" },
+          { t: "Network origin", v: "VPC hoặc Internet, không đổi" },
+          { t: "CORS", v: "trên bucket bị gọi, ≤ 100 rule" }
+        ] },
+        { t: "Giám sát", icon: "svc/AWS-Security-Hub.svg", c: [
+          { t: "Access Analyzer", v: "bucket public / chia sẻ ngoài" },
+          { t: "Macie", v: "PII trong S3" },
+          { t: "GuardDuty", v: "đe dọa, exfiltration" },
+          { t: "CloudTrail data events", v: "ai làm gì với object" },
+          { t: "Config", v: "tuân thủ cấu hình + remediation" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 32 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Lambda.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="32" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-32-lambda.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "base", name: "Khái niệm & kiểu gọi" },
+      { id: "lim", name: "Memory, timeout & quotas" },
+      { id: "async", name: "Async · Destinations · DLQ" },
+      { id: "conc", name: "Concurrency" },
+      { id: "cold", name: "Cold start & SnapStart" },
+      { id: "vpc", name: "Lambda trong VPC" },
+      { id: "pkg", name: "Layers & container image" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Khái niệm
+      { t: "base", f: "Lambda tính tiền theo gì?", b: "<b>Số request + GB-giây</b> (memory × thời lượng, làm tròn lên 1 ms). Không chạy thì không trả tiền (scale to zero)." },
+      { t: "base", f: "Execution role khác resource-based policy của function thế nào?", b: "<b>Execution role</b>: quyền function <b>gọi dịch vụ khác</b> (ghi DynamoDB…).<br><b>Resource-based policy</b>: quyền cho <b>dịch vụ khác gọi function</b> (S3, SNS, API Gateway; tối đa 20 KB)." },
+      { t: "base", f: "Mỗi execution environment xử lý bao nhiêu request cùng lúc?", b: "Mặc định <b>một request</b> tại một thời điểm; môi trường có thể được tái sử dụng (warm start)." },
+      { t: "base", f: "3 kiểu gọi Lambda?", b: "<b>Synchronous</b> (RequestResponse) · <b>Asynchronous</b> (Event, trả 202) · <b>Event source mapping</b> (Lambda poll queue/stream)." },
+      { t: "base", f: "Nguồn nào gọi Lambda đồng bộ? Ai retry khi lỗi?", b: "<b>API Gateway, ALB, function URL</b>, SDK/CLI Invoke, Cognito trigger. Lỗi trả thẳng về, <b>bên gọi tự retry</b>." },
+      { t: "base", f: "Nguồn nào gọi Lambda bất đồng bộ?", b: "<b>Amazon S3, SNS, EventBridge</b>, CloudWatch Logs… Lambda xếp event vào hàng đợi nội bộ, <b>tự retry 2 lần</b>." },
+      { t: "base", f: "Event source mapping dùng cho nguồn nào?", b: "<b>SQS, Kinesis, DynamoDB Streams, MSK</b>, Kafka tự quản, Amazon MQ, DocumentDB – Lambda poll và gọi function theo <b>batch</b>." },
+      { t: "base", f: "ESM gom batch theo những điều kiện nào?", b: "Cái nào tới trước: <b>batching window</b> (0–300 s), <b>batch size</b>, hoặc payload chạm <b>6 MB</b>.", x: "ESM là at-least-once ⇒ code idempotent." },
+      { t: "base", f: "Function URL là gì?", b: "Endpoint <b>HTTPS riêng</b> cho một function – cách đơn giản nhất có HTTP endpoint không cần API Gateway.", x: "Không có throttling/caching/authorizer phong phú như API Gateway." },
+
+      // ---- Quotas
+      { t: "lim", f: "Dải memory của Lambda?", b: "<b>128 MB – 10.240 MB</b>, bước 1 MB; mặc định 128 MB." },
+      { t: "lim", f: "Làm sao tăng CPU cho Lambda?", b: "<b>Tăng memory</b> – CPU tỉ lệ thuận. <b>1.769 MB ≈ 1 vCPU</b>; tối đa tới 6 vCPU.", x: "Không có tham số CPU riêng." },
+      { t: "lim", f: "Timeout tối đa của Lambda?", b: "<b>900 giây (15 phút)</b>, không tăng được. Mặc định 3 giây." },
+      { t: "lim", f: "Giới hạn payload khi gọi Lambda?", b: "<b>6 MB</b> sync (mỗi chiều) · <b>1 MB</b> async · 200 MB response streaming.", x: "Payload lớn ⇒ đặt vào S3, truyền key." },
+      { t: "lim", f: "Giới hạn deployment package .zip?", b: "<b>50 MB nén</b> (upload trực tiếp) · <b>250 MB giải nén</b> (gồm layers, custom runtime).", x: "Upload qua S3 vượt được 50 MB nén nhưng không vượt 250 MB giải nén." },
+      { t: "lim", f: "Container image của Lambda tối đa bao nhiêu?", b: "<b>10 GB</b> (giải nén), lưu trong <b>Amazon ECR</b>." },
+      { t: "lim", f: "Ephemeral storage <code>/tmp</code> của Lambda?", b: "<b>512 MB – 10.240 MB</b>; còn giữ khi môi trường được tái sử dụng (cache tạm)." },
+      { t: "lim", f: "Environment variables tối đa bao nhiêu?", b: "<b>4 KB</b> tổng cộng. Bí mật lớn ⇒ Secrets Manager / Parameter Store." },
+      { t: "lim", f: "Pha Init (code ngoài handler) giới hạn bao lâu?", b: "<b>10 giây</b>; không áp dụng với provisioned concurrency và SnapStart." },
+      { t: "lim", f: "Version và alias của Lambda khác nhau thế nào?", b: "<b>Version</b>: bản chụp <b>bất biến</b>, số không dùng lại.<br><b>Alias</b>: <b>con trỏ</b> tới version (đổi version không phải sửa trigger, chia trọng số canary)." },
+      { t: "lim", f: "Storage cho .zip &amp; layers mỗi Region?", b: "<b>300 GB</b> (không tăng được) ⇒ dọn version cũ." },
+
+      // ---- Async
+      { t: "async", f: "Retry mặc định khi function lỗi trong lời gọi async?", b: "Chạy lại thêm <b>2 lần</b>: chờ <b>1 phút</b> trước lần 2, <b>2 phút</b> trước lần 3." },
+      { t: "async", f: "Async bị throttle (429) hoặc system error thì Lambda làm gì?", b: "Trả event về hàng đợi, thử lại tới <b>6 giờ</b>, khoảng cách tăng từ 1 giây tới tối đa 5 phút." },
+      { t: "async", f: "Hai tham số cấu hình error handling của async?", b: "<b>Maximum age of event</b> (≤ 6 giờ) và <b>Retry attempts</b> (0–2)." },
+      { t: "async", f: "Lambda Destinations gồm những đích nào?", b: "<b>SQS, SNS, Lambda, EventBridge</b>, và <b>S3</b> (chỉ on failure). Cấu hình riêng <b>On success</b> và <b>On failure</b>.", x: "Không hỗ trợ SQS FIFO / SNS FIFO." },
+      { t: "async", f: "Destinations khác DLQ của function thế nào?", b: "<b>Destinations</b>: cả thành công + thất bại, có <b>chi tiết response/lỗi</b>, cấu hình theo version/alias.<br><b>DLQ</b>: chỉ thất bại, <b>chỉ nội dung event</b>, chỉ SQS/SNS standard, cấp function." },
+      { t: "async", f: "Lambda đọc từ SQS, message lỗi cần cô lập ⇒ đặt DLQ ở đâu?", b: "<b>Redrive policy / DLQ trên SQS queue</b>, không phải DLQ của function." },
+      { t: "async", f: "Đặt reserved concurrency = 0 có tác dụng gì?", b: "<b>Tắt function</b> khẩn cấp; với async, event mới đi thẳng vào DLQ / on-failure destination không retry." },
+
+      // ---- Concurrency
+      { t: "conc", f: "Công thức tính concurrency?", b: "<b>Concurrency = RPS × thời gian xử lý trung bình (giây)</b>.<br>Vd 5.000 req/s × 0,2 s = 1.000." },
+      { t: "conc", f: "Quota concurrency mặc định?", b: "<b>1.000</b> mỗi Region cho mọi function (soft, tăng được)." },
+      { t: "conc", f: "Giới hạn RPS của Lambda ngoài concurrency?", b: "RPS ≤ <b>10 × concurrency quota</b> (mặc định 10.000 RPS).", x: "Hàm rất ngắn vẫn có thể bị throttle vì vượt RPS." },
+      { t: "conc", f: "Tốc độ scale concurrency mỗi function?", b: "<b>1.000 execution environment mỗi 10 giây</b> (≈ 10.000 RPS mỗi 10 giây)." },
+      { t: "conc", f: "Vượt concurrency thì xảy ra gì?", b: "Throttle – lỗi <b>429 TooManyRequestsException</b>. Sync: bên gọi nhận lỗi; async: Lambda thử lại tới 6 giờ; ESM: poller chậm lại." },
+      { t: "conc", f: "Reserved concurrency là gì?", b: "Vừa <b>dành riêng</b> (function khác không lấy được) vừa là <b>trần</b>. <b>Miễn phí</b>.", x: "Không khởi tạo sẵn ⇒ vẫn có cold start." },
+      { t: "conc", f: "Với quota 1.000, reserve được tối đa bao nhiêu?", b: "<b>900</b> – Lambda luôn giữ <b>100</b> cho các function không reserved." },
+      { t: "conc", f: "Provisioned concurrency là gì?", b: "Số môi trường <b>khởi tạo sẵn</b> (đã Init) trên <b>version/alias</b>, phản hồi hai chữ số ms, <b>loại bỏ cold start</b>. <b>Tốn phí</b> liên tục." },
+      { t: "conc", f: "Provisioned concurrency có cấu hình trên $LATEST được không?", b: "<b>Không.</b> Chỉ trên version hoặc alias; gọi bằng unqualified ARN sẽ không dùng môi trường provisioned." },
+      { t: "conc", f: "Tự động hóa provisioned concurrency bằng gì?", b: "<b>Application Auto Scaling</b>: scheduled scaling hoặc target tracking theo <code>LambdaProvisionedConcurrencyUtilization</code>." },
+      { t: "conc", f: "Vượt mức provisioned concurrency thì sao?", b: "Không có reserved ⇒ tràn sang concurrency chung (có thể cold start). Có reserved ⇒ throttle khi chạm reserved." },
+
+      // ---- Cold start
+      { t: "cold", f: "Ba pha vòng đời execution environment?", b: "<b>Init → Invoke → Shutdown</b>." },
+      { t: "cold", f: "Cold start là gì? Tần suất?", b: "Trễ thêm khi Lambda phải <b>tải code, khởi động môi trường, chạy Init</b>. Thường <b>dưới 1%</b> số lần gọi, từ dưới 100 ms tới hơn 1 giây." },
+      { t: "cold", f: "Giảm cold start bằng code thế nào?", b: "<b>Khởi tạo client/kết nối ngoài handler</b>, chỉ import thứ cần, giảm kích thước package, lazy-load, tách function lớn." },
+      { t: "cold", f: "SnapStart hoạt động thế nào?", b: "Khi <b>publish version</b>, Lambda chạy Init một lần, <b>chụp snapshot Firecracker microVM</b>, rồi resume môi trường mới từ snapshot ⇒ startup <b>dưới 1 giây</b>." },
+      { t: "cold", f: "SnapStart hỗ trợ runtime nào?", b: "<b>Java 11+, Python 3.12+, .NET 8+</b>.", x: "Node.js, Ruby không hỗ trợ." },
+      { t: "cold", f: "SnapStart không dùng chung được với gì?", b: "<b>Provisioned concurrency, Amazon EFS</b>, ephemeral storage &gt; 512 MB; không dùng với $LATEST." },
+      { t: "cold", f: "Chi phí SnapStart?", b: "<b>Java: miễn phí.</b> Python/.NET: phí cache snapshot + phí restore." },
+      { t: "cold", f: "Lưu ý uniqueness khi dùng SnapStart?", b: "Giá trị ngẫu nhiên/duy nhất sinh trong Init sẽ <b>bị trùng</b> giữa các môi trường ⇒ sinh sau khi restore (runtime hooks)." },
+
+      // ---- VPC
+      { t: "vpc", f: "Lambda kết nối vào VPC của bạn bằng gì?", b: "<b>Hyperplane ENI</b> trong subnet bạn chọn, <b>dùng chung theo cặp subnet + security group</b>." },
+      { t: "vpc", f: "Execution role cần policy gì khi gắn VPC?", b: "<b>AWSLambdaVPCAccessExecutionRole</b> (quyền tạo/quản lý ENI)." },
+      { t: "vpc", f: "Function gắn VPC cần gọi API Internet ⇒ cấu hình gì?", b: "Function ở <b>private subnet</b> có route 0.0.0.0/0 → <b>NAT gateway</b> ở public subnet." },
+      { t: "vpc", f: "Gắn Lambda vào public subnet có ra Internet được không?", b: "<b>Không.</b> ENI của Lambda <b>không có public IP</b>." },
+      { t: "vpc", f: "Function trong VPC gọi S3/DynamoDB riêng tư, rẻ nhất ⇒ ?", b: "<b>Gateway VPC endpoint</b> (miễn phí). Dịch vụ khác ⇒ interface endpoint." },
+      { t: "vpc", f: "Cần IP ra ngoài cố định cho Lambda (whitelist đối tác) ⇒ ?", b: "Đi qua <b>NAT gateway có Elastic IP</b>.", x: "Không gắn Elastic IP trực tiếp cho function được." },
+      { t: "vpc", f: "Function gắn VPC idle 14 ngày thì sao?", b: "Lambda thu hồi ENI, function thành <b>Inactive</b>; lần gọi kế tiếp thất bại và quay lại Pending." },
+      { t: "vpc", f: "Chỉ để gọi S3/DynamoDB có cần gắn VPC không?", b: "<b>Không.</b> Function ngoài VPC đã gọi được dịch vụ AWS public; chỉ gắn VPC khi cần tài nguyên private." },
+
+      // ---- Layers
+      { t: "pkg", f: "Lambda layer là gì? Giải nén vào đâu?", b: "File .zip chứa thư viện/runtime/cấu hình dùng chung, giải nén vào <b><code>/opt</code></b>." },
+      { t: "pkg", f: "Mỗi function gắn tối đa bao nhiêu layer?", b: "<b>5 layer</b>; tổng code + layers ≤ <b>250 MB</b> giải nén." },
+      { t: "pkg", f: "Container image function có dùng layer được không?", b: "<b>Không</b> – phải đóng runtime + dependency vào image." },
+      { t: "pkg", f: "Dependency vài GB (thư viện ML) ⇒ đóng gói thế nào?", b: "<b>Container image</b> (tới 10 GB) trên ECR, hoặc <b>mount EFS</b>." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>serverless</i>”, “<i>run code in response to events</i>”, “<i>pay only when code runs</i>”, tác vụ &lt; 15 phút ⇒ ?", b: "<b>AWS Lambda</b>." },
+      { t: "kw", f: "Đề có “<i>process a file as soon as it is uploaded to S3</i>”, cần chống mất khi tải đột biến ⇒ ?", b: "<b>S3 → SQS → Lambda (ESM)</b>; không cần đệm thì S3 event notification → Lambda." },
+      { t: "kw", f: "Đề có tác vụ chạy &gt; 15 phút ⇒ ?", b: "<b>ECS/Fargate, AWS Batch</b>, hoặc chia nhỏ bằng <b>Step Functions</b>." },
+      { t: "kw", f: "Đề có “<i>function is CPU-bound and slow</i>” ⇒ ?", b: "<b>Tăng memory</b>." },
+      { t: "kw", f: "Đề có “<i>function overwhelms the database with too many connections</i>” ⇒ ?", b: "<b>Reserved concurrency</b> để giới hạn và/hoặc <b>RDS Proxy</b>." },
+      { t: "kw", f: "Đề có “<i>eliminate cold-start latency at predictable peak hours</i>” ⇒ ?", b: "<b>Provisioned concurrency</b> + Application Auto Scaling scheduled." },
+      { t: "kw", f: "Đề có “<i>Java cold starts, reduce startup latency at no additional cost</i>” ⇒ ?", b: "<b>Lambda SnapStart</b>." },
+      { t: "kw", f: "Đề có “<i>capture failed async invocations with error details</i>” ⇒ ?", b: "<b>Lambda Destinations</b> (on failure)." },
+      { t: "kw", f: "Đề có “<i>many functions share the same libraries</i>” ⇒ ?", b: "<b>Lambda layers</b>." },
+      { t: "kw", f: "Đề có “<i>after connecting to the VPC, the function can no longer reach the internet</i>” ⇒ ?", b: "<b>NAT gateway</b> ở public subnet + route từ private subnet của function." }
+    ],
+
+    pairs: [
+      ["Serverless compute", "Không quản lý server, trả theo dùng"],
+      ["Handler", "Hàm điểm vào Lambda gọi mỗi lần invoke"],
+      ["Trigger", "Dịch vụ đẩy event tới function (push)"],
+      ["Execution environment", "MicroVM Firecracker: Init → Invoke → Shutdown"],
+      ["Execution role", "IAM role function assume để gọi dịch vụ"],
+      ["Event source mapping", "Lambda poll queue/stream, gọi theo batch"],
+      ["Function URL", "Endpoint HTTPS riêng của một function"],
+      ["Version", "Bản chụp bất biến của function"],
+      ["Alias", "Con trỏ tới một version"],
+      ["Unqualified ARN", "ARN không hậu tố version ⇒ $LATEST"],
+      ["Ephemeral storage (/tmp)", "Đĩa tạm 512 MB – 10.240 MB"],
+      ["Destination", "Đích nhận bản ghi kết quả lời gọi async"],
+      ["Maximum event age", "Tuổi tối đa của event async, ≤ 6 giờ"],
+      ["Concurrency", "RPS × thời gian xử lý trung bình"],
+      ["Reserved concurrency", "Trần + dành riêng cho function, miễn phí"],
+      ["Unreserved concurrency", "Phần dùng chung, luôn giữ tối thiểu 100"],
+      ["Provisioned concurrency", "Môi trường khởi tạo sẵn, có phí"],
+      ["Throttling (429)", "TooManyRequestsException do vượt hạn mức"],
+      ["Cold start", "Phải init môi trường mới"],
+      ["SnapStart", "Resume môi trường từ snapshot của version"],
+      ["Hyperplane ENI", "ENI do Lambda quản lý, chung theo subnet + SG"],
+      ["Lambda layer", "Thư viện dùng chung, giải nén vào /opt"],
+      ["Container image (Lambda)", "Đóng gói function tới 10 GB trên ECR"],
+      ["Application Auto Scaling", "Co giãn provisioned concurrency"]
+    ],
+
+    sorts: [
+      {
+        title: "Nguồn gọi Lambda theo kiểu nào?",
+        desc: "Mỗi nguồn gọi Lambda theo kiểu synchronous, asynchronous hay event source mapping?",
+        buckets: ["Synchronous", "Asynchronous", "Event source mapping"],
+        items: [
+          ["Amazon API Gateway", 0, "bên gọi chờ response"],
+          ["Application Load Balancer", 0, "đồng bộ"],
+          ["Function URL", 0, "HTTP endpoint đồng bộ"],
+          ["Cognito trigger", 0, "đồng bộ"],
+          ["Amazon S3 event notification", 1, "Lambda trả 202, tự retry 2 lần"],
+          ["Amazon SNS", 1, "bất đồng bộ"],
+          ["Amazon EventBridge", 1, "bất đồng bộ"],
+          ["Amazon SQS", 2, "Lambda poll theo batch"],
+          ["Kinesis Data Streams", 2, "poll stream"],
+          ["DynamoDB Streams", 2, "poll stream"],
+          ["Amazon MSK", 2, "poll Kafka"]
+        ]
+      },
+      {
+        title: "Reserved hay Provisioned concurrency?",
+        desc: "Đặc điểm/tình huống sau thuộc reserved concurrency hay provisioned concurrency?",
+        buckets: ["Reserved concurrency", "Provisioned concurrency"],
+        items: [
+          ["Miễn phí", 0, "không tính thêm phí"],
+          ["Đặt trần để bảo vệ database hạ nguồn", 0, "giới hạn số môi trường đồng thời"],
+          ["Bảo đảm function quan trọng luôn có capacity", 0, "phần dành riêng"],
+          ["Đặt bằng 0 để tắt function", 0, "dừng khẩn cấp"],
+          ["Vẫn có thể bị cold start", 0, "không khởi tạo sẵn"],
+          ["Loại bỏ cold start", 1, "môi trường đã Init sẵn"],
+          ["Chỉ trên version hoặc alias", 1, "không trên $LATEST"],
+          ["Tính phí liên tục kể cả khi không có request", 1, "có phí"],
+          ["Scale theo lịch bằng Application Auto Scaling", 1, "scheduled scaling"]
+        ]
+      },
+      {
+        title: "Vượt giới hạn ⇒ giải pháp nào?",
+        desc: "Mỗi vấn đề nên giải quyết bằng cách nào?",
+        buckets: ["Container image / EFS", "S3 (truyền key)", "ECS/Fargate · Step Functions", "Tăng memory", "Xin tăng quota concurrency"],
+        items: [
+          ["Thư viện ML 4 GB", 0, "image tới 10 GB"],
+          ["Code + layers vượt 250 MB giải nén", 0, ".zip không vượt được 250 MB"],
+          ["Upload ảnh 20 MB qua API", 1, "payload sync tối đa 6 MB ⇒ presigned URL lên S3"],
+          ["Event async lớn hơn 1 MB", 1, "đặt dữ liệu vào S3"],
+          ["Job transcode cần 40 phút", 2, "timeout Lambda tối đa 15 phút"],
+          ["ETL chạy nhiều giờ", 2, "chia nhỏ hoặc chạy container"],
+          ["Function CPU-bound chạy chậm", 3, "CPU tăng theo memory"],
+          ["2.000 req/s × 0,8 s bị lỗi 429", 4, "cần 1.600 > quota 1.000"]
+        ]
+      },
+      {
+        title: "Lambda trong VPC: chọn gì?",
+        desc: "Function đã gắn VPC. Yêu cầu sau giải quyết bằng gì?",
+        buckets: ["NAT gateway", "Gateway VPC endpoint", "Interface VPC endpoint", "RDS Proxy", "Security group"],
+        items: [
+          ["Gọi API thanh toán của bên thứ ba", 0, "private subnet → NAT ở public subnet"],
+          ["IP ra ngoài cố định để đối tác whitelist", 0, "NAT gateway có Elastic IP"],
+          ["Đọc S3 không ra Internet, rẻ nhất", 1, "gateway endpoint miễn phí"],
+          ["Ghi DynamoDB riêng tư", 1, "gateway endpoint cho DynamoDB"],
+          ["Đọc Secrets Manager không qua Internet", 2, "dịch vụ khác dùng interface endpoint"],
+          ["Nhiều function làm cạn kết nối database", 3, "gom kết nối"],
+          ["DB phải cho phép kết nối từ function", 4, "SG của DB cho inbound từ SG của Lambda"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Memory của Lambda đặt được từ 128 MB tới 10.240 MB.", true, "Bước 1 MB."],
+      ["Lambda có tham số CPU riêng để tăng vCPU.", false, "CPU tỉ lệ theo memory; muốn thêm CPU thì tăng memory."],
+      ["Tại 1.769 MB, function có tương đương 1 vCPU.", true, "Theo tài liệu Lambda."],
+      ["Có thể xin tăng timeout của Lambda lên 30 phút.", false, "900 giây là trần cứng."],
+      ["Payload gọi đồng bộ tối đa 6 MB, bất đồng bộ tối đa 1 MB.", true, "Lớn hơn ⇒ dùng S3."],
+      ["Upload .zip qua S3 cho phép vượt giới hạn 250 MB giải nén.", false, "Chỉ vượt 50 MB nén; 250 MB giải nén vẫn là trần."],
+      ["Container image cho Lambda tối đa 10 GB.", true, "Lưu trong Amazon ECR."],
+      ["Container image function có thể gắn Lambda layer.", false, "Layer chỉ dùng với .zip."],
+      ["Mỗi function gắn tối đa 5 layer.", true, "Tổng ≤ 250 MB giải nén."],
+      ["Với lời gọi async, Lambda tự retry 2 lần khi function lỗi.", true, "Chờ 1 phút rồi 2 phút."],
+      ["API Gateway gọi Lambda bất đồng bộ.", false, "API Gateway gọi đồng bộ, bên gọi tự retry."],
+      ["Event source mapping xử lý mỗi event ít nhất một lần.", true, "At-least-once ⇒ code idempotent."],
+      ["Lambda Destinations hỗ trợ SQS FIFO queue.", false, "SQS FIFO và SNS FIFO không được hỗ trợ."],
+      ["DLQ của function chứa cả chi tiết response của function.", false, "DLQ chỉ chứa nội dung event; Destinations mới có response."],
+      ["Lambda đọc từ SQS thì DLQ nên cấu hình trên SQS queue.", true, "Không phải DLQ của function."],
+      ["Concurrency = RPS × thời gian xử lý trung bình.", true, "Vd 100 req/s × 0,5 s = 50."],
+      ["Quota concurrency mặc định là 1.000 mỗi function.", false, "1.000 mỗi Region cho mọi function."],
+      ["Mỗi function scale tối đa 1.000 môi trường mỗi 10 giây.", true, "Concurrency scaling rate."],
+      ["Reserved concurrency giúp loại bỏ cold start.", false, "Reserved chỉ giữ chỗ và đặt trần."],
+      ["Reserved concurrency miễn phí.", true, "Provisioned mới tốn phí."],
+      ["Với quota 1.000, có thể reserve toàn bộ 1.000 cho một function.", false, "Lambda giữ 100 cho unreserved ⇒ tối đa 900."],
+      ["Provisioned concurrency có thể cấu hình trên $LATEST.", false, "Chỉ trên version hoặc alias."],
+      ["Provisioned concurrency có thể tự động scale bằng Application Auto Scaling.", true, "Scheduled hoặc target tracking."],
+      ["Đặt reserved concurrency = 0 sẽ tắt function.", true, "Mẹo dừng khẩn cấp."],
+      ["Cold start thường xảy ra ở dưới 1% số lần gọi.", true, "Theo tài liệu Lambda."],
+      ["SnapStart hỗ trợ runtime Node.js.", false, "Hỗ trợ Java 11+, Python 3.12+, .NET 8+."],
+      ["SnapStart với runtime Java không tốn thêm phí.", true, "Python/.NET mới có phí cache + restore."],
+      ["Có thể bật SnapStart cùng lúc với provisioned concurrency.", false, "Hai tính năng không dùng chung."],
+      ["Gắn Lambda vào public subnet giúp function ra Internet.", false, "ENI của Lambda không có public IP; cần NAT gateway."],
+      ["Hyperplane ENI được dùng chung giữa các function có cùng subnet và security group.", true, "Nên dùng chung subnet/SG để tránh tạo ENI mới."],
+      ["Function trong VPC có thể truy cập S3 riêng tư qua gateway VPC endpoint.", true, "Miễn phí, không cần NAT."],
+      ["Có thể gắn Elastic IP trực tiếp cho Lambda function.", false, "Muốn IP cố định thì đi qua NAT gateway có Elastic IP."],
+      ["Khởi tạo kết nối database ngoài handler giúp tái sử dụng kết nối giữa các lần gọi.", true, "Biến toàn cục còn khi warm start."],
+      ["Environment variables của Lambda tối đa 4 KB tổng cộng.", true, "Bí mật lớn ⇒ Secrets Manager / Parameter Store."]
+    ],
+
+    map: {
+      t: "Bài 32 · AWS Lambda",
+      c: [
+        { t: "Khái niệm & kiểu gọi", icon: "svc/AWS-Lambda.svg", c: [
+          { t: "Giá", v: "request + GB-giây, scale to zero" },
+          { t: "Quyền", v: "execution role (gọi ra) · resource policy (gọi vào)" },
+          { t: "Synchronous", v: "API Gateway, ALB, function URL · bên gọi retry" },
+          { t: "Asynchronous", v: "S3, SNS, EventBridge · Lambda retry 2 lần" },
+          { t: "Event source mapping", v: "SQS, Kinesis, DynamoDB Streams, MSK · batch ≤ 6 MB" }
+        ] },
+        { t: "Giới hạn", icon: "res/AWS-Lambda_Lambda-Function.svg", c: [
+          { t: "Memory", v: "128 – 10.240 MB · 1.769 MB ≈ 1 vCPU" },
+          { t: "Timeout", v: "900 giây (15 phút), không tăng" },
+          { t: "Payload", v: "6 MB sync · 1 MB async" },
+          { t: "Package", v: ".zip 50 MB nén / 250 MB giải nén · image 10 GB" },
+          { t: "/tmp", v: "512 MB – 10.240 MB" },
+          { t: "Env vars", v: "4 KB" }
+        ] },
+        { t: "Async & Destinations", icon: "res/Amazon-Simple-Queue-Service_Message.svg", c: [
+          { t: "Retry", v: "function error: 2 lần (1 phút, 2 phút) · throttle: tới 6 giờ" },
+          { t: "Cấu hình", v: "max event age ≤ 6 giờ · retry 0–2" },
+          { t: "Destinations", v: "on success/failure → SQS, SNS, Lambda, EventBridge, S3" },
+          { t: "DLQ", v: "chỉ event lỗi · SQS/SNS standard" },
+          { t: "Nguồn SQS", v: "DLQ đặt trên queue" }
+        ] },
+        { t: "Concurrency", icon: "svc/AWS-Application-Auto-Scaling.svg", c: [
+          { t: "Công thức", v: "RPS × thời gian xử lý" },
+          { t: "Quota", v: "1.000/Region · RPS ≤ 10× · scale 1.000 env/10 s" },
+          { t: "Reserved", v: "trần + dành riêng, miễn phí, tối đa quota − 100" },
+          { t: "Provisioned", v: "khởi tạo sẵn trên version/alias, có phí" },
+          { t: "Throttle", v: "429 TooManyRequestsException" }
+        ] },
+        { t: "Cold start & SnapStart", icon: "cat/Compute.svg", c: [
+          { t: "Vòng đời", v: "Init (≤ 10 s) → Invoke → Shutdown" },
+          { t: "Cold start", v: "< 1% lời gọi · khởi tạo ngoài handler" },
+          { t: "SnapStart", v: "snapshot khi publish version · Java 11+, Python 3.12+, .NET 8+" },
+          { t: "Giá SnapStart", v: "Java miễn phí · không dùng với provisioned/EFS" }
+        ] },
+        { t: "Lambda trong VPC", icon: "svc/Amazon-Virtual-Private-Cloud.svg", c: [
+          { t: "Hyperplane ENI", v: "dùng chung theo subnet + SG" },
+          { t: "Quyền", v: "AWSLambdaVPCAccessExecutionRole" },
+          { t: "Ra Internet", v: "private subnet + NAT gateway (public subnet vô ích)" },
+          { t: "Dịch vụ AWS", v: "gateway endpoint S3/DynamoDB · interface endpoint" },
+          { t: "Database", v: "RDS Proxy gom kết nối" }
+        ] },
+        { t: "Layers & image", icon: "svc/Amazon-Elastic-Container-Registry.svg", c: [
+          { t: "Layer", v: ".zip giải nén vào /opt, tối đa 5" },
+          { t: "Layer version", v: "bất biến, ARN riêng" },
+          { t: "Container image", v: "10 GB trên ECR, không dùng layer" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

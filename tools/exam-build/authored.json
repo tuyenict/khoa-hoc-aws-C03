@@ -1,0 +1,1072 @@
+[
+ {
+  "q": "A company runs a customer-facing web application on a single Amazon EC2 instance in one Availability Zone. When the instance failed last month, the application was unavailable for 3 hours until an engineer manually launched a replacement. The company wants to apply the reliability pillar of the AWS Well-Architected Framework so that the application recovers from instance failures without human intervention. Which solution will meet these requirements?",
+  "options": [
+   "Create an Amazon CloudWatch alarm on the StatusCheckFailed metric that sends an email notification to the operations team through Amazon SNS.",
+   "Deploy the application in an Auto Scaling group that spans multiple Availability Zones behind an Application Load Balancer, and use ELB health checks to replace unhealthy instances.",
+   "Change the instance to a larger instance type and take daily Amazon EBS snapshots by using Amazon Data Lifecycle Manager.",
+   "Purchase a Reserved Instance for the instance and enable termination protection to prevent accidental termination."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "Nguyên tắc thiết kế của trụ cột Reliability là tự động phục hồi khi có lỗi (automatically recover from failure) và scale ngang để giảm tác động của một thành phần đơn lẻ. Auto Scaling group trải trên nhiều AZ sau ALB với ELB health check sẽ tự thay thế instance hỏng mà không cần con người. Alarm gửi email vẫn cần can thiệp thủ công; instance lớn hơn, snapshot hay Reserved Instance không loại bỏ single point of failure.",
+  "d": "D2",
+  "l": 2
+ },
+ {
+  "q": "A company runs development and test environments on Amazon EC2 instances and Amazon RDS DB instances that are used only between 8 AM and 6 PM on weekdays. The resources currently run 24 hours a day, 7 days a week. A recent AWS Well-Architected Tool review flagged this as a high-risk issue in the cost optimization pillar. Which solution will address this issue MOST cost-effectively?",
+  "options": [
+   "Purchase 3-year All Upfront Reserved Instances for the EC2 instances and the RDS DB instances.",
+   "Move the environments to larger instance types so that tests finish faster during business hours.",
+   "Enable detailed monitoring and create Amazon CloudWatch dashboards that show idle resources to the developers.",
+   "Use Amazon EventBridge Scheduler to stop the EC2 instances and RDS DB instances outside business hours and start them again each weekday morning."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Trụ cột Cost Optimization có nguyên tắc 'adopt a consumption model': chỉ trả tiền cho tài nguyên khi thực sự dùng. Môi trường dev/test chỉ dùng khoảng 50 giờ/tuần, nên tắt ngoài giờ bằng EventBridge Scheduler (hoặc Instance Scheduler on AWS) giảm khoảng 70% chi phí. Reserved Instances 3 năm là cam kết chạy 24/7, không phù hợp tài nguyên chỉ dùng một phần thời gian; dashboard chỉ hiển thị chứ không tiết kiệm được gì.",
+  "d": "D4",
+  "l": 2
+ },
+ {
+  "q": "A company is migrating an application to AWS. The application tier will run on Amazon EC2 instances, the database will run on Amazon RDS for PostgreSQL, and an image-processing component will run as AWS Lambda functions. The security team wants to document which party is responsible for applying operating system patches for each component. Which statement correctly describes the responsibilities under the AWS shared responsibility model?",
+  "options": [
+   "The company patches the guest operating system on the EC2 instances. AWS patches the operating system and database software for Amazon RDS, and the company chooses the maintenance window. AWS manages the operating system and managed runtime for Lambda.",
+   "AWS patches the guest operating system on the EC2 instances and the RDS DB instances. The company patches the operating system that runs the Lambda functions.",
+   "The company patches the guest operating system on the EC2 instances and the RDS DB instances. AWS manages the operating system and runtime for Lambda.",
+   "AWS patches the guest operating system on the EC2 instances only if AWS Systems Manager Patch Manager is enabled. The company patches the RDS operating system and the Lambda runtime."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "EC2 là IaaS: khách hàng chịu trách nhiệm guest OS, patch và ứng dụng. RDS là dịch vụ managed: AWS patch OS và database engine, khách hàng chọn maintenance window và có thể bật auto minor version upgrade. Với Lambda, AWS quản lý OS và managed runtime, khách hàng chỉ chịu trách nhiệm code và thư viện phụ thuộc. Patch Manager chỉ là công cụ giúp khách hàng patch, không chuyển trách nhiệm sang AWS.",
+  "d": "D1",
+  "l": 3
+ },
+ {
+  "q": "A company has just created a new AWS account. A security audit found that the root user has a password but no MFA device, and that an access key was created for the root user to run an old deployment script. The company wants to follow AWS best practices for protecting the root user. Which actions should a solutions architect recommend? (Select TWO.)",
+  "options": [
+   "Store the root user access key in AWS Secrets Manager and enable automatic rotation every 30 days.",
+   "Enable MFA for the root user, preferably with a phishing-resistant FIDO2 security key, and store the device securely.",
+   "Create an IAM user for each administrator and share the root user password with them for emergency use.",
+   "Delete the root user access key and update the deployment script to use an IAM role with temporary credentials.",
+   "Attach an IAM policy to the root user that denies all actions except billing actions."
+  ],
+  "answer": [
+   1,
+   3
+  ],
+  "exp": "Best practice cho root user: bật MFA (ưu tiên FIDO2 security key) và không giữ access key nào cho root; script nên dùng IAM role với temporary credentials. Không thể gắn IAM policy cho root user, và việc chia sẻ mật khẩu root cho nhiều người vi phạm nguyên tắc least privilege. Lưu root access key trong Secrets Manager vẫn để tồn tại credential dài hạn có toàn quyền.",
+  "d": "D1",
+  "l": 3
+ },
+ {
+  "q": "A company uses a third-party SaaS provider to analyze its AWS costs and resource configurations. The provider needs read-only access to the company's AWS account. The provider uses a single AWS account to access the accounts of many customers, and the company wants to prevent the confused deputy problem. Which solution will meet these requirements in the MOST secure way?",
+  "options": [
+   "Create an IAM user with the ReadOnlyAccess managed policy and send the access keys to the provider through an encrypted email.",
+   "Create an IAM role that trusts the provider's AWS account and attach the ReadOnlyAccess policy. Share the role ARN with the provider.",
+   "Create an IAM role that trusts the provider's AWS account, attach a read-only policy, and add a condition to the trust policy that requires the unique external ID that the provider assigned to the company.",
+   "Invite the provider's AWS account into the company's organization in AWS Organizations and apply an SCP that allows only read-only actions."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "Cross-account role với điều kiện sts:ExternalId trong trust policy là cách AWS khuyến nghị để chống confused deputy khi bên thứ ba truy cập nhiều khách hàng: bên khác không thể lừa provider assume role của bạn nếu không biết external ID. Role không có external ID (đáp án B) vẫn hoạt động nhưng không chống được confused deputy. IAM user với access key là credential dài hạn, kém an toàn; mời tài khoản bên ngoài vào Organization là không phù hợp.",
+  "d": "D1",
+  "l": 5
+ },
+ {
+  "q": "A company wants its developers to create IAM roles for the AWS Lambda functions that they build. The security team is concerned that developers could create roles with more permissions than the developers themselves have, such as full administrator access. The security team must allow self-service role creation without allowing privilege escalation. Which solution will meet these requirements with the LEAST operational overhead?",
+  "options": [
+   "Require developers to submit a ticket so that the security team creates every IAM role manually after review.",
+   "Create a managed policy to use as a permissions boundary. Allow developers to create roles and attach policies only when the iam:PermissionsBoundary condition key equals that policy's ARN, and deny developers the ability to modify or delete the boundary policy.",
+   "Attach an SCP that denies iam:CreateRole in all accounts and require developers to use the default Lambda execution role for every function.",
+   "Grant developers the IAMFullAccess managed policy and use AWS CloudTrail to review role creation events every week."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "Permissions boundary đặt giới hạn tối đa cho quyền của role được tạo; quyền hiệu lực là giao của identity policy và boundary. Buộc điều kiện iam:PermissionsBoundary khi tạo role và cấm sửa/xóa boundary giúp developer tự phục vụ mà không thể leo thang đặc quyền. Ticket thủ công tốn công vận hành; IAMFullAccess kèm review CloudTrail chỉ phát hiện sau khi sự cố đã xảy ra.",
+  "d": "D1",
+  "l": 5
+ },
+ {
+  "q": "A company is building a mobile app that lets users sign in with an Amazon Cognito user pool. After sign-in, the app must upload photos directly to an Amazon S3 bucket. Each user must be able to write only to an S3 prefix that matches the user's own identity, and the app must not embed long-term AWS credentials. Which solution will meet these requirements?",
+  "options": [
+   "Create an IAM user for each mobile user and store the access keys in the app's encrypted local storage.",
+   "Send the photos to an Amazon API Gateway REST API that uses a separate API key for each user, and have an AWS Lambda function write the photos to S3.",
+   "Grant s3:PutObject in the bucket policy to all authenticated AWS principals and require the app to send the user pool ID token in an HTTP header.",
+   "Create a Cognito identity pool that trusts the user pool. Assign an authenticated IAM role whose policy allows s3:PutObject only on the prefix that uses the ${cognito-identity.amazonaws.com:sub} policy variable."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Cognito identity pool đổi token của user pool lấy temporary AWS credentials (qua STS) gắn với IAM role cho người dùng đã xác thực. Policy variable ${cognito-identity.amazonaws.com:sub} giới hạn mỗi người dùng chỉ ghi vào prefix của chính mình. IAM user cho từng người dùng mobile là credential dài hạn và không scale; API key của API Gateway không phải cơ chế xác thực người dùng; S3 không xác thực ID token trong header.",
+  "d": "D1",
+  "l": 7
+ },
+ {
+  "q": "A company has an on-premises Microsoft Active Directory domain. The company is moving several Windows-based applications, including Microsoft SQL Server on Amazon EC2, to AWS. The applications need domain controllers in AWS that keep working if the AWS Direct Connect connection to the data center fails. On-premises users must still be able to access the AWS-hosted applications with their existing domain credentials. Which solution will meet these requirements?",
+  "options": [
+   "Deploy AWS Directory Service for Microsoft Active Directory (AWS Managed Microsoft AD) across two Availability Zones and create a two-way forest trust with the on-premises domain.",
+   "Deploy AD Connector in the VPC and point it to the on-premises domain controllers.",
+   "Deploy Simple AD in the VPC and create a two-way trust with the on-premises domain.",
+   "Create an Amazon Cognito user pool and federate it with the on-premises Active Directory by using SAML 2.0."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "AWS Managed Microsoft AD là Active Directory thật chạy trên domain controller do AWS quản lý ở nhiều AZ, nên workload trong AWS vẫn xác thực được khi mất kết nối về on-premises; forest trust cho phép người dùng on-premises dùng tài khoản hiện có. AD Connector chỉ là proxy chuyển tiếp yêu cầu về AD on-premises nên phụ thuộc hoàn toàn vào kết nối. Simple AD không hỗ trợ trust; Cognito user pool không cung cấp domain join cho SQL Server.",
+  "d": "D1",
+  "l": 7
+ },
+ {
+  "q": "A company runs workloads on Amazon EC2 instances from the M6i and C7g families in two AWS Regions, and also on AWS Fargate and AWS Lambda. Over the next 3 years, the company plans to migrate some EC2 workloads to different instance families and to move other workloads between Regions. The company wants to reduce compute costs with a long-term commitment while keeping this flexibility. Which purchasing option will meet these requirements?",
+  "options": [
+   "EC2 Instance Savings Plans for the M6i instance family in each Region.",
+   "Standard Reserved Instances with a 3-year term for each current instance type.",
+   "Spot Instances for all EC2 workloads and Fargate Spot for all container workloads.",
+   "Compute Savings Plans with a 3-year term, which apply automatically to EC2 usage regardless of instance family, size, Region, or operating system, and also apply to Fargate and Lambda usage."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Compute Savings Plans linh hoạt nhất: áp dụng cho EC2 ở mọi instance family, size, Region, OS, tenancy và cả Fargate, Lambda, đổi lại mức giảm thấp hơn một chút so với EC2 Instance Savings Plans. EC2 Instance Savings Plans gắn với một family trong một Region; Standard RI gắn với instance type cụ thể. Spot có thể bị thu hồi bất kỳ lúc nào và không phải cam kết giảm giá cho workload ổn định.",
+  "d": "D4",
+  "l": 9
+ },
+ {
+  "q": "A company stores application log files in an Amazon S3 bucket in the S3 Standard storage class. The logs are accessed frequently for the first 30 days. Between 30 and 90 days, the logs are rarely accessed but must be retrievable within milliseconds and must remain resilient to the loss of an Availability Zone. After 90 days, the logs must be kept for 7 years for compliance, and retrieval within 12 hours is acceptable. Which solution will meet these requirements MOST cost-effectively?",
+  "options": [
+   "Create an S3 Lifecycle configuration that transitions objects to S3 One Zone-Infrequent Access after 30 days, transitions them to S3 Glacier Flexible Retrieval after 90 days, and expires them after 7 years.",
+   "Create an S3 Lifecycle configuration that transitions objects to S3 Glacier Instant Retrieval after 30 days and expires them after 7 years.",
+   "Create an S3 Lifecycle configuration that transitions objects to S3 Standard-Infrequent Access after 30 days, transitions them to S3 Glacier Deep Archive after 90 days, and expires them after 7 years.",
+   "Create an S3 Lifecycle configuration that transitions objects to S3 Glacier Flexible Retrieval after 30 days, transitions them to S3 Glacier Deep Archive after 90 days, and expires them after 7 years."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "S3 Standard-IA cho truy cập mili giây, lưu trên nhiều AZ và rẻ hơn Standard cho dữ liệu ít truy cập; sau 90 ngày, S3 Glacier Deep Archive là lớp rẻ nhất và standard retrieval hoàn tất trong vòng 12 giờ. One Zone-IA không chịu được mất một AZ. Giữ ở Glacier Instant Retrieval suốt 7 năm đắt hơn nhiều so với Deep Archive. Glacier Flexible Retrieval sau 30 ngày không đáp ứng yêu cầu truy xuất mili giây.",
+  "d": "D4",
+  "l": 15
+ },
+ {
+  "q": "A media company has offices on several continents. Editors upload video files of up to 20 GB each to a single Amazon S3 bucket in the us-east-1 Region. Uploads over the public internet are slow, and large uploads frequently fail partway through and must be restarted from the beginning. Which solution will improve upload speed and reliability with the LEAST changes to the existing architecture?",
+  "options": [
+   "Enable S3 Transfer Acceleration on the bucket and update the upload client to use the accelerate endpoint with multipart upload.",
+   "Create an Amazon CloudFront distribution with the bucket as the origin and upload each file through the distribution by using a single PUT request.",
+   "Establish an AWS Site-to-Site VPN connection from each office to a VPC and upload the files through an S3 gateway VPC endpoint.",
+   "Create an S3 bucket in the Region closest to each office and run a nightly S3 Batch Operations job to copy the files to the bucket in us-east-1."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "S3 Transfer Acceleration đưa dữ liệu vào edge location gần nhất rồi đi qua mạng backbone của AWS đến bucket, tăng tốc upload đường dài; multipart upload chia file thành nhiều part upload song song và chỉ cần upload lại part bị lỗi. Một PUT đơn lẻ giới hạn 5 GB nên không upload được file 20 GB. Gateway endpoint không dùng được từ on-premises qua VPN. Copy hằng đêm gây trễ và thêm bucket cần quản lý.",
+  "d": "D3",
+  "l": 15
+ },
+ {
+  "q": "A company stores critical documents in an Amazon S3 bucket in the eu-west-1 Region. A new disaster recovery policy requires a copy of all existing and new objects in a bucket in the eu-central-1 Region. The company must be able to show that new objects are replicated within 15 minutes and must be alerted when replication falls behind. Which solution will meet these requirements?",
+  "options": [
+   "Configure S3 Same-Region Replication to a second bucket and use AWS DataSync to copy that bucket to eu-central-1 every 15 minutes.",
+   "Configure S3 Event Notifications to invoke an AWS Lambda function that copies each new object to the bucket in eu-central-1.",
+   "Enable versioning on the source bucket only and configure S3 Cross-Region Replication to the bucket in eu-central-1.",
+   "Enable versioning on both buckets, configure S3 Cross-Region Replication with S3 Replication Time Control, and use S3 Batch Replication for the existing objects."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "S3 Cross-Region Replication yêu cầu bật versioning trên cả bucket nguồn và đích; S3 Replication Time Control (RTC) cam kết 99,99% object mới được replicate trong 15 phút và cung cấp replication metrics/event để cảnh báo. CRR chỉ áp dụng cho object mới, nên cần S3 Batch Replication cho object đã có. Lambda tự viết không có SLA và tốn công vận hành; thiếu versioning ở bucket đích thì không cấu hình được CRR.",
+  "d": "D2",
+  "l": 15
+ },
+ {
+  "q": "A genomics company runs high performance computing (HPC) jobs on hundreds of Linux Amazon EC2 instances. The input dataset is stored in an Amazon S3 bucket. The jobs require a POSIX-compliant shared file system with sub-millisecond latency and hundreds of GB/s of aggregate throughput. Results must be written back to the S3 bucket. Which solution will meet these requirements?",
+  "options": [
+   "Create an Amazon EFS file system with Elastic throughput and use AWS DataSync to copy the dataset from Amazon S3 before each job.",
+   "Create an Amazon FSx for Lustre file system that is linked to the S3 bucket so that data is loaded from S3 on access and results are exported back to S3.",
+   "Install Mountpoint for Amazon S3 on each EC2 instance and read and write the dataset directly in the S3 bucket.",
+   "Create an Amazon FSx for Windows File Server file system and mount it on the EC2 instances by using the SMB protocol."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "Amazon FSx for Lustre được thiết kế cho HPC với độ trễ dưới mili giây, throughput hàng trăm GB/s, và có thể liên kết trực tiếp với S3 bucket để lazy-load dữ liệu và export kết quả về S3. EFS không đạt mức throughput/độ trễ đó và việc copy bằng DataSync tốn thêm công. Mountpoint for Amazon S3 không phải file system POSIX đầy đủ với độ trễ dưới mili giây. FSx for Windows File Server dành cho workload Windows/SMB, không phù hợp HPC Linux.",
+  "d": "D3",
+  "l": 17
+ },
+ {
+  "q": "A company runs a content management application that stores files on an Amazon EFS file system that uses Elastic throughput. Most files are accessed frequently for a few weeks after they are created and are rarely accessed afterward. Many files are never accessed again after 90 days, but they must remain available through the same file system path. Which solution will reduce storage costs with the LEAST operational overhead?",
+  "options": [
+   "Configure EFS lifecycle management to transition files to EFS Infrequent Access after 30 days without access and to EFS Archive after 90 days, and to transition files back to EFS Standard on first access.",
+   "Create a scheduled AWS Lambda function that moves files older than 90 days to S3 Glacier Flexible Retrieval and update the application to read from Amazon S3.",
+   "Migrate the data to a new EFS file system that uses the One Zone storage class and keep all files in a single storage class.",
+   "Create daily backups with AWS Backup and delete files from the file system after they have not been accessed for 30 days."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "EFS lifecycle management tự động chuyển file ít dùng sang Infrequent Access và Archive (Archive yêu cầu Elastic throughput) mà vẫn giữ nguyên đường dẫn, và có thể chuyển ngược về Standard khi được truy cập lại. Lambda chuyển file sang S3 buộc phải sửa ứng dụng và tăng vận hành. One Zone giảm độ bền sẵn sàng và không tận dụng việc dữ liệu cũ ít truy cập. Xoá file sau khi backup khiến file không còn trên đường dẫn cũ.",
+  "d": "D4",
+  "l": 17
+ },
+ {
+  "q": "A company is migrating several Windows-based line-of-business applications to AWS. The applications require shared file storage over the SMB protocol with Windows ACLs and must authenticate users against the company's self-managed Microsoft Active Directory. The file storage must remain available if an Availability Zone fails. Which solution will meet these requirements with the LEAST operational overhead?",
+  "options": [
+   "Deploy an Amazon FSx for Windows File Server Single-AZ file system joined to the self-managed Active Directory and enable automatic daily backups.",
+   "Deploy Windows file servers on Amazon EC2 instances in two Availability Zones and configure DFS Replication between them.",
+   "Deploy an Amazon FSx for Windows File Server Multi-AZ file system joined to the self-managed Active Directory.",
+   "Deploy an Amazon EFS file system with mount targets in two Availability Zones and mount it on the Windows instances."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "FSx for Windows File Server Multi-AZ có file server active và standby ở hai AZ với failover tự động, hỗ trợ SMB, Windows ACL và join vào self-managed AD. Single-AZ không chịu được sự cố AZ, backup chỉ giúp khôi phục chứ không đảm bảo sẵn sàng. Tự dựng file server trên EC2 với DFS-R tốn nhiều công vận hành. Amazon EFS không hỗ trợ Windows/SMB.",
+  "d": "D2",
+  "l": 17
+ },
+ {
+  "q": "A company is migrating an on-premises NetApp storage array to AWS. The same datasets are accessed concurrently by Linux servers over NFS and by Windows servers over SMB. The company uses NetApp SnapMirror for replication and wants to keep using its existing NetApp data management tools. Which solution will meet these requirements with a fully managed service?",
+  "options": [
+   "Use Amazon EFS for the Linux servers and Amazon FSx for Windows File Server for the Windows servers, and synchronize the two with AWS DataSync.",
+   "Deploy Amazon FSx for OpenZFS and configure the Windows servers to access the file system by using the SMB protocol.",
+   "Deploy an Amazon S3 File Gateway and expose the same S3 bucket through both NFS and SMB file shares.",
+   "Deploy Amazon FSx for NetApp ONTAP, configure multiprotocol access for NFS and SMB, and use SnapMirror to replicate data from the on-premises array."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Amazon FSx for NetApp ONTAP là dịch vụ managed chạy ONTAP, hỗ trợ truy cập đa giao thức NFS và SMB trên cùng dữ liệu, đồng thời hỗ trợ SnapMirror và các công cụ quản lý NetApp quen thuộc. Tách EFS và FSx for Windows rồi đồng bộ bằng DataSync gây trễ và không nhất quán. FSx for OpenZFS không hỗ trợ SMB. S3 File Gateway không hỗ trợ SnapMirror và không phù hợp cho truy cập đồng thời kiểu file server.",
+  "d": "D3",
+  "l": 17
+ },
+ {
+  "q": "A company uses AWS Backup to protect Amazon RDS databases, Amazon EBS volumes, and Amazon DynamoDB tables in a production account in the us-east-1 Region. A new policy requires that backups remain recoverable if the us-east-1 Region becomes unavailable and if the production account is compromised. The company uses AWS Organizations. Which actions should a solutions architect take to meet these requirements? (Select TWO.)",
+  "options": [
+   "Create cross-Region read replicas for each RDS database in a second Region.",
+   "Add a copy rule to the backup plan that copies recovery points to a backup vault in a second AWS Region.",
+   "Enable S3 Cross-Region Replication on the backup vault in the production account.",
+   "Add a copy rule to the backup plan that copies recovery points to a backup vault in a dedicated backup account in the organization.",
+   "Increase the retention period of the recovery points in the existing backup vault and enable EBS Snapshots Archive."
+  ],
+  "answer": [
+   1,
+   3
+  ],
+  "exp": "Copy rule trong AWS Backup plan có thể sao chép recovery point sang vault ở Region khác (chống sự cố Region) và sang vault ở một account backup riêng trong AWS Organizations (chống việc account production bị xâm phạm). Read replica chỉ áp dụng cho RDS và không phải bản backup. Backup vault không phải S3 bucket nên không bật CRR được. Tăng retention trong cùng vault, cùng account không giải quyết rủi ro Region hay account.",
+  "d": "D2",
+  "l": 19
+ },
+ {
+  "q": "A financial services company must retain backups of its Amazon EBS volumes and Amazon RDS databases for 7 years. Regulators require that the backups be stored in a write-once-read-many (WORM) model so that no user, including the root user of the account, can delete the backups or shorten their retention period. The company uses AWS Backup. Which solution will meet these requirements?",
+  "options": [
+   "Attach an IAM policy to all IAM users and roles that denies the backup:DeleteRecoveryPoint action.",
+   "Apply AWS Backup Vault Lock in compliance mode to the backup vault with a minimum retention period of 7 years, and allow the grace period to expire.",
+   "Apply AWS Backup Vault Lock in governance mode to the backup vault with a minimum retention period of 7 years.",
+   "Add a resource-based access policy to the backup vault that denies delete operations for all principals."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "AWS Backup Vault Lock ở compliance mode tạo vault WORM: sau khi hết grace period (cooling-off), không ai, kể cả root user hay AWS, có thể xoá recovery point hoặc rút ngắn retention, đáp ứng yêu cầu tuân thủ. Governance mode cho phép người có quyền đủ cao gỡ lock. IAM policy và vault access policy đều có thể bị admin hoặc root thay đổi nên không đảm bảo bất biến.",
+  "d": "D1",
+  "l": 19
+ },
+ {
+  "q": "A company uses AWS Backup to take monthly backups of its Amazon EFS file systems and Amazon DynamoDB tables. AWS Backup advanced features for DynamoDB are enabled. Auditors require the company to keep the monthly backups for 10 years. The backups are restored only during rare audit requests, and a restore time of several hours is acceptable. Which solution will reduce backup storage costs with the LEAST operational overhead?",
+  "options": [
+   "Configure the backup plan rule to transition the monthly recovery points to cold storage after 30 days and to retain them for 10 years.",
+   "Create an AWS Lambda function that exports each monthly recovery point to S3 Glacier Deep Archive and deletes it from the backup vault.",
+   "Keep the recovery points in warm storage and change the backup frequency from monthly to yearly.",
+   "Enable EFS lifecycle management on the source file systems to move files to the Infrequent Access storage class."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "Lifecycle trong AWS Backup plan có thể chuyển recovery point của các tài nguyên hỗ trợ (như EFS, DynamoDB với advanced features) sang cold storage với chi phí thấp hơn nhiều; recovery point phải ở cold storage tối thiểu 90 ngày, phù hợp với retention 10 năm. Tự export bằng Lambda tăng vận hành và không được hỗ trợ trực tiếp. Giảm tần suất backup vi phạm yêu cầu hằng tháng. EFS IA trên nguồn không làm giảm chi phí lưu trữ backup.",
+  "d": "D4",
+  "l": 19
+ },
+ {
+  "q": "A company runs data processing jobs on Amazon EC2 instances in private subnets. The jobs read and write several terabytes of data each day to Amazon S3 buckets in the same AWS Region. All traffic currently flows through a NAT gateway, and the NAT gateway data processing charges have become the largest item on the monthly bill. Which solution will reduce these costs the MOST?",
+  "options": [
+   "Replace the NAT gateway with a NAT instance on a large EC2 instance type in a public subnet.",
+   "Create an interface VPC endpoint for Amazon S3 and update the application to use the endpoint-specific DNS name.",
+   "Create a gateway VPC endpoint for Amazon S3 and associate it with the route tables of the private subnets.",
+   "Move the EC2 instances to public subnets and assign public IP addresses so they can reach Amazon S3 directly."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "Gateway VPC endpoint cho S3 không tính phí theo giờ hay theo GB, và lưu lượng đến S3 cùng Region đi qua route table thay vì qua NAT gateway nên loại bỏ phí data processing. Interface endpoint cũng tránh NAT nhưng vẫn tính phí theo giờ và theo GB nên tốn hơn. NAT instance tăng công vận hành và giới hạn băng thông. Đưa instance ra public subnet làm giảm bảo mật.",
+  "d": "D4",
+  "l": 22
+ },
+ {
+  "q": "A SaaS provider runs an API on Amazon EC2 instances behind a Network Load Balancer in its own VPC. Hundreds of customers need to call the API from their own VPCs in different AWS accounts, and many customer VPCs use CIDR ranges that overlap with the provider VPC. Traffic must not traverse the internet, and customers must not be able to reach any other resource in the provider VPC. Which solution will meet these requirements?",
+  "options": [
+   "Create a VPC peering connection between the provider VPC and each customer VPC, and restrict access with security groups.",
+   "Create a transit gateway, share it with the customer accounts by using AWS RAM, and attach every customer VPC.",
+   "Expose the API through a public Application Load Balancer protected by AWS WAF with an IP allow list for each customer.",
+   "Create a VPC endpoint service (AWS PrivateLink) backed by the Network Load Balancer, and have each customer create an interface VPC endpoint to the service."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "AWS PrivateLink cho phép expose một dịch vụ cụ thể sau NLB tới VPC của account khác qua interface VPC endpoint, lưu lượng nằm trong mạng AWS, không quan tâm CIDR trùng lặp và chỉ cho phép truy cập đúng dịch vụ đó. VPC peering và Transit Gateway không hoạt động với CIDR trùng nhau và mở kết nối ở mức mạng. Public ALB đi qua internet.",
+  "d": "D1",
+  "l": 22
+ },
+ {
+  "q": "A company has 60 VPCs across multiple AWS accounts in the same AWS Region and two on-premises data centers that are connected to AWS through AWS Direct Connect. The network team must provide routing between all VPCs and both data centers, and must be able to segment traffic by using centrally managed route tables. Managing a full mesh of connections has become unmanageable. Which solution will meet these requirements with the LEAST operational overhead?",
+  "options": [
+   "Create VPC peering connections between every pair of VPCs and attach a virtual private gateway to each VPC for the Direct Connect connection.",
+   "Create a transit gateway, share it with the other accounts by using AWS RAM, attach all VPCs, and connect the data centers through a Direct Connect gateway with a transit virtual interface.",
+   "Create an AWS PrivateLink endpoint service in each VPC and create interface endpoints in every other VPC and in the data centers.",
+   "Create an AWS Site-to-Site VPN connection from each VPC to each data center and use BGP to propagate routes."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "AWS Transit Gateway là hub trung tâm hỗ trợ định tuyến transitive giữa hàng nghìn VPC và on-premises, có nhiều route table để phân đoạn lưu lượng, chia sẻ cross-account qua AWS RAM và kết nối Direct Connect qua Direct Connect gateway với transit VIF. VPC peering không transitive và số kết nối tăng theo cấp số nhân. PrivateLink chỉ expose dịch vụ, không phải kết nối mạng đầy đủ. VPN riêng cho từng VPC tốn nhiều công quản lý.",
+  "d": "D3",
+  "l": 22
+ },
+ {
+  "q": "A gaming company runs a multiplayer game server fleet on Amazon EC2 instances behind Network Load Balancers in three AWS Regions. The game uses a custom UDP protocol. Players around the world experience inconsistent latency, and the company's partners require a fixed set of IP addresses to add to their allow lists. The company also needs automatic failover to another Region if a Regional endpoint becomes unhealthy. Which solution will meet these requirements?",
+  "options": [
+   "Create an Amazon CloudFront distribution with the Network Load Balancers as origins and configure an origin group for failover.",
+   "Use Amazon Route 53 latency-based routing records with health checks that point to each Network Load Balancer.",
+   "Create an AWS Global Accelerator standard accelerator with a UDP listener and an endpoint group in each Region that contains that Region's Network Load Balancer.",
+   "Assign Elastic IP addresses to every EC2 instance and publish the full list of IP addresses to the partners."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "AWS Global Accelerator cung cấp 2 static anycast IP, đưa traffic vào mạng backbone của AWS tại edge gần người chơi nhất, hỗ trợ TCP và UDP, và tự chuyển sang endpoint group khỏe ở Region khác. CloudFront chỉ hỗ trợ HTTP/HTTPS (và WebSocket), không dùng cho game UDP. Route 53 không cung cấp tập IP cố định và failover phụ thuộc DNS caching; danh sách Elastic IP từng instance khó quản lý và không cải thiện latency.",
+  "d": "D3",
+  "l": 25
+ },
+ {
+  "q": "A media company serves images, JavaScript, and CSS files for its global website from Amazon EC2 instances behind an Application Load Balancer in us-east-1. Data transfer out charges increase every month, and the EC2 instances often reach high CPU utilization during traffic peaks. Most of the static files change only once a week. Which solution will reduce costs and origin load MOST effectively?",
+  "options": [
+   "Move the static files to an Amazon S3 bucket and serve them through an Amazon CloudFront distribution that uses origin access control and cache policies with long TTLs, invalidating files when they change.",
+   "Increase the size of the EC2 instances and purchase a Compute Savings Plan to reduce the hourly cost.",
+   "Enable Amazon S3 Transfer Acceleration on a public bucket and serve the static files directly from the bucket URL.",
+   "Deploy additional copies of the application in more AWS Regions and use Amazon Route 53 geolocation routing."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "CloudFront cache nội dung tĩnh tại edge location nên phần lớn request không về đến origin, giảm tải CPU cho EC2; data transfer từ origin AWS đến CloudFront miễn phí và giá data transfer out của CloudFront thường thấp hơn. Đưa file tĩnh sang S3 còn giải phóng hoàn toàn EC2 khỏi việc phục vụ chúng. Transfer Acceleration tối ưu upload/tải dài đường chứ không cache và còn tốn thêm phí; nhân bản sang nhiều Region đắt hơn nhiều.",
+  "d": "D4",
+  "l": 25
+ },
+ {
+  "q": "A company sells premium training videos that are stored in an Amazon S3 bucket and delivered globally through Amazon CloudFront. Only customers with an active subscription may watch the videos, and each link must expire after a few hours. The S3 bucket must not be accessible directly from the internet. Which combination of steps will meet these requirements? (Select TWO.)",
+  "options": [
+   "Configure CloudFront origin access control (OAC) and update the bucket policy to allow s3:GetObject only from the CloudFront service principal for that distribution. Keep S3 Block Public Access enabled.",
+   "Disable S3 Block Public Access and add a bucket policy that allows requests only when the Referer header contains the company's domain.",
+   "Enable S3 Transfer Acceleration and have the application generate S3 presigned URLs that point directly to the bucket.",
+   "Create an AWS WAF web ACL with a geographic match rule that allows only the countries where subscribers live.",
+   "Restrict viewer access on the cache behavior by using a trusted key group, and have the application generate CloudFront signed URLs with an expiration time for subscribed users."
+  ],
+  "answer": [
+   0,
+   4
+  ],
+  "exp": "OAC kèm bucket policy chỉ cho phép CloudFront distribution đọc object, nên bucket vẫn private và người dùng không thể truy cập S3 trực tiếp. CloudFront signed URL (hoặc signed cookie) với trusted key group giới hạn nội dung cho người đăng ký và có thời gian hết hạn. Header Referer dễ giả mạo và yêu cầu bucket public; S3 presigned URL bỏ qua CloudFront; geo match không xác định được ai đã trả tiền.",
+  "d": "D1",
+  "l": 25
+ },
+ {
+  "q": "A financial services company runs a critical application on Amazon Aurora MySQL in eu-west-1. A new regulation requires a disaster recovery plan for a Regional outage with an RPO of approximately 1 second and an RTO of less than 1 minute for the database tier. The DR Region should also serve low-latency read traffic for local users during normal operations. Which solution will meet these requirements?",
+  "options": [
+   "Create a cross-Region Aurora read replica that uses MySQL binary log replication, and promote it manually during an outage.",
+   "Convert the cluster to an Aurora global database with a secondary cluster in eu-central-1, and promote the secondary cluster by using a managed failover during a Regional outage.",
+   "Use AWS Backup to copy Aurora snapshots to eu-central-1 every hour, and restore a new cluster during an outage.",
+   "Add Aurora Replicas in three Availability Zones in eu-west-1 and rely on automatic Multi-AZ failover."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "Aurora Global Database replicate ở tầng storage với độ trễ thường dưới 1 giây (RPO ~1 giây) và có thể promote cluster phụ ở Region khác trong khoảng dưới 1 phút; cluster phụ còn phục vụ đọc cục bộ. Binlog replication có độ trễ cao hơn và kém tin cậy; snapshot mỗi giờ cho RPO 1 giờ và RTO lâu. Aurora Replicas trong cùng Region không bảo vệ khi cả Region gặp sự cố.",
+  "d": "D2",
+  "l": 27
+ },
+ {
+  "q": "A company has an internal reporting application that uses a MySQL-compatible database. The application is used heavily for a few hours at the end of each month and is almost idle for the rest of the month, with unpredictable short bursts during business hours. The company wants to minimize database costs and avoid manual capacity management. Which solution will meet these requirements MOST cost-effectively?",
+  "options": [
+   "Run Amazon RDS for MySQL on a db.r6g.4xlarge instance sized for the month-end peak, and purchase a 1-year Reserved Instance.",
+   "Run Amazon Aurora MySQL on provisioned instances and schedule an AWS Lambda function to change the instance class before and after month-end.",
+   "Run MySQL on Amazon EC2 Spot Instances in an Auto Scaling group and store the data on instance store volumes.",
+   "Migrate to Amazon Aurora Serverless v2 with a low minimum capacity in Aurora capacity units (ACUs) so that the cluster scales automatically with the workload."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Aurora Serverless v2 tự động scale capacity theo từng mức ACU nhỏ trong vài giây và tính phí theo ACU-giờ thực dùng, rất phù hợp với tải gián đoạn, khó dự đoán; có thể đặt minimum thấp (thậm chí 0 ACU với auto-pause). Instance cỡ lớn kèm Reserved Instance trả tiền cho công suất đỉnh suốt cả tháng. Đổi instance class bằng Lambda gây gián đoạn và tốn công vận hành; Spot + instance store có thể mất dữ liệu.",
+  "d": "D4",
+  "l": 27
+ },
+ {
+  "q": "A company runs an e-commerce website on Amazon Aurora PostgreSQL. During marketing campaigns, read traffic for the product catalog increases by five times, and the writer instance reaches 90% CPU utilization. Most of the queries are read-only. The company wants to scale read capacity automatically with minimal application changes. Which solution will meet these requirements?",
+  "options": [
+   "Increase the writer instance size and enable Amazon RDS Performance Insights to tune the slow queries.",
+   "Create an Amazon ElastiCache cluster and rewrite the application to cache the result of every database query.",
+   "Add Aurora Replicas, configure Aurora Auto Scaling with a target tracking policy on average reader CPU utilization, and send read-only queries to the cluster reader endpoint.",
+   "Enable Multi-AZ for the writer instance and send read-only queries to the standby instance."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "Aurora Auto Scaling tự thêm/bớt Aurora Replicas (tối đa 15) dựa trên target tracking như CPU trung bình của reader. Reader endpoint tự cân bằng kết nối giữa các replica, nên ứng dụng chỉ cần đổi connection string cho truy vấn đọc. Scale dọc writer không tự động và có giới hạn; viết lại ứng dụng để cache mọi truy vấn không phải 'minimal changes'; Aurora không có standby thụ động để nhận traffic đọc.",
+  "d": "D3",
+  "l": 27
+ },
+ {
+  "q": "A mobile gaming company needs a real-time global leaderboard for millions of players. Scores are updated thousands of times per second. The game must display the top 100 players and each player's current rank with sub-millisecond latency. Which solution will meet these requirements?",
+  "options": [
+   "Store scores in an Amazon ElastiCache for Valkey cluster by using sorted sets, and use sorted-set commands to update scores and retrieve ranks and top players.",
+   "Store scores in an Amazon Aurora MySQL table with an index on the score column, and run ORDER BY queries to compute ranks.",
+   "Store scores in an Amazon DynamoDB table and scan the table with a filter expression to calculate the top players and ranks.",
+   "Store scores in an Amazon ElastiCache for Memcached cluster and sort the scores in the application before returning results."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "Sorted set của Valkey/Redis OSS (ElastiCache) lưu điểm đã được sắp xếp trong bộ nhớ, các lệnh ZADD, ZREVRANGE, ZREVRANK trả về top N và thứ hạng với độ trễ dưới mili giây, rất phù hợp cho leaderboard. Truy vấn ORDER BY trên Aurora và Scan trên DynamoDB không đạt độ trễ dưới mili giây ở quy mô hàng triệu người chơi. Memcached không có cấu trúc dữ liệu sorted set.",
+  "d": "D3",
+  "l": 29
+ },
+ {
+  "q": "A financial technology company is building a fraud detection system. The system must analyze relationships between customers, devices, IP addresses, and transactions, and must run queries that traverse many levels of connections, such as finding all accounts that share a device with a known fraudulent account. Developers want to use openCypher or Gremlin queries. Which database should a solutions architect recommend?",
+  "options": [
+   "Amazon DynamoDB with an adjacency list design pattern and global secondary indexes",
+   "Amazon RDS for PostgreSQL with recursive common table expressions over join tables",
+   "Amazon Neptune",
+   "Amazon OpenSearch Service with nested documents"
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "Amazon Neptune là graph database được quản lý hoàn toàn, tối ưu cho truy vấn duyệt quan hệ nhiều bước (multi-hop) và hỗ trợ openCypher, Gremlin, SPARQL, rất phù hợp cho phát hiện gian lận. DynamoDB adjacency list và recursive CTE trên PostgreSQL có thể mô phỏng đồ thị nhưng phức tạp và chậm khi duyệt nhiều cấp. OpenSearch dành cho tìm kiếm và phân tích log, không phải graph traversal.",
+  "d": "D3",
+  "l": 29
+ },
+ {
+  "q": "A company runs a self-managed Apache Cassandra cluster on Amazon EC2 instances to store time-series telemetry data from industrial equipment. The operations team spends significant time patching nodes, replacing failed nodes, and planning capacity. The company wants a serverless, fully managed database and wants to keep its existing Cassandra Query Language (CQL) application code with minimal changes. Which solution will meet these requirements?",
+  "options": [
+   "Migrate the data to Amazon DynamoDB and rewrite the data access layer to use the DynamoDB API.",
+   "Migrate the data to Amazon DocumentDB (with MongoDB compatibility) and use the MongoDB drivers.",
+   "Move the Cassandra cluster to larger EC2 instances in an Auto Scaling group to reduce node failures.",
+   "Migrate the data to Amazon Keyspaces (for Apache Cassandra) and use on-demand capacity mode."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Amazon Keyspaces (for Apache Cassandra) là dịch vụ serverless, tương thích CQL nên ứng dụng hiện có chỉ cần đổi endpoint và driver config, không phải quản lý node; on-demand capacity tự scale theo lưu lượng. DynamoDB và DocumentDB buộc phải viết lại code truy cập dữ liệu. Chạy Cassandra trên EC2 lớn hơn vẫn là tự quản lý.",
+  "d": "D3",
+  "l": 29
+ },
+ {
+  "q": "A company is building an order processing workflow. Each step (reserve inventory, charge payment, and arrange shipping) is implemented as an AWS Lambda function. Transient errors in any step must be retried with exponential backoff. If the payment step fails after inventory has been reserved, the reserved inventory must be released automatically. The company wants to write as little custom orchestration code as possible. Which combination of actions will meet these requirements? (Select TWO.)",
+  "options": [
+   "Implement the workflow as an AWS Step Functions Standard workflow that invokes each Lambda function as a task state.",
+   "Have each Lambda function invoke the next Lambda function asynchronously after it finishes its own work.",
+   "Place an Amazon SQS FIFO queue between each step and implement retry and rollback logic inside each Lambda function.",
+   "Configure a Lambda on-failure destination that publishes to an Amazon SNS topic so that operators can release the inventory manually.",
+   "Add Retry fields with a backoff rate to the task states, and add a Catch field to the payment state that transitions to a state that releases the inventory."
+  ],
+  "answer": [
+   0,
+   4
+  ],
+  "exp": "AWS Step Functions điều phối các Lambda dưới dạng state machine; trường Retry hỗ trợ retry với exponential backoff (BackoffRate), còn Catch chuyển sang state bù trừ (compensation) để giải phóng inventory, theo mẫu saga mà không cần tự viết code điều phối. Chuỗi Lambda gọi nhau và SQS kèm logic tự viết làm tăng code và khó theo dõi. Xử lý thủ công qua SNS không đáp ứng yêu cầu tự động.",
+  "d": "D2",
+  "l": 31
+ },
+ {
+  "q": "A company is migrating an on-premises Java application to AWS. The application uses Apache ActiveMQ as its message broker and communicates by using JMS with the OpenWire and STOMP protocols. The company wants a managed, highly available message broker and does not want to change the application code. Which solution will meet these requirements?",
+  "options": [
+   "Replace the broker with Amazon SQS and use the Amazon SQS Java Messaging Library in the application.",
+   "Deploy an Amazon MQ for ActiveMQ active/standby broker across two Availability Zones and point the application to the broker endpoints.",
+   "Replace the broker with Amazon SNS topics that fan out to Amazon SQS queues for each consumer.",
+   "Deploy an Amazon MSK cluster and configure the application to publish messages to Kafka topics."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "Amazon MQ for ActiveMQ là broker được quản lý, hỗ trợ JMS, OpenWire, STOMP, AMQP, MQTT nên phù hợp lift-and-shift mà không sửa code; deployment active/standby trên hai AZ cung cấp tính sẵn sàng cao. SQS, SNS và Amazon MSK đều dùng API/giao thức khác nên buộc phải sửa ứng dụng; SQS cũng không hỗ trợ STOMP hay OpenWire.",
+  "d": "D2",
+  "l": 31
+ },
+ {
+  "q": "A company's order service publishes order events in JSON format. The fraud team needs to receive only orders with a total above 1,000 USD in an AWS Lambda function. The EU analytics team needs to receive only orders whose country code is in the EU in an Amazon SQS queue. More teams will subscribe in the future, and the order service must not be modified when consumers change. Which solution will meet these requirements with the LEAST custom code?",
+  "options": [
+   "Publish all events to a single Amazon SQS queue that every team polls, and have each team discard the messages that it does not need.",
+   "Publish all events to an Amazon Kinesis data stream and have each team build a consumer application that filters the records.",
+   "Publish the events to an Amazon EventBridge custom event bus and create rules with event patterns that route matching events to the Lambda function and the SQS queue.",
+   "Have the order service invoke a router Lambda function that inspects each event and calls the correct target for each team."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "Amazon EventBridge cho phép producer chỉ gửi event lên event bus, còn mỗi team tạo rule với event pattern (hỗ trợ so sánh số và lọc theo danh sách giá trị) để định tuyến đến target như Lambda hay SQS, thêm consumer mới không cần sửa producer. Một SQS queue chung không thể để mọi team cùng nhận đủ message. Kinesis và Lambda router đều cần nhiều code tự viết hơn.",
+  "d": "D3",
+  "l": 31
+ },
+ {
+  "q": "A company runs an internal receipt-processing application on two m5.large Amazon EC2 instances behind an Application Load Balancer. The application receives about 200 requests each day in unpredictable bursts, and each request takes less than 30 seconds to process. The instances are idle most of the time. Which solution will reduce costs the MOST?",
+  "options": [
+   "Purchase 3-year Reserved Instances for the two EC2 instances.",
+   "Place the instances in an Auto Scaling group with a minimum capacity of one instance.",
+   "Replace the On-Demand Instances with Spot Instances in an Auto Scaling group.",
+   "Refactor the processing logic into an AWS Lambda function that is invoked for each request."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Với lượng request thấp, theo đợt và mỗi lần xử lý dưới 30 giây, AWS Lambda chỉ tính phí theo số request và thời gian chạy thực tế, không tốn tiền khi idle nên rẻ nhất. Reserved Instances và Auto Scaling với min 1 vẫn trả tiền cho máy chạy liên tục. Spot Instances rẻ hơn nhưng vẫn chạy 24/7 và có thể bị gián đoạn.",
+  "d": "D4",
+  "l": 32
+ },
+ {
+  "q": "A company exposes an API through Amazon API Gateway that invokes a Java-based AWS Lambda function. Users report response times of several seconds at the start of each business day when traffic ramps up quickly because new execution environments must be initialized. Traffic is predictable between 08:00 and 18:00 on weekdays. The company needs consistently low latency during business hours. Which solution will meet these requirements?",
+  "options": [
+   "Configure provisioned concurrency on a Lambda alias and use Application Auto Scaling scheduled actions to increase it during business hours.",
+   "Increase the memory allocation of the Lambda function to the maximum value.",
+   "Configure reserved concurrency for the Lambda function equal to the expected peak traffic.",
+   "Create an Amazon EventBridge schedule that invokes the Lambda function once every 5 minutes to keep it warm."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "Provisioned concurrency khởi tạo sẵn execution environment nên loại bỏ cold start; dùng Application Auto Scaling scheduled action giúp chỉ trả tiền cho provisioned concurrency trong giờ làm việc. Tăng memory chỉ rút ngắn chứ không loại bỏ cold start. Reserved concurrency chỉ giới hạn/đảm bảo hạn mức, không làm ấm trước. Ping định kỳ chỉ giữ ấm một vài môi trường, không đủ khi lưu lượng tăng mạnh.",
+  "d": "D3",
+  "l": 32
+ },
+ {
+  "q": "An AWS Lambda function processes messages from an Amazon SQS standard queue by using an event source mapping with a batch size of 10. Occasionally, a single malformed message causes the function to fail, and all 10 messages in the batch are returned to the queue and processed again. The malformed message keeps being retried indefinitely. The company must stop reprocessing successful messages and must isolate malformed messages after several attempts without reducing throughput. Which actions should a solutions architect take? (Select TWO.)",
+  "options": [
+   "Increase the visibility timeout of the SQS queue to 12 hours.",
+   "Reduce the batch size of the event source mapping to 1.",
+   "Enable ReportBatchItemFailures on the event source mapping and return the IDs of failed messages in the batchItemFailures response.",
+   "Configure a redrive policy on the source queue that moves messages to a dead-letter queue after a maxReceiveCount of 5.",
+   "Configure an on-failure destination for asynchronous invocations of the Lambda function."
+  ],
+  "answer": [
+   2,
+   3
+  ],
+  "exp": "ReportBatchItemFailures (partial batch response) cho phép Lambda chỉ trả về các message lỗi, nên message xử lý thành công được xoá khỏi queue. Redrive policy với dead-letter queue và maxReceiveCount cô lập message lỗi sau số lần thử nhất định. Giảm batch size xuống 1 làm giảm throughput. Tăng visibility timeout chỉ trì hoãn retry. On-failure destination cho async invocation không áp dụng cho event source mapping SQS.",
+  "d": "D2",
+  "l": 32
+ },
+ {
+  "q": "A company exposes a public REST API by using Amazon API Gateway with AWS Lambda and Amazon DynamoDB on the backend. The GET /products resource returns a catalog that changes only once an hour. During traffic spikes, the backend is overloaded, and a few API consumers send far more requests than their contracts allow. Which actions should a solutions architect take to reduce backend load and limit the abusive consumers? (Select TWO.)",
+  "options": [
+   "Enable cross-origin resource sharing (CORS) on the GET /products method.",
+   "Enable API caching on the API Gateway stage with a TTL of 3,600 seconds for the GET /products method.",
+   "Increase the reserved concurrency of the Lambda function.",
+   "Convert the REST API to a WebSocket API to keep connections open.",
+   "Create usage plans with API keys for each consumer and configure throttling and quota limits."
+  ],
+  "answer": [
+   1,
+   4
+  ],
+  "exp": "API Gateway stage cache (TTL tối đa 3.600 giây) trả kết quả GET /products từ cache nên giảm mạnh số lần gọi Lambda và DynamoDB. Usage plan kèm API key cho phép đặt throttling (rate, burst) và quota theo từng consumer để hạn chế client lạm dụng. CORS không liên quan tải. Tăng reserved concurrency chỉ làm backend nhận thêm tải. WebSocket API không phù hợp và không giảm tải.",
+  "d": "D3",
+  "l": 33
+ },
+ {
+  "q": "A company is building a mobile application that lets users sign up and sign in with an email address and password. The application calls a REST API in Amazon API Gateway. Only authenticated users must be able to call the API, and the API must validate JSON Web Tokens (JWTs) on each request. Which solution will meet these requirements with the LEAST custom code?",
+  "options": [
+   "Create an IAM user for each application user and configure IAM authorization on the API methods.",
+   "Store user credentials in an Amazon DynamoDB table and create a Lambda authorizer that validates the credentials on each request.",
+   "Create an Amazon Cognito user pool for sign-up and sign-in, and configure a Cognito user pool authorizer on the API that validates the token in the Authorization header.",
+   "Issue an API key to each user after sign-in and require the API key on all API methods."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "Amazon Cognito user pool cung cấp sẵn sign-up, sign-in và phát hành JWT; Cognito user pool authorizer của API Gateway tự xác thực token trong header Authorization mà không cần viết code. Tạo IAM user cho từng người dùng cuối không phù hợp và khó mở rộng. Lambda authorizer tự viết tăng code và rủi ro bảo mật. API key dùng để định danh cho usage plan, không phải cơ chế xác thực.",
+  "d": "D1",
+  "l": 33
+ },
+ {
+  "q": "A startup is building a backend API that forwards JSON requests to AWS Lambda functions. Requests must be authorized by using JWTs issued by the company's existing OpenID Connect (OIDC) identity provider. The API does not need response caching, request validation, usage plans, or API keys. Traffic is low to moderate. Which solution will meet these requirements MOST cost-effectively?",
+  "options": [
+   "Create an edge-optimized REST API in Amazon API Gateway with a Lambda authorizer that validates the JWTs.",
+   "Create a private REST API in Amazon API Gateway and require clients to connect through an interface VPC endpoint.",
+   "Create an Application Load Balancer with the Lambda functions as targets and validate the JWTs inside each function.",
+   "Create an HTTP API in Amazon API Gateway with a JWT authorizer and Lambda proxy integrations."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "HTTP API có giá theo request thấp hơn đáng kể so với REST API và hỗ trợ sẵn JWT authorizer cho OIDC/OAuth 2.0, phù hợp khi không cần các tính năng chỉ có ở REST API như caching, usage plan hay request validation. REST API (edge-optimized hay private) đắt hơn và private API không phục vụ được client công khai. ALB tính phí theo giờ dù lưu lượng thấp và phải tự viết code xác thực JWT.",
+  "d": "D4",
+  "l": 33
+ },
+ {
+  "q": "A company runs nightly image-processing jobs as containers. Each job runs for about 2 hours, is stateless, saves checkpoints to Amazon S3, and can be safely restarted if it is interrupted. The company does not want to manage servers or clusters of instances. Which solution will meet these requirements MOST cost-effectively?",
+  "options": [
+   "Run the jobs as Amazon ECS tasks on an Auto Scaling group of On-Demand EC2 instances that the company manages.",
+   "Run the jobs as Amazon ECS tasks on AWS Fargate by using the Fargate Spot capacity provider.",
+   "Package the jobs as container images and run them as AWS Lambda functions.",
+   "Run the jobs as Amazon ECS tasks on AWS Fargate On-Demand and purchase a 3-year Compute Savings Plan."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "Fargate Spot chạy task trên capacity dư thừa với mức giảm giá lớn so với Fargate On-Demand, phù hợp với job batch chịu được gián đoạn nhờ checkpoint, và không phải quản lý server. EC2 tự quản lý trái yêu cầu. Lambda giới hạn 15 phút nên không chạy được job 2 giờ. Savings Plan 3 năm cam kết chi tiêu mỗi giờ cả ngày, lãng phí cho workload chỉ chạy ban đêm và vẫn đắt hơn Spot.",
+  "d": "D4",
+  "l": 34
+ },
+ {
+  "q": "A company runs dozens of microservices on a self-managed Kubernetes cluster in its data center. The teams deploy with Helm charts and kubectl and use Kubernetes-native tools for monitoring and autoscaling. The company wants to move the workloads to AWS, keep using the Kubernetes API and existing tooling, and stop managing the Kubernetes control plane. Which solution will meet these requirements?",
+  "options": [
+   "Deploy the workloads to Amazon EKS with managed node groups and store the container images in Amazon ECR.",
+   "Convert the Helm charts to Amazon ECS task definitions and run the services on AWS Fargate.",
+   "Install Kubernetes on Amazon EC2 instances by using kops and manage the control plane nodes in an Auto Scaling group.",
+   "Deploy each microservice as an AWS Elastic Beanstalk Docker environment."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "Amazon EKS cung cấp Kubernetes control plane được AWS quản lý, tương thích Kubernetes API nên Helm, kubectl và công cụ hiện có vẫn dùng được; managed node groups giảm công quản lý worker node và ECR lưu container image. Chuyển sang ECS hay Elastic Beanstalk buộc phải viết lại cấu hình triển khai. Tự cài Kubernetes trên EC2 vẫn phải quản lý control plane.",
+  "d": "D3",
+  "l": 34
+ },
+ {
+  "q": "A small team runs a containerized web application on Amazon ECS by using the EC2 launch type. The team spends significant time patching AMIs, scaling the cluster instances, and handling unused capacity, and average cluster utilization is below 30%. The team wants to reduce operational overhead and pay only for the CPU and memory that the containers request. Which solution will meet these requirements?",
+  "options": [
+   "Migrate the application to Amazon EKS with self-managed node groups on EC2 instances.",
+   "Switch the cluster to the latest Amazon ECS-optimized AMI and use AWS Systems Manager Patch Manager to patch the instances.",
+   "Migrate the ECS service to the AWS Fargate launch type, define task-level CPU and memory, and configure ECS Service Auto Scaling.",
+   "Consolidate all containers onto a single large EC2 instance and run them with Docker Compose."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "Với AWS Fargate, AWS quản lý hạ tầng chạy container, team không cần patch AMI hay scale cluster, và chỉ trả tiền theo vCPU và memory khai báo cho task; ECS Service Auto Scaling điều chỉnh số task theo tải. EKS với self-managed node vẫn phải quản lý node. Patch Manager chỉ tự động hoá một phần, vẫn có capacity dư thừa. Một EC2 duy nhất tạo single point of failure.",
+  "d": "D4",
+  "l": 34
+ },
+ {
+  "q": "A ride-sharing company streams GPS location events from vehicles. Events for the same vehicle must be processed in the order they were produced. Three independent applications (billing, analytics, and fraud detection) must each read every event concurrently with dedicated read throughput, and the company must be able to replay events from the past 7 days. Which solution will meet these requirements?",
+  "options": [
+   "Send the events to an Amazon SQS FIFO queue with the vehicle ID as the message group ID and have the three applications poll the queue.",
+   "Send the events to Amazon Data Firehose for delivery to Amazon S3 and have the three applications read the objects from S3.",
+   "Send the events to an Amazon SQS standard queue and have each application deduplicate and reorder the events.",
+   "Send the events to an Amazon Kinesis Data Streams data stream with the vehicle ID as the partition key, set the retention period to 7 days, and register each application as an enhanced fan-out consumer."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Kinesis Data Streams đảm bảo thứ tự theo partition key (vehicle ID cùng shard), nhiều consumer đọc độc lập cùng dữ liệu, enhanced fan-out cấp throughput riêng 2 MB/s mỗi shard cho từng consumer, và retention có thể đặt 7 ngày để replay. Với SQS, mỗi message chỉ được một consumer xử lý rồi bị xoá nên ba ứng dụng không cùng nhận đủ và không replay được. Firehose ghi theo lô vào S3, không phải xử lý thời gian thực có thứ tự.",
+  "d": "D3",
+  "l": 35
+ },
+ {
+  "q": "A company collects clickstream events in JSON format and stores them in Amazon S3 for ad hoc analysis with Amazon Athena. Athena query costs are high because queries scan large volumes of JSON data. The company wants to store the data in Apache Parquet format as it is ingested, with the LEAST operational overhead. Which solution will meet these requirements?",
+  "options": [
+   "Send the events to Amazon Kinesis Data Streams and write an AWS Lambda consumer that converts each batch to Parquet and writes it to Amazon S3.",
+   "Send the events to Amazon Data Firehose with record format conversion enabled to convert JSON to Apache Parquet by using a schema from the AWS Glue Data Catalog, and deliver the output to Amazon S3.",
+   "Send the events to Amazon Data Firehose to deliver GZIP-compressed JSON to Amazon S3, and run an hourly AWS Glue ETL job that converts the files to Parquet.",
+   "Run an Amazon EMR cluster with Spark Structured Streaming that reads the events and writes Parquet files to Amazon S3."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "Amazon Data Firehose có sẵn tính năng record format conversion, chuyển JSON sang Apache Parquet hoặc ORC dựa trên schema trong AWS Glue Data Catalog rồi ghi vào S3, không cần code hay hạ tầng riêng; định dạng cột giúp Athena quét ít dữ liệu hơn. Lambda tự viết, Glue ETL job theo giờ và EMR cluster đều làm tăng công vận hành.",
+  "d": "D4",
+  "l": 35
+ },
+ {
+  "q": "A company runs Apache Kafka on premises. Many producer and consumer applications use the native Kafka client libraries, and the company uses Kafka Connect connectors. The company wants to move to AWS, stop managing Kafka brokers and ZooKeeper nodes, and avoid changing application code. Which solution will meet these requirements?",
+  "options": [
+   "Create an Amazon MSK cluster, use MirrorMaker 2 to replicate the topics during migration, and point the applications to the MSK bootstrap brokers.",
+   "Create an Amazon Kinesis Data Streams data stream and update the producers to use the Kinesis Producer Library.",
+   "Create an Amazon MQ broker and configure the applications to publish messages by using the AMQP protocol.",
+   "Create Amazon SQS queues for each Kafka topic and update the consumers to poll the queues."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "Amazon MSK là dịch vụ Apache Kafka được quản lý, tương thích Kafka API nên ứng dụng chỉ cần đổi bootstrap broker; MirrorMaker 2 sao chép topic từ cluster on-premises trong quá trình migrate và MSK Connect hỗ trợ connector của Kafka Connect. Kinesis, Amazon MQ và SQS đều dùng API khác nên buộc phải sửa code.",
+  "d": "D3",
+  "l": 35
+ },
+ {
+  "q": "A company stores 3 years of application logs in Amazon S3 as uncompressed CSV files under a single prefix. Analysts use Amazon Athena to run queries that usually filter on a single day and select only 5 of the 40 columns. Athena costs are high because each query scans almost the entire dataset. Which actions will reduce Athena query costs the MOST? (Select TWO.)",
+  "options": [
+   "Move the CSV files to the S3 Glacier Flexible Retrieval storage class.",
+   "Increase the per-query data usage limit in the Athena workgroup.",
+   "Convert the data to a compressed columnar format such as Apache Parquet.",
+   "Load the data into an Amazon RDS for PostgreSQL database and direct the analysts to query it there.",
+   "Partition the data in S3 by date (for example, year/month/day) and register the partitions in the AWS Glue Data Catalog or use partition projection."
+  ],
+  "answer": [
+   2,
+   4
+  ],
+  "exp": "Athena tính phí theo lượng dữ liệu được scan. Parquet là định dạng cột, nén tốt, nên truy vấn chỉ đọc 5 cột cần thiết; partition theo ngày cho phép partition pruning để chỉ đọc dữ liệu của ngày được lọc. Athena không đọc trực tiếp được object ở Glacier Flexible Retrieval; tăng giới hạn dữ liệu chỉ làm tăng chi phí; RDS không phải giải pháp phân tích log giá rẻ.",
+  "d": "D4",
+  "l": 36
+ },
+ {
+  "q": "A retail company uses a BI tool to run dashboards against its data warehouse. On Monday mornings, hundreds of analysts run queries at the same time, and queries wait in queues. The company also wants to join warehouse tables with 5 years of historical clickstream data that is stored as Parquet files in Amazon S3 without loading that data into the warehouse. Warehouse storage grows much faster than compute needs. Which solution will meet these requirements?",
+  "options": [
+   "Use Amazon Redshift with RA3 nodes and Redshift Managed Storage, enable concurrency scaling for the peak period, and query the S3 data through Amazon Redshift Spectrum external tables.",
+   "Use Amazon RDS for PostgreSQL with several read replicas, and import the clickstream data into the database every night.",
+   "Use Amazon Redshift with DC2 nodes, add nodes manually every Monday, and use the COPY command to load all the clickstream data.",
+   "Use Amazon DynamoDB with on-demand capacity and export the tables to S3 for the BI tool."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "RA3 với Redshift Managed Storage tách compute khỏi storage nên storage tăng mà không phải mua thêm node; concurrency scaling tự thêm cluster tạm thời khi có nhiều truy vấn đồng thời; Redshift Spectrum truy vấn trực tiếp Parquet trên S3 mà không cần load. DC2 gắn storage với compute và việc thêm node thủ công tốn công; RDS và DynamoDB không phải data warehouse cho BI quy mô lớn.",
+  "d": "D3",
+  "l": 36
+ },
+ {
+  "q": "A company receives JSON files from partners in an Amazon S3 bucket several times a day. The schema changes occasionally when partners add new fields. The company needs to catalog the data, transform it into Apache Parquet, and make it queryable in Amazon Athena. The company does not want to manage any servers or clusters. Which solution will meet these requirements with the LEAST operational overhead?",
+  "options": [
+   "Launch an Amazon EMR cluster that runs Apache Spark jobs continuously, and store table definitions in a self-managed Hive metastore on Amazon EC2.",
+   "Use an AWS Glue crawler to detect schemas and update the AWS Glue Data Catalog, and run a serverless AWS Glue ETL job in an AWS Glue workflow to convert the data to Parquet.",
+   "Write a Python script on an Amazon EC2 instance that runs every hour by using cron to convert the files and create the Athena tables.",
+   "Ingest the files with Amazon Kinesis Data Streams and use a provisioned Amazon Redshift cluster to transform and store the data."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "AWS Glue là dịch vụ ETL serverless: crawler tự phát hiện schema (kể cả cột mới) và cập nhật Glue Data Catalog mà Athena dùng làm metastore; Glue ETL job chuyển JSON sang Parquet, được điều phối bằng workflow/trigger. EMR và EC2 đều cần quản lý cluster/server. Kinesis Data Streams dành cho dữ liệu streaming, còn Redshift provisioned thì tốn kém và không cần thiết.",
+  "d": "D4",
+  "l": 36
+ },
+ {
+  "q": "A photo-sharing application stores user-uploaded images in an Amazon S3 bucket. The company must automatically detect explicit, suggestive, or violent content before images are published, and send uncertain cases to human moderators. The company has no machine learning expertise. Which solution will meet these requirements with the LEAST development effort?",
+  "options": [
+   "Label a dataset of images and train a custom image classification model in Amazon SageMaker AI, then host the model on a real-time endpoint.",
+   "Use S3 Event Notifications to invoke an AWS Lambda function that sends the image metadata to Amazon Comprehend for content classification.",
+   "Use S3 Event Notifications to invoke an AWS Lambda function that calls the Amazon Rekognition DetectModerationLabels API and routes images below a confidence threshold to human review.",
+   "Use S3 Event Notifications to invoke an AWS Lambda function that calls Amazon Textract to analyze each image."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "Amazon Rekognition content moderation (DetectModerationLabels) phát hiện nội dung nhạy cảm, bạo lực trong ảnh bằng mô hình đã huấn luyện sẵn, trả về nhãn kèm độ tin cậy để chuyển trường hợp không chắc chắn sang người duyệt. Tự train mô hình trên SageMaker tốn công và cần chuyên môn ML. Amazon Comprehend xử lý văn bản, còn Amazon Textract trích xuất chữ từ tài liệu, không kiểm duyệt hình ảnh.",
+  "d": "D3",
+  "l": 37
+ },
+ {
+  "q": "An insurance company receives 50,000 scanned claim forms each month as PDF files in Amazon S3. Data entry staff manually type the form fields and table data into a database. The company is considering building a custom OCR model to automate the work but wants to minimize cost and development effort. Which solution will meet these requirements?",
+  "options": [
+   "Label thousands of sample forms and train a custom document extraction model in Amazon SageMaker AI.",
+   "Use the Amazon Rekognition DetectText API to read the text in each scanned page.",
+   "Run an open-source OCR engine on a fleet of Amazon EC2 instances and write custom parsing logic for each form layout.",
+   "Use Amazon Textract asynchronous document analysis with the FORMS and TABLES features, and store the extracted key-value pairs in the database."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Amazon Textract là dịch vụ managed trích xuất văn bản, cặp key-value (FORMS) và bảng (TABLES) từ tài liệu scan, hỗ trợ xử lý bất đồng bộ cho PDF nhiều trang, trả tiền theo trang và không cần huấn luyện mô hình. Tự train trên SageMaker hay tự chạy OCR trên EC2 tốn chi phí và công sức hơn nhiều. Rekognition DetectText chỉ nhận dạng chữ trong ảnh, không hiểu cấu trúc biểu mẫu và bảng.",
+  "d": "D4",
+  "l": 37
+ },
+ {
+  "q": "A customer support platform stores millions of chat transcripts as text files in Amazon S3. The analytics team needs the sentiment of each conversation, but personally identifiable information (PII) such as names, addresses, and credit card numbers must be redacted before the analytics team can access the transcripts. The company has no machine learning expertise. Which solution will meet these requirements?",
+  "options": [
+   "Use Amazon Macie to scan the S3 bucket and redact PII in the transcripts, then use Macie findings to determine sentiment.",
+   "Use Amazon Comprehend asynchronous analysis jobs to detect sentiment and to redact PII entities, and write the output to a separate S3 bucket for the analytics team.",
+   "Index the transcripts with Amazon Kendra and use Kendra queries to identify sentiment and PII.",
+   "Use Amazon Translate to normalize the transcripts and then filter PII with regular expressions in an AWS Lambda function."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "Amazon Comprehend là dịch vụ NLP managed hỗ trợ phân tích sentiment và phát hiện, redact PII, có thể chạy batch/asynchronous job trên dữ liệu trong S3 mà không cần chuyên môn ML. Amazon Macie chỉ phát hiện dữ liệu nhạy cảm trong S3, không redact nội dung và không phân tích sentiment. Amazon Kendra là dịch vụ tìm kiếm. Regex tự viết dễ bỏ sót PII và Translate không liên quan.",
+  "d": "D3",
+  "l": 37
+ },
+ {
+  "q": "A call center stores thousands of customer call recordings in an Amazon S3 bucket each day. The company needs searchable text transcripts that identify each speaker and redact sensitive data such as credit card numbers, and the company wants to analyze customer sentiment trends from the transcripts. The solution must minimize development effort and cost. Which combination of actions will meet these requirements? (Select TWO.)",
+  "options": [
+   "Use Amazon Transcribe batch transcription jobs, started when recordings are uploaded, with speaker diarization and PII redaction enabled.",
+   "Use Amazon Polly to convert the call recordings into text transcripts.",
+   "Use Amazon Comprehend to run sentiment analysis on the transcripts and store the results in Amazon S3 for querying with Amazon Athena.",
+   "Deploy a custom speech-to-text model on Amazon SageMaker AI real-time endpoints that run continuously.",
+   "Use Amazon Lex bots to process the recordings and extract customer intents."
+  ],
+  "answer": [
+   0,
+   2
+  ],
+  "exp": "Amazon Transcribe chuyển giọng nói thành văn bản, hỗ trợ speaker diarization (phân biệt người nói) và tự động redact PII; Amazon Comprehend phân tích sentiment trên transcript và kết quả lưu S3 có thể truy vấn bằng Athena. Amazon Polly là text-to-speech (chiều ngược lại). Endpoint SageMaker chạy liên tục tốn chi phí và công phát triển. Amazon Lex dùng để xây chatbot hội thoại, không xử lý file ghi âm.",
+  "d": "D4",
+  "l": 37
+ },
+ {
+  "q": "A company's application on Amazon ECS connects to an Amazon RDS for MySQL database. The database password is currently stored in plaintext in an environment variable in the task definition. A compliance requirement states that the database credentials must be encrypted and rotated automatically every 30 days without changes to application code after the initial update. Which solution will meet these requirements with the LEAST operational overhead?",
+  "options": [
+   "Store the password as a SecureString parameter in AWS Systems Manager Parameter Store and create a cron job on an EC2 instance that changes the password every 30 days.",
+   "Encrypt the password with an AWS KMS key, store the ciphertext in the task definition, and enable automatic annual rotation of the KMS key.",
+   "Store the password in an Amazon S3 bucket that uses SSE-KMS and have the application download the file at startup.",
+   "Store the credentials in AWS Secrets Manager, turn on automatic rotation every 30 days by using the rotation function for Amazon RDS, and update the application to retrieve the secret from Secrets Manager when it opens database connections."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Secrets Manager mã hóa secret bằng KMS và có sẵn chức năng rotation tự động cho thông tin đăng nhập RDS (cập nhật cả mật khẩu trong database lẫn secret). Ứng dụng lấy secret khi tạo kết nối nên luôn dùng mật khẩu mới. Parameter Store không có rotation tích hợp nên cần tự viết và vận hành cron; rotation KMS key không đổi mật khẩu database; lưu trên S3 không có rotation.",
+  "d": "D1",
+  "l": 38
+ },
+ {
+  "q": "A company is designing a new application that encrypts sensitive fields by using the AWS Encryption SDK with an AWS KMS key in us-east-1. The encrypted data is stored in an Amazon DynamoDB global table that replicates to eu-west-1. The application in eu-west-1 must decrypt the data by using KMS in its own Region, even when us-east-1 is unavailable. Which solution will meet these requirements?",
+  "options": [
+   "Create a separate single-Region KMS key in eu-west-1 and grant the application permission to use both keys.",
+   "Export the key material from the us-east-1 KMS key and import it into a new KMS key in eu-west-1.",
+   "Create a KMS multi-Region primary key in us-east-1 and a replica key in eu-west-1, encrypt the data with the multi-Region key, and configure the application in each Region to decrypt with its local key.",
+   "Configure the eu-west-1 application to call the KMS endpoint in us-east-1 through an interface VPC endpoint over inter-Region VPC peering."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "KMS multi-Region keys là các key ở nhiều Region có cùng key ID và key material, nên ciphertext tạo ở us-east-1 có thể giải mã bằng replica key ở eu-west-1 mà không cần gọi cross-Region. Một single-Region key khác ở eu-west-1 không giải mã được dữ liệu mã hóa bằng key us-east-1. Key material do KMS tạo không thể export; gọi KMS ở us-east-1 sẽ thất bại khi Region đó gặp sự cố.",
+  "d": "D1",
+  "l": 38
+ },
+ {
+  "q": "A company hosts a web application on an Application Load Balancer in eu-west-1. The company is adding an Amazon CloudFront distribution in front of the ALB and wants to use the custom domain www.example.com, with HTTPS between viewers and CloudFront and between CloudFront and the ALB. The company wants to use free public certificates that renew automatically. Which solution will meet these requirements?",
+  "options": [
+   "Request an AWS Certificate Manager (ACM) public certificate for www.example.com in us-east-1 and associate it with the CloudFront distribution. Request another ACM public certificate in eu-west-1 for the ALB's origin domain name, such as origin.example.com, and attach it to the ALB HTTPS listener.",
+   "Request a single ACM public certificate in eu-west-1 and associate it with both the CloudFront distribution and the ALB HTTPS listener.",
+   "Use a self-signed certificate on the ALB, and request an ACM public certificate in eu-west-1 for the CloudFront distribution.",
+   "Issue a private certificate from AWS Private CA in us-east-1 for the CloudFront viewer domain, and use HTTP between CloudFront and the ALB."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "CloudFront chỉ dùng được ACM certificate được tạo ở us-east-1 (N. Virginia), còn ALB cần certificate ACM trong cùng Region với nó (eu-west-1). ACM public certificate miễn phí khi dùng với dịch vụ tích hợp và tự gia hạn. Certificate ở eu-west-1 không gắn được cho CloudFront; CloudFront không chấp nhận self-signed certificate ở origin; private certificate không được trình duyệt công khai tin cậy và HTTP không đáp ứng yêu cầu mã hóa đầu-cuối.",
+  "d": "D1",
+  "l": 38
+ },
+ {
+  "q": "A company uses Amazon GuardDuty in all of its accounts. The security team wants to automatically isolate any Amazon EC2 instance when GuardDuty reports a high-severity finding that indicates the instance is communicating with a known command-and-control server. The solution must react within minutes and require minimal custom infrastructure. Which solution will meet these requirements?",
+  "options": [
+   "Configure GuardDuty to automatically terminate any instance that has a high-severity finding.",
+   "Create an Amazon EventBridge rule that matches the GuardDuty finding type and high severity, and target an AWS Lambda function or AWS Systems Manager Automation runbook that replaces the instance's security groups with an isolation security group.",
+   "Export GuardDuty findings to Amazon S3 every 6 hours and use Amazon Athena to identify instances that the team must isolate manually.",
+   "Enable AWS Config and create a managed rule that detects command-and-control traffic and stops the instance."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "GuardDuty gửi finding đến EventBridge gần như theo thời gian thực; rule EventBridge lọc theo loại finding và severity rồi kích hoạt Lambda hoặc SSM Automation để cô lập instance (đổi sang security group cách ly, giữ lại instance để điều tra forensic). GuardDuty chỉ phát hiện, không tự hành động trên tài nguyên. Phân tích bằng Athena mỗi 6 giờ quá chậm; AWS Config đánh giá cấu hình chứ không phát hiện traffic độc hại.",
+  "d": "D1",
+  "l": 39
+ },
+ {
+  "q": "A company stores millions of documents uploaded by customers in hundreds of Amazon S3 buckets across several AWS accounts in AWS Organizations. The compliance team must identify which buckets contain personally identifiable information (PII), such as passport numbers and credit card numbers, and must receive ongoing results with minimal effort. Which solution will meet these requirements?",
+  "options": [
+   "Enable Amazon GuardDuty S3 Protection to scan the objects for PII.",
+   "Use Amazon Inspector to scan the S3 buckets for sensitive data.",
+   "Use Amazon Athena to run regular expression queries against all objects in every bucket.",
+   "Enable Amazon Macie with a delegated administrator account for the organization, and use automated sensitive data discovery with managed data identifiers."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Amazon Macie dùng machine learning và managed data identifiers để phát hiện dữ liệu nhạy cảm như PII, số thẻ tín dụng trong S3; automated sensitive data discovery liên tục lấy mẫu và đánh giá các bucket, quản lý tập trung qua delegated administrator. GuardDuty S3 Protection phát hiện hoạt động truy cập đáng ngờ chứ không phân loại dữ liệu. Inspector quét lỗ hổng phần mềm; tự viết regex bằng Athena tốn công và không đọc được mọi định dạng file.",
+  "d": "D1",
+  "l": 39
+ },
+ {
+  "q": "A company runs a public e-commerce API behind Amazon CloudFront and an Application Load Balancer. Recently, a botnet sent large numbers of HTTP requests from thousands of IP addresses, and some IP addresses sent more than 10,000 requests in 5 minutes. The company wants to mitigate these application layer attacks, get 24/7 access to the AWS Shield Response Team (SRT), and receive protection against scaling charges that result from DDoS attacks. Which combination of actions will meet these requirements? (Select TWO.)",
+  "options": [
+   "Associate an AWS WAF web ACL with the CloudFront distribution and add a rate-based rule that blocks IP addresses that exceed a request threshold.",
+   "Configure network ACLs on the ALB subnets and manually add a deny entry for each attacking IP address.",
+   "Subscribe to AWS Shield Advanced and add the CloudFront distribution and the ALB as protected resources.",
+   "Rely on AWS Shield Standard, which includes SRT support and DDoS cost protection at no additional charge.",
+   "Move the API to larger Amazon EC2 instances with higher network bandwidth in an Auto Scaling group."
+  ],
+  "answer": [
+   0,
+   2
+  ],
+  "exp": "Rate-based rule của AWS WAF tự động chặn các IP vượt ngưỡng request trong khoảng thời gian đánh giá, giảm thiểu HTTP flood tầng 7. Shield Advanced cung cấp quyền truy cập SRT 24/7, DDoS cost protection và hiển thị chi tiết về tấn công. Shield Standard miễn phí nhưng chỉ bảo vệ tầng 3/4, không có SRT hay cost protection; network ACL có giới hạn số rule và không xử lý được hàng nghìn IP.",
+  "d": "D1",
+  "l": 39
+ },
+ {
+  "q": "A company has 60 AWS accounts in AWS Organizations. The security team must collect API activity from all current and future accounts in all AWS Regions into a central Amazon S3 bucket in a dedicated log archive account. Member account administrators must not be able to stop or modify this logging, and auditors must be able to verify that log files were not altered after delivery. Which solution will meet these requirements?",
+  "options": [
+   "Deploy a trail to each member account by using AWS CloudFormation StackSets, and allow account administrators to manage their own trails.",
+   "Enable AWS Config in all accounts and create an aggregator in the log archive account.",
+   "Create an AWS CloudTrail organization trail from the management account or a delegated administrator account that applies to all Regions, delivers logs to the S3 bucket in the log archive account, and has log file integrity validation enabled.",
+   "Configure each account to send its logs to Amazon CloudWatch Logs and use a Lambda function to export them to the central bucket every day."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "Organization trail tự áp dụng cho mọi tài khoản hiện tại và tương lai trong Organization; tài khoản thành viên chỉ thấy trail mà không thể sửa hay xóa. Log file integrity validation tạo digest file có ký số để kiểm chứng log không bị thay đổi. Trail riêng do từng tài khoản quản lý có thể bị tắt; AWS Config ghi lại cấu hình tài nguyên chứ không ghi mọi lệnh gọi API.",
+  "d": "D1",
+  "l": 40
+ },
+ {
+  "q": "A company must ensure that no Amazon S3 bucket in its accounts allows public access. If the Block Public Access settings on a bucket are disabled, the settings must be re-enabled automatically within minutes, and the compliance status must be recorded for audits. Which solution will meet these requirements with the LEAST operational overhead?",
+  "options": [
+   "Use the AWS Config managed rule s3-bucket-level-public-access-prohibited with an automatic remediation action that runs the AWS Systems Manager Automation runbook AWSConfigRemediation-ConfigureS3BucketPublicAccessBlock.",
+   "Write an AWS Lambda function that runs every 24 hours, lists all buckets, and re-enables Block Public Access on each bucket.",
+   "Enable Amazon Macie and manually review the findings about public buckets every week.",
+   "Use AWS Trusted Advisor checks for S3 bucket permissions and email the bucket owners to fix any issues."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "AWS Config managed rule đánh giá cấu hình mỗi khi bucket thay đổi và lưu lịch sử tuân thủ cho audit; automatic remediation gọi SSM Automation runbook do AWS cung cấp để bật lại Block Public Access mà không cần viết code. Lambda chạy 24 giờ một lần không đáp ứng yêu cầu vài phút và phải tự duy trì. Macie và Trusted Advisor chỉ phát hiện, cần xử lý thủ công.",
+  "d": "D1",
+  "l": 40
+ },
+ {
+  "q": "A company uses AWS Organizations with 40 accounts. The company must deploy the same set of IAM roles, an Amazon SNS topic, and AWS Config rules to every account in three AWS Regions. New accounts that are added to specific organizational units (OUs) must receive the resources automatically. Which solution will meet these requirements with the LEAST operational overhead?",
+  "options": [
+   "Write a script that loops through all accounts, assumes a role in each account, and runs the AWS CloudFormation deploy command in each Region.",
+   "Share the AWS CloudFormation template with every account by using AWS Resource Access Manager (AWS RAM) so that each account team can deploy it.",
+   "Create an AWS Elastic Beanstalk environment in each account and Region to deploy the resources.",
+   "Create an AWS CloudFormation StackSet with service-managed permissions that targets the OUs in the three Regions, and enable automatic deployment for accounts that are added to the OUs."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "CloudFormation StackSets triển khai cùng một template vào nhiều tài khoản và Region từ một nơi; với service-managed permissions tích hợp Organizations, automatic deployment tự tạo stack khi có tài khoản mới vào OU và có thể xóa stack khi tài khoản rời OU. Script tự viết tốn công duy trì và không tự xử lý tài khoản mới. AWS RAM không chia sẻ được template CloudFormation; Elastic Beanstalk dùng để triển khai ứng dụng.",
+  "d": "D2",
+  "l": 41
+ },
+ {
+  "q": "A company manages 300 Amazon EC2 instances in private subnets. Administrators currently connect through a bastion host by using SSH keys that are shared among the team. The security team wants to remove the bastion host, close inbound port 22, stop managing SSH keys, and log all session activity to Amazon S3. Which solution will meet these requirements?",
+  "options": [
+   "Replace the bastion host with an AWS Client VPN endpoint and continue to use the shared SSH keys.",
+   "Ensure that the SSM Agent is running, attach an instance profile with the AmazonSSMManagedInstanceCore policy, create VPC interface endpoints for Systems Manager, and use Session Manager with session logging to Amazon S3.",
+   "Assign a public IP address to each instance, open port 22 to the administrators' IP ranges, and use EC2 Instance Connect.",
+   "Move the bastion host to a public subnet in another VPC and use VPC peering to reach the instances."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "Session Manager của AWS Systems Manager cho phép mở shell qua SSM Agent mà không cần mở inbound port, không cần bastion hay SSH key; quyền truy cập kiểm soát bằng IAM và có thể ghi log phiên vào S3/CloudWatch Logs. VPC endpoint (ssm, ssmmessages, ec2messages) giúp instance trong private subnet kết nối mà không cần internet. Client VPN và bastion mới vẫn dùng SSH key chung; gán public IP và mở port 22 đi ngược yêu cầu bảo mật.",
+  "d": "D1",
+  "l": 41
+ },
+ {
+  "q": "A company runs an order management application on Amazon EC2 instances with an Amazon RDS for MySQL database in us-east-1. The company needs a disaster recovery strategy in us-west-2 with an RPO of 5 minutes and an RTO of 1 hour. The company wants to minimize costs and does not want to run any application servers in us-west-2 unless a disaster occurs. Which DR strategy will meet these requirements?",
+  "options": [
+   "Backup and restore: take daily RDS snapshots, copy them to us-west-2, and restore the entire environment during a disaster.",
+   "Warm standby: run a scaled-down but fully functional copy of the application tier and database in us-west-2 at all times.",
+   "Pilot light: maintain a cross-Region RDS read replica in us-west-2, keep current AMIs and infrastructure as code ready, and launch the application tier and promote the replica during a disaster.",
+   "Multi-site active/active: run full production capacity in both Regions and use Amazon Route 53 to route traffic to both Regions."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "Pilot light giữ phần lõi (dữ liệu) luôn được replicate liên tục nên RPO chỉ vài giây đến vài phút, còn tầng ứng dụng chỉ được khởi tạo khi có thảm họa nên chi phí thấp và RTO cỡ vài chục phút. Snapshot hằng ngày cho RPO 24 giờ, không đạt 5 phút. Warm standby và multi-site đều chạy application server liên tục ở us-west-2, trái yêu cầu và tốn kém hơn.",
+  "d": "D2",
+  "l": 42
+ },
+ {
+  "q": "A company runs an internal HR application on Amazon EC2 instances with Amazon EBS volumes and an Amazon RDS for PostgreSQL database. The business has agreed to an RTO of 24 hours and an RPO of 24 hours for a Regional disaster. The company wants centralized management of backups. Which disaster recovery solution will meet these requirements MOST cost-effectively?",
+  "options": [
+   "Use AWS Backup with a daily backup plan for the EC2 instances and the RDS database, configure cross-Region copy of recovery points to a backup vault in another Region, and restore by using infrastructure as code when needed.",
+   "Implement a pilot light environment with a cross-Region RDS read replica and up-to-date AMIs in another Region.",
+   "Run a warm standby environment with a scaled-down Auto Scaling group and an RDS read replica in another Region.",
+   "Use AWS Elastic Disaster Recovery to continuously replicate the servers to a staging area in another Region."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "Với RTO và RPO 24 giờ, backup and restore là chiến lược rẻ nhất vẫn đáp ứng yêu cầu. AWS Backup quản lý tập trung lịch backup cho EC2/EBS và RDS, đồng thời tự copy recovery point sang Region khác. Pilot light, warm standby và Elastic Disaster Recovery đều phải trả tiền cho replication liên tục hoặc tài nguyên luôn chạy, vượt quá nhu cầu RTO/RPO tính bằng giờ.",
+  "d": "D4",
+  "l": 42
+ },
+ {
+  "q": "A company's payment portal runs on Amazon ECS on AWS Fargate behind an Application Load Balancer and uses Amazon Aurora PostgreSQL. The company requires an RTO of 10 minutes and an RPO of less than 1 minute for a Regional failure. During failover, the DR environment must serve production traffic immediately at reduced capacity while it scales up. The company wants to avoid the cost of running full production capacity in two Regions. Which DR strategy will meet these requirements?",
+  "options": [
+   "Backup and restore that uses AWS Backup to copy Aurora and configuration backups to the DR Region every hour.",
+   "Pilot light that uses an Aurora global database secondary cluster, with the ECS cluster, services, and ALB created only after a disaster is declared.",
+   "Multi-site active/active with full production capacity in both Regions and Amazon Route 53 latency-based routing.",
+   "Warm standby that uses an Aurora global database secondary cluster and a small ECS service with a few running tasks behind an ALB in the DR Region, with Route 53 failover routing and scaling up after failover."
+  ],
+  "answer": [
+   3
+  ],
+  "exp": "Warm standby duy trì một bản sao thu nhỏ nhưng đầy đủ chức năng luôn chạy ở Region DR, nên có thể nhận traffic ngay và scale lên trong vài phút; Aurora global database đảm bảo RPO dưới 1 giây. Backup mỗi giờ không đạt RPO 1 phút; pilot light phải tạo hạ tầng ứng dụng khi có sự cố nên không phục vụ được traffic ngay. Active/active đáp ứng nhưng tốn chi phí chạy full capacity ở hai Region.",
+  "d": "D2",
+  "l": 42
+ },
+ {
+  "q": "A company gives each development team a sandbox AWS account with a monthly spending limit of $2,000. The finance team wants team leads to receive an email when forecasted spend reaches 80% of the limit. When actual spend exceeds 100% of the limit, the company wants to automatically prevent the team from launching new Amazon EC2 instances in that account. Which solution will meet these requirements with the LEAST operational overhead?",
+  "options": [
+   "Use AWS Cost Anomaly Detection with a cost monitor for each account and an Amazon SNS subscription for the team leads.",
+   "Create a cost budget in AWS Budgets for each account with an alert at 80% of forecasted cost to the team leads, and a budget action at 100% of actual cost that applies an SCP that denies ec2:RunInstances to the account.",
+   "Create an Amazon CloudWatch billing alarm in each account and write an AWS Lambda function that terminates all EC2 instances when the alarm enters the ALARM state.",
+   "Review the daily cost report in AWS Cost Explorer each morning and manually remove the team's IAM permissions when the limit is exceeded."
+  ],
+  "answer": [
+   1
+  ],
+  "exp": "AWS Budgets hỗ trợ cảnh báo theo chi phí dự báo (forecasted) và thực tế, cùng budget actions tự động áp dụng IAM policy, SCP hoặc dừng EC2/RDS khi vượt ngưỡng, không cần viết code. Cost Anomaly Detection phát hiện chi tiêu bất thường chứ không theo hạn mức cố định và không tự chặn tài nguyên. Billing alarm kèm Lambda tự viết tốn công hơn và việc xóa mọi instance quá mạnh tay; theo dõi thủ công không đáp ứng yêu cầu tự động.",
+  "d": "D4",
+  "l": 44
+ },
+ {
+  "q": "A company has run a steady baseline of Amazon EC2 and AWS Fargate workloads for the past year, and usage is expected to remain stable or grow. The company wants to commit to an appropriate hourly spend for a 1-year Savings Plan based on its actual historical usage, without building its own analysis. Which solution will meet these requirements with the LEAST effort?",
+  "options": [
+   "Use AWS Trusted Advisor to list idle load balancers and use the results to calculate a commitment.",
+   "Export detailed billing data to Amazon S3 and build custom dashboards to estimate the hourly commitment manually.",
+   "Use the Savings Plans recommendations in AWS Cost Explorer, select Compute Savings Plans with a 1-year term and an appropriate lookback period, and purchase the recommended hourly commitment.",
+   "Use AWS Compute Optimizer to automatically purchase Reserved Instances for each EC2 instance type."
+  ],
+  "answer": [
+   2
+  ],
+  "exp": "Cost Explorer đưa ra Savings Plans recommendations dựa trên lịch sử sử dụng thực tế (lookback 7, 30 hoặc 60 ngày), tính sẵn mức cam kết theo giờ và mức tiết kiệm ước tính cho từng loại plan và kỳ hạn. Tự xây dashboard tốn công không cần thiết. Trusted Advisor về idle load balancer không liên quan đến cam kết compute; Compute Optimizer đưa ra khuyến nghị rightsizing và không tự mua Reserved Instances.",
+  "d": "D4",
+  "l": 44
+ },
+ {
+  "q": "A company has several product teams that share one AWS account. Each team tags its resources with a team key. The finance department needs monthly costs broken down by team and wants a detailed, line-item dataset that it can query with Amazon Athena. Which combination of steps will meet these requirements? (Select TWO.)",
+  "options": [
+   "Create a separate VPC for each team and use VPC Flow Logs to calculate each team's costs.",
+   "Activate the team tag as a user-defined cost allocation tag in the AWS Billing and Cost Management console.",
+   "Enable AWS Config to record the team tag on each resource and export the configuration history to the finance department.",
+   "Configure AWS Budgets reports to email each team's spending summary to the finance department once a month.",
+   "Create a Cost and Usage Report (CUR 2.0) export in AWS Data Exports that includes resource tags and delivers Parquet files to Amazon S3 for querying with Athena."
+  ],
+  "answer": [
+   1,
+   4
+  ],
+  "exp": "Tag chỉ xuất hiện trong dữ liệu billing sau khi được kích hoạt làm cost allocation tag. CUR 2.0 qua AWS Data Exports cung cấp dữ liệu chi tiết từng dòng (line-item) kèm cột tag, xuất ra S3 dạng Parquet để truy vấn bằng Athena và phân bổ chi phí theo team. Flow Logs và AWS Config không chứa thông tin chi phí; báo cáo Budgets chỉ là bản tóm tắt, không phải dataset chi tiết.",
+  "d": "D4",
+  "l": 44
+ },
+ {
+  "q": "A company runs 500 Amazon EC2 instances, many Amazon EBS volumes, and many AWS Lambda functions. Most instances were sized years ago, and the company suspects that they are overprovisioned. The company wants recommendations for better instance types and sizes that are based on actual utilization, including memory utilization. Which solution will meet these requirements with the LEAST effort?",
+  "options": [
+   "Opt in to AWS Compute Optimizer for the organization, install the Amazon CloudWatch agent to publish memory metrics, and review the rightsizing recommendations for EC2, EBS, and Lambda.",
+   "Use a monthly AWS Cost Explorer report filtered by instance type to identify the most expensive instances, and downsize all of them by one size.",
+   "Purchase Savings Plans for the existing instance types to reduce their hourly cost.",
+   "Use Amazon Inspector to analyze the utilization of the instances and recommend new instance types."
+  ],
+  "answer": [
+   0
+  ],
+  "exp": "AWS Compute Optimizer dùng machine learning phân tích metric CloudWatch lịch sử để đề xuất rightsizing cho EC2, Auto Scaling groups, EBS, Lambda, ECS trên Fargate và RDS. Memory không phải metric mặc định của EC2 nên cần CloudWatch agent để khuyến nghị chính xác hơn. Hạ size đồng loạt dựa trên chi phí có thể làm thiếu tài nguyên; Savings Plans giảm giá nhưng không sửa việc overprovisioning; Inspector dùng để quét lỗ hổng bảo mật.",
+  "d": "D4",
+  "l": 44
+ }
+]

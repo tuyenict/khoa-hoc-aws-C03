@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 15 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/res/Amazon-Simple-Storage-Service_S3-Replication.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="15" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-15-s3-advanced.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "lc", name: "S3 Lifecycle" },
+      { id: "rep", name: "S3 Replication" },
+      { id: "perf", name: "Hiệu năng S3" },
+      { id: "ta", name: "Transfer Acceleration" },
+      { id: "evt", name: "Event Notifications" },
+      { id: "misc", name: "S3 Select · Requester Pays" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Lifecycle
+      { t: "lc", f: "Hai loại hành động chính của S3 Lifecycle?", b: "<b>Transition</b> (chuyển sang lớp rẻ hơn) và <b>Expiration</b> (S3 xóa object thay bạn)." },
+      { t: "lc", f: "Mỗi bucket có bao nhiêu lifecycle configuration, bao nhiêu rule?", b: "<b>1</b> configuration, tối đa <b>1.000 rule</b> (không tăng được)." },
+      { t: "lc", f: "Filter của lifecycle rule chọn object theo gì?", b: "<b>Prefix</b> (mỗi filter một prefix), <b>tag</b>, <b>object size</b>; kết hợp bằng <code>&lt;And&gt;</code>. Filter rỗng ⇒ mọi object." },
+      { t: "lc", f: "Thời điểm lifecycle tính thế nào?", b: "Ngày tạo + N ngày, <b>làm tròn lên 00:00 UTC</b> kế tiếp. Vd tạo 15/01 10:30, rule 3 ngày ⇒ 19/01 00:00 UTC." },
+      { t: "lc", f: "Rule mới có áp dụng cho object đã có không?", b: "<b>Có.</b> Object cũ hơn N ngày bị đưa vào hàng đợi xử lý ngay." },
+      { t: "lc", f: "Mô hình <i>waterfall</i> của lifecycle là gì?", b: "Object chỉ đi <b>xuống</b> lớp lạnh hơn. Flexible ⇒ chỉ Deep Archive; Deep Archive là điểm cuối.", x: "Muốn đi lên phải restore + copy." },
+      { t: "lc", f: "One Zone-IA chuyển được sang lớp nào bằng lifecycle?", b: "Chỉ <b>Glacier Flexible</b> và <b>Deep Archive</b>." },
+      { t: "lc", f: "Object bao nhiêu KB không được transition mặc định?", b: "<b>&lt; 128 KB</b> (từ 09/2024) – phí transition có thể vượt khoản tiết kiệm. Muốn chuyển thì thêm filter size tùy chỉnh." },
+      { t: "lc", f: "Object phải ở lớp hiện tại ít nhất bao lâu trước khi sang Standard-IA / One Zone-IA?", b: "<b>30 ngày</b>. Glacier thì transition được ngay ngày 0." },
+      { t: "lc", f: "Chuyển sang Glacier IR ngày 4 thì transition sang Deep Archive sớm nhất ngày nào (một rule)?", b: "<b>Ngày 94</b> (4 + 90 ngày minimum duration của Glacier IR)." },
+      { t: "lc", f: "Trong bucket versioning, Expiration có giải phóng dung lượng không?", b: "<b>Không</b> – chỉ chèn delete marker; version cũ vẫn tính tiền. Cần <b>NoncurrentVersionExpiration</b>." },
+      { t: "lc", f: "NewerNoncurrentVersions dùng để làm gì?", b: "Giữ lại <b>1–100</b> version cũ mới nhất; version chỉ bị xử lý khi vượt cả số ngày và số version.", x: "Bắt buộc có &lt;Filter&gt;." },
+      { t: "lc", f: "Bucket bị tính phí dung lượng không thấy trong danh sách object ⇒ ?", b: "Multipart upload dở dang ⇒ rule <b>AbortIncompleteMultipartUpload</b> (DaysAfterInitiation)." },
+      { t: "lc", f: "Nhiều lifecycle rule xung đột thì sao?", b: "<b>Xóa vĩnh viễn thắng transition</b>; transition thắng tạo delete marker; Glacier Flexible thắng Standard-IA/One Zone-IA; mỗi object một action mỗi ngày." },
+      { t: "lc", f: "Bucket policy deny mọi action có chặn được lifecycle không?", b: "<b>Không.</b> Lifecycle vẫn transition/xóa bình thường." },
+      { t: "lc", f: "Billing thay đổi khi nào sau khi object đủ điều kiện lifecycle?", b: "<b>Ngay khi đủ điều kiện</b>, dù S3 thực hiện chậm. Ngoại lệ: chuyển sang Intelligent-Tiering chỉ đổi giá sau khi chuyển xong." },
+
+      // ---- Replication
+      { t: "rep", f: "S3 Replication đồng bộ hay bất đồng bộ?", b: "<b>Bất đồng bộ (asynchronous).</b>", x: "Đề cần RPO = 0 tuyệt đối thì S3 replication không bảo đảm." },
+      { t: "rep", f: "Điều kiện bắt buộc để bật S3 Replication?", b: "<b>Versioning</b> ở cả nguồn và đích + <b>IAM role</b> cho S3 replicate; cross-account cần <b>bucket policy</b> ở đích." },
+      { t: "rep", f: "CRR dùng cho tình huống nào?", b: "Khác Region: <b>compliance</b> khoảng cách xa, <b>giảm độ trễ</b> cho user vùng khác, compute ở hai Region, <b>DR</b>." },
+      { t: "rep", f: "SRR dùng cho tình huống nào?", b: "Cùng Region: <b>gom log</b> nhiều bucket/account, replicate prod ⇔ test, <b>data sovereignty</b> (không rời quốc gia). Không phí data transfer." },
+      { t: "rep", f: "Live replication có replicate object đã có trước khi bật không?", b: "<b>Không.</b> Dùng <b>S3 Batch Replication</b>." },
+      { t: "rep", f: "S3 Batch Replication làm được gì?", b: "Replicate <b>object có sẵn</b>, object <b>FAILED</b>, sang đích mới, và replica. Chạy như job S3 Batch Operations.", x: "RTC không áp dụng cho Batch Replication." },
+      { t: "rep", f: "S3 Replication Time Control (RTC) cam kết gì?", b: "<b>99.99% object mới trong 15 phút</b>, có SLA; tự bật replication metrics và sự kiện OperationMissedThreshold." },
+      { t: "rep", f: "DELETE kèm version ID ở nguồn có được replicate không?", b: "<b>Không bao giờ</b> – chống xóa có chủ đích/độc hại." },
+      { t: "rep", f: "Delete marker có được replicate mặc định không?", b: "<b>Không</b> (với config có Filter), trừ khi bật <b>delete marker replication</b> (không hỗ trợ rule theo tag)." },
+      { t: "rep", f: "A ⇒ B ⇒ C: replica ở B có tự sang C không?", b: "<b>Không</b> (no chaining). Muốn có ở C ⇒ cấu hình A ⇒ C trực tiếp." },
+      { t: "rep", f: "<i>Owner override</i> dùng để làm gì?", b: "Đổi quyền sở hữu replica sang <b>account sở hữu bucket đích</b> – hay dùng khi backup sang account riêng." },
+      { t: "rep", f: "Cái gì không được replicate ngoài object cũ, replica, delete marker?", b: "Hành động <b>lifecycle</b>, thay đổi cấu hình cấp bucket, object ở <b>Glacier Flexible/Deep Archive</b>." },
+      { t: "rep", f: "Đang replicate có suspend versioning ở bucket nguồn được không?", b: "<b>Không</b> – S3 trả lỗi, phải gỡ replication config trước. Suspend ở đích ⇒ replication FAILED." },
+
+      // ---- Performance
+      { t: "perf", f: "Request rate tối thiểu S3 hỗ trợ mỗi prefix?", b: "<b>3.500</b> PUT/COPY/POST/DELETE và <b>5.500</b> GET/HEAD mỗi giây mỗi prefix; số prefix không giới hạn." },
+      { t: "perf", f: "Đọc song song 10 prefix đạt bao nhiêu GET/giây?", b: "Tới <b>55.000</b> read request/giây." },
+      { t: "perf", f: "Lỗi <b>503 Slow Down</b> nghĩa là gì? Xử lý thế nào?", b: "S3 đang scale tới tốc độ mới. Xử lý: <b>exponential backoff</b> + phân tán key qua <b>nhiều prefix</b>.", x: "Không phải tăng quota hay đổi storage class." },
+      { t: "perf", f: "Từ bao nhiêu MB AWS khuyên dùng multipart upload?", b: "Từ <b>100 MB</b>; bắt buộc khi &gt; 5 GB." },
+      { t: "perf", f: "Ba bước của multipart upload?", b: "<b>CreateMultipartUpload</b> (nhận upload ID) ⇒ <b>UploadPart</b> (part number 1–10.000, trả ETag) ⇒ <b>CompleteMultipartUpload</b> (hoặc Abort)." },
+      { t: "perf", f: "File 100 GB, part 100 MB ⇒ bao nhiêu API call?", b: "1 Create + 1.000 UploadPart + 1 Complete = <b>1.002</b>." },
+      { t: "perf", f: "Byte-range fetch là gì?", b: "Dùng header <b>Range</b> trong GetObject để lấy một đoạn byte; nhiều kết nối song song ⇒ throughput cao hơn, retry nhanh hơn." },
+      { t: "perf", f: "Nội dung đọc lặp lại nhiều lần nên cache bằng gì?", b: "<b>CloudFront</b> (edge gần user) hoặc <b>ElastiCache</b> (in-memory, phải sửa code)." },
+      { t: "perf", f: "Dùng SSE-KMS ảnh hưởng hiệu năng S3 thế nào?", b: "Request S3 còn bị giới hạn bởi <b>quota request/giây của AWS KMS</b>." },
+
+      // ---- Transfer Acceleration
+      { t: "ta", f: "S3 Transfer Acceleration hoạt động thế nào?", b: "Dữ liệu vào <b>edge location CloudFront</b> gần client nhất rồi đi <b>backbone AWS</b> về bucket." },
+      { t: "ta", f: "Endpoint của Transfer Acceleration?", b: "<code>&lt;bucket&gt;.s3-accelerate.amazonaws.com</code> (dual-stack: s3-accelerate.dualstack)." },
+      { t: "ta", f: "Điều kiện tên bucket để bật Transfer Acceleration?", b: "<b>DNS-compliant</b> và <b>không có dấu chấm</b>; chỉ virtual-hosted style." },
+      { t: "ta", f: "Sau khi bật, bao lâu mới thấy tăng tốc?", b: "Endpoint dùng được ngay, nhưng có thể mất tới <b>20 phút</b>." },
+      { t: "ta", f: "Transfer Acceleration tính phí thế nào?", b: "Chỉ tính phí cho lần truyền mà TA <b>có khả năng cải thiện tốc độ</b>." },
+      { t: "ta", f: "Upload toàn cầu vs tải nội dung tĩnh toàn cầu – chọn gì?", b: "Upload về một bucket ⇒ <b>Transfer Acceleration</b>.<br>Tải/xem nội dung tĩnh lặp lại ⇒ <b>CloudFront</b>." },
+
+      // ---- Event Notifications
+      { t: "evt", f: "4 đích nhận S3 Event Notifications?", b: "<b>SNS topic</b>, <b>SQS queue</b>, <b>Lambda function</b>, <b>EventBridge</b>." },
+      { t: "evt", f: "S3 gửi trực tiếp tới SQS FIFO hoặc SNS FIFO được không?", b: "<b>Không.</b> Chỉ Standard. Muốn tới SQS FIFO ⇒ <b>EventBridge</b>." },
+      { t: "evt", f: "Event notification giao theo kiểu gì?", b: "<b>At least once</b>, không bảo đảm thứ tự ⇒ consumer nên <b>idempotent</b>." },
+      { t: "evt", f: "Một event notification có bao nhiêu đích?", b: "<b>Một.</b> Nhiều consumer ⇒ SNS fan-out hoặc EventBridge nhiều target." },
+      { t: "evt", f: "s3:ObjectRemoved có báo xóa do lifecycle không?", b: "<b>Không</b> – dùng <b>s3:LifecycleExpiration:*</b>." },
+      { t: "evt", f: "Lambda trigger bởi upload rồi ghi lại vào cùng bucket ⇒ rủi ro gì?", b: "<b>Vòng lặp vô hạn.</b> Tránh bằng hai bucket hoặc trigger chỉ trên prefix đầu vào." },
+      { t: "evt", f: "Bật EventBridge cho bucket có đặc điểm gì?", b: "Gửi <b>mọi sự kiện</b> tới default event bus; lọc nâng cao bằng rule, nhiều target, <b>archive & replay</b>, gửi cross-account/Region." },
+      { t: "evt", f: "Muốn S3 gửi được tới SNS/SQS/Lambda cần cấu hình gì?", b: "<b>Resource policy</b> của SNS topic / SQS queue / Lambda cho phép S3 publish/send/invoke. Đích phải cùng Region." },
+      { t: "evt", f: "Message S3 gửi SQS lớn tới bao nhiêu?", b: "Tới <b>64 KB</b> ⇒ đặt MaximumMessageSize ≥ 64 KB." },
+
+      // ---- Select, Requester Pays
+      { t: "misc", f: "S3 Select là gì? Trạng thái hiện tại?", b: "SQL lọc nội dung <b>một object</b> (CSV, JSON, Parquet) phía server. <b>Không còn mở cho khách hàng mới</b> ⇒ dùng <b>Athena</b>." },
+      { t: "misc", f: "Athena khác S3 Select thế nào?", b: "Athena: SQL serverless trên <b>nhiều object/data lake</b>, join, aggregate, trả phí theo dữ liệu quét." },
+      { t: "misc", f: "Requester Pays: ai trả gì?", b: "<b>Requester</b>: phí request + data transfer.<br><b>Owner</b>: luôn trả phí lưu trữ." },
+      { t: "misc", f: "Requester Pays có cho truy cập ẩn danh không?", b: "<b>Không.</b> Mọi request phải authenticated và gửi header <code>x-amz-request-payer</code>." },
+      { t: "misc", f: "Requester Pays bucket có làm đích replication cross-account được không?", b: "<b>Không</b>; cũng không làm target của server access logging." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>frequent 30 days, rarely after, keep 7 years then delete</i>” ⇒ ?", b: "<b>Một lifecycle rule</b>: Standard ⇒ (30 ngày) Standard-IA ⇒ Glacier/Deep Archive ⇒ Expiration sau 7 năm." },
+      { t: "kw", f: "Đề có “<i>storage costs keep growing after enabling versioning</i>” ⇒ ?", b: "<b>NoncurrentVersionExpiration</b> (+ NewerNoncurrentVersions)." },
+      { t: "kw", f: "Đề có “<i>least operational overhead to delete objects after N days</i>” ⇒ ?", b: "<b>Lifecycle expiration</b>, không phải Lambda + cron." },
+      { t: "kw", f: "Đề có “<i>replicate objects that already exist</i>”, “<i>re-replicate failed objects</i>” ⇒ ?", b: "<b>S3 Batch Replication</b>." },
+      { t: "kw", f: "Đề có “<i>replicate within 15 minutes, SLA</i>” ⇒ ?", b: "<b>S3 Replication Time Control</b>." },
+      { t: "kw", f: "Đề có “<i>aggregate logs in the same Region</i>”, “<i>data must not leave the country</i>” ⇒ ?", b: "<b>SRR</b>." },
+      { t: "kw", f: "Đề có “<i>HTTP 503 Slow Down</i>” ⇒ ?", b: "<b>Nhiều prefix</b> + <b>exponential backoff</b>." },
+      { t: "kw", f: "Đề có “<i>users across continents upload large files to a single bucket; slow</i>” ⇒ ?", b: "<b>Transfer Acceleration + multipart upload</b>." },
+      { t: "kw", f: "Đề có “<i>read only the first bytes of many large files</i>” ⇒ ?", b: "<b>Byte-range GET</b>." },
+      { t: "kw", f: "Đề có “<i>several applications must each receive every new-object event</i>” ⇒ ?", b: "S3 ⇒ <b>SNS ⇒ nhiều SQS</b> (fan-out) hoặc EventBridge nhiều target." },
+      { t: "kw", f: "Đề có “<i>send S3 events to SQS FIFO</i>”, “<i>replay events</i>” ⇒ ?", b: "<b>Amazon EventBridge</b>." },
+      { t: "kw", f: "Đề có “<i>share dataset; company must not pay when partners download</i>” ⇒ ?", b: "<b>Requester Pays</b>." }
+    ],
+
+    pairs: [
+      ["Lifecycle rule", "Quy tắc tự chuyển lớp/xóa, ≤ 1.000 mỗi bucket"],
+      ["Transition action", "Chuyển object sang lớp rẻ hơn"],
+      ["Expiration action", "S3 xóa object hết hạn thay bạn"],
+      ["NoncurrentVersionExpiration", "Xóa vĩnh viễn version cũ"],
+      ["Expired object delete marker", "Delete marker không còn version phía sau"],
+      ["AbortIncompleteMultipartUpload", "Dọn multipart dở dang sau N ngày"],
+      ["Waterfall model", "Transition chỉ từ lớp nóng xuống lạnh"],
+      ["CRR", "Sao chép xuyên Region"],
+      ["SRR", "Sao chép cùng Region, không phí transfer"],
+      ["S3 Batch Replication", "Replicate object đã có / FAILED"],
+      ["S3 RTC", "99.99% trong 15 phút, có SLA"],
+      ["Owner override", "Đổi chủ replica sang account đích"],
+      ["Delete marker replication", "Tùy chọn sao chép dấu xóa, mặc định tắt"],
+      ["Partitioned prefix", "Đơn vị tính 3.500/5.500 request/giây"],
+      ["503 Slow Down", "Lỗi giảm tốc khi S3 đang scale"],
+      ["Exponential backoff", "Retry với thời gian chờ tăng dần"],
+      ["Upload ID", "Mã phiên của multipart upload"],
+      ["Byte-range fetch", "Tải theo dải byte bằng header Range"],
+      ["Transfer Acceleration", "Upload qua edge location CloudFront"],
+      ["S3 Select", "SQL lọc một object, không còn cho khách mới"],
+      ["At-least-once delivery", "Có thể trùng lặp, consumer nên idempotent"],
+      ["Fan-out", "Một sự kiện tới nhiều consumer (SNS ⇒ SQS)"],
+      ["Requester Pays", "Người tải trả request + data transfer"]
+    ],
+
+    sorts: [
+      {
+        title: "Được replicate hay không?",
+        desc: "Với cấu hình replication mặc định (live CRR/SRR), mục nào được replicate sang đích?",
+        buckets: ["Được replicate", "Không replicate"],
+        items: [
+          ["Object mới tạo sau khi thêm replication config", 0, "live replication"],
+          ["Object mã hóa SSE-KMS (đã cấu hình KMS)", 0, "cần cấu hình thêm cho KMS"],
+          ["Metadata và object tags", 0, "giữ nguyên version ID gốc"],
+          ["Thông tin Object Lock retention", 0, "được replicate"],
+          ["Cập nhật ACL", 0, "trừ khi dùng owner override"],
+          ["Object có sẵn trước khi bật replication", 1, "phải dùng Batch Replication"],
+          ["DELETE kèm version ID", 1, "không bao giờ – chống xóa độc hại"],
+          ["Replica do rule khác tạo (A ⇒ B ⇒ C)", 1, "no chaining"],
+          ["Hành động lifecycle ở bucket nguồn", 1, "phải cấu hình lifecycle ở cả hai bucket"],
+          ["Object ở Glacier Deep Archive", 1, "không replicate object archive"]
+        ]
+      },
+      {
+        title: "CRR, SRR, Batch Replication hay RTC?",
+        desc: "Chọn kiểu replication phù hợp với tình huống đề.",
+        buckets: ["CRR", "SRR", "Batch Replication", "RTC"],
+        items: [
+          ["Bản sao DR ở Region khác", 0, "khác Region"],
+          ["Giảm độ trễ cho người dùng ở châu lục khác", 0, "dữ liệu nằm sẵn ở Region gần user"],
+          ["Gom log từ nhiều account về một bucket cùng Region", 1, "SRR"],
+          ["Bản sao ở account khác nhưng dữ liệu không được rời quốc gia", 1, "data sovereignty"],
+          ["Replicate giữa account production và test cùng Region", 1, "giữ metadata"],
+          ["Replicate hàng triệu object đã có sẵn", 2, "live replication chỉ áp dụng object mới"],
+          ["Replicate lại các object FAILED", 2, "on-demand"],
+          ["Compliance yêu cầu replicate trong 15 phút có SLA", 3, "99.99% trong 15 phút"]
+        ]
+      },
+      {
+        title: "Tối ưu hiệu năng / truyền tải bằng gì?",
+        desc: "Chọn kỹ thuật phù hợp nhất với tình huống.",
+        buckets: ["Nhiều prefix + backoff", "Multipart upload", "Byte-range fetch", "Transfer Acceleration", "CloudFront", "Snow Family / DataSync"],
+        items: [
+          ["Ứng dụng nhận nhiều lỗi 503 Slow Down", 0, "giới hạn tính theo prefix"],
+          ["Cần ghi hơn 3.500 PUT/giây", 0, "song song qua nhiều prefix"],
+          ["Upload file 50 GB, mạng hay gián đoạn", 1, "part lỗi chỉ gửi lại part đó"],
+          ["Bắt đầu upload khi chưa biết kích thước cuối", 1, "lợi ích của multipart"],
+          ["Tải file lớn nhanh hơn bằng nhiều kết nối", 2, "header Range song song"],
+          ["Chỉ đọc phần header đầu của nhiều file lớn", 2, "lấy một đoạn byte"],
+          ["Người dùng nhiều châu lục upload về một bucket", 3, "edge location + backbone AWS"],
+          ["Nội dung tĩnh được người dùng toàn cầu tải lặp lại", 4, "cache tại edge"],
+          ["Hàng trăm TB, đường truyền chậm", 5, "truyền offline / tác tử truyền dữ liệu"]
+        ]
+      },
+      {
+        title: "Đích nhận S3 event nào?",
+        desc: "Chọn đích nhận sự kiện phù hợp nhất.",
+        buckets: ["Lambda", "SQS", "SNS", "EventBridge"],
+        items: [
+          ["Tạo thumbnail ngay khi upload, serverless", 0, "chạy code theo sự kiện"],
+          ["Ghi metadata object vào DynamoDB khi upload", 0, "Lambda xử lý trực tiếp"],
+          ["Upload dồn dập, không mất sự kiện, worker xử lý theo tốc độ riêng", 1, "đệm & decouple"],
+          ["Một sự kiện phát tới email và nhiều queue", 2, "pub/sub fan-out"],
+          ["Gửi sự kiện tới SQS FIFO", 3, "S3 không gửi trực tiếp tới FIFO"],
+          ["Lọc nâng cao theo size/metadata, archive và replay", 3, "EventBridge rule"],
+          ["Gửi sự kiện sang account/Region khác", 3, "EventBridge"]
+        ]
+      },
+      {
+        title: "Lifecycle transition hợp lệ?",
+        desc: "Theo mô hình waterfall, transition sau có được lifecycle hỗ trợ không?",
+        buckets: ["Hợp lệ", "Không hợp lệ"],
+        items: [
+          ["Standard ⇒ Standard-IA sau 30 ngày", 0, "đi xuống, đủ 30 ngày"],
+          ["Standard ⇒ Glacier Deep Archive ngày 0", 0, "Glacier transition ngay được"],
+          ["Standard-IA ⇒ Intelligent-Tiering", 0, "đi xuống"],
+          ["Glacier Flexible ⇒ Deep Archive", 0, "đích duy nhất của Flexible"],
+          ["One Zone-IA ⇒ Glacier Flexible", 0, "hợp lệ"],
+          ["Deep Archive ⇒ S3 Standard", 1, "phải restore + copy"],
+          ["Standard ⇒ Standard-IA sau 7 ngày", 1, "tối thiểu 30 ngày"],
+          ["One Zone-IA ⇒ Glacier Instant Retrieval", 1, "One Zone-IA chỉ sang Flexible/Deep"],
+          ["Standard-IA ⇒ Standard", 1, "không đi ngược lên"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Mỗi bucket chỉ có một lifecycle configuration.", true, "Tối đa 1.000 rule trong đó."],
+      ["Giới hạn 1.000 lifecycle rule có thể xin tăng.", false, "Không tăng được."],
+      ["Lifecycle rule mới chỉ áp dụng cho object tạo sau khi thêm rule.", false, "Áp dụng cả object đã có."],
+      ["Lifecycle có thể chuyển object từ Glacier Deep Archive về S3 Standard.", false, "Chỉ đi xuống; phải restore + copy."],
+      ["Glacier Flexible Retrieval chỉ transition được sang Deep Archive.", true, "Mô hình waterfall."],
+      ["Object nhỏ hơn 128 KB mặc định không được lifecycle transition.", true, "Thay đổi từ 09/2024."],
+      ["Lifecycle có thể transition sang Standard-IA sau 7 ngày.", false, "Tối thiểu 30 ngày."],
+      ["Trong bucket versioning, Expiration xóa vĩnh viễn current version.", false, "Chỉ chèn delete marker."],
+      ["Expiration không xóa multipart upload dở dang.", true, "Phải dùng AbortIncompleteMultipartUpload."],
+      ["Khi rule xung đột, xóa vĩnh viễn thắng transition.", true, "Object bị xóa."],
+      ["Bucket policy deny mọi action sẽ chặn lifecycle.", false, "Lifecycle vẫn chạy bình thường."],
+      ["Không có phí retrieval khi lifecycle transition.", true, "Chỉ có phí transition request."],
+      ["S3 Replication là đồng bộ (synchronous).", false, "Bất đồng bộ."],
+      ["Replication yêu cầu versioning ở cả bucket nguồn và đích.", true, "Cùng một IAM role."],
+      ["Bật CRR sẽ tự sao chép mọi object đã có sang Region đích.", false, "Chỉ object mới; object cũ dùng Batch Replication."],
+      ["DELETE kèm version ID ở nguồn không được replicate sang đích.", true, "Bảo vệ khỏi xóa có chủ đích."],
+      ["Replica ở bucket B tự được replicate tiếp sang bucket C.", false, "No chaining; cấu hình A ⇒ C."],
+      ["SRR có phí data transfer giữa bucket.", false, "SRR không có phí data transfer."],
+      ["S3 RTC áp dụng cho Batch Replication.", false, "RTC chỉ cho live replication."],
+      ["S3 RTC replicate 99.99% object mới trong 15 phút.", true, "Có SLA."],
+      ["Có thể đặt replica thẳng vào Glacier Deep Archive.", true, "Chọn storage class đích trong rule."],
+      ["S3 hỗ trợ ít nhất 5.500 GET/HEAD mỗi giây mỗi prefix.", true, "Ghi là 3.500."],
+      ["Số prefix trong một bucket bị giới hạn.", false, "Không giới hạn – song song qua nhiều prefix."],
+      ["Lỗi 503 Slow Down xử lý bằng cách đổi storage class.", false, "Exponential backoff + nhiều prefix."],
+      ["Part multipart chưa complete vẫn bị tính phí lưu trữ.", true, "Và không hiện trong danh sách object."],
+      ["Byte-range fetch dùng header Range trong GetObject.", true, "Đọc song song hoặc đọc một phần."],
+      ["Bucket có dấu chấm trong tên vẫn bật được Transfer Acceleration.", false, "Tên không được có dấu chấm."],
+      ["Transfer Acceleration dùng edge location của CloudFront.", true, "Rồi đi backbone AWS về bucket."],
+      ["S3 Event Notifications gửi trực tiếp được tới SQS FIFO.", false, "Không; dùng EventBridge."],
+      ["S3 Event Notifications bảo đảm giao đúng một lần và theo thứ tự.", false, "At least once, không bảo đảm thứ tự."],
+      ["Khi bật EventBridge cho bucket, mọi sự kiện được gửi tới default event bus.", true, "Lọc bằng rule."],
+      ["s3:ObjectRemoved báo cả object bị lifecycle xóa.", false, "Dùng s3:LifecycleExpiration:*."],
+      ["S3 Select vẫn mở cho khách hàng mới.", false, "Không còn cho khách mới; dùng Athena."],
+      ["Requester Pays cho phép truy cập ẩn danh.", false, "Mọi request phải authenticated."],
+      ["Với Requester Pays, bucket owner vẫn trả phí lưu trữ.", true, "Requester trả request + data transfer."],
+      ["Hành động lifecycle ở bucket nguồn được replicate sang đích.", false, "Phải cấu hình lifecycle ở cả hai bucket."]
+    ],
+
+    map: {
+      t: "Bài 15 · S3 nâng cao",
+      c: [
+        { t: "S3 Lifecycle", icon: "res/Amazon-Simple-Storage-Service_S3-Glacier-Deep-Archive.svg", c: [
+          { t: "Quota", v: "1 config/bucket, ≤ 1.000 rule" },
+          { t: "Filter", v: "prefix · tag · size (AND)" },
+          { t: "Action", v: "Transition · Expiration · Noncurrent* · ExpiredObjectDeleteMarker · AbortIncompleteMultipartUpload" },
+          { t: "Waterfall", v: "chỉ đi xuống, Deep Archive là điểm cuối" },
+          { t: "Ràng buộc", v: "&lt; 128 KB không transition · IA ≥ 30 ngày · Glacier +40 KB" },
+          { t: "Versioning", v: "Expiration chỉ tạo delete marker ⇒ NoncurrentVersionExpiration" }
+        ] },
+        { t: "S3 Replication", icon: "res/Amazon-Simple-Storage-Service_S3-Replication.svg", c: [
+          { t: "Điều kiện", v: "versioning 2 bucket + IAM role (+ bucket policy đích)" },
+          { t: "CRR", v: "khác Region: compliance, độ trễ, DR" },
+          { t: "SRR", v: "cùng Region: gom log, prod–test, sovereignty" },
+          { t: "Batch Replication", v: "object có sẵn, FAILED" },
+          { t: "RTC", v: "99.99% trong 15 phút, SLA" },
+          { t: "Không replicate", v: "object cũ, replica, DELETE + versionId, lifecycle" }
+        ] },
+        { t: "Hiệu năng", icon: "res/Amazon-Simple-Storage-Service_S3-Standard.svg", c: [
+          { t: "Request rate", v: "3.500 ghi / 5.500 đọc mỗi giây mỗi prefix" },
+          { t: "503 Slow Down", v: "nhiều prefix + exponential backoff" },
+          { t: "Multipart", v: "từ 100 MB: Create ⇒ UploadPart ⇒ Complete" },
+          { t: "Byte-range fetch", v: "header Range, đọc song song" },
+          { t: "Cache", v: "CloudFront / ElastiCache" }
+        ] },
+        { t: "Transfer Acceleration", icon: "res/Amazon-CloudFront_Edge-Location.svg", c: [
+          { t: "Cơ chế", v: "edge location CloudFront + backbone AWS" },
+          { t: "Endpoint", v: "bucket.s3-accelerate.amazonaws.com" },
+          { t: "Tên bucket", v: "không có dấu chấm" },
+          { t: "Hiệu lực", v: "tới 20 phút" },
+          { t: "Chi phí", v: "chỉ tính khi có khả năng nhanh hơn" },
+          { t: "Phân biệt", v: "upload toàn cầu ⇒ TA · tải nội dung tĩnh ⇒ CloudFront" }
+        ] },
+        { t: "Event Notifications", icon: "svc/Amazon-EventBridge.svg", c: [
+          { t: "Đích", v: "SNS · SQS · Lambda · EventBridge" },
+          { t: "FIFO", v: "không trực tiếp ⇒ EventBridge" },
+          { t: "Giao", v: "at least once, không thứ tự ⇒ idempotent" },
+          { t: "Vòng lặp", v: "Lambda ghi vào prefix/bucket khác" },
+          { t: "EventBridge", v: "mọi sự kiện, lọc nâng cao, replay" }
+        ] },
+        { t: "Select & Requester Pays", icon: "res/Client.svg", c: [
+          { t: "S3 Select", v: "SQL một object, không còn cho khách mới ⇒ Athena" },
+          { t: "Requester Pays", v: "requester trả request + transfer, owner trả lưu trữ" },
+          { t: "Điều kiện", v: "không anonymous, header x-amz-request-payer" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

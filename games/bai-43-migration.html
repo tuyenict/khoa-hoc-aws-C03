@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 43 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Database-Migration-Service.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="43" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-43-migration.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "over", name: "Tổng quan migration" },
+      { id: "rs", name: "7 Rs" },
+      { id: "disc", name: "Discovery & Migration Hub" },
+      { id: "mgn", name: "AWS MGN" },
+      { id: "dms", name: "AWS DMS" },
+      { id: "cdc", name: "CDC" },
+      { id: "sct", name: "Schema Conversion / SCT" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Tổng quan
+      { t: "over", f: "Ba giai đoạn của một dự án migration lớn?", b: "<b>Assess</b> (lý do kinh doanh, chi phí, mức sẵn sàng) → <b>Mobilize</b> (discovery, phụ thuộc, chọn 7 Rs, landing zone) → <b>Migrate &amp; modernize</b> (theo wave, tối ưu sau)." },
+      { t: "over", f: "Ba dịch vụ di chuyển chính trong bài?", b: "<b>MGN</b> cho máy chủ · <b>DMS</b> cho database · <b>Migration Hub / Application Discovery Service</b> cho khám phá và theo dõi." },
+      { t: "over", f: "Tên hiện tại của AWS MGN trong tài liệu?", b: "<b>AWS Transform MGN</b> – cùng dịch vụ với AWS Application Migration Service.", x: "MGN kế thừa CloudEndure Migration và thay AWS Server Migration Service (SMS) cũ." },
+      { t: "over", f: "Tình trạng Migration Hub và Application Discovery Service?", b: "<b>Không còn mở cho khách hàng mới</b> (Migration Hub từ 7/11/2025); AWS khuyến nghị <b>AWS Transform</b>. Đề vẫn có thể nhắc tới." },
+      { t: "over", f: "Wave là gì?", b: "<b>Đợt di chuyển</b>: nhóm ứng dụng được di chuyển cùng nhau (server phụ thuộc chặt đi cùng wave)." },
+
+      // ---- 7 Rs
+      { t: "rs", f: "Kể 7 Rs.", b: "<b>Retire, Retain, Rehost, Relocate, Repurchase, Replatform, Refactor</b>.", x: "Retire và Retain là hai quyết định không di chuyển." },
+      { t: "rs", f: "Retire dùng khi nào?", b: "Ứng dụng <b>không còn giá trị</b>; giảm rủi ro OS hết hỗ trợ; <b>zombie</b> (CPU/RAM &lt; 5%) hoặc <b>idle</b> (5–20% trong 90 ngày); không có kết nối inbound trong 90 ngày." },
+      { t: "rs", f: "Retain (Revisit) dùng khi nào?", b: "Data residency/tuân thủ, rủi ro cao, phụ thuộc ứng dụng khác, <b>vừa nâng cấp</b>, đợi bản SaaS, phần cứng đặc thù, <b>mainframe</b>/Unix không x86." },
+      { t: "rs", f: "Rehost còn gọi là gì? Công cụ?", b: "<b>Lift and shift</b> – không đổi ứng dụng. Công cụ: <b>AWS MGN</b>, Cloud Migration Factory, VM Import/Export." },
+      { t: "rs", f: "Relocate là gì?", b: "Chuyển nhiều server cùng lúc sang <b>phiên bản cloud của cùng nền tảng</b> (VMware on-prem → VMware trên AWS), hoặc chuyển tài nguyên sang <b>VPC/Region/account khác</b> (vd RDS instance).", x: "Tài liệu gọi đây là cách nhanh nhất vì không ảnh hưởng kiến trúc." },
+      { t: "rs", f: "Repurchase còn gọi là gì?", b: "<b>Drop and shop</b> – thay bằng sản phẩm khác, thường là <b>SaaS</b>." },
+      { t: "rs", f: "Replatform còn gọi là gì? Ví dụ kinh điển?", b: "<b>Lift, tinker, and shift</b>. Ví dụ: SQL Server tự quản → <b>Amazon RDS for SQL Server</b>; VM → container (App2Container); Windows → Linux; Graviton." },
+      { t: "rs", f: "Refactor (re-architect) là gì?", b: "Thiết kế lại theo <b>cloud-native</b> (monolith → microservices/serverless). <b>Phức tạp và tốn kém nhất</b>." },
+      { t: "rs", f: "Chiến lược khuyến nghị cho migration lớn?", b: "<b>Rehost / relocate / replatform trước, hiện đại hóa sau</b>; refactor không khuyến nghị trong lúc di chuyển lớn." },
+      { t: "rs", f: "Cài lại SQL Server trên EC2 là rehost hay replatform?", b: "<b>Rehost</b> (về bản chất). Chuyển sang <b>RDS</b> mới là replatform.", x: "Bẫy kinh điển." },
+      { t: "rs", f: "Replatform khác Refactor ở điểm nào?", b: "<b>Replatform</b> giữ kiến trúc lõi, chỉ “tinker”.<br><b>Refactor</b> đổi kiến trúc (microservices, Lambda + DynamoDB)." },
+      { t: "rs", f: "Công cụ đưa VM .NET/Java vào container không sửa code?", b: "<b>AWS App2Container</b> (replatform)." },
+      { t: "rs", f: "Công cụ port .NET Framework sang .NET Core?", b: "<b>Porting Assistant for .NET</b> (replatform)." },
+
+      // ---- Discovery
+      { t: "disc", f: "AWS Application Discovery Service thu thập gì?", b: "Cấu hình, mức sử dụng CPU/RAM/disk, <b>kết nối mạng</b> giữa server on-prem ⇒ lập kế hoạch, nhóm thành ứng dụng, ước tính chi phí, khuyến nghị EC2." },
+      { t: "disc", f: "Agentless Collector triển khai thế nào, thấy gì?", b: "<b>File OVA qua VMware vCenter</b>, không cài agent trên VM. Thu cấu hình tĩnh + CPU/RAM/Disk I/O, kết nối mạng; chu kỳ <b>~60 phút</b>.", x: "Không thấy process đang chạy; chỉ VMware VM, không cho physical server." },
+      { t: "disc", f: "Discovery Agent khác Agentless Collector thế nào?", b: "Cài <b>trên từng VM và physical server</b> (Windows/Linux); có <b>process đang chạy</b>, time-series chi tiết, kết nối mạng; chu kỳ <b>~15 giây</b>; export sang <b>Athena</b>/CSV." },
+      { t: "disc", f: "Cách thu thập thứ ba (không cần collector/agent)?", b: "<b>File-based import</b>: template Migration Hub hoặc export từ <b>RVTools</b> (chỉ một snapshot)." },
+      { t: "disc", f: "Collector nào lấy được thông tin database (Oracle, SQL Server…)?", b: "<b>Agentless Collector</b> (module database &amp; analytics); Discovery Agent thì không." },
+      { t: "disc", f: "AWS Migration Hub làm gì?", b: "<b>Một nơi duy nhất</b> xem server đã khám phá, nhóm ứng dụng, theo dõi tiến độ migration; nhận trạng thái từ <b>MGN và DMS</b>." },
+      { t: "disc", f: "Home Region của Migration Hub là gì?", b: "Region lưu <b>dữ liệu theo dõi + discovery</b>; phải chọn trước mọi thao tác. Agent/collector/import chỉ dùng ở home Region.", x: "Vẫn di chuyển được vào bất kỳ Region nào – chỉ dữ liệu theo dõi nằm ở home Region." },
+      { t: "disc", f: "DMS Fleet Advisor làm gì?", b: "Kiểm kê <b>database on-prem</b> từ vị trí trung tâm, không cài trên từng máy (SQL Server, MySQL, Oracle, PostgreSQL); tạo target recommendations." },
+      { t: "disc", f: "Ba thành phần đi kèm Migration Hub?", b: "<b>Strategy Recommendations</b> (gợi ý chiến lược) · <b>Refactor Spaces</b> (refactor dần sang microservices) · <b>Migration Hub Orchestrator</b> (template workflow)." },
+
+      // ---- MGN
+      { t: "mgn", f: "AWS MGN di chuyển máy chủ bằng cơ chế nào?", b: "<b>Continuous block-level replication</b> + chuyển đổi để chạy native trên EC2; cutover thường <b>vài phút</b>. Dịch vụ khuyến nghị cho <b>lift-and-shift</b>." },
+      { t: "mgn", f: "Port của MGN?", b: "<b>TCP 1500</b>: source → replication server (dữ liệu, TLS 1.2).<br><b>TCP 443</b>: source &amp; staging subnet → MGN API endpoint." },
+      { t: "mgn", f: "Replication server của MGN là gì, ở đâu?", b: "EC2 nhỏ (Amazon Linux 2023) trong <b>staging area subnet</b>, ghi dữ liệu vào EBS giá rẻ." },
+      { t: "mgn", f: "Conversion server làm gì?", b: "Khi launch test/cutover, <b>chuyển đổi disk</b> (driver, boot) để boot native trên EC2." },
+      { t: "mgn", f: "Ba loại template trong MGN?", b: "<b>Replication</b> (staging subnet…) · <b>Launch</b> (EC2 launch template) · <b>Post-launch</b> (vd chạy SSM document)." },
+      { t: "mgn", f: "Vòng đời một source server trong MGN?", b: "Cài agent → initial sync → <b>Ready for testing</b> → launch test → Ready for cutover → launch cutover → <b>finalize</b> → archive." },
+      { t: "mgn", f: "Nên test bao lâu trước cutover? Tối đa bao nhiêu server mỗi lần launch?", b: "Test <b>≥ 2 tuần</b> trước cutover · tối đa <b>100 source server</b> mỗi thao tác." },
+      { t: "mgn", f: "Finalize cutover làm gì?", b: "Dừng sao chép, bỏ dữ liệu sao chép, <b>terminate mọi tài nguyên replication</b> ⇒ Cutover complete." },
+      { t: "mgn", f: "Chi phí MGN gồm gì?", b: "Có thời gian miễn phí cho mỗi source server, nhưng vẫn trả <b>replication server EC2, EBS staging</b> và EC2/EBS của test/cutover instance ⇒ <b>finalize sớm</b>." },
+      { t: "mgn", f: "MGN khác AWS Elastic Disaster Recovery thế nào?", b: "<b>MGN</b>: migrate hẳn, sao chép tạm thời tới khi finalize.<br><b>DRS</b>: DR liên tục, nguồn vẫn chạy, PIT snapshot, drill, failback.", x: "Cùng kiến trúc agent/staging/TCP 1500 – đừng nhầm mục đích." },
+      { t: "mgn", f: "VM Import/Export khác MGN thế nào?", b: "Dựa trên <b>file image</b>, không sao chép liên tục ⇒ downtime dài hơn; hợp với <b>số ít VM</b>." },
+      { t: "mgn", f: "Agentless replication của MGN (vCenter Client) còn dùng được không?", b: "<b>Không cho triển khai mới</b>; AWS khuyến nghị agent-based (CDP, cửa sổ cutover ngắn nhất)." },
+
+      // ---- DMS
+      { t: "dms", f: "Các thành phần của AWS DMS?", b: "<b>Replication instance</b> (EC2 được quản lý) · <b>source/target endpoint</b> · <b>replication task</b>." },
+      { t: "dms", f: "Replication instance của DMS có storage bao nhiêu? HA thế nào?", b: "<b>50 GB hoặc 100 GB</b> tùy instance class; hỗ trợ <b>Multi-AZ</b> (standby đồng bộ ở AZ khác, tự failover)." },
+      { t: "dms", f: "Ba kiểu migration của DMS task?", b: "<b>Full load</b> · <b>Full load + CDC</b> (downtime tối thiểu) · <b>CDC only</b>." },
+      { t: "dms", f: "Khi nào dùng CDC only?", b: "Bulk load bằng <b>công cụ native</b> (thường nhanh hơn khi homogeneous) rồi DMS đồng bộ thay đổi; hoặc sao chép liên tục sang hệ thống khác." },
+      { t: "dms", f: "Ba target table preparation mode?", b: "<b>Do nothing</b> · <b>Drop tables on target</b> · <b>Truncate</b>." },
+      { t: "dms", f: "Full LOB mode khác Limited LOB mode thế nào?", b: "<b>Full</b>: migrate LOB đầy đủ theo chunk (chậm hơn).<br><b>Limited</b>: cắt theo Max LOB Size (nhanh hơn)." },
+      { t: "dms", f: "Views migrate được bằng loại task nào?", b: "Chỉ <b>full load only</b>; task có CDC chỉ gồm bảng." },
+      { t: "dms", f: "DMS Serverless là gì? 1 DCU bằng bao nhiêu?", b: "Tự provision, autoscale giữa min–max <b>DCU</b>, HA tích hợp. <b>1 DCU = 2 GB RAM</b>; min mặc định 1 DCU." },
+      { t: "dms", f: "DMS Serverless: storage ban đầu và quy tắc thu hồi?", b: "Storage <b>100 GB</b>, tự tăng khi dùng tới 90%. Dừng mà không resume trong <b>48 giờ</b> ⇒ tài nguyên bị thu hồi.", x: "Không scale down trong lúc full load; lần đầu khởi tạo có thể mất tới 40 phút." },
+
+      // ---- CDC
+      { t: "cdc", f: "CDC của DMS lấy thay đổi từ đâu?", b: "Đọc <b>transaction log</b> qua API native của engine ⇒ không query lại bảng, ít ảnh hưởng nguồn." },
+      { t: "cdc", f: "Cơ chế CDC cho Oracle, SQL Server, MySQL, PostgreSQL?", b: "Oracle: <b>LogMiner</b>/binary reader (redo log, SCN) · SQL Server: <b>MS-CDC</b>/MS-Replication (LSN) · MySQL: <b>row-based binlog</b> · PostgreSQL: <b>logical replication slot</b> + test_decoding." },
+      { t: "cdc", f: "CDC trên RDS MySQL nguồn thất bại ⇒ kiểm tra gì?", b: "Đã bật <b>automated backups</b>, binlog <b>row format</b>, thời gian giữ binlog đủ (<b>~24 giờ</b>)." },
+      { t: "cdc", f: "CDCLatencyTarget &gt; CDCLatencySource nghĩa là gì?", b: "Thay đổi tràn xuống <b>Change Cache</b> trên disk ⇒ cần <b>tối ưu phía đích</b> (thiếu primary key/index, thiếu tài nguyên)." },
+      { t: "cdc", f: "DMS CDC có phải real-time, có SLA độ trễ không?", b: "<b>Không</b> – độ trễ có thể vài phút hoặc hơn.", x: "Cần sub-second / DR cho Aurora ⇒ Aurora Global Database / read replica." },
+      { t: "cdc", f: "Bidirectional replication của DMS có dùng cho multi-master được không?", b: "<b>Không</b>: không phát hiện/giải quyết xung đột; chỉ dùng khi dữ liệu mỗi node tách biệt nghiệp vụ (có loopback prevention)." },
+      { t: "cdc", f: "Quy trình cutover database với full load + CDC?", b: "Full load → apply thay đổi đã ghi → trạng thái ổn định → <b>tắt ứng dụng</b>, chờ thay đổi còn lại chảy sang → trỏ ứng dụng vào đích." },
+
+      // ---- SCT
+      { t: "sct", f: "Homogeneous và heterogeneous migration khác nhau thế nào?", b: "<b>Homogeneous</b> (MySQL → RDS MySQL): chỉ di chuyển dữ liệu.<br><b>Heterogeneous</b> (Oracle → Aurora PostgreSQL): <b>chuyển schema + code trước</b>, rồi DMS chuyển dữ liệu." },
+      { t: "sct", f: "DMS Schema Conversion có chuyển dữ liệu không?", b: "<b>Không</b> – chỉ chuyển schema và code (view, stored procedure, function, trigger)." },
+      { t: "sct", f: "DMS Schema Conversion khác AWS SCT thế nào?", b: "<b>DMS Schema Conversion</b>: managed, trên console, không cài đặt – mặc định khi “least operational overhead”.<br><b>AWS SCT</b>: ứng dụng tải về cài trên máy, là engine gốc." },
+      { t: "sct", f: "Ba tài nguyên của DMS Schema Conversion?", b: "<b>Instance profile</b> · <b>data provider</b> · <b>migration project</b> (credential trong Secrets Manager)." },
+      { t: "sct", f: "Assessment report dùng để làm gì?", b: "Cho biết phần nào chuyển tự động, phần nào làm tay ⇒ <b>ước tính công sức</b> trước khi cam kết." },
+      { t: "sct", f: "Extension pack là gì?", b: "Gói giả lập <b>tính năng nguồn mà đích không có</b>." },
+      { t: "sct", f: "Oracle chuyển được sang những đích nào với DMS Schema Conversion?", b: "Aurora/RDS for PostgreSQL, Aurora/RDS for MySQL, <b>Amazon Redshift</b>." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "“<i>Migrate hundreds of VMware and physical servers to EC2, minimal downtime, no application changes</i>” ⇒ ?", b: "<b>AWS Application Migration Service (MGN)</b>." },
+      { t: "kw", f: "“<i>Move self-managed DB to a managed service, minimal code changes</i>” ⇒ chiến lược?", b: "<b>Replatform</b> (→ RDS / Aurora)." },
+      { t: "kw", f: "“<i>Break the monolith into microservices / serverless</i>” ⇒ chiến lược?", b: "<b>Refactor</b>." },
+      { t: "kw", f: "“<i>Move VMware workloads without converting VMs</i>” / “<i>move an RDS instance to another account</i>” ⇒ ?", b: "<b>Relocate</b>." },
+      { t: "kw", f: "“<i>Collect utilization data from VMware, cannot install software on VMs</i>” ⇒ ?", b: "<b>Agentless Collector</b> (OVA trên vCenter)." },
+      { t: "kw", f: "“<i>Need running processes and network connections, also physical servers</i>” ⇒ ?", b: "<b>Discovery Agent</b>." },
+      { t: "kw", f: "“<i>Single place to track migration progress across tools</i>” ⇒ ?", b: "<b>AWS Migration Hub</b>." },
+      { t: "kw", f: "“<i>Migrate on-prem DB to RDS/Aurora with minimal downtime</i>” ⇒ ?", b: "<b>AWS DMS full load + CDC</b>." },
+      { t: "kw", f: "“<i>Avoid capacity planning for replication instances</i>” ⇒ ?", b: "<b>DMS Serverless</b>." },
+      { t: "kw", f: "“<i>Migrate Oracle to Aurora PostgreSQL</i>” ⇒ ?", b: "<b>DMS Schema Conversion / AWS SCT</b> (schema) + <b>AWS DMS</b> (dữ liệu)." },
+      { t: "kw", f: "Ứng dụng 3 tầng: web/app servers + Oracle DB + NFS share ⇒ công cụ?", b: "<b>MGN</b> (server) + <b>DMS</b> (+ SCT nếu đổi engine) + <b>DataSync</b> (file)." },
+      { t: "kw", f: "Đề nhắc “<i>AWS Server Migration Service</i>” hay “<i>CloudEndure Migration</i>” ⇒ ?", b: "Dịch vụ cũ; đáp án hiện đại là <b>MGN</b>." }
+    ],
+
+    pairs: [
+      ["Retire", "Tắt/lưu trữ ứng dụng không còn giá trị"],
+      ["Retain", "Giữ ở môi trường nguồn, xem lại sau"],
+      ["Rehost", "Lift and shift, không đổi ứng dụng"],
+      ["Relocate", "Cùng nền tảng sang cloud / VPC, account khác"],
+      ["Repurchase", "Drop and shop – thay bằng SaaS"],
+      ["Replatform", "Lift, tinker, and shift – vd DB → RDS"],
+      ["Refactor", "Thiết kế lại theo cloud-native"],
+      ["Zombie application", "CPU &amp; RAM &lt; 5%"],
+      ["Wave", "Nhóm ứng dụng di chuyển cùng nhau"],
+      ["Cutover", "Thời điểm chuyển production sang AWS"],
+      ["Agentless Collector", "OVA trên vCenter, ~60 phút, không thấy process"],
+      ["Discovery Agent", "Cài từng server, ~15 giây, có process"],
+      ["Home Region", "Nơi lưu dữ liệu discovery và theo dõi migration"],
+      ["DMS Fleet Advisor", "Kiểm kê database on-prem"],
+      ["Conversion server", "Chỉnh disk để boot native trên EC2"],
+      ["Finalize cutover", "Dừng sao chép, xóa tài nguyên staging"],
+      ["Replication instance", "EC2 được quản lý chạy task DMS"],
+      ["Full load", "Copy dữ liệu hiện có"],
+      ["CDC", "Đọc transaction log để áp dụng thay đổi"],
+      ["DCU", "Đơn vị năng lực DMS Serverless = 2 GB RAM"],
+      ["Heterogeneous migration", "Di chuyển khác loại engine"],
+      ["Extension pack", "Giả lập tính năng nguồn mà đích không có"],
+      ["Loopback prevention", "Chống thay đổi bị dội ngược khi sao chép 2 chiều"],
+      ["VM Import/Export", "Đổi image VM thành AMI và ngược lại"]
+    ],
+
+    sorts: [
+      {
+        title: "Tình huống ⇒ chiến lược 7 Rs",
+        desc: "Xếp mỗi ứng dụng vào chiến lược di chuyển phù hợp.",
+        buckets: ["Retire", "Retain", "Rehost", "Relocate", "Repurchase", "Replatform", "Refactor"],
+        items: [
+          ["Tool nội bộ CPU/RAM &lt; 5%, không kết nối inbound 90 ngày", 0, "zombie application"],
+          ["Mainframe IBM AS/400 cần đánh giá kỹ", 1, "mainframe/Unix không x86 ⇒ giữ lại trước"],
+          ["Hệ thống vừa nâng cấp phần cứng năm ngoái", 1, "hoãn tới đợt làm mới tiếp theo"],
+          ["400 server chuyển nhanh, không sửa ứng dụng", 2, "lift and shift bằng MGN"],
+          ["VMware on-prem → nền tảng VMware trên AWS", 3, "cùng nền tảng, không convert VM"],
+          ["Chuyển RDS DB instance sang account khác", 3, "relocate tài nguyên sang VPC/account khác"],
+          ["CRM tự host → SaaS CRM", 4, "drop and shop"],
+          ["SQL Server tự quản → Amazon RDS for SQL Server", 5, "ví dụ kinh điển của replatform"],
+          ["Java trên VM chạy trong container không sửa code", 5, "App2Container"],
+          ["Monolith → microservices với Lambda + DynamoDB", 6, "đổi kiến trúc"]
+        ]
+      },
+      {
+        title: "Dữ liệu/tài nguyên ⇒ công cụ di chuyển",
+        desc: "Chọn công cụ đúng cho từng thứ cần di chuyển.",
+        buckets: ["AWS MGN", "AWS DMS", "DMS Schema Conversion / SCT", "AWS DataSync", "Application Discovery Service"],
+        items: [
+          ["Hàng trăm server vật lý + VMware lên EC2", 0, "rehost, block-level liên tục"],
+          ["Rehost nguyên VM chứa database", 0, "MGN di chuyển cả VM"],
+          ["MySQL on-prem → RDS MySQL, downtime tối thiểu", 1, "full load + CDC"],
+          ["Sao chép liên tục thay đổi DB sang Kinesis/S3 cho analytics", 1, "DMS CDC với đích S3/Kinesis"],
+          ["Chuyển stored procedure Oracle sang PostgreSQL", 2, "chuyển schema + code"],
+          ["Ước tính công sức chuyển đổi database", 2, "assessment report"],
+          ["File share NFS/SMB lên EFS/FSx", 3, "file/object ⇒ DataSync (Bài 18)"],
+          ["Thu thập CPU/RAM và phụ thuộc mạng của server", 4, "discovery để lập kế hoạch"]
+        ]
+      },
+      {
+        title: "Agentless Collector hay Discovery Agent?",
+        desc: "Đặc điểm thuộc cách thu thập nào của Application Discovery Service?",
+        buckets: ["Agentless Collector", "Discovery Agent"],
+        items: [
+          ["Triển khai OVA một lần mỗi vCenter", 0, "không cài trên VM"],
+          ["Chu kỳ thu thập ~60 phút", 0, "~15 giây là của agent"],
+          ["Lấy được thông tin database Oracle/SQL Server", 0, "module database & analytics"],
+          ["Chính sách cấm cài phần mềm lên VM", 0, "agentless"],
+          ["Thấy process đang chạy", 1, "agent nhìn vào bên trong máy"],
+          ["Hỗ trợ physical server", 1, "Agentless chỉ cho VMware VM"],
+          ["Export time-series sang Amazon Athena", 1, "phân tích sâu bằng SQL"],
+          ["Chu kỳ thu thập ~15 giây", 1, "time-series chi tiết"]
+        ]
+      },
+      {
+        title: "Kiểu migration của DMS task",
+        desc: "Chọn migration type phù hợp với yêu cầu.",
+        buckets: ["Full load", "Full load + CDC", "CDC only"],
+        items: [
+          ["Chấp nhận outage đủ dài để copy hết dữ liệu", 0, "chỉ copy dữ liệu hiện có"],
+          ["Cần migrate cả views", 0, "views chỉ đi được với full load only"],
+          ["DB 5 TB dùng 24/7, phải giảm downtime tối thiểu", 1, "đồng bộ thay đổi tới lúc cutover"],
+          ["Giữ nguồn hoạt động trong suốt migration", 1, "lựa chọn phổ biến nhất trong đề"],
+          ["Đã nạp lần đầu bằng dump/restore native, cần bắt kịp thay đổi", 2, "native bulk load + CDC only"],
+          ["Bắt đầu từ một LSN/SCN cụ thể", 2, "native start point cho CDC"],
+          ["Sao chép liên tục sang hệ thống khác, không cần nạp lại dữ liệu cũ", 2, "chỉ thay đổi từ một thời điểm"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Retire và Retain là hai chiến lược không di chuyển ứng dụng.", true, "Năm chiến lược còn lại có di chuyển."],
+      ["Refactor được khuyến nghị cho migration lớn vì tối ưu cloud ngay.", false, "Không khuyến nghị; rehost/relocate/replatform trước, hiện đại hóa sau."],
+      ["Cài lại SQL Server trên EC2 là replatform.", false, "Về bản chất là rehost; sang RDS mới là replatform."],
+      ["Chuyển SQL Server sang Amazon RDS for SQL Server là replatform.", true, "Ví dụ kinh điển trong tài liệu."],
+      ["Repurchase còn gọi là drop and shop.", true, "Thường thay bằng SaaS."],
+      ["Relocate yêu cầu viết lại ứng dụng.", false, "Không mua phần cứng, không viết lại, không đổi quy trình."],
+      ["Chuyển một RDS DB instance sang account khác là relocate.", true, "Relocate cũng gồm chuyển sang VPC/Region/account khác."],
+      ["Ứng dụng có CPU/RAM trung bình dưới 5% gọi là zombie application.", true, "5–20% trong 90 ngày là idle."],
+      ["Đưa VM vào container bằng App2Container là refactor.", false, "Không sửa code ⇒ replatform."],
+      ["Agentless Collector thấy được process đang chạy trong VM.", false, "Cần Discovery Agent."],
+      ["Agentless Collector hỗ trợ physical server.", false, "Chỉ VMware VM."],
+      ["Discovery Agent export được dữ liệu sang Amazon Athena.", true, "Phân tích sâu bằng SQL."],
+      ["Migration Hub chỉ cho phép di chuyển vào home Region.", false, "Chỉ dữ liệu theo dõi ở home Region; đích là Region bất kỳ."],
+      ["Migration Hub nhận cập nhật trạng thái từ MGN và DMS.", true, "Một nơi theo dõi tiến độ."],
+      ["DMS Fleet Advisor kiểm kê database on-prem mà không cần cài trên từng máy.", true, "Thu thập từ vị trí trung tâm."],
+      ["AWS MGN dùng TCP 1500 để truyền dữ liệu sao chép.", true, "TCP 443 dùng tới MGN API."],
+      ["MGN cho phép launch tối đa 1.000 source server mỗi lần.", false, "Tối đa 100 source server mỗi thao tác."],
+      ["Best practice là test MGN ít nhất hai tuần trước ngày cutover.", true, "Để kịp phát hiện và sửa lỗi."],
+      ["Sau khi launch cutover, MGN tự dừng sao chép ngay.", false, "Sao chép tiếp tục tới khi finalize cutover."],
+      ["Trong thời gian miễn phí của MGN, không phải trả tiền replication server.", false, "Vẫn trả EC2/EBS của hạ tầng staging."],
+      ["VM Import/Export sao chép liên tục như MGN.", false, "Dựa trên file image ⇒ downtime dài hơn."],
+      ["DMS replication instance hỗ trợ Multi-AZ.", true, "Standby đồng bộ, tự failover."],
+      ["DMS tự tạo bảng và primary key ở đích nếu chưa có.", true, "Theo tài liệu DMS."],
+      ["Task DMS có CDC migrate được views.", false, "Views chỉ đi với full load only."],
+      ["1 DCU của DMS Serverless tương đương 2 GB RAM.", true, "Tính tiền theo DCU đang dùng."],
+      ["DMS Serverless scale down trong lúc full load.", false, "Không scale down trong lúc full load."],
+      ["DMS CDC đọc transaction log của database nguồn.", true, "Qua API native của engine."],
+      ["DMS CDC đảm bảo độ trễ dưới 1 giây theo SLA.", false, "Không real-time, không có SLA latency."],
+      ["Bidirectional replication của DMS phù hợp cho multi-master ghi cùng dữ liệu.", false, "Không phát hiện/giải quyết xung đột."],
+      ["Migration MySQL on-prem sang RDS MySQL cần AWS SCT.", false, "Homogeneous ⇒ không cần chuyển schema."],
+      ["DMS Schema Conversion chỉ chuyển schema, không chuyển dữ liệu.", true, "Dữ liệu do DMS chuyển."],
+      ["AWS SCT là dịch vụ managed chạy trên console.", false, "SCT là ứng dụng tải về; DMS Schema Conversion mới là managed."],
+      ["Đồng bộ NFS file share lên AWS nên dùng DMS.", false, "File ⇒ DataSync."],
+      ["MGN và Elastic Disaster Recovery dùng kiến trúc agent/staging tương tự nhau.", true, "Khác mục đích: migrate vs DR."]
+    ],
+
+    map: {
+      t: "Bài 43 · Migration lên AWS",
+      c: [
+        { t: "Tổng quan", icon: "cat/Migration-Transfer.svg", c: [
+          { t: "3 giai đoạn", v: "Assess → Mobilize → Migrate & modernize" },
+          { t: "Dịch vụ", v: "MGN (server) · DMS (DB) · Hub/Discovery (theo dõi)" },
+          { t: "File/object", v: "DataSync · Snow · Transfer Family (Bài 18)" },
+          { t: "Tình trạng", v: "Hub/Discovery đóng khách mới → AWS Transform" }
+        ] },
+        { t: "7 Rs", icon: "svc/AWS-Migration-Hub.svg", c: [
+          { t: "Không di chuyển", c: [
+            { t: "Retire", v: "zombie &lt; 5%, không inbound 90 ngày" },
+            { t: "Retain", v: "mainframe, data residency, vừa nâng cấp" }
+          ] },
+          { t: "Rehost", v: "lift and shift · MGN" },
+          { t: "Relocate", v: "cùng nền tảng / VPC, account khác · nhanh nhất" },
+          { t: "Repurchase", v: "drop and shop · SaaS" },
+          { t: "Replatform", v: "lift, tinker, and shift · SQL Server → RDS" },
+          { t: "Refactor", v: "cloud-native · phức tạp nhất" },
+          { t: "Migration lớn", v: "rehost/relocate/replatform trước, hiện đại hóa sau" }
+        ] },
+        { t: "Discovery", icon: "svc/AWS-Application-Discovery-Service.svg", c: [
+          { t: "Agentless Collector", v: "OVA vCenter · ~60 phút · không process" },
+          { t: "Discovery Agent", v: "từng server · ~15 giây · process · Athena" },
+          { t: "Import", v: "template / RVTools · một snapshot" },
+          { t: "Migration Hub", v: "theo dõi tiến độ MGN + DMS · home Region" },
+          { t: "DMS Fleet Advisor", v: "kiểm kê database on-prem" }
+        ] },
+        { t: "AWS MGN", icon: "svc/CloudEndure-Migration.svg", c: [
+          { t: "Cơ chế", v: "block-level liên tục · cutover vài phút" },
+          { t: "Port", v: "1500 dữ liệu · 443 MGN API" },
+          { t: "Thành phần", v: "agent → replication server → conversion server" },
+          { t: "Vòng đời", v: "test → cutover → finalize → archive" },
+          { t: "Giới hạn", v: "test ≥ 2 tuần · 100 server/lần launch" },
+          { t: "Template", v: "replication · launch · post-launch" }
+        ] },
+        { t: "AWS DMS", icon: "svc/AWS-Database-Migration-Service.svg", c: [
+          { t: "Thành phần", v: "replication instance + endpoint + task" },
+          { t: "Instance", v: "50/100 GB · Multi-AZ" },
+          { t: "Migration type", v: "Full load · Full load + CDC · CDC only" },
+          { t: "Serverless", v: "1 DCU = 2 GB RAM · autoscale min–max" },
+          { t: "LOB", v: "Full (chậm) · Limited (nhanh)" }
+        ] },
+        { t: "CDC", icon: "res/Amazon-Simple-Storage-Service_S3-Replication.svg", c: [
+          { t: "Nguồn", v: "transaction log qua API native" },
+          { t: "Engine", v: "LogMiner · MS-CDC · binlog row · logical slot" },
+          { t: "Độ trễ", v: "không real-time, không SLA" },
+          { t: "Change Cache", v: "Target latency &gt; Source ⇒ tối ưu đích" },
+          { t: "Bidirectional", v: "không giải xung đột, không multi-master" }
+        ] },
+        { t: "Schema Conversion", icon: "res/AWS-Database-Migration-Service_Database-migration-workflow-job.svg", c: [
+          { t: "Homogeneous", v: "chỉ chuyển dữ liệu" },
+          { t: "Heterogeneous", v: "schema/code trước → DMS dữ liệu" },
+          { t: "DMS Schema Conversion", v: "managed · least operational overhead" },
+          { t: "AWS SCT", v: "ứng dụng tải về" },
+          { t: "Assessment report", v: "ước tính công sức chuyển đổi" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

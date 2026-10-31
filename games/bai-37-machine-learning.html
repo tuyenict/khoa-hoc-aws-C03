@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 37 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-SageMaker.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="37" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-37-machine-learning.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "tier", name: "Ba tầng AI/ML" },
+      { id: "vision", name: "Rekognition & Textract" },
+      { id: "lang", name: "Comprehend · Translate · Kendra · Lex" },
+      { id: "voice", name: "Transcribe & Polly" },
+      { id: "other", name: "Forecast & AI service khác" },
+      { id: "sm", name: "Amazon SageMaker AI" },
+      { id: "bedrock", name: "Amazon Bedrock" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Ba tầng
+      { t: "tier", f: "Ba tầng AI/ML trên AWS?", b: "1. <b>AI services</b> pretrained (chỉ gọi API)<br>2. <b>ML platform</b>: SageMaker AI (model của riêng bạn)<br>3. <b>Generative AI</b>: Bedrock, Amazon Q (foundation model qua API)" },
+      { t: "tier", f: "Khi nào chọn AI service dựng sẵn?", b: "Bài toán phổ biến (ảnh, OCR, dịch…), muốn <b>least operational overhead</b>, đội ngũ <b>không có data scientist</b>." },
+      { t: "tier", f: "Khi nào chọn SageMaker AI?", b: "Bài toán <b>đặc thù trên dữ liệu riêng</b> (churn, chấm điểm tín dụng…), cần <b>toàn quyền kiểm soát model</b>." },
+      { t: "tier", f: "Khi nào chọn Amazon Bedrock?", b: "<b>Sinh văn bản/ảnh, tóm tắt, chatbot</b> hỏi-đáp trên tài liệu nội bộ, agent – dùng foundation model mà không quản lý hạ tầng." },
+      { t: "tier", f: "Đáp án “tự cài thư viện OCR/NLP mã nguồn mở trên EC2” thường thế nào?", b: "<b>Gần như luôn sai</b> khi đã có dịch vụ managed tương ứng." },
+      { t: "tier", f: "AWS Trainium và AWS Inferentia dùng cho gì?", b: "<b>Trainium</b>: train model.<br><b>Inferentia</b>: inference." },
+
+      // ---- Vision
+      { t: "vision", f: "Amazon Rekognition làm được những gì?", b: "Phân tích <b>ảnh & video</b>: vật thể/cảnh, chữ trong ảnh, khuôn mặt, người nổi tiếng, <b>content moderation</b>, <b>PPE</b>, Custom Labels, Face Liveness." },
+      { t: "vision", f: "Rekognition Image là đồng bộ hay bất đồng bộ? Input?", b: "<b>Đồng bộ</b>; ảnh <b>JPG/PNG</b> trong S3 hoặc truyền bytes (Base64)." },
+      { t: "vision", f: "Rekognition phân tích video lưu trên S3 theo mô hình nào?", b: "<b>Bất đồng bộ</b>: gọi <code>Start…</code> → trạng thái publish lên <b>SNS</b> → gọi <code>Get…</code> lấy kết quả.", x: "Mẫu “job + SNS” lặp lại ở Textract, Transcribe." },
+      { t: "vision", f: "Rekognition phân tích video trực tiếp từ camera thế nào?", b: "Video vào <b>Kinesis Video Streams</b>, xử lý bằng <b>stream processor</b>; kết quả face search ra Kinesis data stream." },
+      { t: "vision", f: "Face collection là gì?", b: "<b>Storage-based API</b>: lưu thông tin khuôn mặt vào collection để <b>tìm kiếm khuôn mặt</b> về sau (Index rồi Search)." },
+      { t: "vision", f: "Rekognition Custom Labels dùng khi nào?", b: "Tự huấn luyện bộ phân loại vật thể <b>riêng của doanh nghiệp</b>: logo, linh kiện máy, cây bệnh." },
+      { t: "vision", f: "Face Liveness dùng để làm gì?", b: "Xác nhận <b>người thật</b> trước camera – chống giả mạo bằng ảnh in, video, mặt nạ 3D, deepfake." },
+      { t: "vision", f: "Textract khác OCR đơn thuần ở điểm nào?", b: "Ngoài chữ in/viết tay, Textract trích <b>form (key-value)</b> và <b>bảng</b>, giữ nguyên ngữ cảnh; có <b>Queries</b> hỏi thẳng thông tin." },
+      { t: "vision", f: "Các API chuyên dụng của Textract?", b: "<b>AnalyzeExpense</b> (hóa đơn, biên lai), <b>AnalyzeID</b> (bằng lái, hộ chiếu Mỹ), <b>Analyze Lending</b> (hồ sơ vay thế chấp)." },
+      { t: "vision", f: "Textract sync và async dùng khi nào?", b: "<b>Sync</b>: tài liệu <b>một trang</b>, độ trễ quan trọng.<br><b>Async</b>: tài liệu <b>nhiều trang</b> (PDF trên S3), thông báo qua SNS." },
+      { t: "vision", f: "Amazon Augmented AI (A2I) dùng để làm gì?", b: "Quy trình <b>con người duyệt lại</b> dự đoán ML có độ tin cậy thấp (Textract, Rekognition, model riêng)." },
+      { t: "vision", f: "Đọc chữ trên biển báo khác đọc hóa đơn thế nào?", b: "Chữ trong <b>ảnh đời thường</b> ⇒ <b>Rekognition</b> text detection.<br><b>Tài liệu</b> (form, bảng, hóa đơn, PDF) ⇒ <b>Textract</b>." },
+
+      // ---- Language
+      { t: "lang", f: "Amazon Comprehend trích xuất được những insight nào?", b: "<b>Entities, key phrases, PII, language, sentiment</b>, targeted sentiment, syntax, <b>topic modeling</b>." },
+      { t: "lang", f: "Các giá trị sentiment của Comprehend?", b: "<b>positive, neutral, negative, mixed</b>." },
+      { t: "lang", f: "Comprehend Custom gồm những gì?", b: "<b>Custom classification</b> (vd phân loại ticket hỗ trợ) và <b>custom entity recognition</b>; nhận cả ảnh, PDF, Word." },
+      { t: "lang", f: "Văn bản y tế (bệnh, thuốc, liều lượng) ⇒ dịch vụ nào?", b: "<b>Amazon Comprehend Medical</b> (HIPAA-eligible)." },
+      { t: "lang", f: "Translate giữ nguyên tên thương hiệu khi dịch bằng gì?", b: "<b>Custom terminology</b> (vd giữ “Amazon Photos”).", x: "Translate dùng ngữ cảnh, không đảm bảo lúc nào cũng áp dụng." },
+      { t: "lang", f: "Amazon Kendra là gì? Trạng thái hiện nay?", b: "<b>Enterprise search ngữ nghĩa</b>: connector tới S3, SharePoint…, hỏi bằng ngôn ngữ tự nhiên, <b>lọc theo quyền user/group</b>.<br>Không còn nhận khách mới ⇒ <b>Bedrock Knowledge Bases</b>." },
+      { t: "lang", f: "Kendra tính tiền index thế nào sau free trial?", b: "Tính tiền cho <b>mọi index đã provision, kể cả index rỗng</b> (free trial 750 giờ trong 30 ngày đầu)." },
+      { t: "lang", f: "Amazon Lex kết hợp những công nghệ gì?", b: "<b>ASR</b> (nói → chữ) + <b>NLU</b> (hiểu ý định) – cùng công nghệ với Alexa." },
+      { t: "lang", f: "Intent, slot, utterance trong Lex?", b: "<b>Intent</b>: ý định (BookHotel).<br><b>Utterance</b>: câu mẫu.<br><b>Slot</b>: ô thông tin cần lấy (ngày, thành phố)." },
+      { t: "lang", f: "Lex thực hiện yêu cầu (fulfillment) bằng gì? Tích hợp contact center nào?", b: "<b>AWS Lambda</b>; tích hợp <b>Amazon Connect</b>." },
+
+      // ---- Voice
+      { t: "voice", f: "Amazon Transcribe làm gì?", b: "<b>Speech-to-text</b> (ASR): transcript kèm <b>confidence score và timestamp từng từ</b>." },
+      { t: "voice", f: "Batch và streaming transcription khác nhau thế nào?", b: "<b>Batch</b>: file trên S3, <code>StartTranscriptionJob</code>.<br><b>Streaming</b>: HTTP/2 hoặc WebSocket, <code>StartStreamTranscription</code>, real-time." },
+      { t: "voice", f: "Các tính năng tùy biến của Transcribe?", b: "<b>Custom vocabulary</b>, custom language model, vocabulary filtering, <b>speaker diarization</b>, multi-channel, <b>PII redaction</b>." },
+      { t: "voice", f: "PII redaction của Transcribe có đáp ứng de-identification HIPAA không?", b: "<b>Không</b> – tài liệu cảnh báo ML không đảm bảo bắt hết PII." },
+      { t: "voice", f: "Transcribe tính giá thế nào?", b: "Theo <b>số giây audio</b>, bước 1 giây, không thời lượng tối thiểu; PII redaction và custom language model tính thêm." },
+      { t: "voice", f: "Amazon Polly làm gì? Các voice engine?", b: "<b>Text-to-speech</b>. Engine: <b>generative, long-form, neural (NTTS), standard</b>; NTTS có phong cách Newscaster." },
+      { t: "voice", f: "SSML và lexicon trong Polly?", b: "<b>SSML</b>: bọc text trong <code>&lt;speak&gt;</code> để điều khiển ngắt nghỉ, tốc độ, nhấn mạnh, phát âm.<br><b>Lexicon</b>: định nghĩa cách đọc từ riêng (W3C ⇒ World Wide Web Consortium)." },
+      { t: "voice", f: "Audio Polly sinh ra có được cache, phát lại miễn phí không?", b: "<b>Có</b> – cache, lưu, phát lại không tốn thêm ⇒ nội dung tĩnh chỉ tổng hợp một lần rồi lưu S3." },
+      { t: "voice", f: "Dịch một cuộc gọi tiếng Tây Ban Nha rồi phân tích cảm xúc ⇒ chuỗi dịch vụ?", b: "<b>Transcribe → Translate → Comprehend</b>." },
+
+      // ---- Other
+      { t: "other", f: "Amazon Forecast dùng cho gì? Trạng thái?", b: "Dự báo <b>time-series</b> (nhu cầu, tồn kho, nhân sự, lưu lượng web), AutoML.<br>Không nhận khách mới ⇒ <b>SageMaker Canvas</b>." },
+      { t: "other", f: "Amazon Personalize dùng khi nào?", b: "<b>Gợi ý cá nhân hóa</b> (product recommendations, personalized ranking) từ hành vi người dùng." },
+      { t: "other", f: "Amazon Fraud Detector dùng khi nào?", b: "Phát hiện <b>gian lận trực tuyến</b>: tài khoản giả, thanh toán gian lận." },
+      { t: "other", f: "Lookout for Vision / Equipment dùng khi nào?", b: "<b>Lỗi sản phẩm qua ảnh dây chuyền</b> / bất thường từ cảm biến (bảo trì dự đoán).", x: "Lookout for Metrics ngừng hỗ trợ từ 10/10/2025." },
+      { t: "other", f: "Amazon DevOps Guru và CodeGuru?", b: "<b>DevOps Guru</b>: ML phát hiện bất thường vận hành, gợi ý nguyên nhân gốc.<br><b>CodeGuru</b>: Reviewer (lỗi/lỗ hổng code), Profiler (dòng code tốn tài nguyên)." },
+      { t: "other", f: "Amazon Q Business và Q Developer?", b: "<b>Q Business</b>: trợ lý GenAI hỏi đáp trên dữ liệu doanh nghiệp.<br><b>Q Developer</b>: hỗ trợ lập trình (tên cũ CodeWhisperer)." },
+      { t: "other", f: "PII trong văn bản ứng dụng gửi tới khác PII trong S3 bucket thế nào?", b: "Chuỗi văn bản ⇒ <b>Comprehend</b>.<br>Quét S3 bucket toàn tài khoản ⇒ <b>Amazon Macie</b>." },
+
+      // ---- SageMaker
+      { t: "sm", f: "Amazon SageMaker AI là gì? Đổi tên khi nào?", b: "Nền tảng ML fully managed để <b>build, train, deploy</b> model. Đổi tên từ Amazon SageMaker ngày <b>03/12/2024</b> (API <code>sagemaker</code> giữ nguyên)." },
+      { t: "sm", f: "Ground Truth, Data Wrangler, Feature Store?", b: "<b>Ground Truth</b>: gán nhãn dữ liệu.<br><b>Data Wrangler</b>: chuẩn bị dữ liệu trực quan.<br><b>Feature Store</b>: lưu, chia sẻ feature nhất quán giữa train và inference." },
+      { t: "sm", f: "Autopilot khác Canvas thế nào?", b: "<b>Autopilot</b>: AutoML từ dataset dạng bảng + cột mục tiêu, vẫn minh bạch.<br><b>Canvas</b>: business analyst tạo dự đoán <b>không cần code</b>." },
+      { t: "sm", f: "SageMaker JumpStart là gì?", b: "<b>Model hub</b>: deploy/fine-tune một click model mở, foundation model (gần 1.000 model)." },
+      { t: "sm", f: "SageMaker Clarify làm gì?", b: "Phát hiện <b>bias</b> và <b>giải thích dự đoán</b> (feature importance)." },
+      { t: "sm", f: "SageMaker Pipelines và Model Monitor?", b: "<b>Pipelines</b>: CI/CD cho ML (MLOps), Model Registry.<br><b>Model Monitor</b>: theo dõi chất lượng model đang chạy (data drift)." },
+      { t: "sm", f: "Real-time inference dùng khi nào?", b: "Tải tương tác, <b>độ trễ thấp</b>, lưu lượng ổn định; endpoint chạy liên tục, hỗ trợ <b>GPU, VPC</b>, multi-model, auto scaling." },
+      { t: "sm", f: "Serverless Inference: khi nào dùng, giới hạn gì?", b: "Traffic <b>thất thường, có khoảng nghỉ</b>, chấp nhận cold start; scale về 0; memory <b>1–6 GB</b>, max concurrency 200/endpoint.", x: "Không hỗ trợ GPU, VPC, multi-model, Model Monitor." },
+      { t: "sm", f: "Asynchronous Inference: khi nào dùng, giới hạn gì?", b: "<b>Payload lớn (tới 1 GB), xử lý lâu (tới 1 giờ)</b>, gần real-time; request xếp hàng, input/output qua S3, báo SNS; scale về 0." },
+      { t: "sm", f: "Batch transform dùng khi nào?", b: "Dự đoán cho <b>cả dataset</b>, không cần endpoint thường trực; job đọc S3, ghi kết quả ra S3 rồi dừng." },
+      { t: "sm", f: "Chuyển đổi giữa endpoint real-time và serverless có được không?", b: "<b>Real-time → serverless: không được.</b> Serverless → real-time: được nhưng không quay lại được." },
+      { t: "sm", f: "Cách tiết kiệm chi phí SageMaker AI?", b: "Serverless/Async scale về 0, <b>managed Spot training</b>, <b>Savings Plans (tới 64%)</b>, Inferentia/Trainium, Neo, multi-model endpoint." },
+
+      // ---- Bedrock
+      { t: "bedrock", f: "Amazon Bedrock là gì?", b: "Dịch vụ <b>fully managed, serverless</b> truy cập <b>foundation model</b> của Amazon (Nova) và nhiều hãng (Anthropic Claude, Meta Llama, Mistral…) qua <b>một API</b>." },
+      { t: "bedrock", f: "Bedrock Knowledge Bases làm gì?", b: "<b>RAG</b>: lấy đoạn liên quan từ dữ liệu riêng đưa vào prompt; trả lời <b>kèm trích dẫn</b>; không cần train lại khi tài liệu đổi – chỉ sync lại data source." },
+      { t: "bedrock", f: "Vector store cho Bedrock Knowledge Bases?", b: "<b>OpenSearch Serverless, Aurora, Neptune…</b> hoặc Managed Knowledge Base do Bedrock lo toàn bộ." },
+      { t: "bedrock", f: "Bedrock Guardrails lọc được gì?", b: "<b>Content filters</b> (Hate, Violence, Prompt Attack…), <b>denied topics</b>, word filters, <b>sensitive information (PII)</b>, <b>contextual grounding check</b> (hallucination), Automated Reasoning." },
+      { t: "bedrock", f: "Bedrock Agents / AgentCore dùng để làm gì?", b: "Xây AI agent <b>tự lên kế hoạch và gọi công cụ/API</b> để hoàn thành tác vụ nhiều bước." },
+      { t: "bedrock", f: "Các cách tùy biến model trên Bedrock?", b: "<b>Fine-tuning</b>, reinforcement fine-tuning, <b>model distillation</b>, custom model import." },
+      { t: "bedrock", f: "Bedrock tính giá thế nào, tối ưu ra sao?", b: "Theo <b>token</b> input/output; <b>batch inference giảm tới 50%</b>, <b>Provisioned Throughput</b>, prompt caching giảm tới 90% chi phí." },
+      { t: "bedrock", f: "Bedrock khác SageMaker AI thế nào?", b: "<b>Bedrock</b>: FM có sẵn, serverless, prompt + RAG, giá theo token.<br><b>SageMaker AI</b>: tự train/tùy biến, kiểm soát hạ tầng, giá theo instance." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>no machine learning expertise</i>”, “<i>pre-trained</i>” ⇒ ?", b: "<b>AI service chuyên dụng</b> (Rekognition, Textract, Comprehend…), không phải SageMaker." },
+      { t: "kw", f: "Đề có “<i>detect inappropriate content in user-uploaded images</i>” ⇒ ?", b: "<b>Rekognition content moderation</b>." },
+      { t: "kw", f: "Đề có “<i>workers must wear helmets</i>” ⇒ ?", b: "<b>Rekognition PPE detection</b>." },
+      { t: "kw", f: "Đề có “<i>extract forms, tables from scanned documents</i>”, “<i>invoices</i>” ⇒ ?", b: "<b>Amazon Textract</b>." },
+      { t: "kw", f: "Đề có “<i>sentiment of customer reviews</i>”, “<i>redact PII in text</i>” ⇒ ?", b: "<b>Amazon Comprehend</b>." },
+      { t: "kw", f: "Đề có “<i>chatbot</i>”, “<i>IVR in Amazon Connect</i>” ⇒ ?", b: "<b>Amazon Lex</b> (+ Lambda fulfillment)." },
+      { t: "kw", f: "Đề có “<i>intermittent traffic, idle periods, tolerate cold starts</i>” cho inference ⇒ ?", b: "<b>SageMaker Serverless Inference</b>." },
+      { t: "kw", f: "Đề có “<i>chatbot answers from company documents, cite sources</i>” ⇒ ?", b: "<b>Bedrock Knowledge Bases</b> (RAG)." },
+      { t: "kw", f: "Đề có “<i>block harmful content / mask PII in GenAI responses</i>” ⇒ ?", b: "<b>Bedrock Guardrails</b>." },
+      { t: "kw", f: "Đề có “<i>real-time product recommendations</i>” ⇒ ?", b: "<b>Amazon Personalize</b>." }
+    ],
+
+    pairs: [
+      ["Pretrained AI service", "Chỉ gọi API, không cần chuyên môn ML"],
+      ["Content moderation", "Phát hiện ảnh/video không phù hợp"],
+      ["Face collection", "Chỉ mục khuôn mặt để tìm kiếm"],
+      ["Custom Labels", "Tự train bộ phân loại vật thể riêng"],
+      ["Face Liveness", "Xác nhận người thật, chống giả mạo"],
+      ["PPE detection", "Phát hiện thiết bị bảo hộ cá nhân"],
+      ["Key-value pair", "Cặp khóa – giá trị trong biểu mẫu (Textract)"],
+      ["Amazon A2I", "Con người duyệt lại dự đoán ML"],
+      ["Targeted sentiment", "Cảm xúc gắn với từng thực thể"],
+      ["Topic modeling", "Gom kho tài liệu theo chủ đề"],
+      ["Custom terminology", "Giữ đúng tên thương hiệu khi dịch"],
+      ["ASR / NLU", "Nhận dạng giọng nói / hiểu ý định"],
+      ["Intent / Slot", "Ý định / ô thông tin trong Lex"],
+      ["Fulfillment", "Thực hiện yêu cầu, thường bằng Lambda"],
+      ["Speaker diarization", "Tách lời theo người nói"],
+      ["Custom vocabulary", "Tăng chính xác với từ chuyên ngành"],
+      ["SSML", "Đánh dấu điều khiển cách đọc của Polly"],
+      ["Ground Truth", "Gán nhãn dữ liệu huấn luyện"],
+      ["Feature Store", "Kho đặc trưng dùng chung giữa team"],
+      ["Autopilot", "AutoML trên dữ liệu dạng bảng"],
+      ["SageMaker Canvas", "ML không cần code cho business analyst"],
+      ["Clarify", "Phát hiện bias, giải thích dự đoán"],
+      ["SageMaker Pipelines", "CI/CD cho ML (MLOps)"],
+      ["Batch transform", "Suy luận theo lô, không cần endpoint"],
+      ["Foundation model", "Mô hình nền tảng dùng qua API"],
+      ["RAG", "Truy xuất tài liệu rồi đưa vào prompt"],
+      ["Guardrails", "Lọc nội dung, topic, PII cho GenAI"],
+      ["Token", "Đơn vị tính giá Bedrock"]
+    ],
+
+    sorts: [
+      {
+        title: "Bài toán ⇒ AI service",
+        desc: "Ghép mỗi bài toán với AI service dựng sẵn phù hợp nhất.",
+        buckets: ["Rekognition", "Textract", "Comprehend", "Translate", "Transcribe", "Polly", "Lex", "Personalize"],
+        items: [
+          ["Lọc ảnh bạo lực người dùng tải lên", 0, "content moderation"],
+          ["Xác minh danh tính bằng so sánh khuôn mặt", 0, "facial analysis / comparison"],
+          ["Trích bảng và form từ PDF scan", 1, "forms + tables"],
+          ["Xử lý hóa đơn và biên lai", 1, "AnalyzeExpense"],
+          ["Phân tích cảm xúc review sản phẩm", 2, "sentiment"],
+          ["Phân loại ticket hỗ trợ vào nhóm riêng", 2, "custom classification"],
+          ["Bản địa hóa mô tả sản phẩm sang nhiều ngôn ngữ", 3, "neural machine translation"],
+          ["Tạo phụ đề cho video bài giảng", 4, "speech-to-text"],
+          ["Đọc bài viết cho người khiếm thị", 5, "text-to-speech"],
+          ["Bot đặt phòng khách sạn bằng giọng nói", 6, "intent + slot"],
+          ["“Khách mua món này cũng mua…”", 7, "gợi ý cá nhân hóa"]
+        ]
+      },
+      {
+        title: "Chọn kiểu SageMaker inference",
+        desc: "Đọc yêu cầu và chọn kiểu inference phù hợp.",
+        buckets: ["Real-time", "Serverless", "Asynchronous", "Batch transform"],
+        items: [
+          ["Độ trễ thấp, traffic ổn định, cần GPU", 0, "endpoint chạy liên tục"],
+          ["Endpoint phải chạy trong VPC, A/B production variants", 0, "Serverless không hỗ trợ VPC"],
+          ["Traffic thất thường, có khoảng nghỉ, chấp nhận cold start", 1, "scale về 0, không chọn instance"],
+          ["Tối thiểu chi phí cho tải ít, không cần GPU", 1, "trả theo dùng"],
+          ["Payload vài trăm MB, xử lý vài phút, scale về 0", 2, "tới 1 GB, tới 1 giờ"],
+          ["Request xếp hàng, kết quả ghi S3 và báo SNS", 2, "mô hình bất đồng bộ"],
+          ["Dự đoán cho cả dataset mỗi đêm", 3, "không cần endpoint thường trực"],
+          ["Tiền xử lý dataset lớn trên S3 rồi dừng", 3, "job đọc S3 ghi *.out"]
+        ]
+      },
+      {
+        title: "Tầng nào của AI/ML?",
+        desc: "Xếp mỗi tình huống vào đúng tầng dịch vụ: AI service, SageMaker AI hay Bedrock.",
+        buckets: ["AI service", "SageMaker AI", "Bedrock"],
+        items: [
+          ["OCR tài liệu, đội ngũ không có chuyên môn ML", 0, "Textract chỉ cần gọi API"],
+          ["Dịch chat chăm sóc khách hàng", 0, "Translate"],
+          ["Phát hiện khuôn mặt trong ảnh", 0, "Rekognition"],
+          ["Data scientist tự train model churn trên dữ liệu riêng", 1, "build–train–deploy model riêng"],
+          ["Bring your own algorithm / framework", 1, "SageMaker hỗ trợ BYO"],
+          ["Hệ thống chống gian lận riêng của ngân hàng", 1, "ví dụ của decision guide"],
+          ["Sinh mô tả sản phẩm bằng LLM, không quản lý hạ tầng", 2, "foundation model qua API"],
+          ["Chatbot hỏi-đáp chính sách nội bộ có trích dẫn", 2, "Knowledge Bases (RAG)"],
+          ["Agent tự gọi API để hoàn thành tác vụ nhiều bước", 2, "Agents / AgentCore"]
+        ]
+      },
+      {
+        title: "Tính năng SageMaker AI nào?",
+        desc: "Xếp yêu cầu vào đúng tính năng của SageMaker AI.",
+        buckets: ["Ground Truth", "Feature Store", "Canvas", "Autopilot", "Clarify", "Pipelines"],
+        items: [
+          ["Gán nhãn ảnh để tạo tập huấn luyện", 0, "data labeling"],
+          ["Chia sẻ feature giữa các team, nhất quán train/inference", 1, "kho feature"],
+          ["Business analyst dự đoán không cần code", 2, "point-and-click"],
+          ["Đích chuyển đổi cho khách Amazon Forecast", 2, "theo hướng dẫn của AWS"],
+          ["Đưa dataset bảng + cột mục tiêu, tự chọn model tốt nhất", 3, "AutoML"],
+          ["Phát hiện bias và giải thích dự đoán", 4, "feature importance"],
+          ["Tự động hóa workflow ML end-to-end", 5, "CI/CD cho ML"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Đề nhấn “no ML expertise” thì nên chọn AI service dựng sẵn thay vì SageMaker.", true, "Least operational overhead."],
+      ["Rekognition Image là thao tác bất đồng bộ.", false, "Image là đồng bộ; stored video mới bất đồng bộ."],
+      ["Rekognition video trên S3 báo hoàn tất qua SNS rồi gọi Get… lấy kết quả.", true, "Mẫu job + SNS."],
+      ["Video trực tiếp từ camera đi vào Rekognition qua Kinesis Video Streams.", true, "Dùng stream processor."],
+      ["Rekognition PPE detection hỗ trợ cả video.", false, "Theo bảng của bài, PPE chỉ cho ảnh."],
+      ["Textract trích xuất được cặp key-value và bảng từ tài liệu.", true, "Vượt xa OCR đơn thuần."],
+      ["Textract hiểu được cảm xúc của văn bản vừa trích.", false, "Cần nối tiếp Comprehend."],
+      ["Tài liệu PDF nhiều trang nên dùng Textract async.", true, "Sync cho tài liệu một trang."],
+      ["Rekognition là lựa chọn tốt nhất để quét PII trong mọi S3 bucket của tài khoản.", false, "Dùng Amazon Macie."],
+      ["Comprehend có 4 giá trị sentiment: positive, neutral, negative, mixed.", true, "Có thêm targeted sentiment."],
+      ["Comprehend nhận trực tiếp file audio để phân tích cảm xúc.", false, "Phải Transcribe sang văn bản trước."],
+      ["Custom terminology luôn đảm bảo thuật ngữ được áp dụng.", false, "Translate dùng ngữ cảnh, không đảm bảo."],
+      ["Kendra lọc kết quả tìm kiếm theo quyền user/group.", true, "Phản ánh mô hình bảo mật của tổ chức."],
+      ["Kendra tính phí cả index rỗng sau thời gian dùng thử.", true, "Tính cho mọi index đã provision."],
+      ["Amazon Lex kết hợp ASR và NLU.", true, "Cùng công nghệ Alexa."],
+      ["Lex là công cụ chuẩn để chép lời file audio dài.", false, "Chép lời ⇒ Transcribe."],
+      ["Transcribe trả timestamp cho từng từ.", true, "Kèm confidence score."],
+      ["PII redaction của Transcribe đáp ứng de-identification HIPAA.", false, "Tài liệu cảnh báo không đáp ứng."],
+      ["Polly chuyển giọng nói thành văn bản.", false, "Polly là text-to-speech; ngược lại là Transcribe."],
+      ["Audio Polly sinh ra được phát lại không tốn thêm phí.", true, "Cache và lưu thoải mái."],
+      ["Amazon Forecast vẫn mở cho khách hàng mới.", false, "Không còn nhận khách mới; chuyển SageMaker Canvas."],
+      ["Gợi ý sản phẩm real-time trên web thương mại điện tử dùng Personalize.", true, "Không phải Forecast."],
+      ["Amazon SageMaker được đổi tên thành SageMaker AI và namespace API cũng đổi.", false, "Namespace sagemaker giữ nguyên."],
+      ["SageMaker Canvas cho phép business analyst tạo dự đoán không cần code.", true, "Giao diện point-and-click."],
+      ["Serverless Inference hỗ trợ GPU và chạy trong VPC.", false, "Không hỗ trợ GPU, VPC."],
+      ["Asynchronous Inference hỗ trợ payload tới 1 GB và xử lý tới 1 giờ.", true, "Scale về 0 khi rảnh."],
+      ["Có thể chuyển endpoint real-time thành serverless.", false, "Chỉ chiều serverless → real-time."],
+      ["Batch transform cần endpoint chạy thường trực.", false, "Job chạy xong thì dừng."],
+      ["SageMaker AI Savings Plans tiết kiệm tới 64%.", true, "Cam kết 1–3 năm."],
+      ["Bedrock là serverless, tính giá theo token.", true, "Không quản lý hạ tầng."],
+      ["Muốn chatbot trả lời theo tài liệu mới, phải train lại foundation model.", false, "RAG chỉ cần sync lại data source."],
+      ["Bedrock Guardrails có thể phát hiện hallucination trong RAG.", true, "Contextual grounding check."],
+      ["Batch inference trên Bedrock giúp tiết kiệm tới 50%.", true, "Một trong các cách tối ưu chi phí Bedrock."],
+      ["Model tùy biến train trên SageMaker AI không thể import vào Bedrock.", false, "Custom model import cho phép inference serverless."]
+    ],
+
+    map: {
+      t: "Bài 37 · AI/ML trên AWS",
+      c: [
+        { t: "Ba tầng AI/ML", icon: "cat/Machine-Learning.svg", c: [
+          { t: "AI services", v: "gọi API, không cần chuyên môn ML" },
+          { t: "SageMaker AI", v: "build–train–deploy model riêng" },
+          { t: "Generative AI", v: "Bedrock, Amazon Q – FM qua API" },
+          { t: "Hạ tầng", v: "GPU · Trainium (train) · Inferentia (inference)" }
+        ] },
+        { t: "Rekognition & Textract", icon: "svc/Amazon-Rekognition.svg", c: [
+          { t: "Rekognition", v: "label, text, face, celebrity, moderation, PPE" },
+          { t: "Ảnh / video", v: "ảnh sync · stored video async + SNS · streaming qua KVS" },
+          { t: "Tùy biến", v: "Custom Labels · Face Liveness · face collection" },
+          { t: "Textract", v: "OCR + forms + tables + Queries + chữ viết tay" },
+          { t: "API riêng", v: "AnalyzeExpense · AnalyzeID · Lending" },
+          { t: "A2I", v: "con người duyệt kết quả độ tin cậy thấp" }
+        ] },
+        { t: "Ngôn ngữ & tìm kiếm", icon: "svc/Amazon-Comprehend.svg", c: [
+          { t: "Comprehend", v: "entity, key phrase, PII, sentiment, topic" },
+          { t: "Comprehend Medical", v: "văn bản y tế, HIPAA" },
+          { t: "Translate", v: "neural MT, custom terminology" },
+          { t: "Kendra", v: "enterprise search, lọc theo quyền (→ Bedrock KB)" },
+          { t: "Lex", v: "ASR + NLU, intent/slot, Lambda, Connect" }
+        ] },
+        { t: "Giọng nói", icon: "svc/Amazon-Transcribe.svg", c: [
+          { t: "Transcribe", v: "nói → chữ, batch (S3) / streaming" },
+          { t: "Tính năng", v: "timestamp, diarization, custom vocabulary, PII redaction" },
+          { t: "Polly", v: "chữ → nói; standard/neural/long-form/generative" },
+          { t: "SSML · lexicon", v: "điều khiển cách đọc · phát âm từ riêng" },
+          { t: "Chuỗi hay gặp", v: "Transcribe → Translate → Comprehend" }
+        ] },
+        { t: "AI service khác", icon: "svc/Amazon-Forecast.svg", c: [
+          { t: "Forecast", v: "time-series (khách mới → SageMaker Canvas)" },
+          { t: "Personalize", v: "gợi ý sản phẩm" },
+          { t: "Fraud Detector", v: "gian lận trực tuyến" },
+          { t: "Lookout", v: "lỗi sản phẩm qua ảnh · bảo trì dự đoán" },
+          { t: "Amazon Q", v: "Business (doanh nghiệp) · Developer (lập trình)" }
+        ] },
+        { t: "SageMaker AI", icon: "svc/Amazon-SageMaker.svg", c: [
+          { t: "Chuẩn bị dữ liệu", v: "Ground Truth · Data Wrangler · Feature Store" },
+          { t: "Build & train", v: "Studio · JumpStart · Autopilot · Canvas" },
+          { t: "Đánh giá & MLOps", v: "Clarify · Pipelines · Model Monitor" },
+          { t: "Inference", c: [
+            { t: "Real-time", v: "độ trễ thấp, GPU, VPC" },
+            { t: "Serverless", v: "thất thường, 1–6 GB, không GPU/VPC" },
+            { t: "Asynchronous", v: "≤ 1 GB, ≤ 1 giờ, S3 + SNS" },
+            { t: "Batch transform", v: "cả dataset, không endpoint" }
+          ] }
+        ] },
+        { t: "Amazon Bedrock", icon: "cat/Machine-Learning.svg", c: [
+          { t: "Bản chất", v: "FM serverless qua một API, giá theo token" },
+          { t: "Knowledge Bases", v: "RAG có trích dẫn, không train lại" },
+          { t: "Guardrails", v: "lọc nội dung, topic, PII, hallucination" },
+          { t: "Agents / AgentCore", v: "agent gọi công cụ, tác vụ nhiều bước" },
+          { t: "Tùy biến & chi phí", v: "fine-tuning, distillation · batch −50%" },
+          { t: "vs SageMaker AI", v: "FM có sẵn vs tự train, kiểm soát hạ tầng" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

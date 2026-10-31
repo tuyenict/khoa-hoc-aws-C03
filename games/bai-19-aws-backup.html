@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 19 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Backup.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="19" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-19-aws-backup.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "ov", name: "Tổng quan AWS Backup" },
+      { id: "plan", name: "Backup plan & lifecycle" },
+      { id: "vault", name: "Backup vault & Vault Lock" },
+      { id: "xacc", name: "Cross-Region & cross-account" },
+      { id: "pitr", name: "Continuous backup & PITR" },
+      { id: "ops", name: "Giám sát, audit, restore testing" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Tổng quan
+      { t: "ov", f: "AWS Backup là gì?", b: "Dịch vụ <b>fully managed</b> sao lưu <b>tập trung, theo chính sách</b> cho nhiều dịch vụ AWS (và on-premises), thay cho script riêng từng dịch vụ." },
+      { t: "ov", f: "Những nhóm tài nguyên nào AWS Backup hỗ trợ?", b: "<b>Compute/block</b>: EC2, EBS, EKS, SAP HANA.<br><b>Object/file</b>: S3, EFS, mọi FSx, Volume Gateway.<br><b>Database</b>: RDS, Aurora, DynamoDB, DocumentDB, Neptune, Redshift.<br><b>Khác</b>: CloudFormation stack, VMware." },
+      { t: "ov", f: "AWS Backup có quản lý backup tạo bên ngoài AWS Backup không?", b: "<b>Không.</b> Backup tạo ngoài AWS Backup không do AWS Backup quản lý." },
+      { t: "ov", f: "Lợi ích của tài nguyên “Full AWS Backup management”?", b: "<b>Mã hóa độc lập</b> bằng KMS key của vault · ARN riêng <code>arn:aws:backup</code> · <b>billing tập trung</b> dưới mục Backup.", x: "Ví dụ: S3, EFS, DynamoDB advanced features. EBS/RDS thì recovery point là snapshot của dịch vụ gốc." },
+      { t: "ov", f: "Incremental backup trong AWS Backup hoạt động thế nào?", b: "Lần đầu là <b>bản đầy đủ</b>, các lần sau chỉ lưu <b>phần thay đổi</b> (với tài nguyên hỗ trợ)." },
+      { t: "ov", f: "Khi nào chọn Data Lifecycle Manager thay vì AWS Backup?", b: "Khi <b>chỉ cần snapshot EBS/AMI</b> theo lịch, đơn giản.", x: "Nhiều dịch vụ, nhiều account, cần audit/Vault Lock ⇒ AWS Backup." },
+      { t: "ov", f: "Backup khác replication thế nào?", b: "<b>Backup</b>: quay về quá khứ (chống xóa nhầm, ransomware, lỗi logic).<br><b>Replication</b>: sao chép cả lỗi sang đích gần như ngay lập tức." },
+
+      // ---- Plan
+      { t: "plan", f: "Backup plan gồm những gì?", b: "Một hoặc nhiều <b>backup rule</b>: tần suất, backup window, vault đích, lifecycle, copy rule, tag cho recovery point." },
+      { t: "plan", f: "Tần suất snapshot backup nhanh nhất?", b: "<b>Mỗi giờ</b> (hoặc cron 6 trường kiểu EventBridge)." },
+      { t: "plan", f: "Backup window mặc định trên console?", b: "Bắt đầu <b>12:30 AM</b>, start within <b>8 giờ</b>, complete within <b>7 ngày</b> (complete within không áp dụng cho FSx)." },
+      { t: "plan", f: "Retention của snapshot và continuous backup?", b: "<b>Snapshot</b>: 1 ngày – <b>100 năm</b> (hoặc vô thời hạn).<br><b>Continuous</b>: 1 – <b>35 ngày</b>." },
+      { t: "plan", f: "Ràng buộc retention khi chuyển backup xuống cold storage?", b: "Ở cold <b>tối thiểu 90 ngày</b> ⇒ <code>DeleteAfterDays ≥ MoveToColdStorageAfterDays + 90</code>.", x: "Chuyển cold sau 30 ngày mà retention 60 ngày ⇒ không hợp lệ (phải ≥ 120)." },
+      { t: "plan", f: "Vì sao AWS khuyến nghị giữ ở warm ≥ 8 ngày trước khi chuyển cold?", b: "Backup incremental cần ít nhất <b>một bản full ở warm</b>; chuyển full xuống cold quá sớm ⇒ AWS Backup tạo thêm bản full warm ⇒ tốn hơn." },
+      { t: "plan", f: "Tài nguyên nào hỗ trợ cold storage?", b: "<b>EFS, EBS</b> (Snapshots Archive, tần suất hằng tháng trở lên), <b>DynamoDB advanced</b>, CloudFormation, SAP HANA, Timestream, VMware.", x: "KHÔNG có RDS, Aurora, S3, FSx, EC2." },
+      { t: "plan", f: "Service opt-in là gì?", b: "Bật loại tài nguyên AWS Backup được phép điều phối trong Region. Tài nguyên có tag đúng nhưng dịch vụ chưa opt-in ⇒ <b>không được backup</b>." },
+      { t: "plan", f: "Các cách gán tài nguyên vào backup plan?", b: "Theo <b>resource type / ARN</b>, “<b>Include all resources</b>”, hoặc <b>tag</b> include/exclude + condition (StringEquals, StringLike…)." },
+      { t: "plan", f: "Quota của một resource assignment?", b: "<b>500</b> ARN không wildcard · <b>30</b> ARN có wildcard · <b>30</b> condition · <b>30</b> tag." },
+      { t: "plan", f: "Rule chồng lấn trong cùng plan được xử lý thế nào?", b: "Khi start window chồng nhau, AWS Backup chỉ giữ backup của rule có <b>retention dài hơn</b>." },
+      { t: "plan", f: "Vì sao snapshot RDS đặt lịch có thể fail?", b: "Database AWS không bắt đầu backup trong <b>1 giờ trước</b> hoặc trong <b>maintenance window</b>; FSx là 3 giờ trước." },
+      { t: "plan", f: "Muốn backup application-consistent cho SQL Server trên EC2 Windows?", b: "Bật <b>Windows VSS</b> trong advanced backup settings." },
+      { t: "plan", f: "On-demand backup có thể là continuous backup không?", b: "<b>Không.</b> On-demand ghi lại trạng thái tại một thời điểm." },
+      { t: "plan", f: "Backup hết hạn bị xóa khi nào?", b: "Vào thời điểm ngẫu nhiên trong <b>8 giờ</b> sau khi hết hạn." },
+
+      // ---- Vault
+      { t: "vault", f: "Backup vault là gì?", b: "Container chứa <b>recovery point</b>, có <b>KMS key riêng</b> và <b>vault access policy</b>; khóa được bằng <b>Vault Lock</b>." },
+      { t: "vault", f: "Recovery point có sửa được không? Có mất khi xóa tài nguyên gốc không?", b: "<b>Immutable</b> – không ai sửa được nội dung. Vault vẫn giữ backup kể cả khi xóa EC2/EBS gốc." },
+      { t: "vault", f: "3 lớp bảo vệ của backup vault?", b: "<b>Mã hóa KMS</b> (chống đọc trái phép) · <b>Vault access policy</b> (vd Deny <code>backup:DeleteRecoveryPoint</code>) · <b>Vault Lock</b> (WORM, kể cả root)." },
+      { t: "vault", f: "Governance mode của Vault Lock?", b: "Lock <b>gỡ được</b> bởi user có IAM permission phù hợp; <b>không có grace time</b>; API không truyền ChangeableForDays." },
+      { t: "vault", f: "Compliance mode của Vault Lock?", b: "Có <b>grace time ≥ 3 ngày (72 giờ)</b>; hết grace time ⇒ không user nào, <b>kể cả AWS</b>, gỡ được khi vault còn recovery point." },
+      { t: "vault", f: "Tham số nào quyết định Vault Lock là compliance mode?", b: "<b>ChangeableForDays</b> (3 – 36.500 ngày) – cũng là grace time." },
+      { t: "vault", f: "MinRetentionDays / MaxRetentionDays của Vault Lock áp dụng cho backup nào?", b: "Chỉ cho <b>job backup/copy mới</b>; job có retention ngoài khoảng sẽ fail. Recovery point có sẵn giữ lifecycle cũ.", x: "Min ≥ 1 ngày, max ≤ 36.500 ngày." },
+      { t: "vault", f: "Vault Lock có tốn phí thêm không? Đạt chuẩn tuân thủ nào?", b: "<b>Không phí thêm</b>. Được Cohasset đánh giá cho <b>SEC 17a-4, CFTC, FINRA</b>." },
+      { t: "vault", f: "Rủi ro của retention “Always” trong vault compliance mode?", b: "Sau grace time, recovery point bị <b>giữ mãi mãi</b> và bạn <b>trả phí mãi mãi</b>." },
+      { t: "vault", f: "Logically air-gapped vault là gì?", b: "Vault có <b>compliance lock sẵn</b>, mã hóa bằng AWS owned key, lưu trong account của dịch vụ AWS Backup; <b>share qua AWS RAM</b>, tích hợp <b>MPA</b>." },
+      { t: "vault", f: "Vault Lock có chặn được share EBS snapshot qua EC2 API không?", b: "<b>Không.</b> Vault Lock chỉ điều khiển hành động qua AWS Backup. Dùng IAM/SCP deny <code>ModifySnapshotAttribute</code>, <code>ModifySnapshotTier</code>, bật block public access cho EBS snapshot." },
+      { t: "vault", f: "AWS Backup Vault Lock khác S3 Object Lock và Glacier Vault Lock thế nào?", b: "<b>AWS Backup Vault Lock</b>: mọi recovery point trong một backup vault (đa dịch vụ).<br><b>S3 Object Lock</b>: từng object version.<br><b>Glacier Vault Lock</b>: vault của Glacier gốc – tính năng khác hẳn." },
+
+      // ---- Cross
+      { t: "xacc", f: "Lần copy backup đầu tiên và các lần sau thế nào?", b: "Lần đầu <b>full</b>; các lần sau tới cùng vault đích là <b>incremental</b> (nếu dịch vụ hỗ trợ). Bản copy được <b>mã hóa lại bằng key của vault đích</b>." },
+      { t: "xacc", f: "Có copy được backup đang ở cold tier không?", b: "<b>Không</b> – cả cross-Region lẫn cross-account." },
+      { t: "xacc", f: "Điều kiện để dùng cross-account backup?", b: "Cùng <b>organization</b> · management account <b>bật Cross-account backup</b> · vault đích (không phải default) Allow <code>backup:CopyIntoBackupVault</code> · share customer managed key nếu cần." },
+      { t: "xacc", f: "Vì sao default vault không làm đích cross-account được?", b: "Default vault dùng <b>key không chia sẻ được</b>." },
+      { t: "xacc", f: "Copy cross-account EBS/RDS mã hóa bị lỗi – nguyên nhân thường gặp?", b: "Dùng <b>AWS managed key</b> – key policy không sửa được nên không share được ⇒ chuyển sang <b>customer managed key</b> và share." },
+      { t: "xacc", f: "Restore backup của account A vào account B thế nào?", b: "<b>Copy</b> recovery point sang vault của B, rồi <b>restore trong B</b>. Không restore trực tiếp được." },
+      { t: "xacc", f: "Chặn member account tự làm đích copy hoặc rời org mang theo backup bằng gì?", b: "<b>SCP</b>: giới hạn đích (backup:CopyTargets, CopyTargetOrgPaths…) và deny <code>organizations:LeaveOrganization</code>." },
+      { t: "xacc", f: "Backup policy của AWS Organizations làm gì?", b: "Policy khai báo: định nghĩa backup plan ở management account và gắn vào root/OU/account ⇒ <b>mọi account (kể cả mới) tự có plan</b>." },
+      { t: "xacc", f: "Mô hình “fan in / fan out” là gì?", b: "Các account workload copy backup <b>về một central backup account</b> (fan in), rồi copy tiếp sang Region khác/air-gapped vault (fan out)." },
+
+      // ---- PITR
+      { t: "pitr", f: "Continuous backup hoạt động thế nào?", b: "Tạo <b>bản full</b>, rồi liên tục sao lưu <b>transaction log</b>; khi PITR thì replay log tới thời điểm chọn, chính xác <b>1 giây</b>, lùi tối đa <b>35 ngày</b>." },
+      { t: "pitr", f: "Dịch vụ nào hỗ trợ continuous backup trong AWS Backup?", b: "<b>RDS</b> (không gồm Multi-AZ DB cluster), <b>Aurora</b>, <b>S3</b>, <b>SAP HANA trên EC2</b>." },
+      { t: "pitr", f: "RPO của continuous backup với RDS và S3?", b: "<b>RDS</b>: tới 5 phút gần nhất (Aurora thường &lt; 5 phút).<br><b>S3</b>: tới 15 phút gần nhất." },
+      { t: "pitr", f: "Copy continuous backup sang Region khác thì sao?", b: "Bản copy <b>trở thành snapshot</b> ⇒ <b>không còn PITR</b> ở đích." },
+      { t: "pitr", f: "Mỗi tài nguyên có bao nhiêu continuous backup?", b: "<b>Một.</b> Nhiều rule cùng vault ⇒ theo retention dài nhất; khác vault ⇒ rule đầu tạo continuous, các rule sau tạo snapshot." },
+      { t: "pitr", f: "Continuous backup S3 phụ thuộc vào gì?", b: "Sự kiện S3 gửi qua <b>Amazon EventBridge</b>; tắt notification EventBridge ⇒ continuous backup dừng." },
+      { t: "pitr", f: "Những giới hạn của continuous backup?", b: "Không on-demand · <b>không cold storage</b> · bản copy thành snapshot · không áp dụng legal hold." },
+      { t: "pitr", f: "Cần PITR 14 ngày và giữ backup 7 năm ⇒ thiết kế?", b: "Kết hợp <b>rule continuous</b> (≤ 35 ngày) + <b>rule snapshot</b> (retention dài, có thể cold)." },
+
+      // ---- Ops
+      { t: "ops", f: "AWS Backup Audit Manager làm gì?", b: "Control dựng sẵn/tùy biến (gom thành <b>framework</b>), tìm tài nguyên chưa tuân thủ, <b>báo cáo hằng ngày</b> làm bằng chứng; đẩy sang AWS Audit Manager." },
+      { t: "ops", f: "Restore testing làm gì?", b: "Tự <b>restore định kỳ</b>, đo thời gian restore so với RTO, giữ tài nguyên 1–168 giờ để validation rồi <b>tự xóa</b>." },
+      { t: "ops", f: "Legal hold khác Vault Lock thế nào?", b: "<b>Legal hold</b>: áp cho <b>từng recovery point</b>, không hạn, tới khi release.<br><b>Vault Lock</b>: bảo vệ <b>cả vault</b>." },
+      { t: "ops", f: "Giới hạn của legal hold?", b: "Tối đa <b>50</b> legal hold active/account · không áp cho continuous backup · bản copy không mang theo legal hold." },
+      { t: "ops", f: "Công cụ giám sát AWS Backup?", b: "<b>CloudWatch</b> (metric, alarm) · <b>EventBridge</b> (sự kiện job) · <b>SNS</b> (thông báo) · <b>CloudTrail</b> (audit API)." },
+      { t: "ops", f: "Quét malware trong backup bằng gì?", b: "Tích hợp <b>Amazon GuardDuty</b> Malware Protection (EC2, EBS, S3)." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>centralize and automate backups across EC2, RDS, DynamoDB, EFS</i>” + “<i>least operational overhead</i>” ⇒ ?", b: "<b>AWS Backup</b> + backup plan gán tài nguyên bằng <b>tag</b>." },
+      { t: "kw", f: "Đề có “<i>new resources must be backed up automatically</i>” ⇒ ?", b: "Gán tài nguyên vào plan <b>bằng tag</b>." },
+      { t: "kw", f: "Đề có “<i>across all accounts in the organization</i>” ⇒ ?", b: "<b>Backup policies</b> của AWS Organizations." },
+      { t: "kw", f: "Đề có “<i>no one, including root, can delete backups before retention</i>” ⇒ ?", b: "<b>Vault Lock compliance mode</b>." },
+      { t: "kw", f: "Đề có “<i>only specific privileged users may remove the lock</i>” ⇒ ?", b: "<b>Vault Lock governance mode</b>." },
+      { t: "kw", f: "Đề có “<i>ransomware, recover even if production account is compromised</i>” ⇒ ?", b: "<b>Cross-account copy + Vault Lock</b> / <b>logically air-gapped vault</b> share qua RAM, MPA." },
+      { t: "kw", f: "Đề có “<i>restore to a specific point in time within N days (N ≤ 35)</i>” ⇒ ?", b: "<b>Continuous backup (PITR)</b>." },
+      { t: "kw", f: "Đề có “<i>auditors require evidence all resources are backed up per policy</i>” ⇒ ?", b: "<b>AWS Backup Audit Manager</b>." },
+      { t: "kw", f: "Đề có “<i>regularly verify backups can be restored within RTO</i>” ⇒ ?", b: "<b>Restore testing</b>." },
+      { t: "kw", f: "Đề có “<i>litigation: preserve specific backups until released</i>” ⇒ ?", b: "<b>Legal hold</b>." },
+      { t: "kw", f: "Đề có “<i>near real-time copy of S3 data in another Region</i>” ⇒ ?", b: "<b>S3 Cross-Region Replication</b>, không phải AWS Backup." }
+    ],
+
+    pairs: [
+      ["Backup plan", "Chính sách gồm một hoặc nhiều backup rule"],
+      ["Backup rule", "Tần suất, window, vault, lifecycle, copy"],
+      ["Backup window", "Khoảng job phải bắt đầu / hoàn tất"],
+      ["Resource assignment", "Gán tài nguyên vào plan theo ARN, loại, tag"],
+      ["Service opt-in", "Bật loại tài nguyên được backup trong Region"],
+      ["Backup vault", "Container chứa recovery point, có KMS key riêng"],
+      ["Recovery point", "Một bản sao lưu bất biến trong vault"],
+      ["Vault access policy", "Resource-based policy gắn vào backup vault"],
+      ["Cold storage", "Tầng rẻ hơn, tối thiểu 90 ngày"],
+      ["Vault Lock", "WORM cho backup vault, chặn cả root"],
+      ["Governance mode", "Lock gỡ được bởi user có đủ quyền IAM"],
+      ["Compliance mode", "Hết grace time thì không ai gỡ được lock"],
+      ["Grace time", "≥ 3 ngày trước khi lock compliance bất biến"],
+      ["Logically air-gapped vault", "Vault compliance lock sẵn, share qua RAM"],
+      ["Multi-party approval", "Truy cập air-gapped vault khi account mất quyền"],
+      ["Fan-in / Fan-out", "Gom backup về account kho rồi copy tỏa đi"],
+      ["Continuous backup", "Full backup + transaction log, tối đa 35 ngày"],
+      ["PITR", "Khôi phục về thời điểm bất kỳ, chính xác 1 giây"],
+      ["Snapshot backup", "Thời điểm rời rạc, giữ tới 100 năm"],
+      ["Windows VSS", "Backup application-consistent trên EC2 Windows"],
+      ["Item-level restore", "Khôi phục từng file, thư mục, object"],
+      ["Backup Audit Manager", "Control, framework, báo cáo tuân thủ hằng ngày"],
+      ["Restore testing", "Tự restore định kỳ, đo thời gian, tự dọn dẹp"],
+      ["Legal hold", "Chặn xóa recovery point cụ thể tới khi release"]
+    ],
+
+    sorts: [
+      {
+        title: "Continuous backup hay snapshot backup?",
+        desc: "Mỗi đặc điểm thuộc loại backup nào trong AWS Backup?",
+        buckets: ["Continuous backup", "Snapshot backup"],
+        items: [
+          ["Restore về bất kỳ giây nào trong cửa sổ", 0, "PITR chính xác 1 giây"],
+          ["Retention 1 – 35 ngày", 0, "tối đa 35 ngày"],
+          ["Bản copy cross-Region mất PITR", 0, "copy trở thành snapshot"],
+          ["Chỉ RDS, Aurora, S3, SAP HANA trên EC2", 0, "dịch vụ hỗ trợ continuous"],
+          ["Giữ tới 100 năm", 1, "snapshot 1 ngày – 100 năm"],
+          ["Chuyển được sang cold storage", 1, "continuous không chuyển cold"],
+          ["Tạo on-demand được", 1, "không có on-demand continuous"],
+          ["Lịch theo cron, nhanh nhất mỗi giờ", 1, "continuous không dùng cron"],
+          ["Áp dụng được legal hold", 1, "legal hold không áp cho continuous"]
+        ]
+      },
+      {
+        title: "Governance hay compliance mode?",
+        desc: "Phân loại đặc điểm theo chế độ của AWS Backup Vault Lock.",
+        buckets: ["Governance mode", "Compliance mode"],
+        items: [
+          ["User có IAM permission phù hợp gỡ được lock", 0, "dành cho quản trị nội bộ"],
+          ["Không có grace time", 0, "không truyền ChangeableForDays"],
+          ["Dùng để thử nghiệm cấu hình lock", 0, "gỡ được nên an toàn để thử"],
+          ["Grace time tối thiểu 3 ngày", 1, "cooling-off 72 giờ"],
+          ["Có tham số ChangeableForDays", 1, "3 – 36.500 ngày"],
+          ["Sau grace time, cả AWS cũng không gỡ được", 1, "lock immutable"],
+          ["Đáp ứng yêu cầu SEC 17a-4: không ai xóa trước hạn", 1, "kể cả root/admin"],
+          ["Logically air-gapped vault tự động có chế độ này", 1, "air-gapped có compliance lock sẵn"]
+        ]
+      },
+      {
+        title: "Công cụ nào cho tình huống?",
+        desc: "Chọn giải pháp bảo vệ dữ liệu phù hợp nhất cho yêu cầu đề.",
+        buckets: ["AWS Backup plan + tag", "Vault Lock / air-gapped", "Continuous backup", "Audit Manager / restore testing", "Tính năng gốc dịch vụ"],
+        items: [
+          ["Một chính sách backup cho EC2, RDS, DynamoDB, EFS", 0, "đúng mục đích thiết kế của AWS Backup"],
+          ["Tài nguyên mới gắn tag phải tự được backup", 0, "tag-based assignment"],
+          ["Backup bất biến, không ai xóa trước hạn", 1, "compliance mode"],
+          ["Ransomware chiếm account production", 1, "cross-account + air-gapped vault"],
+          ["Khôi phục DB về đúng 10:42:15 tuần trước", 2, "PITR chính xác 1 giây"],
+          ["Khôi phục cả bucket S3 về 3 giờ chiều hôm qua", 2, "continuous backup cho S3"],
+          ["Kiểm toán viên cần bằng chứng tuân thủ hằng ngày", 3, "Backup Audit Manager"],
+          ["Chứng minh định kỳ restore được trong RTO", 3, "restore testing"],
+          ["Bản sao S3 gần thời gian thực ở Region khác", 4, "S3 Cross-Region Replication"],
+          ["Chỉ tự động snapshot EBS theo lịch, đơn giản", 4, "Data Lifecycle Manager"],
+          ["File system ở Region khác, RPO phút, failover nhanh", 4, "EFS Replication"]
+        ]
+      },
+      {
+        title: "Hỗ trợ cold storage trong AWS Backup?",
+        desc: "Tài nguyên nào chuyển được backup sang cold storage?",
+        buckets: ["Có cold storage", "Không có cold storage"],
+        items: [
+          ["Amazon EFS", 0, "hỗ trợ cold"],
+          ["Amazon EBS (Snapshots Archive, tần suất hằng tháng+)", 0, "qua EBS Snapshots Archive"],
+          ["DynamoDB với advanced features", 0, "hỗ trợ cold"],
+          ["CloudFormation stack", 0, "hỗ trợ cold"],
+          ["Amazon RDS", 1, "thiết lập cold bị bỏ qua"],
+          ["Amazon Aurora", 1, "không hỗ trợ cold"],
+          ["Amazon S3", 1, "không hỗ trợ cold"],
+          ["Amazon FSx", 1, "không hỗ trợ cold"],
+          ["Continuous backup bất kỳ", 1, "35 ngày &lt; 90 ngày tối thiểu"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["AWS Backup quản lý cả các backup bạn tạo bên ngoài AWS Backup.", false, "Không quản lý backup tạo ngoài AWS Backup."],
+      ["Tài nguyên fully managed được mã hóa bằng KMS key của vault, độc lập với key nguồn.", true, "Thêm một lớp phòng thủ."],
+      ["Tần suất snapshot backup nhanh nhất là mỗi giờ.", true, "Hoặc cron."],
+      ["Backup window mặc định là start within 8 giờ, complete within 7 ngày.", true, "Bắt đầu 12:30 AM."],
+      ["Có thể đặt chuyển cold sau 30 ngày với retention 60 ngày.", false, "Retention phải ≥ cold-after + 90 = 120 ngày."],
+      ["RDS backup chuyển được sang cold storage.", false, "RDS, Aurora, S3, FSx, EC2 không hỗ trợ cold."],
+      ["Tài nguyên có tag đúng nhưng chưa opt-in dịch vụ vẫn được backup.", false, "Service opt-in vẫn áp dụng."],
+      ["Recovery point vẫn còn trong vault khi tài nguyên gốc bị xóa.", true, "Vault tách backup khỏi tài nguyên nguồn."],
+      ["Nội dung recovery point có thể chỉnh sửa bởi admin.", false, "Recovery point immutable."],
+      ["Vault Lock governance mode có grace time 3 ngày.", false, "Governance không có grace time; compliance mới có."],
+      ["Sau grace time, lock compliance mode không ai gỡ được, kể cả AWS.", true, "Khi vault còn recovery point."],
+      ["Grace time tối thiểu của compliance mode là 24 giờ.", false, "Tối thiểu 3 ngày (72 giờ); 24 giờ là của Glacier Vault Lock."],
+      ["MinRetentionDays của Vault Lock áp dụng lại cho recovery point có sẵn.", false, "Chỉ áp cho job mới."],
+      ["Vault Lock không tính thêm phí.", true, "Chỉ trả phí lưu trữ."],
+      ["Vault Lock chặn được ModifySnapshotAttribute qua EC2 API.", false, "Chỉ điều khiển hành động qua AWS Backup; dùng IAM/SCP."],
+      ["Logically air-gapped vault chia sẻ cho account khác qua AWS RAM.", true, "Kể cả khác organization."],
+      ["Copy cross-Region được mã hóa lại bằng KMS key của vault đích.", true, "Re-encrypt bằng key đích."],
+      ["Có thể copy backup đang ở cold tier sang Region khác.", false, "Không copy được từ cold tier."],
+      ["Cross-account backup yêu cầu hai account cùng organization.", true, "Và management account bật tính năng."],
+      ["Default vault có thể làm đích cross-account.", false, "Default vault dùng key không chia sẻ được."],
+      ["AWS managed key share cross-account được cho EBS backup.", false, "Phải dùng customer managed key."],
+      ["AWS Backup restore trực tiếp recovery point từ account A sang account B.", false, "Phải copy sang vault của B rồi restore."],
+      ["Continuous backup cho phép restore chính xác tới 1 giây, tối đa 35 ngày.", true, "PITR."],
+      ["Continuous backup hỗ trợ RDS Multi-AZ DB cluster.", false, "Không hỗ trợ Multi-AZ DB cluster."],
+      ["Bản copy cross-Region của continuous backup vẫn giữ PITR.", false, "Bản copy trở thành snapshot."],
+      ["Có thể tạo on-demand continuous backup.", false, "Không có on-demand continuous."],
+      ["Mỗi tài nguyên chỉ có một continuous backup.", true, "Rule dư tạo snapshot thay thế."],
+      ["Continuous backup S3 dừng nếu tắt EventBridge notification trên bucket.", true, "Dựa vào sự kiện S3 qua EventBridge."],
+      ["Legal hold áp dụng cho từng recovery point và không có hạn.", true, "Tồn tại tới khi được release."],
+      ["Bản copy sang Region khác mang theo legal hold.", false, "Legal hold không đi theo bản copy."],
+      ["Restore testing tự xóa tài nguyên đã restore sau khi test.", true, "Có thể giữ 1–168 giờ để validation."],
+      ["Backup và replication là một: đều chống được lỗi logic.", false, "Replication sao chép cả lỗi; backup mới quay về quá khứ được."]
+    ],
+
+    map: {
+      t: "Bài 19 · AWS Backup",
+      c: [
+        { t: "Tổng quan", icon: "svc/AWS-Backup.svg", c: [
+          { t: "Bản chất", v: "sao lưu tập trung, theo chính sách, đa dịch vụ, đa account" },
+          { t: "Hỗ trợ", v: "EC2, EBS, S3, EFS, FSx, RDS, Aurora, DynamoDB, EKS, VMware…" },
+          { t: "Full management", v: "mã hóa độc lập, ARN arn:aws:backup, billing tập trung" },
+          { t: "Incremental", v: "lần đầu full, sau chỉ phần thay đổi" },
+          { t: "Không quản lý", v: "backup tạo ngoài AWS Backup" }
+        ] },
+        { t: "Backup plan", icon: "res/AWS-Backup_Backup-Plan.svg", c: [
+          { t: "Tần suất", v: "tới mỗi giờ / cron" },
+          { t: "Window mặc định", v: "12:30 AM, start 8 h, complete 7 ngày" },
+          { t: "Retention", v: "snapshot 1 ngày–100 năm · continuous 1–35 ngày" },
+          { t: "Cold storage", v: "≥ 90 ngày, warm ≥ 8 ngày, chỉ EFS/EBS/DynamoDB adv…" },
+          { t: "Gán tài nguyên", v: "tag / ARN / type; nhớ service opt-in" },
+          { t: "Windows VSS", v: "application-consistent trên EC2" }
+        ] },
+        { t: "Vault & Vault Lock", icon: "res/AWS-Backup_Backup-Vault.svg", c: [
+          { t: "Vault", v: "KMS key riêng + access policy" },
+          { t: "Recovery point", v: "immutable, còn khi xóa tài nguyên gốc" },
+          { t: "Governance", v: "gỡ được bằng IAM, không grace time" },
+          { t: "Compliance", v: "grace ≥ 3 ngày, sau đó không ai gỡ được" },
+          { t: "Min/Max retention", v: "1 – 36.500 ngày, chỉ áp job mới" },
+          { t: "Air-gapped vault", v: "compliance sẵn, share qua RAM, MPA" }
+        ] },
+        { t: "Cross-Region / account", icon: "svc/AWS-Organizations.svg", c: [
+          { t: "Copy", v: "đầu full, sau incremental, re-encrypt key đích" },
+          { t: "Cold tier", v: "không copy được" },
+          { t: "Cross-account", v: "cùng org, management account bật, CopyIntoBackupVault" },
+          { t: "Key", v: "customer managed key cho EBS/RDS; không dùng default vault" },
+          { t: "Restore sang account khác", v: "copy rồi restore" },
+          { t: "Backup policy", v: "Organizations tự áp plan cho mọi account" }
+        ] },
+        { t: "Continuous / PITR", icon: "res/AWS-Backup_Recovery-Point-Objective.svg", c: [
+          { t: "Cơ chế", v: "full + transaction log, chính xác 1 giây" },
+          { t: "Dịch vụ", v: "RDS, Aurora, S3, SAP HANA" },
+          { t: "RPO", v: "RDS ~5 phút · S3 15 phút" },
+          { t: "Giới hạn", v: "≤ 35 ngày, không on-demand, không cold" },
+          { t: "Copy", v: "thành snapshot, mất PITR" }
+        ] },
+        { t: "Vận hành & tuân thủ", icon: "res/AWS-Backup_Compliance-Reporting.svg", c: [
+          { t: "Audit Manager", v: "framework control, báo cáo hằng ngày" },
+          { t: "Restore testing", v: "tự restore, đo RTO, tự dọn dẹp" },
+          { t: "Legal hold", v: "từng recovery point, ≤ 50/account, không hạn" },
+          { t: "Giám sát", v: "CloudWatch · EventBridge · SNS · CloudTrail" },
+          { t: "Malware", v: "GuardDuty quét recovery point" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 27 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Aurora.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="27" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-27-aurora.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "ovw", name: "Aurora vs RDS" },
+      { id: "vol", name: "Cluster & storage" },
+      { id: "ep", name: "Endpoint" },
+      { id: "rep", name: "Replicas & failover" },
+      { id: "sls", name: "Serverless v2" },
+      { id: "gdb", name: "Global Database" },
+      { id: "bk", name: "Backup · Backtrack · Cloning" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Tổng quan
+      { t: "ovw", f: "Amazon Aurora là gì?", b: "Relational DB engine <b>fully managed</b>, <b>tương thích MySQL và PostgreSQL</b>; throughput tới <b>6×</b> MySQL/PostgreSQL “stock”.", x: "Aurora là một phần của Amazon RDS: cùng console, CLI, API." },
+      { t: "ovw", f: "Aurora hỗ trợ những engine nào?", b: "<b>Chỉ MySQL và PostgreSQL</b>.", x: "Oracle / SQL Server / Db2 / MariaDB ⇒ dùng RDS (Bài 26)." },
+      { t: "ovw", f: "Đơn vị quản trị của Aurora khác RDS thế nào?", b: "RDS: <b>DB instance</b> có EBS riêng.<br>Aurora: <b>DB cluster</b>, nhiều instance dùng chung một <b>cluster volume</b>." },
+      { t: "ovw", f: "Automated backup retention của Aurora khác RDS ở đâu?", b: "Aurora: <b>1–35 ngày</b>, <b>không tắt được</b>, mặc định 1 ngày.<br>RDS: 0–35 ngày (0 = tắt)." },
+      { t: "ovw", f: "Cách migrate RDS MySQL/PostgreSQL sang Aurora với downtime thấp?", b: "Tạo <b>Aurora read replica</b> của RDS instance rồi <b>promote</b>, hoặc <b>restore snapshot RDS</b> thành Aurora cluster." },
+      { t: "ovw", f: "Những tính năng chỉ Aurora có (so với RDS)?", b: "<b>Serverless v2, Global Database, Backtrack (MySQL), Cloning, custom endpoint, I/O-Optimized</b>, Aurora Auto Scaling." },
+
+      // ---- Cluster volume
+      { t: "vol", f: "Một Aurora DB cluster gồm gì?", b: "<b>1 writer</b> + <b>0–15 Aurora Replicas</b> + <b>1 cluster volume</b>; compute tách khỏi storage." },
+      { t: "vol", f: "Writer (primary) DB instance làm gì?", b: "Xử lý mọi <b>DDL và DML</b>, cũng đọc được; mỗi cluster có <b>đúng một</b> writer." },
+      { t: "vol", f: "Cluster volume giữ bao nhiêu bản sao dữ liệu?", b: "<b>6 bản trên 3 AZ</b>, sao chép đồng bộ, <b>không phụ thuộc số instance</b>.", x: "Cluster chỉ có 1 instance vẫn có 6 bản / 3 AZ." },
+      { t: "vol", f: "Kích thước tối đa cluster volume? Có phải cấp phát trước không?", b: "Tối đa <b>256 TiB</b> (tùy engine version), <b>tự tăng</b>, không cấp phát trước, không có “storage full”." },
+      { t: "vol", f: "Xóa dữ liệu (DROP/TRUNCATE) thì storage Aurora thế nào?", b: "<b>Tự giảm</b> tương ứng (dynamic resizing) ⇒ chỉ trả tiền phần dùng.", x: "Khác RDS: không bao giờ giảm." },
+      { t: "vol", f: "Quorum ghi/đọc của Aurora (kiến thức phổ biến)?", b: "Ghi cần <b>4/6</b>, đọc cần <b>3/6</b> ⇒ mất 2 bản vẫn ghi, mất 3 bản vẫn đọc." },
+      { t: "vol", f: "Vì sao thêm Aurora Replica rất nhanh?", b: "Không copy dữ liệu: instance mới chỉ <b>“gắn” vào volume dùng chung</b>." },
+      { t: "vol", f: "Aurora Standard vs I/O-Optimized?", b: "<b>Standard</b>: trả phí theo mỗi 1 triệu request I/O, hợp khi I/O &lt; 25% chi phí.<br><b>I/O-Optimized</b>: không phí I/O, chọn khi I/O <b>≥ 25%</b> chi phí.", x: "Standard → I/O-Optimized: mỗi 30 ngày một lần; đổi về Standard bất cứ lúc nào." },
+      { t: "vol", f: "Storage auto-repair là gì?", b: "Aurora tự phát hiện lỗi đĩa và <b>sửa segment hỏng</b> từ các bản sao khác." },
+      { t: "vol", f: "Survivable page cache là gì?", b: "Page cache chạy ở <b>process tách khỏi DB</b> ⇒ restart xong cache vẫn “ấm”, không cần warm-up." },
+      { t: "vol", f: "Cluster Aurora 1 instance, AZ của instance sập thì sao?", b: "Dữ liệu vẫn còn (6 bản / 3 AZ) nhưng <b>compute mất</b> ⇒ phải tạo instance mới ở AZ khác.", x: "Muốn HA compute ⇒ thêm Aurora Replica ở AZ khác." },
+
+      // ---- Endpoint
+      { t: "ep", f: "Cluster endpoint (writer endpoint) trỏ tới đâu?", b: "<b>Writer hiện tại</b>, tự đổi khi failover; dùng cho đọc/ghi, DDL, DML." },
+      { t: "ep", f: "Reader endpoint làm gì?", b: "<b>Cân bằng kết nối</b> giữa các Aurora Replicas cho query chỉ đọc.", x: "Cân bằng mức kết nối (DNS), không phải từng query. Cluster 1 instance ⇒ trỏ về writer." },
+      { t: "ep", f: "Custom endpoint là gì? Tối đa bao nhiêu?", b: "Trỏ tới <b>nhóm instance bạn chọn</b>, tối đa <b>5 / cluster</b>; tách workload (báo cáo vào instance lớn riêng)." },
+      { t: "ep", f: "Khi nào dùng instance endpoint?", b: "<b>Chẩn đoán, tuning</b>, hoặc logic kết nối tự viết.", x: "Instance endpoint KHÔNG tự chuyển khi failover." },
+      { t: "ep", f: "Global writer endpoint là gì?", b: "Luôn trỏ <b>writer của cluster chính</b> trong Global Database, tự đổi Region khi switchover/failover." },
+
+      // ---- Replicas
+      { t: "rep", f: "Đặc điểm Aurora Replica?", b: "Tối đa <b>15</b>, chỉ đọc, <b>đọc chung cluster volume</b>, lag thường <b>&lt; 100 ms</b>; vừa scale đọc vừa là đích failover." },
+      { t: "rep", f: "Aurora chọn replica nào khi failover?", b: "Replica có <b>promotion tier nhỏ nhất</b> (0 → 15). Cùng tier ⇒ <b>lớn nhất</b>; cùng tier và size ⇒ ngẫu nhiên." },
+      { t: "rep", f: "Thời gian failover của Aurora khi có replica?", b: "Thường <b>&lt; 60 giây</b>, thường <b>&lt; 30 giây</b>; cluster endpoint tự trỏ writer mới." },
+      { t: "rep", f: "Aurora không có replica thì failover thế nào?", b: "Tạo lại writer trong cùng AZ, thường <b>&lt; 10 phút</b>; trong lúc đó cluster không khả dụng." },
+      { t: "rep", f: "Aurora Auto Scaling hoạt động thế nào?", b: "Target tracking (CPU trung bình của reader hoặc số kết nối) để thêm/bớt <b>0–15 Aurora Replicas</b>; cooldown mặc định <b>300 s</b>.", x: "Không tính writer ⇒ không giúp tải ghi." },
+      { t: "rep", f: "Replica do Aurora Auto Scaling tạo có promotion tier bao nhiêu?", b: "<b>Tier 15</b>, cùng instance class với writer; Auto Scaling chỉ xóa replica do nó tạo." },
+      { t: "rep", f: "RDS read replica khác Aurora Replica thế nào?", b: "<b>RDS</b>: storage riêng, lag giây–phút, promote thủ công, không auto scaling.<br><b>Aurora</b>: chung volume, &lt; 100 ms, tự failover, Auto Scaling, một reader endpoint." },
+      { t: "rep", f: "Aurora Replica có đặt ở Region khác được không?", b: "<b>Không</b>, chỉ trong cùng Region. Đa Region ⇒ <b>Global Database</b>.", x: "Aurora PostgreSQL không hỗ trợ cross-Region Aurora Replicas." },
+      { t: "rep", f: "RDS Proxy giúp gì cho Aurora failover?", b: "Bỏ qua DNS cache, giảm thời gian failover <b>tới 66%</b>." },
+
+      // ---- Serverless v2
+      { t: "sls", f: "Aurora Serverless v2 là gì?", b: "Cấu hình <b>on-demand, tự co giãn compute</b>; trả tiền theo tài nguyên dùng. Class <b>db.serverless</b>." },
+      { t: "sls", f: "1 ACU tương đương bao nhiêu?", b: "Khoảng <b>2 GiB bộ nhớ</b> + CPU và network tương ứng." },
+      { t: "sls", f: "Khoảng ACU hỗ trợ của Serverless v2 (version mới)?", b: "<b>0–256 ACU</b> (Aurora MySQL), tới <b>384 ACU</b> (Aurora PostgreSQL)." },
+      { t: "sls", f: "Serverless v2 scale theo bước nào? Có gián đoạn không?", b: "Bước nhỏ tới <b>0,5 ACU</b>; scale cả khi transaction đang mở, bảng đang lock, <b>không gián đoạn</b>." },
+      { t: "sls", f: "Serverless v2 tính phí thế nào?", b: "Theo <b>ACU-hour, đo theo giây</b>; 0 khi auto-pause (vẫn trả storage)." },
+      { t: "sls", f: "Reader serverless tier 0–1 khác tier 2–15 thế nào?", b: "<b>Tier 0–1</b>: min = capacity của writer, pause cùng writer ⇒ HA.<br><b>Tier 2–15</b>: co giãn độc lập ⇒ báo cáo/analytics." },
+      { t: "sls", f: "Bật auto-pause (scale to zero) thế nào?", b: "Đặt <b>min capacity = 0 ACU</b>; pause sau <b>300 s</b> (mặc định, tối đa 86.400 s) không có kết nối." },
+      { t: "sls", f: "Resume sau auto-pause mất bao lâu?", b: "Khoảng <b>15 giây</b>; pause &gt; 24 giờ có thể ≥ 30 giây.", x: "Client timeout &gt; 15 s và có retry logic." },
+      { t: "sls", f: "Trường hợp nào Serverless v2 KHÔNG auto-pause?", b: "Min &gt; 0 · còn kết nối người dùng · gắn <b>RDS Proxy</b> · trong <b>Global Database</b> · bật binlog/logical replication · zero-ETL tới Redshift." },
+      { t: "sls", f: "Mixed-configuration cluster là gì?", b: "Cluster <b>trộn instance provisioned và serverless</b>, vd writer provisioned lớn + reader serverless." },
+      { t: "sls", f: "Aurora Serverless v1 còn nên chọn không?", b: "<b>Không</b>: sản phẩm cũ, kiến trúc khác, <b>deprecated</b>. Chọn Serverless v2." },
+
+      // ---- Global Database
+      { t: "gdb", f: "Aurora Global Database gồm gì?", b: "<b>1 cluster chính</b> (nhận ghi) + tối đa <b>10 cluster phụ</b> chỉ đọc ở Region khác." },
+      { t: "gdb", f: "Global Database sao chép thế nào, lag bao nhiêu?", b: "Ở <b>tầng storage</b> bằng hạ tầng chuyên dụng, lag thường <b>&lt; 1 giây</b>." },
+      { t: "gdb", f: "RPO / RTO của Global Database khi mất Region?", b: "RPO <b>tính bằng giây</b>, RTO <b>cỡ phút</b>." },
+      { t: "gdb", f: "Cluster phụ của Global Database hỗ trợ bao nhiêu instance?", b: "Tới <b>16 instance chỉ đọc</b> (thay vì 15)." },
+      { t: "gdb", f: "Write forwarding là gì?", b: "Cluster phụ <b>chuyển câu SQL ghi về cluster chính</b> ⇒ ứng dụng ở Region phụ dùng một endpoint cho cả đọc và ghi." },
+      { t: "gdb", f: "Switchover khác managed failover thế nào?", b: "<b>Switchover</b>: có kế hoạch, RPO <b>0</b>, giữ topology.<br><b>Failover (allow data loss)</b>: sự cố ngoài kế hoạch, có thể mất vài giây dữ liệu." },
+      { t: "gdb", f: "Failover Global Database nên chọn Region phụ nào?", b: "Region có <b>lag thấp nhất</b> (AuroraGlobalDBRPOLag / AuroraGlobalDBReplicationLag)." },
+      { t: "gdb", f: "Headless secondary cluster là gì?", b: "Cluster phụ <b>không có instance</b>, chỉ storage ⇒ rẻ; phải thêm instance trước khi switchover/failover." },
+      { t: "gdb", f: "Giới hạn chính của Global Database?", b: "<b>Không Backtrack</b>, <b>không Auto Scaling cho cluster phụ</b>, không stop/start từng cluster, managed switchover cần cùng engine version." },
+      { t: "gdb", f: "Tham số <code>rds.global_db_rpo</code> làm gì?", b: "Aurora PostgreSQL: giới hạn RPO (≥ 20 s); mọi cluster phụ trễ quá ngưỡng ⇒ <b>chặn commit</b> ở cluster chính." },
+
+      // ---- Backup / Backtrack / Clone
+      { t: "bk", f: "PITR của Aurora tạo ra gì?", b: "Luôn tạo <b>DB cluster mới</b>; có thể mất <b>hàng giờ</b> với dữ liệu lớn." },
+      { t: "bk", f: "Backtrack là gì?", b: "<b>Tua ngược cluster tại chỗ</b> về thời điểm chỉ định, không tạo cluster mới, xong trong <b>vài phút</b>." },
+      { t: "bk", f: "Backtrack áp dụng cho engine nào, cửa sổ tối đa?", b: "<b>Chỉ Aurora MySQL</b>; target backtrack window tối đa <b>72 giờ</b>." },
+      { t: "bk", f: "Bật Backtrack khi nào?", b: "Chỉ khi <b>tạo cluster mới, restore snapshot hoặc clone</b>; không Modify cluster đang chạy." },
+      { t: "bk", f: "Aurora cloning hoạt động thế nào?", b: "<b>Copy-on-write</b>: clone dùng chung page với nguồn, chỉ page bị thay đổi mới tạo riêng ⇒ nhanh, gần như không tốn thêm storage." },
+      { t: "bk", f: "Giới hạn của Aurora cloning?", b: "Tối đa <b>15 clone COW</b> (thứ 16 là full copy) · <b>cùng Region</b> · cross-account qua AWS RAM · nguồn cần ≥ 1 instance." },
+      { t: "bk", f: "Lưu backup Aurora quá 35 ngày ⇒ ?", b: "<b>DB cluster snapshot thủ công</b> (không hết hạn) hoặc <b>AWS Backup</b>." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>MySQL/PostgreSQL-compatible, high performance, storage grows automatically, 15 low-latency read replicas</i>” ⇒ ?", b: "<b>Amazon Aurora</b>." },
+      { t: "kw", f: "Đề có “<i>analytics queries on larger instances without affecting production reads</i>” ⇒ ?", b: "<b>Custom endpoint</b> gồm các replica lớn." },
+      { t: "kw", f: "Đề có “<i>must not change connection string after failover</i>” ⇒ ?", b: "<b>Cluster endpoint</b> (trong Region) hoặc <b>global writer endpoint</b> (đa Region)." },
+      { t: "kw", f: "Đề có “<i>read traffic unpredictable, automatically add/remove read capacity</i>” (provisioned) ⇒ ?", b: "<b>Aurora Auto Scaling</b> + reader endpoint." },
+      { t: "kw", f: "Đề có “<i>ensure a specific replica becomes the new writer</i>” ⇒ ?", b: "Đặt <b>promotion tier 0</b> cho replica đó." },
+      { t: "kw", f: "Đề có “<i>spiky / intermittent workload, pay only for capacity consumed</i>” ⇒ ?", b: "<b>Aurora Serverless v2</b>." },
+      { t: "kw", f: "Đề có “<i>dev/test used a few hours a day, tolerate short delay on first connection</i>” ⇒ ?", b: "Serverless v2 với <b>min 0 ACU</b> (auto-pause)." },
+      { t: "kw", f: "Đề có “<i>RPO of seconds, RTO of minutes for a Region failure, low-latency reads in multiple Regions</i>” ⇒ ?", b: "<b>Aurora Global Database</b>." },
+      { t: "kw", f: "Đề có “<i>planned Region rotation with no data loss</i>” ⇒ ?", b: "<b>Switchover</b> của Global Database." },
+      { t: "kw", f: "Đề có “<i>accidentally deleted rows in Aurora MySQL, restore quickly without a new cluster</i>” ⇒ ?", b: "<b>Backtrack</b> (nếu đã bật).", x: "Aurora PostgreSQL ⇒ chỉ có PITR." },
+      { t: "kw", f: "Đề có “<i>copy of production for testing quickly and cost-effectively</i>” ⇒ ?", b: "<b>Aurora cloning</b>, không phải snapshot + restore hay dump." }
+    ],
+
+    pairs: [
+      ["Aurora DB cluster", "1 writer + 0–15 replica + 1 cluster volume"],
+      ["Cluster volume", "Ổ ảo SSD dùng chung, 6 bản / 3 AZ, ≤ 256 TiB"],
+      ["Writer instance", "Instance duy nhất xử lý DDL/DML"],
+      ["Aurora Replica", "Reader dùng chung volume, lag &lt; 100 ms"],
+      ["Cluster endpoint", "Trỏ writer hiện tại, tự đổi khi failover"],
+      ["Reader endpoint", "Cân bằng kết nối giữa các replica"],
+      ["Custom endpoint", "Nhóm instance tự chọn, tối đa 5 / cluster"],
+      ["Instance endpoint", "Đúng một instance, để chẩn đoán/tuning"],
+      ["Promotion tier", "0–15, số nhỏ được ưu tiên thành writer"],
+      ["Aurora Auto Scaling", "Thêm/bớt 0–15 replica theo target tracking"],
+      ["Aurora I/O-Optimized", "Không tính phí I/O, chọn khi I/O ≥ 25%"],
+      ["Storage auto-repair", "Tự sửa segment hỏng từ bản sao khác"],
+      ["Survivable page cache", "Cache vẫn “ấm” sau khi DB restart"],
+      ["ACU", "≈ 2 GiB RAM + CPU, mạng tương ứng"],
+      ["Mixed-configuration cluster", "Trộn instance provisioned và serverless"],
+      ["Auto-pause", "Min 0 ACU, pause khi không có kết nối"],
+      ["Global Database", "1 primary + ≤ 10 Region phụ, lag &lt; 1 s"],
+      ["Global writer endpoint", "Luôn trỏ writer cluster chính, kể cả đổi Region"],
+      ["Write forwarding", "Cluster phụ gửi lệnh ghi về cluster chính"],
+      ["Switchover", "Đổi Region chính có kế hoạch, RPO 0"],
+      ["Write fencing", "Chặn ghi ở Region cũ để tránh split-brain"],
+      ["Headless secondary cluster", "Cluster phụ chỉ có storage, không instance"],
+      ["Backtrack", "Tua ngược tại chỗ, Aurora MySQL, ≤ 72 giờ"],
+      ["Copy-on-write", "Chỉ tách page riêng khi page bị thay đổi"]
+    ],
+
+    sorts: [
+      {
+        title: "RDS for MySQL/PostgreSQL hay Amazon Aurora?",
+        desc: "Đặc điểm sau thuộc RDS (Bài 26) hay Aurora?",
+        buckets: ["RDS for MySQL/PostgreSQL", "Amazon Aurora"],
+        items: [
+          ["Mỗi DB instance có EBS riêng", 0, "đơn vị quản trị là DB instance"],
+          ["Storage tối đa 64 TiB, không bao giờ giảm", 0, "autoscaling chỉ tăng"],
+          ["Read replica lag giây – phút, promote thủ công", 0, "async bằng replication của engine"],
+          ["Automated backup retention 0–35 ngày, tắt được", 0, "0 = tắt"],
+          ["Hỗ trợ cả Oracle, SQL Server, Db2, MariaDB", 0, "Aurora chỉ MySQL/PostgreSQL"],
+          ["Luôn có 6 bản sao / 3 AZ kể cả khi chỉ 1 instance", 1, "cluster volume"],
+          ["Storage tự tăng tới 256 TiB và tự giảm", 1, "dynamic resizing"],
+          ["Replica lag thường &lt; 100 ms, tự failover", 1, "đọc chung volume"],
+          ["Auto Scaling cho bản sao đọc (0–15)", 1, "Aurora Auto Scaling"],
+          ["Retention 1–35 ngày, không tắt được backup", 1, "mặc định 1 ngày"]
+        ]
+      },
+      {
+        title: "Dùng endpoint nào?",
+        desc: "Chọn loại endpoint Aurora phù hợp với nhu cầu.",
+        buckets: ["Cluster endpoint", "Reader endpoint", "Custom endpoint", "Instance endpoint", "Global writer endpoint"],
+        items: [
+          ["Ghi dữ liệu, chạy DDL/DML, ETL", 0, "trỏ writer hiện tại"],
+          ["Không đổi connection string sau failover trong Region", 0, "tự trỏ writer mới"],
+          ["Phân phối kết nối chỉ đọc trên mọi replica", 1, "cân bằng mức kết nối"],
+          ["Tự dùng replica mới do Auto Scaling thêm vào", 1, "ứng dụng nên dùng reader endpoint"],
+          ["Báo cáo BI chạy trên 2 replica lớn riêng", 2, "nhóm instance tự chọn"],
+          ["Tách production và analytics trên instance khác cấu hình", 2, "tối đa 5 / cluster"],
+          ["Chẩn đoán, tuning một instance cụ thể", 3, "không tự chuyển khi failover"],
+          ["Ứng dụng đa Region ghi mà không mã hóa Region vào connection string", 4, "tự đổi Region khi switchover/failover"]
+        ]
+      },
+      {
+        title: "PITR, Backtrack, Cloning hay Snapshot?",
+        desc: "Chọn cơ chế khôi phục / sao chép dữ liệu Aurora phù hợp tình huống.",
+        buckets: ["PITR", "Backtrack", "Cloning", "DB cluster snapshot / AWS Backup"],
+        items: [
+          ["Aurora PostgreSQL lỡ xóa dữ liệu, khôi phục về 10 phút trước", 0, "Backtrack không có cho PostgreSQL"],
+          ["Khôi phục về thời điểm cũ nhưng giữ cluster gốc để điều tra", 0, "PITR tạo cluster mới"],
+          ["Aurora MySQL chạy DELETE thiếu WHERE, giữ nguyên endpoint", 1, "tua ngược tại chỗ, vài phút"],
+          ["Tua tới lui để tìm thời điểm một thay đổi xảy ra", 1, "backtrack nhiều lần được"],
+          ["QA chạy test phá hoại trên bản sao 5 TB của production", 2, "copy-on-write, nhanh, rẻ"],
+          ["Chạy query analytics nặng mà không ảnh hưởng production", 2, "clone là volume độc lập"],
+          ["Giữ bản backup hằng tháng trong 7 năm", 3, "retention tự động tối đa 35 ngày"],
+          ["Đưa bản sao dữ liệu sang Region khác", 3, "clone không cross-Region được"]
+        ]
+      },
+      {
+        title: "Tình huống ⇒ giải pháp Aurora",
+        desc: "Chọn tính năng Aurora đúng cho yêu cầu đề.",
+        buckets: ["Thêm Aurora Replica", "Aurora Auto Scaling", "Serverless v2", "Global Database", "I/O-Optimized"],
+        items: [
+          ["Cluster 1 instance cần chịu lỗi AZ trong ~1 phút", 0, "replica ở AZ khác làm đích failover"],
+          ["Muốn replica cụ thể làm writer khi failover", 0, "replica cùng class, tier 0"],
+          ["Replica 90% CPU giờ cao điểm, rảnh ban đêm", 1, "target tracking CPU trung bình reader"],
+          ["Ứng dụng mới, tải khó đoán, chỉ trả phần dùng", 2, "co giãn bước 0,5 ACU"],
+          ["DB dev chỉ dùng giờ hành chính, chấp nhận chờ 15 s", 2, "min 0 ACU ⇒ auto-pause"],
+          ["Người dùng EU/Asia đọc chậm, cần DR RPO giây", 3, "Region phụ đọc tại chỗ"],
+          ["Ứng dụng ở Region phụ cũng cần ghi", 3, "write forwarding"],
+          ["Phí I/O chiếm 40% hóa đơn và biến động", 4, "không tính phí I/O"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Aurora tương thích MySQL và PostgreSQL.", true, "Chỉ hai engine này."],
+      ["Aurora hỗ trợ engine Oracle.", false, "Oracle dùng RDS for Oracle."],
+      ["Cluster Aurora chỉ có 1 instance thì dữ liệu chỉ nằm ở 1 AZ.", false, "Dữ liệu luôn có 6 bản / 3 AZ; chỉ compute ở 1 AZ."],
+      ["Cluster volume của Aurora tự tăng tới 256 TiB.", true, "Không cần cấp phát trước."],
+      ["Aurora cần bật storage autoscaling và đặt maximum storage threshold.", false, "Đó là tính năng RDS; Aurora volume tự tăng sẵn."],
+      ["Storage Aurora có thể giảm khi DROP bảng (version mới).", true, "Dynamic resizing ⇒ chỉ trả tiền phần dùng."],
+      ["Aurora I/O-Optimized nên chọn khi phí I/O ≥ 25% tổng chi phí Aurora.", true, "Không tính phí I/O, chi phí dễ dự đoán."],
+      ["Có thể tạo Aurora Replica mã hóa cho cluster không mã hóa.", false, "Mã hóa là thuộc tính của cả cluster."],
+      ["Mỗi Aurora cluster có thể có nhiều writer trong cùng Region.", false, "Mỗi cluster có đúng một writer."],
+      ["Reader endpoint cân bằng tải theo từng câu query.", false, "Cân bằng ở mức kết nối (DNS)."],
+      ["Một cluster có tối đa 5 custom endpoint.", true, "Theo tài liệu."],
+      ["Instance endpoint tự chuyển sang instance khác khi failover.", false, "Chỉ cluster và reader endpoint tự chuyển."],
+      ["Aurora Replica có lag thường dưới 100 ms.", true, "Vì đọc chung cluster volume."],
+      ["Khi failover, Aurora ưu tiên replica có promotion tier 15.", false, "Tier nhỏ nhất (0) được ưu tiên."],
+      ["Cùng promotion tier, Aurora chọn replica lớn nhất.", true, "Cùng size thì ngẫu nhiên."],
+      ["Aurora không có replica thì tạo lại writer thường dưới 10 phút.", true, "Trong lúc đó cluster không khả dụng."],
+      ["Aurora Auto Scaling có thể co giãn writer instance.", false, "Chỉ thêm/bớt Aurora Replicas."],
+      ["Replica do Aurora Auto Scaling tạo có promotion tier 15.", true, "Nên ít được chọn làm writer hơn."],
+      ["1 ACU tương đương khoảng 2 GiB bộ nhớ.", true, "Kèm CPU và network tương ứng."],
+      ["Aurora Serverless v2 chỉ scale khi không có transaction đang mở.", false, "Scale cả khi transaction mở, bảng đang lock."],
+      ["Serverless v2 scale storage của Aurora.", false, "Serverless v2 scale compute; storage vốn tự tăng."],
+      ["Đặt min capacity 0 ACU cho phép instance serverless auto-pause.", true, "Pause sau mặc định 300 giây không kết nối."],
+      ["Gắn RDS Proxy vẫn cho phép instance Serverless v2 auto-pause.", false, "Proxy luôn giữ kết nối ⇒ không bao giờ pause."],
+      ["Có thể trộn instance provisioned và serverless trong một cluster.", true, "Mixed-configuration cluster."],
+      ["Aurora Serverless v1 là lựa chọn được khuyến nghị cho ứng dụng mới.", false, "v1 đã deprecated; chọn Serverless v2."],
+      ["Aurora Global Database hỗ trợ tối đa 10 Region phụ.", true, "1 primary + ≤ 10 secondary."],
+      ["Global Database sao chép bằng binlog ở tầng engine.", false, "Sao chép ở tầng storage bằng hạ tầng chuyên dụng."],
+      ["Switchover của Global Database có RPO bằng 0.", true, "Chờ cluster phụ đồng bộ hoàn toàn."],
+      ["Managed failover “allow data loss” dành cho đổi Region có kế hoạch.", false, "Dành cho sự cố ngoài kế hoạch; có kế hoạch dùng switchover."],
+      ["Global Database hỗ trợ Backtrack.", false, "Không hỗ trợ Backtrack."],
+      ["Thêm Aurora Replica bảo vệ ứng dụng khỏi sự cố cả Region.", false, "Replica cùng Region; cần Global Database."],
+      ["Automated backup của Aurora có thể tắt bằng cách đặt retention 0.", false, "Retention 1–35 ngày, không tắt được."],
+      ["Backtrack có cho Aurora PostgreSQL.", false, "Chỉ Aurora MySQL."],
+      ["Backtrack không tạo cluster mới.", true, "Tua ngược tại chỗ trong vài phút."],
+      ["Có thể Modify cluster đang chạy để bật Backtrack.", false, "Chỉ bật khi tạo, restore snapshot hoặc clone."],
+      ["Aurora clone có thể tạo ở Region khác với nguồn.", false, "Clone cùng Region; cross-Region dùng copy snapshot."],
+      ["Xóa cluster nguồn không ảnh hưởng dữ liệu của clone.", true, "Clone là volume độc lập."]
+    ],
+
+    map: {
+      t: "Bài 27 · Amazon Aurora",
+      c: [
+        { t: "Tổng quan", icon: "svc/Amazon-Aurora.svg", c: [
+          { t: "Engine", v: "chỉ MySQL & PostgreSQL" },
+          { t: "Hiệu năng", v: "throughput tới 6× “stock”" },
+          { t: "Quản trị", v: "DB cluster, cùng console/API của RDS" },
+          { t: "Migrate từ RDS", v: "Aurora read replica rồi promote / restore snapshot" }
+        ] },
+        { t: "Cluster & storage", icon: "res/Amazon-Aurora-Instance.svg", c: [
+          { t: "Thành phần", v: "1 writer + 0–15 replica + cluster volume" },
+          { t: "Sao chép", v: "6 bản / 3 AZ, bất kể số instance" },
+          { t: "Dung lượng", v: "tự tăng ≤ 256 TiB, tự giảm khi xóa" },
+          { t: "Cấu hình storage", c: [
+            { t: "Standard", v: "phí I/O theo request, I/O &lt; 25%" },
+            { t: "I/O-Optimized", v: "không phí I/O, I/O ≥ 25%" }
+          ] },
+          { t: "Tin cậy", v: "auto-repair, survivable page cache" }
+        ] },
+        { t: "Endpoint", icon: "svc/Amazon-Route-53.svg", c: [
+          { t: "Cluster", v: "writer hiện tại, tự đổi khi failover" },
+          { t: "Reader", v: "cân bằng kết nối giữa replica" },
+          { t: "Custom", v: "nhóm instance tự chọn, ≤ 5" },
+          { t: "Instance", v: "một instance, chẩn đoán" },
+          { t: "Global writer", v: "writer cluster chính, tự đổi Region" }
+        ] },
+        { t: "Replicas & failover", icon: "res/Amazon-Aurora-MySQL-Instance-Alternate.svg", c: [
+          { t: "Aurora Replica", v: "≤ 15, chung volume, lag &lt; 100 ms" },
+          { t: "Promotion tier", v: "0 ưu tiên nhất; cùng tier ⇒ lớn nhất" },
+          { t: "Failover", v: "&lt; 60 s (thường &lt; 30 s)" },
+          { t: "Không replica", v: "tạo lại writer &lt; 10 phút" },
+          { t: "Auto Scaling", v: "0–15 replica, target tracking, tier 15" }
+        ] },
+        { t: "Serverless v2", icon: "res/Amazon-Aurora-Instance.svg", c: [
+          { t: "ACU", v: "≈ 2 GiB RAM, class db.serverless" },
+          { t: "Khoảng", v: "0–256 (MySQL) / 384 (PostgreSQL) ACU" },
+          { t: "Bước scale", v: "0,5 ACU, không gián đoạn" },
+          { t: "Tính phí", v: "ACU-hour đo theo giây" },
+          { t: "Auto-pause", v: "min 0 ACU, sau 300 s, resume ~15 s" },
+          { t: "Không pause khi", v: "RDS Proxy, Global DB, binlog" }
+        ] },
+        { t: "Global Database", icon: "cat/Database.svg", c: [
+          { t: "Cấu trúc", v: "1 primary + ≤ 10 Region phụ (≤ 16 instance)" },
+          { t: "Sao chép", v: "tầng storage, lag &lt; 1 s" },
+          { t: "DR", v: "RPO giây, RTO phút" },
+          { t: "Switchover", v: "có kế hoạch, RPO 0" },
+          { t: "Failover", v: "sự cố, allow data loss, chọn lag thấp nhất" },
+          { t: "Write forwarding", v: "Region phụ gửi ghi về chính" },
+          { t: "Giới hạn", v: "không Backtrack, không Auto Scaling cluster phụ" }
+        ] },
+        { t: "Backup · Backtrack · Clone", icon: "res/AWS-Backup_Backup-Restore.svg", c: [
+          { t: "Automated backup", v: "1–35 ngày, không tắt, PITR ⇒ cluster mới" },
+          { t: "Backtrack", v: "Aurora MySQL, ≤ 72 h, tại chỗ, bật lúc tạo" },
+          { t: "Cloning", v: "copy-on-write, cùng Region, ≤ 15 COW" },
+          { t: "Dài hạn", v: "cluster snapshot thủ công / AWS Backup" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

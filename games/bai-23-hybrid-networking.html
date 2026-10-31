@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 23 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Direct-Connect.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="23" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-23-hybrid-networking.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "s2s", name: "Site-to-Site VPN" },
+      { id: "hub", name: "VPN CloudHub" },
+      { id: "cvpn", name: "Client VPN" },
+      { id: "dx", name: "Direct Connect" },
+      { id: "dxgw", name: "Direct Connect gateway" },
+      { id: "res", name: "Chịu lỗi & mã hóa" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Site-to-Site VPN
+      { t: "s2s", f: "AWS Site-to-Site VPN là gì?", b: "Đường hầm <b>IPsec mã hóa</b> qua <b>internet công cộng</b>, nối cả một mạng (data center, chi nhánh) với VPC. Dựng trong <b>vài phút</b>, chi phí thấp." },
+      { t: "s2s", f: "Mỗi Site-to-Site VPN connection có bao nhiêu tunnel?", b: "<b>2 tunnel</b> tới hai endpoint khác nhau phía AWS, dùng đồng thời được để HA.", x: "AWS bảo trì một endpoint ⇒ traffic chuyển sang tunnel còn lại; nên cấu hình cả hai tunnel." },
+      { t: "s2s", f: "Phân biệt <b>customer gateway</b> và <b>customer gateway device</b>.", b: "<b>Customer gateway</b>: <b>tài nguyên trong AWS</b> mô tả thiết bị phía bạn (IP, BGP ASN, chứng chỉ).<br><b>Customer gateway device</b>: router/firewall <b>thật ở on-premises</b>.", x: "Đề hay tráo tên các thành phần này." },
+      { t: "s2s", f: "Virtual private gateway (VGW) là gì?", b: "“VPN concentrator” phía Amazon, gắn vào <b>một VPC duy nhất</b>. ASN mặc định <b>64512</b>, không đổi được sau khi tạo." },
+      { t: "s2s", f: "<i>Target gateway</i> của Site-to-Site VPN có thể là gì?", b: "<b>Virtual private gateway</b>, <b>transit gateway</b> (hoặc Cloud WAN core network)." },
+      { t: "s2s", f: "Băng thông và MTU của một VPN tunnel chuẩn?", b: "<b>1,25 Gbps</b> mỗi tunnel (~140.000 pps) · MTU <b>1446 byte</b> (MSS 1406), không jumbo frame." },
+      { t: "s2s", f: "Static routing hay dynamic routing (BGP) – AWS khuyến nghị gì?", b: "<b>BGP</b>: phát hiện liveness mạnh, failover sang tunnel thứ hai. Static chỉ dùng khi thiết bị không hỗ trợ BGP.", x: "BGP bắt buộc cho VPN CloudHub và ECMP trên TGW." },
+      { t: "s2s", f: "Trong route table VPC, route propagated từ VPN chồng lấn route local – route nào thắng?", b: "<b>Local luôn thắng</b>, kể cả khi route propagated cụ thể hơn. Cùng CIDR với route static ⇒ <b>static thắng</b>." },
+      { t: "s2s", f: "Thứ tự ưu tiên route trong VGW khi cùng prefix?", b: "1. <b>DX BGP</b><br>2. <b>VPN static</b><br>3. <b>VPN BGP</b><br>4. AS PATH ngắn hơn<br>5. MED thấp hơn", x: "Giải thích vì sao DX chính + VPN dự phòng chạy tự nhiên." },
+      { t: "s2s", f: "Muốn ép traffic ưu tiên một đường cụ thể – AWS khuyến nghị gì?", b: "Quảng bá <b>prefix cụ thể hơn</b> (longest prefix match)." },
+      { t: "s2s", f: "VPN đã UP nhưng instance không tới được on-premises – vì sao?", b: "Thiếu <b>route</b> tới CIDR on-premises (target <code>vgw-…</code>) hoặc chưa bật <b>route propagation</b>; hoặc <b>SG/NACL</b> chưa mở." },
+      { t: "s2s", f: "VGW có hỗ trợ IPv6 qua VPN không?", b: "<b>Không.</b> Muốn IPv6 phải dùng <b>transit gateway</b> (hoặc Cloud WAN). Một VPN không chở đồng thời IPv4 và IPv6." },
+      { t: "s2s", f: "Một VPC gắn được bao nhiêu virtual private gateway?", b: "<b>Một</b> tại một thời điểm. Một VPN phục vụ nhiều VPC ⇒ <b>transit gateway</b>." },
+      { t: "s2s", f: "ECMP trên Transit Gateway dùng để làm gì? Điều kiện?", b: "Gộp nhiều tunnel VPN để <b>tăng băng thông vượt 1,25 Gbps</b>. Yêu cầu <b>BGP</b>.", x: "VGW không hỗ trợ ECMP – chỉ một tunnel được chọn làm đường ra." },
+      { t: "s2s", f: "Large Bandwidth Tunnel là gì?", b: "Tunnel tới <b>5 Gbps</b> (400.000 pps), chỉ cho VPN gắn <b>transit gateway</b> hoặc Cloud WAN." },
+      { t: "s2s", f: "Accelerated Site-to-Site VPN là gì? Điều kiện?", b: "VPN đi qua <b>AWS Global Accelerator</b> (edge location gần nhất rồi chạy trên mạng AWS). Chỉ cho VPN gắn <b>transit gateway</b>; không bật/tắt được trên VPN đã tạo.", x: "Không dùng cùng DX public VIF; NAT-T bắt buộc." },
+      { t: "s2s", f: "Quota Site-to-Site VPN cần nhớ?", b: "<b>10</b> VPN connection mỗi VGW · <b>5</b> VGW / <b>50</b> customer gateway mỗi Region · tối đa <b>100</b> static route và <b>100</b> route BGP trên VGW (<b>1.000</b> route BGP nếu VPN gắn TGW)." },
+
+      // ---- CloudHub
+      { t: "hub", f: "AWS VPN CloudHub là gì?", b: "Một <b>VGW làm hub</b> cho nhiều Site-to-Site VPN ⇒ các <b>chi nhánh nói chuyện với nhau</b> (và với VPC). Rẻ, dựng nhanh; dùng được có hoặc không có VPC." },
+      { t: "hub", f: "3 điều kiện của VPN CloudHub?", b: "<b>Một VGW</b> chung · VPN <b>BGP</b> (dynamic) · mỗi customer gateway <b>ASN riêng</b>; CIDR các site <b>không chồng lấn</b>." },
+      { t: "hub", f: "Site dùng Direct Connect có tham gia CloudHub được không?", b: "<b>Có</b> – nếu DX tới <b>cùng VGW</b> (vd trụ sở New York dùng DX, LA và Miami dùng VPN)." },
+      { t: "hub", f: "Chi phí VPN CloudHub tính thế nào?", b: "Giá VPN connection-giờ cho mỗi VPN gắn VGW. Dữ liệu site → VGW <b>miễn phí</b>; VGW chuyển ra site đích tính data transfer chuẩn." },
+
+      // ---- Client VPN
+      { t: "cvpn", f: "AWS Client VPN là gì?", b: "Dịch vụ VPN <b>managed</b> dựa trên <b>OpenVPN</b>, mã hóa <b>TLS</b>, cho <b>từng người dùng</b> truy cập VPC và on-premises từ bất cứ đâu; tự co giãn." },
+      { t: "cvpn", f: "Các thành phần chính của Client VPN?", b: "<b>Client VPN endpoint</b> · <b>target network</b> (subnet / TGW) · <b>route</b> · <b>authorization rule</b> · <b>client CIDR range</b> · connection logging." },
+      { t: "cvpn", f: "Người dùng đã kết nối Client VPN nhưng không vào được subnet – vì sao?", b: "Thiếu <b>authorization rule</b> (mặc định <b>không có</b>) hoặc thiếu <b>route</b> trong route table của endpoint." },
+      { t: "cvpn", f: "Quy định về client CIDR range?", b: "Kích thước <b>/22 → /12</b>; <b>không chồng lấn</b> CIDR VPC; <b>không đổi được</b> sau khi tạo; nên cấp gấp đôi số kết nối đồng thời." },
+      { t: "cvpn", f: "3 kiểu xác thực của Client VPN?", b: "<b>Active Directory</b> (Directory Service, hỗ trợ MFA) · <b>Mutual authentication</b> (chứng chỉ, ACM) · <b>SAML federated</b> (SSO, IdP).", x: "Luôn cần server certificate trong ACM; mutual auth không dùng được self-service portal." },
+      { t: "cvpn", f: "Full-tunnel và split-tunnel khác nhau thế nào?", b: "<b>Full-tunnel</b> (mặc định): mọi traffic đi qua VPN.<br><b>Split-tunnel</b>: chỉ traffic tới mạng có route mới qua tunnel ⇒ <b>giảm data transfer</b>, giảm chi phí.", x: "Sửa route table khi bật split-tunnel ⇒ mọi kết nối bị reset." },
+      { t: "cvpn", f: "Client VPN: số subnet mỗi AZ, cổng hỗ trợ, băng thông?", b: "<b>1 subnet / AZ</b>, tất cả cùng một VPC · cổng <b>443 / 1194</b> TCP/UDP (mặc định 443) · baseline <b>50 Mbps</b> mỗi kết nối." },
+      { t: "cvpn", f: "Traffic IPv4 từ client vào VPC hiện IP nào ở phía đích?", b: "IP của <b>Client VPN network interface</b> (SNAT). IPv6 thì không NAT." },
+      { t: "cvpn", f: "Chi phí Client VPN?", b: "Phí giờ mỗi <b>endpoint association</b> + phí giờ mỗi <b>kết nối VPN</b> + data transfer out." },
+
+      // ---- Direct Connect
+      { t: "dx", f: "AWS Direct Connect là gì?", b: "<b>Cáp quang Ethernet riêng</b> từ router của bạn tới router AWS tại một <b>DX location</b>, <b>bỏ qua ISP</b>; băng thông lớn, độ trễ ổn định." },
+      { t: "dx", f: "Hai thành phần chính của Direct Connect?", b: "<b>Connection</b> (dedicated / hosted) và <b>Virtual interface (VIF)</b> = VLAN 802.1Q + phiên BGP. Phải tạo VIF mới dùng được connection." },
+      { t: "dx", f: "Dedicated connection: tốc độ và cách đặt?", b: "<b>1, 10, 100, 400 Gbps</b>; tự yêu cầu qua console/CLI/API; AWS cấp <b>LOA-CFA</b>; tới 50 private/public VIF + tối đa 4 transit VIF (tổng 51).", x: "Không đổi tốc độ được – phải tạo connection mới." },
+      { t: "dx", f: "Hosted connection: tốc độ và giới hạn?", b: "<b>50 Mbps → 25 Gbps</b> qua <b>DX Partner</b>; <b>chỉ 1 VIF</b>; không đặt qua console (partner tạo, bạn accept)." },
+      { t: "dx", f: "LOA-CFA là gì?", b: "Letter of Authorization and Connecting Facility Assignment: giấy ủy quyền để nhà mạng đặt <b>cross connect</b> tới cổng AWS tại DX location." },
+      { t: "dx", f: "Khi nào DX bắt đầu tính phí?", b: "Khi port <b>active</b> hoặc <b>90 ngày</b> sau khi LOA được cấp, tùy cái nào đến trước.", x: "AWS có thể mất tới 72 giờ làm việc để duyệt và cấp port." },
+      { t: "dx", f: "Yêu cầu mạng để dùng Direct Connect?", b: "Cáp quang <b>single-mode</b> · <b>802.1Q VLAN</b> toàn tuyến · <b>BGP + MD5</b> (tùy chọn BFD) · colocated tại DX location hoặc qua partner." },
+      { t: "dx", f: "3 loại virtual interface và đích của chúng?", b: "<b>Private VIF</b>: VPC (qua VGW hoặc DX gateway).<br><b>Public VIF</b>: dịch vụ AWS public toàn cầu bằng IP public.<br><b>Transit VIF</b>: Transit Gateway qua DX gateway." },
+      { t: "dx", f: "MTU của private VIF và transit VIF?", b: "Private VIF: <b>1500 hoặc 9001</b>. Transit VIF: <b>1500 hoặc 8500</b>." },
+      { t: "dx", f: "Giới hạn route trên private/transit VIF?", b: "Mặc định <b>100 route</b> mỗi phiên BGP (tăng tới 1.000); vượt quá ⇒ phiên BGP chuyển idle (DOWN)." },
+      { t: "dx", f: "Direct Connect có mã hóa traffic mặc định không?", b: "<b>Không.</b> DX là đường riêng, không phải đường mã hóa ⇒ dùng VPN over DX hoặc MACsec." },
+      { t: "dx", f: "Vì sao DX giúp “reduce network costs” khi truyền nhiều dữ liệu?", b: "Data transfer out qua DX tính theo <b>đơn giá DX thấp hơn</b> data transfer ra internet. Chi phí = <b>port hours</b> + data transfer out." },
+
+      // ---- DX gateway
+      { t: "dxgw", f: "Direct Connect gateway là gì?", b: "Tài nguyên <b>toàn cầu</b> (trừ Trung Quốc): một kết nối DX tới VGW/TGW ở <b>nhiều Region, nhiều account</b>. Là tập route reflector BGP, nằm ngoài đường dữ liệu ⇒ không SPOF." },
+      { t: "dxgw", f: "DX gateway associate được với những gì? Giới hạn?", b: "<b>VGW</b> (qua private VIF, tối đa <b>20</b>) · <b>Transit Gateway</b> (qua transit VIF, tối đa <b>6</b>) · Cloud WAN core network." },
+      { t: "dxgw", f: "Các VPC gắn cùng một DX gateway có nói chuyện được với nhau không?", b: "<b>Không</b> – DX gateway không cho VGW → VGW (đúng thiết kế). VPC ↔ VPC dùng peering / TGW.", x: "Ngoại lệ: on-premises quảng bá supernet bao trùm các VPC." },
+      { t: "dxgw", f: "Account khác muốn dùng DX gateway của bạn làm thế nào?", b: "Gửi <b>association proposal</b>; chủ DX gateway accept và có thể giới hạn <b>allowed prefixes</b>." },
+      { t: "dxgw", f: "Hàng chục/trăm VPC trong một Region dùng chung một DX – thiết kế?", b: "<b>DX gateway + transit VIF + Transit Gateway</b> (vượt giới hạn 20 VGW, TGW còn định tuyến giữa các VPC)." },
+      { t: "dxgw", f: "Quota DX gateway cần nhớ?", b: "<b>200</b> DX gateway/account · <b>20</b> VGW và <b>6</b> TGW mỗi DX gateway · <b>30</b> private/transit VIF mỗi DX gateway." },
+
+      // ---- Chịu lỗi & mã hóa
+      { t: "res", f: "3 mô hình của Direct Connect Resiliency Toolkit?", b: "<b>Maximum</b>: 2+ location, thiết bị riêng – <b>99,99%</b>.<br><b>High</b>: 2 location, mỗi nơi một connection – <b>99,9%</b>.<br><b>Dev/test</b>: một location, thiết bị khác nhau." },
+      { t: "res", f: "LAG (Link Aggregation Group) là gì? Có thay dự phòng đa location không?", b: "Gộp nhiều dedicated connection <b>cùng tốc độ, cùng location</b> (≤ 4 khi &lt; 100G, 2 khi 100G). <b>Không</b> – LAG chỉ tăng băng thông, vẫn ở một location." },
+      { t: "res", f: "Cách dự phòng rẻ nhất cho một kết nối DX?", b: "<b>Site-to-Site VPN backup</b> cùng kết thúc tại VGW/TGW; DX hỏng thì BGP rút route, traffic sang VPN.", x: "Băng thông khi failover bị giới hạn ở mức VPN qua internet." },
+      { t: "res", f: "Private IP VPN là gì? Cần gì?", b: "IPsec chạy trên <b>transit VIF</b> với <b>IP private</b> hai đầu. Cần <b>DX gateway + transit gateway</b>. Không cần IP public, không mở public VIF." },
+      { t: "res", f: "VPN qua public VIF có nhược điểm gì?", b: "Cần <b>IP public</b>; public VIF mở đường tới <b>mọi dịch vụ AWS public</b> ⇒ phạm vi rủi ro rộng hơn." },
+      { t: "res", f: "MACsec mã hóa đoạn nào?", b: "Mã hóa tầng 2 (chuẩn IEEE) từ data center tới <b>DX location</b>, trên <b>dedicated connection</b> hỗ trợ MACsec." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>quickly</i>”, “<i>encrypted</i>”, “<i>over the internet</i>”, “<i>low cost</i>” ⇒ ?", b: "<b>Site-to-Site VPN</b>." },
+      { t: "kw", f: "Đề có “<i>consistent network performance</i>”, “<i>transfer large amounts of data regularly</i>”, “<i>not over the public internet</i>” ⇒ ?", b: "<b>Direct Connect</b>." },
+      { t: "kw", f: "Đề có “<i>remote employees / work from home</i>”, “<i>managed</i>” ⇒ ?", b: "<b>AWS Client VPN</b>." },
+      { t: "kw", f: "Đề có “<i>multiple branch offices communicate with each other</i>”, “<i>existing internet connections</i>” ⇒ ?", b: "<b>VPN CloudHub</b>." },
+      { t: "kw", f: "Đề có “<i>VPN throughput limited to ~1.25 Gbps</i>” ⇒ ?", b: "Nhiều tunnel + <b>Transit Gateway ECMP</b> (BGP)." },
+      { t: "kw", f: "Đề có “<i>VPN performance inconsistent for a branch far from the Region</i>” ⇒ ?", b: "<b>Accelerated Site-to-Site VPN</b> (cần transit gateway)." },
+      { t: "kw", f: "Đề có “<i>existing Direct Connect to reach VPCs in another Region / other accounts</i>” ⇒ ?", b: "<b>Direct Connect gateway</b>." },
+      { t: "kw", f: "Đề có “<i>encrypt traffic over DX without public IP addresses</i>” ⇒ ?", b: "<b>Private IP VPN</b> trên transit VIF (DX gateway + TGW)." },
+      { t: "kw", f: "Đề có “<i>survive the failure of an entire DX location</i>”, “<i>maximum resiliency</i>” ⇒ ?", b: "DX ở <b>hai location</b>, mỗi nơi hai connection trên thiết bị riêng (SLA 99,99%)." },
+      { t: "kw", f: "Đề có “<i>only traffic destined for the VPC through the VPN; reduce data transfer costs</i>” ⇒ ?", b: "Bật <b>split-tunnel</b> trên Client VPN." }
+    ],
+
+    pairs: [
+      ["Site-to-Site VPN", "IPsec giữa mạng on-premises và VPC qua internet"],
+      ["VPN tunnel", "Liên kết mã hóa; mỗi VPN connection có 2 tunnel"],
+      ["Customer gateway", "Tài nguyên AWS mô tả thiết bị on-premises"],
+      ["Customer gateway device", "Router/firewall thật ở phía bạn"],
+      ["Virtual private gateway", "Đầu VPN/DX phía AWS gắn 1 VPC, ASN 64512"],
+      ["BGP", "Giao thức trao đổi route, dùng cho VPN động và DX"],
+      ["ASN", "Số hiệu hệ thống tự trị trong phiên BGP"],
+      ["Route propagation", "VGW tự thêm route on-premises vào route table"],
+      ["ECMP", "Gộp nhiều tunnel VPN trên TGW, cần BGP"],
+      ["Accelerated VPN", "VPN qua Global Accelerator, chỉ VPN gắn TGW"],
+      ["Large Bandwidth Tunnel", "Tới 5 Gbps/tunnel, chỉ TGW/Cloud WAN"],
+      ["VPN CloudHub", "Một VGW làm hub cho các chi nhánh nói chuyện"],
+      ["AWS Client VPN", "VPN managed dựa trên OpenVPN cho người dùng"],
+      ["Authorization rule", "Nhóm người dùng nào vào mạng nào; mặc định không có"],
+      ["Split-tunnel", "Chỉ traffic tới mạng có route mới qua VPN"],
+      ["Mutual authentication", "Client và server xác thực bằng chứng chỉ (ACM)"],
+      ["Dedicated connection", "Cổng riêng 1/10/100/400 Gbps, tự đặt"],
+      ["Hosted connection", "Qua DX Partner, 50 Mbps–25 Gbps, 1 VIF"],
+      ["LOA-CFA", "Giấy ủy quyền để đặt cross connect tới cổng AWS"],
+      ["Cross connect", "Dây nối vật lý tới router AWS tại DX location"],
+      ["Private VIF", "Tới VPC bằng IP private (VGW / DX gateway)"],
+      ["Public VIF", "Tới dịch vụ AWS public toàn cầu bằng IP public"],
+      ["Transit VIF", "Tới Transit Gateway qua DX gateway"],
+      ["Direct Connect gateway", "Tài nguyên toàn cầu nối DX tới nhiều Region/account"],
+      ["LAG", "Gộp dedicated connection cùng tốc độ, cùng location"],
+      ["MACsec", "Mã hóa tầng 2 trên dedicated connection"],
+      ["Private IP VPN", "IPsec trên transit VIF, IP private hai đầu"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn giải pháp hybrid",
+        desc: "Đọc yêu cầu trong đề và chọn giải pháp phù hợp nhất (theo bảng quyết định của bài).",
+        buckets: ["Site-to-Site VPN", "Direct Connect", "Client VPN", "VPN CloudHub", "Direct Connect gateway", "Transit Gateway"],
+        items: [
+          ["Nối data center với VPC trong 2 ngày, mã hóa, chi phí thấp", 0, "VPN dựng nhanh, IPsec mặc định"],
+          ["Dự phòng rẻ nhất cho kết nối DX hiện có", 0, "VPN backup; VGW ưu tiên route DX"],
+          ["Băng thông lớn, độ trễ ổn định, không qua internet", 1, "đường vật lý riêng"],
+          ["Truyền hàng chục TB mỗi tháng, muốn giảm phí data transfer", 1, "đơn giá data transfer qua DX thấp hơn"],
+          ["Nhân viên làm việc tại nhà, xác thực bằng Active Directory", 2, "VPN managed cho từng người dùng"],
+          ["Chi nhánh LA, Miami, New York cần trao đổi dữ liệu với nhau qua AWS, rẻ", 3, "một VGW + VPN BGP, ASN riêng"],
+          ["Dùng DX ở us-east-1 để tới VPC ở us-west-1", 4, "DX gateway là tài nguyên toàn cầu"],
+          ["Chia sẻ một DX cho VPC thuộc nhiều account", 4, "association proposal"],
+          ["40 VPC dùng chung một VPN, cần &gt; 1,25 Gbps", 5, "VPN attachment + ECMP"],
+          ["Chi nhánh xa Region, VPN chập chờn, muốn accelerated VPN", 5, "accelerated VPN chỉ hỗ trợ TGW"]
+        ]
+      },
+      {
+        title: "VGW hay Transit Gateway?",
+        desc: "Tính năng VPN sau có được trên virtual private gateway, hay chỉ có trên transit gateway?",
+        buckets: ["Có trên VGW", "Chỉ trên Transit Gateway"],
+        items: [
+          ["Site-to-Site VPN cơ bản 2 tunnel", 0, "VGW là target gateway đơn giản nhất"],
+          ["VPN CloudHub nối các chi nhánh", 0, "CloudHub dùng một VGW làm hub"],
+          ["ASN phía Amazon mặc định 64512", 0, "VGW không đổi ASN được sau khi tạo"],
+          ["Private VIF gắn thẳng vào", 0, "private VIF tới một VPC qua VGW"],
+          ["ECMP gộp băng thông nhiều tunnel", 1, "VGW chỉ chọn một tunnel làm đường ra"],
+          ["Large Bandwidth Tunnel 5 Gbps", 1, "chỉ TGW / Cloud WAN"],
+          ["Accelerated Site-to-Site VPN", 1, "VGW không hỗ trợ acceleration"],
+          ["IPv6 qua VPN", 1, "VGW không hỗ trợ IPv6 qua VPN"],
+          ["Một VPN phục vụ hàng trăm VPC", 1, "VGW gắn đúng một VPC"]
+        ]
+      },
+      {
+        title: "Loại virtual interface",
+        desc: "Tình huống sau cần private VIF, public VIF hay transit VIF?",
+        buckets: ["Private VIF", "Public VIF", "Transit VIF"],
+        items: [
+          ["Tới một VPC cùng Region qua virtual private gateway", 0, "private VIF gắn VGW"],
+          ["Tới VPC ở nhiều Region qua DX gateway + nhiều VGW", 0, "private VIF gắn DX gateway"],
+          ["On-premises truy cập S3 bằng IP public qua DX", 1, "public VIF tới dịch vụ public"],
+          ["Dựng VPN tới endpoint public AWS qua DX (cách truyền thống)", 1, "VPN dùng IP public của endpoint"],
+          ["Gọi API endpoint của dịch vụ AWS ở mọi Region public", 1, "public VIF truy cập toàn cầu"],
+          ["Tới Transit Gateway có hàng chục VPC", 2, "transit VIF qua DX gateway"],
+          ["Private IP VPN để mã hóa trên DX", 2, "IPsec chạy trên transit VIF"],
+          ["MTU jumbo 8500 byte", 2, "private VIF jumbo là 9001"]
+        ]
+      },
+      {
+        title: "Mô hình chịu lỗi Direct Connect",
+        desc: "Mô tả sau ứng với mô hình/kỹ thuật nào?",
+        buckets: ["Maximum resiliency", "High resiliency", "Development and test", "LAG", "VPN backup"],
+        items: [
+          ["2 location × 2 connection trên thiết bị riêng", 0, "chịu mất cả một location"],
+          ["SLA 99,99%", 0, "mô hình cao nhất"],
+          ["Hai connection đơn, mỗi location một", 1, "tránh mất trọn một location"],
+          ["SLA 99,9%", 1, "high resiliency"],
+          ["Nhiều connection trên thiết bị khác nhau ở một location", 2, "không chịu được mất location"],
+          ["Gộp 4 connection 10 Gbps cùng location để tăng băng thông", 3, "LAG không giúp chịu lỗi location"],
+          ["Rẻ nhất, băng thông failover giới hạn bởi internet", 4, "VPN qua internet làm đường dự phòng"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Mỗi Site-to-Site VPN connection có 2 tunnel IPsec.", true, "Hai tunnel tới hai endpoint khác nhau phía AWS."],
+      ["Customer gateway là router vật lý đặt ở data center của bạn.", false, "Đó là customer gateway device; customer gateway là tài nguyên trong AWS."],
+      ["Một VPN tunnel chuẩn đạt tối đa 1,25 Gbps.", true, "~140.000 pps."],
+      ["Site-to-Site VPN hỗ trợ jumbo frame.", false, "MTU tối đa 1446 byte, không jumbo frame."],
+      ["Virtual private gateway hỗ trợ ECMP để gộp băng thông nhiều tunnel.", false, "Chỉ transit gateway hỗ trợ ECMP (cần BGP)."],
+      ["ECMP trên transit gateway yêu cầu VPN dùng BGP.", true, "Static routing không dùng được ECMP."],
+      ["Trong VGW, route BGP từ Direct Connect được ưu tiên hơn route VPN.", true, "DX BGP > VPN static > VPN BGP."],
+      ["Route propagated cụ thể hơn sẽ thắng route local của VPC.", false, "Route local luôn thắng."],
+      ["Accelerated Site-to-Site VPN hỗ trợ virtual private gateway.", false, "Chỉ hỗ trợ VPN gắn transit gateway."],
+      ["Có thể bật acceleration cho một VPN connection đã tạo.", false, "Phải tạo VPN mới."],
+      ["Một VPC chỉ gắn được một virtual private gateway tại một thời điểm.", true, "Nhiều VPC dùng chung VPN ⇒ transit gateway."],
+      ["VPN CloudHub yêu cầu mỗi customer gateway có BGP ASN riêng.", true, "Cùng với một VGW và CIDR không chồng lấn."],
+      ["VPN CloudHub dùng được với static routing.", false, "CloudHub bắt buộc dynamic routing (BGP)."],
+      ["Client VPN dùng giao thức dựa trên OpenVPN, mã hóa TLS.", true, "Client cài OpenVPN hoặc AWS VPN Client."],
+      ["Client VPN endpoint mới tạo đã có sẵn authorization rule cho phép mọi người dùng.", false, "Mặc định không có rule nào."],
+      ["Client CIDR range của Client VPN có thể đổi sau khi tạo.", false, "Không đổi được; kích thước /22 → /12."],
+      ["Split-tunnel giúp giảm lượng data transfer ra từ AWS.", true, "Chỉ traffic tới mạng có route mới qua tunnel."],
+      ["Client VPN mặc định chạy ở chế độ split-tunnel.", false, "Mặc định là full-tunnel."],
+      ["Mutual authentication của Client VPN dùng chứng chỉ nạp vào ACM.", true, "Không dùng được self-service portal."],
+      ["Direct Connect mã hóa traffic theo mặc định.", false, "DX không mã hóa mặc định; dùng VPN over DX hoặc MACsec."],
+      ["Dedicated connection có tốc độ 1, 10, 100 hoặc 400 Gbps.", true, "Tự đặt qua console/CLI/API."],
+      ["Hosted connection hỗ trợ tối đa 50 virtual interface.", false, "Hosted connection chỉ có 1 VIF."],
+      ["Có thể đổi tốc độ dedicated connection sau khi tạo yêu cầu.", false, "Phải tạo connection mới."],
+      ["DX bắt đầu tính phí khi port active hoặc 90 ngày sau khi cấp LOA.", true, "Tùy điều kiện nào đến trước."],
+      ["Direct Connect yêu cầu 802.1Q VLAN và BGP.", true, "Kèm BGP MD5 authentication."],
+      ["Public VIF dùng để truy cập S3 bằng IP public qua DX.", true, "Public VIF tới dịch vụ AWS public toàn cầu."],
+      ["Private VIF gắn thẳng VGW truy cập được VPC ở nhiều Region.", false, "Chỉ một VPC cùng Region; nhiều Region cần DX gateway."],
+      ["Direct Connect gateway là tài nguyên toàn cầu.", true, "Dùng được với mọi Region trừ Trung Quốc."],
+      ["Các VPC gắn cùng một DX gateway có thể giao tiếp với nhau qua nó theo mặc định.", false, "DX gateway không cho VGW → VGW."],
+      ["Một DX gateway associate được tối đa 20 virtual private gateway.", true, "Và 6 transit gateway."],
+      ["LAG giúp chịu được sự cố mất cả một DX location.", false, "LAG ở cùng location, chỉ tăng băng thông."],
+      ["Mô hình maximum resiliency hướng tới SLA 99,99%.", true, "High resiliency là 99,9%."],
+      ["Private IP VPN cần Direct Connect gateway và transit gateway.", true, "IPsec chạy trên transit VIF."],
+      ["Site-to-Site VPN backup cho DX cho băng thông khi failover tương đương DX.", false, "Băng thông bị giới hạn ở mức VPN qua internet."]
+    ],
+
+    map: {
+      t: "Bài 23 · Mạng lai (Hybrid networking)",
+      c: [
+        { t: "Tổng quan 3 con đường", icon: "svc/AWS-Direct-Connect.svg", c: [
+          { t: "Site-to-Site VPN", v: "mạng ↔ mạng, IPsec, internet, vài phút" },
+          { t: "Direct Connect", v: "mạng ↔ mạng, đường riêng, không mã hóa mặc định" },
+          { t: "Client VPN", v: "người dùng ↔ mạng, TLS" }
+        ] },
+        { t: "Site-to-Site VPN", icon: "svc/AWS-Site-to-Site-VPN.svg", c: [
+          { t: "Thành phần", v: "CGW (AWS) ↔ CGW device (on-prem) ↔ VGW / TGW" },
+          { t: "Tunnel", v: "2 tunnel · 1,25 Gbps · MTU 1446" },
+          { t: "Định tuyến", v: "static hoặc BGP (khuyến nghị)" },
+          { t: "Ưu tiên route", c: [
+            { t: "Trong VPC", v: "local > static > propagated" },
+            { t: "Trong VGW", v: "DX BGP > VPN static > VPN BGP > AS PATH > MED" }
+          ] },
+          { t: "Chỉ trên TGW", v: "ECMP, 5 Gbps tunnel, IPv6, accelerated VPN" }
+        ] },
+        { t: "VPN CloudHub", icon: "res/Amazon-VPC_VPN-Connection.svg", c: [
+          { t: "Mô hình", v: "1 VGW làm hub cho nhiều chi nhánh" },
+          { t: "Điều kiện", v: "BGP, ASN riêng, CIDR không chồng lấn" },
+          { t: "Ưu điểm", v: "rẻ, dùng internet sẵn có" }
+        ] },
+        { t: "Client VPN", icon: "svc/AWS-Client-VPN.svg", c: [
+          { t: "Thành phần", v: "endpoint, target network, route, authorization rule" },
+          { t: "Xác thực", v: "AD · mutual cert (ACM) · SAML" },
+          { t: "Client CIDR", v: "/22 → /12, không đổi, không chồng VPC" },
+          { t: "Split-tunnel", v: "chỉ traffic tới VPC qua VPN, giảm phí" },
+          { t: "Giới hạn", v: "1 subnet/AZ · 443/1194 · 50 Mbps" }
+        ] },
+        { t: "Direct Connect", icon: "svc/AWS-Direct-Connect.svg", c: [
+          { t: "Dedicated", v: "1/10/100/400 Gbps, LOA-CFA, 51 VIF" },
+          { t: "Hosted", v: "50 Mbps–25 Gbps qua partner, 1 VIF" },
+          { t: "VIF", c: [
+            { t: "Private", v: "VPC (VGW / DX gateway)" },
+            { t: "Public", v: "dịch vụ AWS public toàn cầu" },
+            { t: "Transit", v: "TGW qua DX gateway" }
+          ] },
+          { t: "Yêu cầu", v: "single-mode, 802.1Q, BGP + MD5" },
+          { t: "Tính phí", v: "port hours + DTO · active hoặc 90 ngày sau LOA" }
+        ] },
+        { t: "Direct Connect gateway", icon: "res/AWS-Direct-Connect-Gateway.svg", c: [
+          { t: "Bản chất", v: "toàn cầu, route reflector BGP, không SPOF" },
+          { t: "Associate", v: "20 VGW · 6 TGW" },
+          { t: "Giới hạn", v: "không cho VPC ↔ VPC qua DX gateway" },
+          { t: "Đa account", v: "association proposal + allowed prefixes" }
+        ] },
+        { t: "Chịu lỗi & mã hóa", icon: "res/Amazon-VPC_VPN-Connection.svg", c: [
+          { t: "Maximum", v: "2 location, thiết bị riêng, 99,99%" },
+          { t: "High", v: "2 location, 99,9%" },
+          { t: "LAG", v: "tăng băng thông một location" },
+          { t: "VPN backup", v: "dự phòng rẻ nhất cho DX" },
+          { t: "Mã hóa DX", v: "private IP VPN · VPN qua public VIF · MACsec" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

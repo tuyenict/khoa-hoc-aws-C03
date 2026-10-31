@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 4 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/cat/Security-Identity-Compliance.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="4" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-04-iam-basics.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "id", name: "IAM · Users & Groups" },
+      { id: "role", name: "IAM role" },
+      { id: "policy", name: "JSON policy" },
+      { id: "ptype", name: "Loại policy & cross-account" },
+      { id: "cred", name: "Credentials · MFA · Access keys" },
+      { id: "bp", name: "Best practices & công cụ" },
+      { id: "quota", name: "Con số & quotas" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- IAM, users, groups
+      { t: "id", f: "IAM kiểm soát hai việc gì?", b: "<b>Authentication</b>: ai đã đăng nhập (xác thực).<br><b>Authorization</b>: ai được phép làm gì trên tài nguyên (phân quyền)." },
+      { t: "id", f: "IAM là dịch vụ global hay regional? Có tốn phí không?", b: "<b>Global</b>: user, group, role, policy không gắn Region.<br><b>Miễn phí</b> (cả IAM Identity Center, AWS STS), chỉ trả tiền dịch vụ mà identity dùng.", x: "Đáp án “replicate IAM roles to the DR Region” là sai/không cần thiết." },
+      { t: "id", f: "<i>Eventual consistency</i> của IAM có hệ quả gì khi thiết kế?", b: "Thay đổi IAM cần thời gian lan truyền ⇒ <b>không đặt thao tác sửa IAM vào critical path</b> của ứng dụng; làm trong routine khởi tạo riêng và kiểm tra đã lan truyền." },
+      { t: "id", f: "Luồng xử lý một request trong IAM?", b: "Principal dùng <b>credentials</b> xác thực → gửi <b>request</b> → AWS <b>phân quyền</b> dựa trên policies → được phép thì thực hiện <b>action</b> trên <b>resource</b>." },
+      { t: "id", f: "<i>Principal</i> là gì? <i>Service principal</i> là gì?", b: "Thực thể thực hiện request: root user, IAM user, IAM role, federated principal, ứng dụng.<br>Service principal = định danh dịch vụ AWS, vd <code>ec2.amazonaws.com</code>." },
+      { t: "id", f: "IAM identity khác IAM entity thế nào?", b: "<b>Identity</b>: user, group, role.<br><b>Entity</b> (xác thực được): chỉ <b>user và role</b> – group không phải entity." },
+      { t: "id", f: "IAM user mới tạo có quyền gì?", b: "<b>Không có quyền gì</b> (implicit deny). Tạo bằng CLI/API thì cũng <b>chưa có credentials</b> nào." },
+      { t: "id", f: "IAM user có quyền administrator có phải root user không?", b: "<b>Không.</b> Admin IAM user vẫn chỉ là IAM user, khác root user." },
+      { t: "id", f: "3 cách AWS định danh một IAM user?", b: "<b>Friendly name</b> (Richard) · <b>ARN</b> <code>arn:aws:iam::123456789012:user/Richard</code> · <b>unique ID</b> bắt đầu <code>AIDA</code>.", x: "Friendly name xuất hiện trong ARN ⇒ không chứa thông tin cá nhân." },
+      { t: "id", f: "Khi nào AWS vẫn chấp nhận dùng IAM user (thay vì federation)?", b: "Workload không dùng được role (vd WordPress plugin ngoài AWS) · third-party client không hỗ trợ Identity Center · CodeCommit/Keyspaces (service-specific credentials) · <b>emergency “break-glass”</b> access." },
+      { t: "id", f: "Quyền thực tế của một user thuộc nhiều group?", b: "<b>Hợp (union)</b> các policy của user và của mọi group chứa user." },
+      { t: "id", f: "IAM group có lồng nhau được không? Có group mặc định chứa mọi user không?", b: "<b>Không lồng nhau</b> – group chỉ chứa user.<br><b>Không có</b> group mặc định; muốn có phải tự tạo và tự thêm user.", x: "“Parent group chứa child group” luôn sai." },
+      { t: "id", f: "IAM group có thể làm <i>Principal</i> trong bucket policy không?", b: "<b>Không.</b> Group gắn với permissions, không phải authentication. Dùng ARN user/role hoặc account." },
+      { t: "id", f: "IAM group có credentials, đăng nhập hay assume role được không?", b: "<b>Không.</b> Group chỉ là công cụ gom quyền." },
+
+      // ---- Role
+      { t: "role", f: "IAM role khác IAM user ở điểm cốt lõi nào?", b: "Role <b>không gắn với một người</b>, ai cần thì <b>assume</b>; <b>không có password/access key</b> – cấp <b>temporary security credentials</b> cho role session." },
+      { t: "role", f: "Ai có thể assume một IAM role?", b: "IAM user (cùng/khác tài khoản) · IAM role (role chaining) · <b>service principal</b> (EC2, Lambda, S3 replication, Roles Anywhere…) · người dùng <b>federated</b> qua SAML 2.0 / OIDC." },
+      { t: "role", f: "Hai loại policy mà mỗi role luôn có?", b: "<b>Trust policy</b>: <i>AI</i> được assume (resource-based).<br><b>Permissions policy</b>: được làm <i>GÌ</i> (identity-based)." },
+      { t: "role", f: "Đặc điểm của trust policy?", b: "<b>Resource-based policy bắt buộc</b> của role (loại resource-based duy nhất của IAM); khai báo Principal tin cậy; Action thường <code>sts:AssumeRole</code>.", x: "Không được dùng wildcard * trong ARN principal." },
+      { t: "role", f: "Service role khác service-linked role thế nào?", b: "<b>Service role</b>: dịch vụ assume, <b>admin tạo/sửa/xóa được</b>.<br><b>Service-linked role</b>: <b>dịch vụ sở hữu</b>, admin chỉ xem, không sửa quyền; xóa tài nguyên liên quan trước mới xóa được.", x: "Thấy AWSServiceRoleFor… lạ ⇒ đừng xóa thủ công." },
+      { t: "role", f: "<i>Instance profile</i> là gì?", b: "<b>Vỏ chứa role</b> để gắn vào EC2; ứng dụng lấy temporary credentials qua instance metadata, SDK tự phát hiện.", x: "Console tự tạo instance profile cùng tên khi tạo role cho EC2. Mỗi instance gắn 1 instance profile." },
+      { t: "role", f: "Delegation (ủy quyền cross-account) cần đủ hai nửa nào?", b: "<b>Trust policy</b> của role ở trusting account (sở hữu tài nguyên) + <b>identity policy</b> cho user ở trusted account được <code>sts:AssumeRole</code>." },
+      { t: "role", f: "<i>External ID</i> dùng để làm gì?", b: "Tham số khi <b>bên thứ ba</b> (khác tổ chức) assume role, chống <b>confused deputy problem</b>. Dài 2–1.224 ký tự." },
+      { t: "role", f: "<i>Role chaining</i> bị giới hạn session thế nào?", b: "Tối đa <b>1 giờ</b>, bất kể maximum session duration của role.", x: "Truyền DurationSeconds &gt; 3600 khi chaining ⇒ lỗi." },
+      { t: "role", f: "Maximum session duration của role và DurationSeconds?", b: "Max session duration cấu hình <b>1–12 giờ</b>. DurationSeconds từ <b>900 giây (15 phút)</b> tới max; không truyền thì mặc định <b>1 giờ</b>." },
+      { t: "role", f: "Khi user assume role, quyền gốc của user ra sao?", b: "<b>Tạm gác lại</b>: user chỉ có quyền của role; thoát role mới khôi phục quyền gốc." },
+      { t: "role", f: "Mobile app cần gọi AWS ⇒ cấp quyền thế nào?", b: "<b>Role qua web identity (Amazon Cognito)</b> – không nhúng access key vào app (dễ bị trích xuất)." },
+      { t: "role", f: "Server on-premises có PKI cần credentials AWS ⇒ ?", b: "<b>IAM Roles Anywhere</b> (chứng chỉ X.509) – vẫn dùng temporary credentials ngoài AWS." },
+
+      // ---- JSON policy
+      { t: "policy", f: "Các phần tử của một JSON policy?", b: "<b>Version</b>, <b>Statement</b> (Sid, <b>Effect</b>, <b>Principal</b>, <b>Action</b>, <b>Resource</b>, <b>Condition</b>)." },
+      { t: "policy", f: "<code>Version: 2012-10-17</code> có nghĩa là gì?", b: "Phiên bản <b>ngôn ngữ policy</b> mới nhất AWS khuyến nghị – <b>không phải</b> ngày tạo policy.", x: "Bản cũ 2008-10-17 không hỗ trợ policy variables như ${aws:username}." },
+      { t: "policy", f: "Principal có trong loại policy nào?", b: "<b>Bắt buộc</b> trong resource-based policy.<br><b>Không được có</b> trong identity-based policy (principal ngầm định là identity được gắn)." },
+      { t: "policy", f: "Nhiều statement / nhiều policy cùng áp dụng được kết hợp thế nào?", b: "Bằng <b>logical OR</b>." },
+      { t: "policy", f: "Phần tử Condition hoạt động thế nào?", b: "Statement <b>chỉ có hiệu lực khi Condition = true</b> (vd yêu cầu MFA, IP nguồn, TLS, tag)." },
+      { t: "policy", f: "Cấp <code>s3:GetObject</code> và <code>s3:ListBucket</code> cần ARN nào?", b: "<code>s3:ListBucket</code> (cấp bucket) ⇒ <code>arn:aws:s3:::bucket</code>.<br><code>s3:GetObject</code> (cấp object) ⇒ <code>arn:aws:s3:::bucket/*</code>.", x: "Quên /* ⇒ GetObject bị từ chối." },
+      { t: "policy", f: "Least privilege nghĩa là gì?", b: "Chỉ cấp quyền <b>cần cho tác vụ</b>; bắt đầu từ tập tối thiểu rồi cấp thêm khi cần." },
+      { t: "policy", f: "5 access level IAM dùng phân loại action?", b: "<b>List, Read, Write, Permissions management, Tagging</b>. Read-only ⇒ chọn List + Read." },
+
+      // ---- Loại policy
+      { t: "ptype", f: "Identity-based policy khác resource-based policy thế nào?", b: "<b>Identity-based</b>: gắn user/group/role; managed hoặc inline.<br><b>Resource-based</b>: gắn resource (bucket, queue, KMS key…), <b>có Principal</b>, cho phép cross-account, <b>luôn inline</b>." },
+      { t: "ptype", f: "So sánh AWS managed, customer managed, inline policy.", b: "<b>AWS managed</b>: AWS quản lý, không sửa được.<br><b>Customer managed</b>: bạn sửa, gắn nhiều identity, <b>5 phiên bản</b>, rollback được.<br><b>Inline</b>: 1-1 với identity, <b>xóa theo identity</b>." },
+      { t: "ptype", f: "Loại identity-based policy nào AWS khuyến nghị cho least privilege?", b: "<b>Customer managed policy</b> – viết riêng cho use case.", x: "AWS managed dùng chung mọi khách hàng nên thường không least privilege." },
+      { t: "ptype", f: "Các loại policy “guardrail” KHÔNG cấp quyền?", b: "<b>Permissions boundary</b>, <b>SCP</b>, <b>RCP</b>, <b>session policy</b>, VPC endpoint policy – chỉ đặt giới hạn tối đa." },
+      { t: "ptype", f: "Đặc điểm riêng của ACL?", b: "Loại policy duy nhất <b>không dùng JSON</b>; chỉ cấp quyền <b>cross-account</b>, không cấp cho entity cùng tài khoản." },
+      { t: "ptype", f: "Resource-based policy khác resource-level permission thế nào?", b: "<b>Resource-based</b>: policy gắn trực tiếp vào resource.<br><b>Resource-level</b>: dùng ARN chỉ định resource cụ thể trong phần Resource (kể cả identity-based)." },
+      { t: "ptype", f: "Quy tắc đánh giá cơ bản của IAM?", b: "1. Mặc định <b>implicit deny</b>.<br>2. <b>Explicit Deny luôn thắng</b>.<br>3. Cùng tài khoản: chỉ cần <b>1 Allow</b> (identity hoặc resource).<br>4. Cross-account: cần Allow ở <b>cả hai phía</b>." },
+      { t: "ptype", f: "Cross-account: bucket policy ở B đã Allow user ở A nhưng vẫn Access Denied (không có Deny). Nguyên nhân?", b: "<b>Identity-based policy của user ở Account A</b> chưa cho phép action trên bucket ở B." },
+      { t: "ptype", f: "Khi nào chọn resource-based policy thay vì cross-account role?", b: "Khi principal cần <b>giữ quyền của chính mình</b> lúc truy cập tài nguyên tài khoản khác (vd copy object từ bucket B sang bucket A trong một lệnh)." },
+      { t: "ptype", f: "Policy nào áp dụng/không áp dụng được cho root user?", b: "<b>Không</b> gắn identity-based policy, <b>không</b> đặt permissions boundary cho root.<br>Root của member account <b>bị ảnh hưởng bởi SCP và RCP</b>; có thể là Principal trong resource-based policy/ACL." },
+
+      // ---- Credentials
+      { t: "cred", f: "Long-term credentials khác temporary credentials thế nào?", b: "<b>Long-term</b>: password, access key – không tự hết hạn, phải tự rotate.<br><b>Temporary</b>: AWS STS cấp (key ID thường bắt đầu <code>ASIA</code> + secret + <b>session token</b>), tự hết hạn." },
+      { t: "cred", f: "Secret access key xem được khi nào?", b: "<b>Chỉ một lần lúc tạo</b>. Mất thì xóa key và tạo key mới." },
+      { t: "cred", f: "Quy trình xoay vòng access key không gián đoạn?", b: "Tạo key thứ 2 → cập nhật ứng dụng dùng key mới → đặt key cũ <b>Inactive</b> → kiểm tra không lỗi → <b>xóa</b> key cũ." },
+      { t: "cred", f: "Tắt console password có vô hiệu hóa access keys không?", b: "<b>Không.</b> Password và access key độc lập – key còn Active thì vẫn gọi API được." },
+      { t: "cred", f: "Access key bị lộ lên GitHub công khai ⇒ làm gì ĐẦU TIÊN?", b: "<b>Deactivate/delete</b> key bị lộ, tạo key mới nếu cần, <b>rà soát CloudTrail</b>.", x: "Đổi mật khẩu console, bật MFA hay xóa repo đều không thu hồi key." },
+      { t: "cred", f: "Cách ép MFA bằng policy?", b: "Condition <code>Bool: aws:MultiFactorAuthPresent = true</code> – vd chỉ cho terminate/xóa tài nguyên quan trọng khi có MFA." },
+      { t: "cred", f: "Loại MFA AWS ưu tiên? Tối đa bao nhiêu thiết bị/user?", b: "<b>Phishing-resistant</b>: passkeys, security keys (FIDO). Tối đa <b>8 thiết bị MFA</b>/user." },
+      { t: "cred", f: "Thay thế access key dài hạn bằng gì?", b: "<b>AWS CloudShell</b>, <b>IAM role</b>, <b>IAM Identity Center + AWS CLI</b>, lệnh <code>aws login</code>." },
+
+      // ---- Best practices & công cụ
+      { t: "bp", f: "Best practice số 1 cho human users?", b: "<b>Federation</b> với identity provider để dùng <b>temporary credentials</b>; quản lý tập trung bằng <b>IAM Identity Center</b>." },
+      { t: "bp", f: "Lộ trình “start quickly, then least privilege”?", b: "Bắt đầu với <b>AWS managed policies</b> → tiến tới <b>customer managed policies</b> riêng cho use case." },
+      { t: "bp", f: "IAM Access Analyzer làm được những gì?", b: "<b>External access findings</b> (public/cross-account, miễn phí), <b>unused access</b>, <b>policy validation</b> (100+ checks), <b>policy generation</b> từ CloudTrail, custom policy checks." },
+      { t: "bp", f: "<i>Last accessed information</i> (Access Advisor) dùng để làm gì?", b: "Xem dịch vụ (và một số action) được dùng <b>lần cuối</b> ⇒ <b>gỡ quyền thừa</b>." },
+      { t: "bp", f: "<i>Credential report</i> là gì?", b: "File <b>CSV</b> liệt kê mọi IAM user và trạng thái <b>password, access keys, MFA</b>, lần dùng gần nhất – phục vụ audit." },
+      { t: "bp", f: "Permissions boundary dùng trong tình huống nào?", b: "<b>Ủy quyền quản lý quyền</b>: cho developer tự tạo role nhưng không bao giờ vượt quá tập quyền định sẵn (quyền hiệu lực = giao của identity policy và boundary)." },
+      { t: "bp", f: "Các condition key hay dùng để hạn chế thêm?", b: "Bắt buộc TLS · <code>aws:CalledVia</code> (chỉ qua dịch vụ như CloudFormation) · <code>aws:SourceIp</code> · <code>aws:MultiFactorAuthPresent</code>." },
+
+      // ---- Quotas
+      { t: "quota", f: "Số IAM user tối đa mỗi account?", b: "<b>5.000</b> – không tăng được; cần hơn ⇒ dùng <b>federation</b>." },
+      { t: "quota", f: "Quota group: số group/account và số group một user tham gia?", b: "<b>300</b> group/account (tối đa 500) · mỗi user tối đa <b>10 group</b>." },
+      { t: "quota", f: "Managed policies gắn được vào user / group / role?", b: "User <b>10</b> (tối đa 20) · Group <b>10</b> (tối đa 10) · Role <b>20</b> (tối đa 25)." },
+      { t: "quota", f: "Số roles và customer managed policies mỗi account?", b: "Roles <b>1.000</b> (tối đa 10.000) · Customer managed policies <b>1.500</b> (tối đa 10.000)." },
+      { t: "quota", f: "Giới hạn kích thước managed policy và inline policy?", b: "Managed policy <b>6.144 ký tự</b>.<br>Inline tổng: user <b>2.048</b> · group <b>5.120</b> · role <b>10.240</b> ký tự." },
+      { t: "quota", f: "Giới hạn session policy và session tags?", b: "Session policy: <b>1 inline + tối đa 10 managed ARN</b>, tổng 2.048 ký tự.<br>Session tags: tối đa <b>50</b>." },
+      { t: "quota", f: "AWS STS request quota?", b: "<b>600 request/giây/account/Region</b> (AssumeRole, GetCallerIdentity… dùng chung)." },
+      { t: "quota", f: "Tiền tố unique ID gợi ý loại gì?", b: "<code>AIDA</code> user · <code>AGPA</code> group · <code>AROA</code> role · <code>ANPA</code> managed policy · <code>ASCA</code> server certificate." },
+      { t: "quota", f: "Policy vượt kích thước tối đa ⇒ xử lý thế nào?", b: "<b>Tách thành nhiều customer managed policies</b> hoặc gắn qua group." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>application running on EC2 needs to access S3/DynamoDB… MOST secure</i>” ⇒ ?", b: "<b>IAM role + instance profile</b>.", x: "“Store access keys in config / env vars / AMI / user data” luôn sai." },
+      { t: "kw", f: "Đề có “<i>Lambda function needs permissions</i>” / “<i>ECS task</i>” ⇒ ?", b: "Lambda: <b>execution role</b> · ECS: <b>task role</b>." },
+      { t: "kw", f: "Đề có “<i>many users with the same job need the same permissions</i>” ⇒ ?", b: "<b>IAM group + managed policy</b>." },
+      { t: "kw", f: "Đề có “<i>employees already in Active Directory / corporate IdP</i>” ⇒ ?", b: "<b>Federation</b> (IAM Identity Center, SAML 2.0) – không tạo IAM user." },
+      { t: "kw", f: "Đề có “<i>third party / vendor access to our account</i>” ⇒ ?", b: "<b>Cross-account role + external ID</b>." },
+      { t: "kw", f: "Đề có “<i>reuse the same permissions for many roles and roll back changes</i>” ⇒ ?", b: "<b>Customer managed policy</b> (có versioning)." },
+      { t: "kw", f: "Đề có “<i>permissions must be deleted together with the user</i>” ⇒ ?", b: "<b>Inline policy</b>." },
+      { t: "kw", f: "Đề có “<i>identify resources shared with external entities / publicly accessible</i>” ⇒ ?", b: "<b>IAM Access Analyzer</b> (external access)." },
+      { t: "kw", f: "Đề có “<i>generate a least-privilege policy based on actual usage</i>” ⇒ ?", b: "<b>IAM Access Analyzer policy generation</b> (dựa trên CloudTrail)." },
+      { t: "kw", f: "Đề có “<i>audit all users and status of passwords, access keys, MFA</i>” ⇒ ?", b: "<b>IAM credential report</b>." },
+      { t: "kw", f: "Đề có “<i>user still can't access despite Allow</i>” ⇒ ?", b: "Có <b>explicit Deny</b> ở đâu đó (resource policy, SCP, boundary)." },
+      { t: "kw", f: "Đề có “<i>manage workforce access across multiple accounts with SSO</i>” và “<i>sign-up/sign-in for web/mobile app users</i>” ⇒ ?", b: "Workforce SSO ⇒ <b>IAM Identity Center</b>.<br>Người dùng ứng dụng ⇒ <b>Amazon Cognito</b>." },
+      { t: "kw", f: "Đề có “<i>share subnets / Transit Gateway across accounts</i>” ⇒ ?", b: "<b>AWS RAM</b> (resource share)." }
+    ],
+
+    pairs: [
+      ["Authentication", "Xác thực – chứng minh principal là ai"],
+      ["Authorization", "Phân quyền – request được allow hay deny"],
+      ["Principal", "Thực thể gửi request: user, role, service…"],
+      ["Service principal", "Định danh dịch vụ AWS, vd ec2.amazonaws.com"],
+      ["IAM entity", "Identity xác thực được: chỉ user và role"],
+      ["IAM user group", "Tập hợp user để gán quyền chung, không lồng nhau"],
+      ["IAM role", "Identity được assume, cấp temporary credentials"],
+      ["Trust policy", "Resource-based policy của role: ai được assume"],
+      ["Permissions policy", "Identity-based policy: được làm gì"],
+      ["Service-linked role", "Do dịch vụ sở hữu, admin không sửa quyền"],
+      ["Instance profile", "Vỏ chứa role để gắn vào EC2"],
+      ["External ID", "Tham số khi bên thứ ba assume role"],
+      ["Confused deputy", "Bên có quyền bị lợi dụng thao tác hộ kẻ khác"],
+      ["Role chaining", "Role assume role khác, session ≤ 1 giờ"],
+      ["Service account", "IAM user đại diện cho ứng dụng"],
+      ["Customer managed policy", "Standalone, sửa được, lưu 5 phiên bản"],
+      ["Inline policy", "Gắn 1-1 với identity, xóa theo identity"],
+      ["Implicit deny", "Không có Allow nào ⇒ từ chối"],
+      ["Explicit deny", "Statement Deny khớp ⇒ luôn thắng"],
+      ["Permissions boundary", "Managed policy đặt quyền tối đa cho user/role"],
+      ["Session policy", "Truyền khi assume role để giới hạn session"],
+      ["Credential report", "CSV trạng thái password, key, MFA của user"],
+      ["Access Advisor", "Dịch vụ/action được dùng lần cuối"],
+      ["IAM Roles Anywhere", "Workload ngoài AWS lấy creds bằng X.509"],
+      ["Eventual consistency", "Thay đổi IAM cần thời gian lan truyền"]
+    ],
+
+    sorts: [
+      {
+        title: "Đặc điểm thuộc identity nào?",
+        desc: "Xếp mỗi đặc điểm vào IAM user, IAM user group hay IAM role.",
+        buckets: ["IAM user", "IAM user group", "IAM role"],
+        items: [
+          ["Có console password và access keys", 0, "long-term credentials"],
+          ["Unique ID bắt đầu bằng AIDA", 0, "AIDA = user"],
+          ["Đại diện ứng dụng gọi là service account", 0, "service account là IAM user"],
+          ["Dùng cho “break-glass” emergency access", 0, "một trong số ít ca AWS chấp nhận IAM user"],
+          ["Không lồng nhau được", 1, "group chỉ chứa user"],
+          ["Không thể làm Principal trong policy", 1, "group gắn với permissions, không authentication"],
+          ["Mặc định 300/account, mỗi user tối đa tham gia 10", 1, "quota của group"],
+          ["Có trust policy bắt buộc", 2, "trust policy khai báo ai được assume"],
+          ["Cấp temporary credentials khi được assume", 2, "role không có long-term credentials"],
+          ["Gắn vào EC2 qua instance profile", 2, "instance profile là vỏ chứa role"],
+          ["Unique ID bắt đầu bằng AROA", 2, "AROA = role"]
+        ]
+      },
+      {
+        title: "AWS managed, customer managed hay inline?",
+        desc: "Chọn loại identity-based policy khớp với đặc điểm/yêu cầu.",
+        buckets: ["AWS managed", "Customer managed", "Inline"],
+        items: [
+          ["AWS tự cập nhật, bạn không sửa được", 0, "do AWS tạo và quản lý"],
+          ["Bắt đầu nhanh theo job function (ReadOnlyAccess)", 0, "AWS managed theo chức danh"],
+          ["ARN dạng arn:aws:iam::aws:policy/…", 0, "account ID là aws"],
+          ["Lưu tối đa 5 phiên bản, rollback được", 1, "có versioning"],
+          ["Khuyến nghị cho least privilege theo use case", 1, "viết riêng cho đúng nhu cầu"],
+          ["Tái sử dụng cho nhiều role và roll back thay đổi", 1, "standalone + versioning"],
+          ["Quan hệ 1-1 với đúng một identity", 2, "nhúng vào identity"],
+          ["Bị xóa cùng khi xóa user", 2, "là một phần của identity"],
+          ["Không bao giờ bị gắn nhầm sang identity khác", 2, "không standalone"]
+        ]
+      },
+      {
+        title: "Cấp quyền hay chỉ giới hạn?",
+        desc: "Loại policy nào có thể CẤP quyền, loại nào chỉ đặt giới hạn tối đa (guardrail)?",
+        buckets: ["Cấp quyền", "Chỉ giới hạn (không cấp quyền)"],
+        items: [
+          ["Identity-based policy", 0, "gắn user/group/role, cấp quyền"],
+          ["Resource-based policy (bucket policy…)", 0, "cấp quyền, kể cả cross-account"],
+          ["ACL", 0, "cấp quyền, chỉ cross-account"],
+          ["AWS RAM resource share", 0, "chia sẻ resource cho account/OU/org"],
+          ["Permissions boundary", 1, "quyền tối đa cho user/role"],
+          ["SCP", 1, "quyền tối đa cho principal trong member account"],
+          ["RCP", 1, "quyền tối đa trên resource trong member account"],
+          ["Session policy", 1, "giao với identity policy"],
+          ["VPC endpoint policy", 1, "lớp giới hạn bổ sung"]
+        ]
+      },
+      {
+        title: "Tình huống đề ⇒ giải pháp",
+        desc: "Chọn cách cấp quyền/công cụ đúng cho từng tình huống.",
+        buckets: ["IAM role (workload)", "Federation / Identity Center", "Cross-account role + external ID", "Permissions boundary", "IAM Access Analyzer", "Credential report"],
+        items: [
+          ["Ứng dụng trên EC2 cần đọc S3, ghi DynamoDB", 0, "instance profile, không lưu key"],
+          ["Lambda cần ghi log và đọc SQS", 0, "execution role"],
+          ["25.000 nhân viên đã có tài khoản Active Directory", 1, "vượt quota 5.000 user, dùng temporary credentials"],
+          ["Workforce truy cập nhiều account bằng SSO", 1, "IAM Identity Center"],
+          ["SaaS giám sát bên thứ ba cần quyền read-only", 2, "chống confused deputy"],
+          ["Auditor ngoài tổ chức cần vào tài khoản", 2, "bên thứ ba ⇒ external ID"],
+          ["Developer tự tạo role nhưng không vượt tập quyền định sẵn", 3, "quyền hiệu lực = giao với boundary"],
+          ["Tìm S3 bucket, KMS key được chia sẻ công khai", 4, "external access findings"],
+          ["Sinh policy least privilege từ hoạt động thực tế", 4, "policy generation từ CloudTrail"],
+          ["Audit trạng thái password, access key, MFA của mọi user", 5, "file CSV"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["IAM là dịch vụ global, không cần tạo IAM user ở từng Region.", true, "User, group, role, policy không gắn Region."],
+      ["IAM tính phí theo số user và role.", false, "IAM, IAM Identity Center và AWS STS miễn phí."],
+      ["Thay đổi IAM có hiệu lực tức thì ở mọi nơi.", false, "IAM eventually consistent – cần thời gian lan truyền."],
+      ["IAM user mới tạo mặc định không có quyền gì.", true, "Implicit deny khi chưa có Allow."],
+      ["Group là một IAM entity.", false, "Entity chỉ gồm user và role."],
+      ["Một IAM user có thể thuộc nhiều group.", true, "Quyền = hợp các policy của user và mọi group."],
+      ["Có thể tạo group cha chứa các group con.", false, "Group không lồng nhau, chỉ chứa user."],
+      ["Có thể ghi group/Developers làm Principal trong bucket policy.", false, "Group không thể là Principal."],
+      ["Role không có password hay access key dài hạn.", true, "Assume role nhận temporary credentials."],
+      ["Có thể thêm role vào một IAM user group.", false, "Group chỉ chứa IAM user."],
+      ["Trust policy là resource-based policy bắt buộc của role.", true, "Khai báo ai được assume."],
+      ["Admin có thể sửa permissions của service-linked role.", false, "Service-linked role do dịch vụ sở hữu, chỉ xem."],
+      ["Khi assume role, user giữ quyền gốc cộng thêm quyền của role.", false, "Quyền gốc tạm gác lại cho tới khi thoát role."],
+      ["Role chaining giới hạn session tối đa 1 giờ.", true, "Bất kể maximum session duration."],
+      ["Maximum session duration của role có thể đặt tới 24 giờ.", false, "Tối đa 12 giờ (1–12 giờ)."],
+      ["Không truyền DurationSeconds thì role session mặc định 1 giờ.", true, "Tối thiểu 15 phút, mặc định 1 giờ."],
+      ["“Version”: “2012-10-17” là ngày tạo policy.", false, "Đó là phiên bản ngôn ngữ policy."],
+      ["Identity-based policy phải có phần tử Principal.", false, "Principal chỉ có trong resource-based; trong identity-based là không hợp lệ."],
+      ["s3:GetObject cần ARN dạng arn:aws:s3:::bucket/*.", true, "Action cấp object cần /*."],
+      ["Nhiều statement trong cùng policy được kết hợp bằng logical AND.", false, "Kết hợp bằng logical OR."],
+      ["Resource-based policy luôn là inline.", true, "Không có managed resource-based policy."],
+      ["Customer managed policy lưu được tối đa 5 phiên bản.", true, "Cho phép rollback."],
+      ["Xóa user thì AWS managed policy gắn với user cũng bị xóa.", false, "Chỉ inline policy bị xóa theo identity."],
+      ["Permissions boundary tự nó cấp quyền cho user/role.", false, "Boundary chỉ đặt quyền tối đa."],
+      ["Explicit Deny thắng mọi Allow.", true, "Có Deny khớp ⇒ từ chối."],
+      ["Trong cùng tài khoản, resource-based policy Allow là đủ dù identity không có policy nào.", true, "Ví dụ Zhang: cùng account chỉ cần một Allow."],
+      ["Cross-account: chỉ cần bucket policy ở tài khoản B cho phép là user ở A tải được object.", false, "Cần cả identity-based policy ở A cho phép."],
+      ["Có thể gắn identity-based policy cho root user.", false, "Root không nhận identity-based policy hay boundary."],
+      ["Mỗi IAM user có tối đa 2 access key.", true, "Để xoay vòng không gián đoạn."],
+      ["Tắt console password sẽ vô hiệu hóa luôn access keys của user.", false, "Password và access key độc lập."],
+      ["Lưu access key trong EC2 user data an toàn hơn file cấu hình.", false, "User data đọc được qua instance metadata; dùng instance profile."],
+      ["Một tài khoản có thể có tối đa 5.000 IAM user và không tăng được.", true, "Cần nhiều hơn ⇒ federation."],
+      ["Mỗi user có thể tham gia tối đa 10 group.", true, "Quota cố định."],
+      ["IAM credential report cho biết action nào role đã dùng để sinh policy.", false, "Đó là Access Analyzer policy generation / last accessed info."],
+      ["External ID giúp chống confused deputy khi bên thứ ba assume role.", true, "Tham số trong trust policy."]
+    ],
+
+    map: {
+      t: "Bài 4 · IAM cơ bản",
+      c: [
+        { t: "IAM là gì", icon: "svc/AWS-Identity-and-Access-Management.svg", c: [
+          { t: "Chức năng", v: "authentication (ai) + authorization (làm gì)" },
+          { t: "Phạm vi", v: "global · miễn phí" },
+          { t: "Nhất quán", v: "eventually consistent → ngoài critical path" },
+          { t: "Luồng", v: "credentials → request → policies → action trên resource" },
+          { t: "Phân biệt", c: [
+            { t: "IAM Identity Center", v: "workforce SSO nhiều account" },
+            { t: "Amazon Cognito", v: "người dùng app web/mobile" }
+          ] }
+        ] },
+        { t: "Identities", icon: "res/Users.svg", c: [
+          { t: "IAM user", v: "long-term creds, mặc định không quyền, ID AIDA" },
+          { t: "Group", v: "chỉ chứa user, không lồng, không là Principal" },
+          { t: "Role", v: "assume → temporary creds, không password/key" },
+          { t: "Trust + Permissions", v: "AI được assume + được làm GÌ" },
+          { t: "Service-linked role", v: "dịch vụ sở hữu, không sửa quyền" },
+          { t: "Instance profile", v: "vỏ chứa role cho EC2" },
+          { t: "Session", v: "15 phút–12 giờ, mặc định 1 giờ, chaining ≤ 1 giờ" },
+          { t: "External ID", v: "bên thứ ba, chống confused deputy" }
+        ] },
+        { t: "JSON policy", icon: "res/AWS-Identity-Access-Management_Permissions.svg", c: [
+          { t: "Version", v: "2012-10-17 = phiên bản ngôn ngữ" },
+          { t: "Principal", v: "chỉ trong resource-based policy" },
+          { t: "Kết hợp", v: "nhiều statement/policy = OR" },
+          { t: "Condition", v: "statement chỉ áp dụng khi true" },
+          { t: "S3 ARN", v: "ListBucket → bucket · GetObject → bucket/*" },
+          { t: "Access level", v: "List, Read, Write, Permissions mgmt, Tagging" }
+        ] },
+        { t: "Loại policy", icon: "res/AWS-IoT_Policy.svg", c: [
+          { t: "Identity-based", c: [
+            { t: "AWS managed", v: "không sửa, bắt đầu nhanh" },
+            { t: "Customer managed", v: "khuyến nghị, 5 phiên bản" },
+            { t: "Inline", v: "1-1, xóa theo identity" }
+          ] },
+          { t: "Resource-based", v: "có Principal, luôn inline, cross-account" },
+          { t: "Guardrail", v: "boundary, SCP, RCP, session policy – không cấp quyền" },
+          { t: "Đánh giá", v: "implicit deny → explicit Deny thắng → 1 Allow" },
+          { t: "Cross-account", v: "Allow ở cả hai phía" }
+        ] },
+        { t: "Credentials", icon: "res/AWS-Identity-Access-Management_MFA-Token.svg", c: [
+          { t: "Long-term", v: "password, access key – tự rotate" },
+          { t: "Temporary", v: "STS: key ASIA + secret + session token" },
+          { t: "Access key", v: "≤ 2/user, secret xem 1 lần, root = 0" },
+          { t: "Rotate", v: "tạo mới → Inactive → xóa key cũ" },
+          { t: "Key bị lộ", v: "deactivate/delete + rà CloudTrail" },
+          { t: "MFA", v: "aws:MultiFactorAuthPresent · ≤ 8 thiết bị" }
+        ] },
+        { t: "Best practices & công cụ", icon: "res/AWS-Identity-Access-Management_AWS-IAM-Access-Analyzer.svg", c: [
+          { t: "Human users", v: "federation / IAM Identity Center" },
+          { t: "Workloads", v: "IAM role, Roles Anywhere ngoài AWS" },
+          { t: "Access Analyzer", v: "external access, unused, validation, generation" },
+          { t: "Access Advisor", v: "last accessed → gỡ quyền thừa" },
+          { t: "Credential report", v: "CSV password/key/MFA" },
+          { t: "Permissions boundary", v: "ủy quyền tạo role an toàn" }
+        ] },
+        { t: "Quotas", icon: "cat/Security-Identity-Compliance.svg", c: [
+          { t: "Users", v: "5.000/account, không tăng" },
+          { t: "Groups", v: "300 (max 500) · user ≤ 10 group" },
+          { t: "Managed policy gắn", v: "user 10 · group 10 · role 20" },
+          { t: "Kích thước", v: "managed 6.144 · inline user 2.048 / role 10.240" },
+          { t: "STS", v: "600 request/giây/account/Region" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

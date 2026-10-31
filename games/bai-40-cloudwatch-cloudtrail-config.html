@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 40 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-CloudWatch.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="40" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-40-cloudwatch-cloudtrail-config.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "big", name: "Ba dịch vụ: Performance · Who · What" },
+      { id: "met", name: "CloudWatch Metrics" },
+      { id: "alarm", name: "CloudWatch Alarms" },
+      { id: "logs", name: "CloudWatch Logs" },
+      { id: "agent", name: "Agent & tính năng quan sát" },
+      { id: "trail", name: "AWS CloudTrail" },
+      { id: "config", name: "AWS Config & remediation" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Tổng thể
+      { t: "big", f: "CloudWatch, CloudTrail, AWS Config lần lượt trả lời câu hỏi gì?", b: "<b>CloudWatch</b>: hệ thống đang chạy thế nào? (Performance)<br><b>CloudTrail</b>: ai gọi API gì, khi nào? (Who)<br><b>Config</b>: cấu hình ra sao, có tuân thủ không? (What / Compliance)" },
+      { t: "big", f: "“<i>Who deleted the S3 bucket?</i>” ⇒ dịch vụ nào?", b: "<b>CloudTrail</b>.", x: "Config biết cấu hình thay đổi và liên kết tới event CloudTrail, nhưng “ai” là CloudTrail." },
+      { t: "big", f: "“<i>Security group trông thế nào tuần trước?</i>” ⇒ dịch vụ nào?", b: "<b>AWS Config</b> (configuration history), không phải CloudTrail." },
+      { t: "big", f: "CloudWatch, CloudTrail, Config có chặn hành động không?", b: "<b>Không.</b> Muốn ngăn ⇒ <b>IAM policy / SCP</b>; muốn phản ứng nhanh ⇒ <b>EventBridge</b>." },
+
+      // ---- Metrics
+      { t: "met", f: "Namespace trong CloudWatch là gì?", b: "Container chứa metric, cách ly thống kê. Không có namespace mặc định; AWS dùng <code>AWS/&lt;service&gt;</code>. Agent mặc định dùng <b>CWAgent</b>." },
+      { t: "met", f: "Một metric có tối đa bao nhiêu dimension?", b: "<b>30 dimension</b>; mỗi tổ hợp dimension khác nhau là một metric riêng." },
+      { t: "met", f: "Standard vs high-resolution metric?", b: "<b>Standard</b>: độ mịn <b>1 phút</b>.<br><b>High resolution</b>: <b>1 giây</b>, chỉ cho <b>custom metric</b>." },
+      { t: "met", f: "Lịch lưu giữ dữ liệu metric CloudWatch?", b: "&lt; 60 s ⇒ <b>3 giờ</b> · 1 phút ⇒ <b>15 ngày</b> · 5 phút ⇒ <b>63 ngày</b> · 1 giờ ⇒ <b>15 tháng</b> (455 ngày)." },
+      { t: "met", f: "Đo độ trễ nên dùng statistic nào?", b: "<b>Percentile p99/p95</b>: Average che anomaly, Maximum bị một điểm lệch làm méo." },
+      { t: "met", f: "Period hợp lệ của statistic?", b: "<b>1, 5, 10, 30</b> giây hoặc <b>bội của 60</b>; mặc định 60 giây. Dưới 60 s chỉ có ý nghĩa với high-resolution." },
+      { t: "met", f: "EC2 basic vs detailed monitoring?", b: "<b>Basic</b>: mặc định, miễn phí, mỗi <b>5 phút</b>.<br><b>Detailed</b>: tính phí, mỗi <b>1 phút</b>.", x: "Cả hai đều không có memory/disk space – cần CloudWatch agent." },
+      { t: "met", f: "Metric có xóa được không?", b: "<b>Không xóa được</b>; tự hết hạn sau <b>15 tháng</b> nếu không có dữ liệu mới." },
+      { t: "met", f: "CloudWatch có tự gộp metric qua Region không?", b: "<b>Không</b> – metric chỉ ở Region tạo ra nó; gộp bằng <b>metric math</b>." },
+      { t: "met", f: "Publish custom metric bằng API nào?", b: "<b>PutMetricData</b> (mọi lời gọi đều tính phí). CloudWatch chỉ nhận <b>push</b>, không pull." },
+      { t: "met", f: "Statistic set dùng để làm gì? Đánh đổi gì?", b: "Gộp trước Sum/Min/Max/SampleCount rồi gửi một lần ⇒ <b>giảm API call</b>; đổi lại <b>mất percentile</b>." },
+      { t: "met", f: "Muốn alarm phát hiện ứng dụng “ngừng gửi metric” ⇒ ?", b: "<b>Publish giá trị 0</b> cho period không có dữ liệu (hoặc treat missing data = breaching)." },
+
+      // ---- Alarms
+      { t: "alarm", f: "Ba trạng thái của CloudWatch alarm?", b: "<b>OK</b> · <b>ALARM</b> · <b>INSUFFICIENT_DATA</b>." },
+      { t: "alarm", f: "Evaluation Periods (N) và Datapoints to Alarm (M)?", b: "<b>N</b>: số data point gần nhất được xem xét.<br><b>M</b>: số điểm trong N phải vượt ngưỡng (<b>không cần liên tiếp</b>) ⇒ “M out of N”." },
+      { t: "alarm", f: "Alarm 3 out of 3, period 10 phút ⇒ cửa sổ đánh giá bao lâu?", b: "<b>30 phút</b>." },
+      { t: "alarm", f: "Bốn tùy chọn treat missing data?", b: "<b>missing</b> (mặc định) · <b>notBreaching</b> (tốt) · <b>breaching</b> (xấu) · <b>ignore</b> (giữ trạng thái)." },
+      { t: "alarm", f: "Metric chỉ phát sinh khi có lỗi (ThrottledRequests) ⇒ treat missing data?", b: "<b>notBreaching</b>." },
+      { t: "alarm", f: "Metric heartbeat lẽ ra luôn có dữ liệu ⇒ treat missing data?", b: "<b>breaching</b> – mất dữ liệu = có vấn đề." },
+      { t: "alarm", f: "Recover vs reboot action của EC2?", b: "<b>Recover</b>: <code>StatusCheckFailed_System</code> (phần cứng host) ⇒ phần cứng mới, giữ instance ID, private IP, EIP; mất RAM.<br><b>Reboot</b>: <code>StatusCheckFailed_Instance</code> (OS)." },
+      { t: "alarm", f: "Instance có root là instance store dùng được action Stop không?", b: "<b>Không</b> – chỉ terminate được." },
+      { t: "alarm", f: "Composite alarm là gì? Hạn chế?", b: "Biểu thức <b>AND/OR/NOT</b> trên trạng thái nhiều alarm ⇒ <b>giảm alert noise</b>. <b>Không</b> có EC2 action hay Auto Scaling action, không cross-account." },
+      { t: "alarm", f: "Alarm phát hiện metric lệch khỏi mẫu bình thường theo mùa ⇒ ?", b: "Alarm dựa trên <b>anomaly detection band</b> thay vì ngưỡng tĩnh." },
+      { t: "alarm", f: "Lịch sử alarm được giữ bao lâu? Số alarm tối đa?", b: "Lịch sử <b>30 ngày</b>; <b>không giới hạn</b> số alarm." },
+      { t: "alarm", f: "Alarm period 60 s trên metric EC2 basic monitoring ⇒ vấn đề gì?", b: "Hay rơi vào <b>thiếu dữ liệu</b> vì metric chỉ có mỗi 5 phút ⇒ dùng period ≥ 300 s." },
+      { t: "alarm", f: "High-resolution alarm có period bao nhiêu?", b: "<b>10 / 20 / 30 giây</b>, đánh giá mỗi 10 giây, phí cao hơn." },
+      { t: "alarm", f: "Alarm action Systems Manager tạo ra gì?", b: "<b>OpsItem</b> (OpsCenter) hoặc <b>incident</b> (Incident Manager)." },
+
+      // ---- Logs
+      { t: "logs", f: "Log event, log stream, log group?", b: "<b>Event</b>: timestamp + message.<br><b>Stream</b>: chuỗi event cùng nguồn.<br><b>Group</b>: nhóm stream chung retention, KMS, quyền, filter." },
+      { t: "logs", f: "Retention mặc định của log group?", b: "<b>Never Expire</b> (giữ vô thời hạn); đặt được 1 ngày tới 10 năm.", x: "Giảm chi phí ⇒ đặt retention hợp lý." },
+      { t: "logs", f: "Log class Standard vs Essentials?", b: "<b>Standard</b>: đầy đủ (metric filter, subscription filter, Live Tail).<br><b>Essentials</b>: ingestion rẻ hơn, <b>không</b> metric/subscription filter; <b>không đổi class</b> sau khi tạo." },
+      { t: "logs", f: "Metric filter là gì? Có hồi tố không?", b: "Biến log khớp pattern thành <b>data point của metric</b> để alarm. <b>Không hồi tố</b> – chỉ event đến sau." },
+      { t: "logs", f: "Subscription filter gửi log tới đâu?", b: "<b>Kinesis Data Streams, Data Firehose, Lambda, OpenSearch</b> – gần thời gian thực (thường &lt; 3 phút)." },
+      { t: "logs", f: "Mỗi log group có tối đa bao nhiêu subscription filter?", b: "<b>5</b>; thêm 1 account-level subscription filter/Region." },
+      { t: "logs", f: "Export task sang S3 có đặc điểm gì?", b: "<b>Batch</b>: log có thể mất tới <b>12 giờ</b> mới export được; timeout 24 giờ.", x: "Lưu trữ liên tục ⇒ subscription filter → Firehose → S3." },
+      { t: "logs", f: "CloudWatch Logs Insights là gì?", b: "Truy vấn <b>tương tác</b> log không cần hạ tầng; Logs Insights QL, OpenSearch PPL, SQL; tính phí theo <b>GB quét</b>." },
+      { t: "logs", f: "Giới hạn của Logs Insights?", b: "Truy vấn timeout <b>60 phút</b>; kết quả giữ <b>7 ngày</b>; 100 truy vấn đồng thời/account." },
+      { t: "logs", f: "Log alarm khác metric filter + alarm thế nào?", b: "<b>Log alarm</b> chạy truy vấn Logs Insights <b>theo lịch</b> (M out of N), không cần metric filter." },
+      { t: "logs", f: "Log đã nằm trong S3 muốn truy vấn SQL ⇒ ?", b: "<b>Athena</b>, không phải Logs Insights." },
+
+      // ---- Agent
+      { t: "agent", f: "CloudWatch agent thu được gì?", b: "Metric <b>trong OS</b> (memory, disk, process, GPU), custom metric qua <b>StatsD/collectd</b>, <b>log file</b>, <b>trace</b> (X-Ray/OpenTelemetry) – cả EC2 và on-premises." },
+      { t: "agent", f: "Metric của agent nằm ở namespace nào và tính phí thế nào?", b: "Namespace <b>CWAgent</b>, tính phí như <b>custom metric</b>." },
+      { t: "agent", f: "Agent cần quyền gì để gửi metric/log?", b: "<b>IAM role</b> (instance profile) cho EC2 hoặc <b>IAM user</b> cho on-premises; thường dùng <code>CloudWatchAgentServerPolicy</code>." },
+      { t: "agent", f: "Triển khai agent cho fleet lớn thế nào?", b: "Dùng <b>Systems Manager</b> quản lý cấu hình tập trung (có thể lưu cấu hình trong Parameter Store)." },
+      { t: "agent", f: "Cross-account observability là gì?", b: "Một <b>monitoring account</b> xem metric, log, trace của nhiều source account." },
+      { t: "agent", f: "CloudWatch Synthetics canary dùng làm gì?", b: "Script mô phỏng người dùng gọi endpoint theo lịch ⇒ <b>phát hiện lỗi trước khi người dùng thật gặp</b>." },
+      { t: "agent", f: "Application Signals, RUM, Container Insights, Lambda Insights?", b: "<b>Application Signals</b>: APM tự động (latency, error, SLO).<br><b>RUM</b>: người dùng thật.<br><b>Container Insights</b>: ECS/EKS.<br><b>Lambda Insights</b>: memory, cold start." },
+
+      // ---- CloudTrail
+      { t: "trail", f: "CloudTrail event history có gì?", b: "<b>90 ngày management events</b>, theo Region, chỉ đọc, <b>miễn phí</b>; không có data/Insights event." },
+      { t: "trail", f: "Trail khác event history ở điểm nào?", b: "Trail <b>giao event liên tục vào S3</b> (tùy chọn CloudWatch Logs, EventBridge), giữ bao lâu tùy bạn, chọn loại event, KMS, SNS." },
+      { t: "trail", f: "CloudTrail Lake là gì?", b: "Data lake được quản lý: event dạng ORC trong <b>event data store</b>, truy vấn <b>SQL</b>, giữ tới <b>~10 năm</b> (3.653 ngày); không cần trail." },
+      { t: "trail", f: "Bốn loại event CloudTrail?", b: "<b>Management</b> (mặc định ghi) · <b>Data</b> · <b>Network activity</b> · <b>Insights</b> (ba loại sau bật riêng, tính phí)." },
+      { t: "trail", f: "Ví dụ data events?", b: "S3 <b>GetObject/PutObject/DeleteObject</b>, Lambda <b>Invoke</b>, DynamoDB <b>PutItem</b>, SNS Publish.", x: "“Who downloaded objects?” ⇒ phải bật S3 data events." },
+      { t: "trail", f: "CloudTrail Insights phát hiện gì?", b: "Bất thường về <b>API call rate</b> hoặc <b>API error rate</b> so với baseline." },
+      { t: "trail", f: "Vì sao nên dùng multi-Region trail?", b: "Ghi mọi Region; <b>global service events</b> (IAM, STS, CloudFront) ghi ở us-east-1 – trail single-Region nơi khác bỏ lỡ.", x: "Trail tạo bằng console luôn là multi-Region." },
+      { t: "trail", f: "Mỗi Region tối đa bao nhiêu trail?", b: "<b>5 trail</b> (multi-Region trail tính 1 ở mỗi Region)." },
+      { t: "trail", f: "Organization trail có đặc điểm gì?", b: "Ghi event của management + mọi member account vào cùng bucket; member <b>thấy nhưng không xóa, không tắt, không sửa</b> được." },
+      { t: "trail", f: "Log file integrity validation hoạt động thế nào?", b: "Băm mỗi log file bằng <b>SHA-256</b>; mỗi giờ giao một <b>digest file</b> ký số ⇒ CLI xác định file bị sửa/xóa." },
+      { t: "trail", f: "CloudTrail có phải thời gian thực không?", b: "<b>Không</b> – event thường vào trail trong ~5 phút. Cần phản ứng nhanh ⇒ <b>EventBridge</b>." },
+      { t: "trail", f: "CloudTrail có ghi traffic mạng hay log trong OS không?", b: "<b>Không.</b> Traffic mạng ⇒ VPC Flow Logs; log OS ⇒ CloudWatch agent." },
+
+      // ---- Config
+      { t: "config", f: "Configuration item (CI) là gì?", b: "<b>Ảnh chụp tại một thời điểm</b> thuộc tính của một tài nguyên: metadata, attributes, relationships, related CloudTrail events. Config tính phí theo số CI." },
+      { t: "config", f: "Configuration history, snapshot, stream?", b: "<b>History</b>: CI của một tài nguyên theo thời gian.<br><b>Snapshot</b>: CI của mọi tài nguyên tại một thời điểm.<br><b>Stream</b>: CI gửi qua <b>SNS</b> khi thay đổi." },
+      { t: "config", f: "AWS Config là dịch vụ global hay regional?", b: "<b>Regional</b> – phải bật recorder ở từng Region." },
+      { t: "config", f: "Ba trigger type của Config rule?", b: "<b>Configuration changes</b> · <b>Periodic</b> (vd 24 giờ) · <b>Hybrid</b>." },
+      { t: "config", f: "Detective vs proactive evaluation?", b: "<b>Detective</b>: đánh giá tài nguyên đã triển khai.<br><b>Proactive</b>: đánh giá thuộc tính <b>trước khi</b> triển khai; không remediate, không chặn." },
+      { t: "config", f: "Hai cách viết custom Config rule?", b: "<b>Custom Lambda rule</b> hoặc <b>Custom policy rule</b> bằng <b>Guard</b> (không cần Lambda)." },
+      { t: "config", f: "Kết quả đánh giá Config rule có thể là?", b: "<b>COMPLIANT</b> · <b>NON_COMPLIANT</b> · <b>ERROR</b> · <b>NOT_APPLICABLE</b>." },
+      { t: "config", f: "Conformance pack là gì?", b: "Tập <b>Config rules + remediation</b> trong một <b>YAML</b> template, triển khai như một khối cho account hoặc cả Organization." },
+      { t: "config", f: "Config aggregator có đặc điểm gì?", b: "Gom cấu hình & tuân thủ nhiều account/Region về một chỗ; <b>chỉ đọc</b> (không deploy rule), <b>miễn phí</b>." },
+      { t: "config", f: "Config remediation dùng gì để sửa tài nguyên?", b: "<b>SSM Automation document</b> (runbook) – manual hoặc <b>automatic</b> (có retries, Resource ID parameter)." },
+      { t: "config", f: "Vì sao runbook auto remediation nên idempotent?", b: "Remediation dựa trên snapshot định kỳ ⇒ có thể chạy trên tài nguyên <b>vừa trở thành compliant</b>." },
+      { t: "config", f: "Config rule có ngăn thay đổi sai cấu hình không?", b: "<b>Không</b> – chỉ phát hiện; có một khoảng thời gian tài nguyên vi phạm trước khi remediation sửa." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>monitor memory utilization / disk space of EC2</i>” ⇒ ?", b: "<b>CloudWatch agent</b> (custom metric)." },
+      { t: "kw", f: "Đề có “<i>metric every second / 10 seconds</i>” ⇒ ?", b: "<b>High-resolution custom metric</b> (+ high-resolution alarm)." },
+      { t: "kw", f: "Đề có “<i>recover EC2 if underlying hardware fails, keep same IP and instance ID</i>” ⇒ ?", b: "Alarm <code>StatusCheckFailed_System</code> + action <b>Recover</b>." },
+      { t: "kw", f: "Đề có “<i>stop idle development instances automatically</i>” ⇒ ?", b: "Alarm CPU thấp + action <b>Stop</b> (không cần Lambda)." },
+      { t: "kw", f: "Đề có “<i>reduce alert fatigue, notify only when several conditions are true</i>” ⇒ ?", b: "<b>Composite alarm</b>." },
+      { t: "kw", f: "Đề có “<i>alert when ERROR appears more than N times in logs</i>” ⇒ ?", b: "<b>Metric filter</b> + alarm + SNS." },
+      { t: "kw", f: "Đề có “<i>stream logs in near real time to OpenSearch / SIEM</i>” ⇒ ?", b: "<b>Subscription filter</b> (→ Firehose / Kinesis / Lambda)." },
+      { t: "kw", f: "Đề có “<i>prove log files were not modified or deleted</i>” ⇒ ?", b: "<b>CloudTrail log file integrity validation</b>." },
+      { t: "kw", f: "Đề có “<i>all accounts and Regions, member accounts cannot disable</i>” ⇒ ?", b: "<b>Organization trail, multi-Region</b> (+ SCP chặn StopLogging)." },
+      { t: "kw", f: "Đề có “<i>notify immediately when root signs in</i>” ⇒ ?", b: "CloudTrail event → <b>EventBridge rule</b> → SNS." },
+      { t: "kw", f: "Đề có “<i>automatically fix noncompliant resources</i>” ⇒ ?", b: "<b>Config rule + automatic remediation</b> (SSM Automation)." },
+      { t: "kw", f: "Đề có “<i>centralized compliance view across accounts and Regions</i>” ⇒ ?", b: "<b>Config aggregator</b>; deploy cùng bộ rule ⇒ <b>conformance pack</b>." },
+      { t: "kw", f: "Đề có “<i>detect website checkout broken before customers report</i>” ⇒ ?", b: "<b>CloudWatch Synthetics canary</b>." }
+    ],
+
+    pairs: [
+      ["Namespace", "Container chứa metric, vd AWS/EC2, CWAgent"],
+      ["Dimension", "Cặp name/value định danh metric, tối đa 30"],
+      ["High-resolution metric", "Custom metric độ mịn 1 giây"],
+      ["Detailed monitoring", "Metric EC2 mỗi 1 phút, tính phí"],
+      ["PutMetricData", "API publish custom metric"],
+      ["Statistic set", "Gộp sẵn Sum/Min/Max/SampleCount gửi một lần"],
+      ["Metric math", "Phép toán trên metric tạo chuỗi mới"],
+      ["Datapoints to Alarm", "Số điểm (M) phải vượt ngưỡng trong N"],
+      ["INSUFFICIENT_DATA", "Trạng thái alarm chưa đủ dữ liệu"],
+      ["Composite alarm", "Alarm tổng hợp AND/OR/NOT từ alarm khác"],
+      ["Anomaly detection", "Dải giá trị kỳ vọng học từ lịch sử"],
+      ["StatusCheckFailed_System", "Lỗi phần cứng host ⇒ action Recover"],
+      ["Log group", "Nhóm log stream chung retention, quyền"],
+      ["Metric filter", "Biến log thành metric, không hồi tố"],
+      ["Subscription filter", "Stream log tới Kinesis/Firehose/Lambda"],
+      ["Export task", "Xuất log theo lô sang S3"],
+      ["Logs Insights", "Truy vấn log tương tác, phí theo GB quét"],
+      ["CWAgent", "Namespace mặc định của CloudWatch agent"],
+      ["Synthetics canary", "Script giám sát chủ động endpoint"],
+      ["Event history", "90 ngày management events, miễn phí"],
+      ["Data event", "S3 object, Lambda Invoke – bật riêng"],
+      ["CloudTrail Insights", "Bất thường tỷ lệ gọi API / tỷ lệ lỗi"],
+      ["Digest file", "File hash mỗi giờ để xác thực log"],
+      ["CloudTrail Lake", "Kho event truy vấn SQL, tới ~10 năm"],
+      ["Configuration item", "Ảnh chụp cấu hình tài nguyên tại một thời điểm"],
+      ["Configuration stream", "Thông báo CI qua SNS khi thay đổi"],
+      ["Conformance pack", "Rule + remediation trong YAML"],
+      ["Aggregator", "Gom dữ liệu Config nhiều account, chỉ đọc"],
+      ["SSM Automation runbook", "Các bước sửa tài nguyên vi phạm"]
+    ],
+
+    sorts: [
+      {
+        title: "CloudWatch, CloudTrail hay Config?",
+        desc: "Tình huống đề thuộc dịch vụ nào trong ba dịch vụ?",
+        buckets: ["CloudWatch", "CloudTrail", "AWS Config"],
+        items: [
+          ["Cảnh báo khi CPU &gt; 80%", 0, "metric + alarm"],
+          ["Theo dõi memory của EC2", 0, "CloudWatch agent → custom metric"],
+          ["Đếm lỗi trong log ứng dụng rồi cảnh báo", 0, "Logs metric filter + alarm"],
+          ["IAM user nào đã terminate instance", 1, "ai gọi API ⇒ CloudTrail"],
+          ["Ai đã đọc object nhạy cảm trong S3", 1, "S3 data events"],
+          ["Phát hiện số lời gọi API tăng vọt bất thường", 1, "CloudTrail Insights"],
+          ["Security group trông thế nào tuần trước", 2, "configuration history"],
+          ["Mọi EBS volume có được mã hóa không", 2, "Config rule encrypted-volumes"],
+          ["Tự sửa bucket public thành private", 2, "Config rule + SSM Automation"]
+        ]
+      },
+      {
+        title: "Lịch lưu giữ dữ liệu",
+        desc: "Dữ liệu này được giữ bao lâu (theo bài)?",
+        buckets: ["3 giờ", "15 ngày", "63 ngày", "15 tháng", "90 ngày", "Vô thời hạn (mặc định)"],
+        items: [
+          ["Metric high-resolution period &lt; 60 giây", 0, "sau đó gộp lên"],
+          ["Metric period 1 phút", 1, "sau đó chỉ còn độ phân giải 5 phút"],
+          ["Metric period 5 phút", 2, "sau đó gộp thành 1 giờ"],
+          ["Metric period 1 giờ", 3, "455 ngày"],
+          ["Metric không có dữ liệu mới rồi tự hết hạn", 3, "metric không xóa được"],
+          ["CloudTrail event history", 4, "management events, miễn phí"],
+          ["Log group mới chưa đặt retention", 5, "Never Expire"]
+        ]
+      },
+      {
+        title: "Treat missing data",
+        desc: "Chọn cách xử lý dữ liệu thiếu phù hợp cho alarm.",
+        buckets: ["missing", "notBreaching", "breaching", "ignore"],
+        items: [
+          ["Alarm EC2 có action stop/terminate/recover", 0, "khuyến nghị dùng mặc định missing"],
+          ["Muốn INSUFFICIENT_DATA khi mọi điểm đều thiếu", 0, "hành vi của missing"],
+          ["ThrottledRequests của DynamoDB", 1, "chỉ phát sinh khi có lỗi"],
+          ["Metric lỗi chỉ xuất hiện khi có sự cố", 1, "không có dữ liệu = tốt"],
+          ["Heartbeat ứng dụng phải luôn gửi", 2, "mất dữ liệu = có vấn đề"],
+          ["Rollback alarm cần coi mất dữ liệu là xấu", 2, "breaching"],
+          ["Metric thưa, giữ nguyên trạng thái hiện tại", 3, "namespace AWS/DynamoDB mặc định ignore"]
+        ]
+      },
+      {
+        title: "Lối ra của log group",
+        desc: "Yêu cầu nào dùng tính năng nào của CloudWatch Logs?",
+        buckets: ["Metric filter", "Subscription filter", "Logs Insights", "Export task"],
+        items: [
+          ["Alarm khi ERROR xuất hiện &gt; 50 lần/5 phút", 0, "log → metric → alarm"],
+          ["Đếm ConsoleLogin thất bại trong log CloudTrail", 0, "metric filter + alarm"],
+          ["Stream log gần thời gian thực sang OpenSearch", 1, "đích Kinesis/Firehose/Lambda/OpenSearch"],
+          ["Gom log nhiều account về account trung tâm", 1, "hỗ trợ cross-account, cross-Region"],
+          ["Lưu trữ liên tục sang S3 qua Firehose", 1, "tài liệu khuyến nghị thay export"],
+          ["Tìm top 10 IP gây lỗi, ad-hoc", 2, "truy vấn tương tác không cần hạ tầng"],
+          ["Điều tra sau sự cố bằng PPL/SQL", 2, "Logs Insights hỗ trợ 3 ngôn ngữ"],
+          ["Xuất log một tháng cũ sang S3 một lần", 3, "batch, có thể trễ tới 12 giờ"]
+        ]
+      },
+      {
+        title: "Loại event CloudTrail",
+        desc: "Hoạt động này được ghi dưới loại event nào?",
+        buckets: ["Management event", "Data event", "Network activity event", "Insights event"],
+        items: [
+          ["CreateSubnet, AttachRolePolicy", 0, "control plane"],
+          ["ConsoleLogin", 0, "sự kiện không phải API, vẫn là management"],
+          ["DeleteBucket", 0, "thao tác quản lý trên bucket"],
+          ["S3 GetObject / DeleteObject", 1, "data plane, bật riêng"],
+          ["Lambda Invoke", 1, "data event"],
+          ["DynamoDB PutItem", 1, "thao tác trên item"],
+          ["Gọi KMS qua VPC endpoint từ VPC private", 2, "ghi cho chủ VPC endpoint"],
+          ["DeleteBucket đột ngột tăng từ 20 lên 100 lần/phút", 3, "API call rate bất thường"],
+          ["AccessDeniedException tăng vọt", 3, "API error rate bất thường"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["CloudTrail trả lời câu hỏi “ai đã gọi API nào”.", true, "CloudTrail = Who."],
+      ["AWS Config có thể chặn việc mở security group ra 0.0.0.0/0.", false, "Config chỉ phát hiện và sửa sau; chặn ⇒ IAM/SCP."],
+      ["Một metric có tối đa 30 dimension.", true, "Mỗi tổ hợp dimension là một metric riêng."],
+      ["High-resolution metric áp dụng được cho metric của dịch vụ AWS mặc định.", false, "Chỉ cho custom metric; metric AWS mặc định là standard."],
+      ["Dữ liệu metric period 1 phút được giữ ở độ phân giải đó 15 ngày.", true, "Sau đó gộp thành 5 phút."],
+      ["Dữ liệu metric period 5 phút được giữ 63 ngày.", true, "Sau đó gộp thành 1 giờ."],
+      ["EC2 detailed monitoring cung cấp metric memory utilization.", false, "Memory cần CloudWatch agent."],
+      ["EC2 basic monitoring gửi metric mỗi 5 phút, miễn phí.", true, "Detailed là 1 phút, tính phí."],
+      ["Có thể xóa một metric CloudWatch bằng API.", false, "Metric tự hết hạn sau 15 tháng không có dữ liệu."],
+      ["CloudWatch có thể kéo (pull) metric từ ứng dụng.", false, "Chỉ nhận dữ liệu được đẩy lên."],
+      ["Datapoints to Alarm yêu cầu các điểm vượt ngưỡng phải liên tiếp.", false, "Không cần liên tiếp – M out of N."],
+      ["Treat missing data mặc định là missing.", true, "Mọi điểm thiếu ⇒ INSUFFICIENT_DATA."],
+      ["Action Recover dùng với StatusCheckFailed_Instance.", false, "Recover dùng với StatusCheckFailed_System; Instance ⇒ reboot."],
+      ["Recover giữ nguyên instance ID và Elastic IP.", true, "Dữ liệu trong RAM bị mất."],
+      ["Composite alarm có thể kích hoạt Auto Scaling action.", false, "Không có EC2 hay Auto Scaling action."],
+      ["Lịch sử alarm được giữ 30 ngày.", true, "Không giới hạn số alarm."],
+      ["Log group mặc định giữ log vô thời hạn.", true, "Never Expire."],
+      ["Có thể đổi log class từ Essentials sang Standard sau khi tạo.", false, "Không đổi được log class."],
+      ["Metric filter tạo data point cho cả log đã có trước khi tạo filter.", false, "Không hồi tố."],
+      ["Mỗi log group có tối đa 5 subscription filter.", true, "Cộng 1 account-level filter/Region."],
+      ["Export task sang S3 là cách tốt nhất để lưu trữ log liên tục.", false, "Dùng subscription filter → Firehose → S3."],
+      ["Logs Insights tính phí theo lượng log được quét.", true, "Chọn ít log group, khoảng thời gian hẹp."],
+      ["Metric của CloudWatch agent mặc định nằm ở namespace CWAgent.", true, "Tính phí như custom metric."],
+      ["CloudTrail event history giữ 90 ngày management events miễn phí.", true, "Không có data/Insights events."],
+      ["Event history ghi được ai đã GetObject trong S3.", false, "Phải bật S3 data events trên trail."],
+      ["Data events được ghi mặc định trên mọi trail.", false, "Phải bật riêng, tính phí."],
+      ["Trail tạo bằng console là multi-Region.", true, "Single-Region chỉ tạo bằng CLI/API."],
+      ["Member account có thể tắt logging của organization trail.", false, "Member thấy nhưng không xóa/tắt/sửa."],
+      ["Global service events như IAM được ghi ở us-east-1.", true, "Trail single-Region nơi khác sẽ bỏ lỡ."],
+      ["CloudTrail giao event theo thời gian thực tức thì.", false, "Thường trong ~5 phút; phản ứng nhanh ⇒ EventBridge."],
+      ["CloudTrail Lake giữ dữ liệu tới khoảng 10 năm.", true, "3.653 ngày với gói extendable retention."],
+      ["AWS Config là dịch vụ theo Region.", true, "Phải bật ở từng Region."],
+      ["Config aggregator có thể deploy rule xuống account nguồn.", false, "Aggregator chỉ đọc."],
+      ["Config aggregator không tốn thêm phí.", true, "Theo tài liệu."],
+      ["Proactive Config rule chặn việc triển khai tài nguyên không tuân thủ.", false, "Proactive không remediate và không chặn."],
+      ["Config remediation dùng SSM Automation document.", true, "Manual hoặc automatic."]
+    ],
+
+    map: {
+      t: "Bài 40 · CloudWatch, CloudTrail & Config",
+      c: [
+        { t: "Ba góc nhìn", icon: "cat/Management-Governance.svg", c: [
+          { t: "CloudWatch", v: "Performance – metric, log, alarm" },
+          { t: "CloudTrail", v: "Who – ai gọi API, khi nào" },
+          { t: "AWS Config", v: "What / Compliance – cấu hình & tuân thủ" },
+          { t: "Không chặn", v: "ngăn ⇒ IAM/SCP; phản ứng ⇒ EventBridge" }
+        ] },
+        { t: "CloudWatch Metrics", icon: "svc/Amazon-CloudWatch.svg", c: [
+          { t: "Định danh", v: "namespace + name + ≤ 30 dimension" },
+          { t: "Resolution", v: "standard 1 phút · high-res 1 giây (custom)" },
+          { t: "Retention", v: "&lt;60 s 3 giờ · 1 phút 15 ngày · 5 phút 63 ngày · 1 giờ 15 tháng" },
+          { t: "EC2", v: "basic 5 phút · detailed 1 phút" },
+          { t: "Custom", v: "PutMetricData, chỉ push" }
+        ] },
+        { t: "CloudWatch Alarms", icon: "res/Amazon-CloudWatch_Alarm.svg", c: [
+          { t: "Trạng thái", v: "OK · ALARM · INSUFFICIENT_DATA" },
+          { t: "M out of N", v: "Datapoints to Alarm / Evaluation Periods" },
+          { t: "Missing data", v: "missing · notBreaching · breaching · ignore" },
+          { t: "EC2 action", c: [
+            { t: "Recover", v: "StatusCheckFailed_System, giữ ID & IP" },
+            { t: "Reboot", v: "StatusCheckFailed_Instance" },
+            { t: "Stop/Terminate", v: "instance nhàn rỗi" }
+          ] },
+          { t: "Composite", v: "AND/OR/NOT, giảm nhiễu, không EC2/ASG action" }
+        ] },
+        { t: "CloudWatch Logs", icon: "res/Amazon-CloudWatch_Logs.svg", c: [
+          { t: "Cấu trúc", v: "event → stream → group" },
+          { t: "Retention", v: "mặc định Never Expire" },
+          { t: "Log class", v: "Standard · Essentials (không đổi được)" },
+          { t: "Metric filter", v: "log → metric → alarm, không hồi tố" },
+          { t: "Subscription filter", v: "≤ 5/group → Kinesis, Firehose, Lambda, OpenSearch" },
+          { t: "Export / Insights", v: "export batch ≤ 12 giờ · Insights phí theo GB quét" }
+        ] },
+        { t: "Agent & quan sát", icon: "res/Amazon-EC2_Instance-with-CloudWatch.svg", c: [
+          { t: "Agent", v: "memory, disk, log file, trace; EC2 + on-prem" },
+          { t: "Namespace", v: "CWAgent, phí custom metric" },
+          { t: "Cross-account", v: "monitoring account" },
+          { t: "Synthetics", v: "canary phát hiện lỗi trước người dùng" }
+        ] },
+        { t: "AWS CloudTrail", icon: "svc/AWS-CloudTrail.svg", c: [
+          { t: "Event history", v: "90 ngày management, miễn phí" },
+          { t: "Trail", v: "giao S3 (+ CW Logs, EventBridge), multi-Region" },
+          { t: "Event", v: "management (mặc định) · data · network activity · Insights" },
+          { t: "Organization trail", v: "member không tắt/sửa được" },
+          { t: "Integrity", v: "SHA-256, digest mỗi giờ" },
+          { t: "Lake", v: "SQL, giữ tới ~10 năm" }
+        ] },
+        { t: "AWS Config", icon: "svc/AWS-Config.svg", c: [
+          { t: "CI", v: "ảnh chụp cấu hình; history · snapshot · stream" },
+          { t: "Rules", v: "managed · custom Lambda · custom Guard" },
+          { t: "Trigger", v: "configuration changes · periodic · hybrid" },
+          { t: "Mode", v: "detective · proactive (không chặn)" },
+          { t: "Quy mô", v: "conformance pack (YAML) · aggregator chỉ đọc, miễn phí" },
+          { t: "Remediation", v: "SSM Automation, manual / automatic + retries" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

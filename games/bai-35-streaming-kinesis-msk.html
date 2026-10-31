@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 35 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Kinesis-Data-Streams.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="35" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-35-streaming-kinesis-msk.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "overview", name: "Streaming vs queue" },
+      { id: "kds", name: "Kinesis Data Streams" },
+      { id: "capacity", name: "Provisioned · on-demand · hot shard" },
+      { id: "consumer", name: "Producer & consumer" },
+      { id: "firehose", name: "Amazon Data Firehose" },
+      { id: "msk", name: "Amazon MSK" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Tổng quan
+      { t: "overview", f: "Ba vai trò trong một pipeline streaming?", b: "<b>Producer</b> (ghi dữ liệu) → <b>stream storage</b> (lưu tạm có thứ tự, chịu tải) → <b>consumer</b> (xử lý, phân tích, ghi xuống kho)." },
+      { t: "overview", f: "SQS khác Kinesis Data Streams ở điểm cốt lõi nào?", b: "<b>SQS</b>: consumer nhận rồi <b>xóa</b> message, không replay.<br><b>KDS</b>: log có thứ tự theo shard; consumer <b>chỉ đọc</b>, dữ liệu còn tới hết retention ⇒ nhiều consumer, replay được." },
+      { t: "overview", f: "Firehose có cho nhiều consumer đọc lại dữ liệu không?", b: "<b>Không.</b> Firehose là ống dẫn: nhận → buffer → giao tới <b>một đích</b>; không lưu để replay." },
+      { t: "overview", f: "Tên cũ của Amazon Data Firehose và Managed Service for Apache Flink?", b: "<b>Kinesis Data Firehose</b> và <b>Kinesis Data Analytics</b>." },
+      { t: "overview", f: "Độ trễ điển hình của KDS, Firehose, MSK, SQS?", b: "<b>KDS</b>: &lt; 1 giây (put-to-get).<br><b>Firehose</b>: near real-time theo buffer (mặc định 300 s với S3).<br><b>MSK</b>, <b>SQS</b>: mili-giây." },
+      { t: "overview", f: "Amazon Kinesis Video Streams dùng khi nào?", b: "Thu nhận <b>video/âm thanh từ camera, thiết bị</b> để phân tích (vd Rekognition Video), phát lại." },
+      { t: "overview", f: "Đề nói “<i>process each message once, delete after processing</i>” ⇒ chọn Kinesis?", b: "<b>Không</b> – vẫn là <b>SQS</b>." },
+
+      // ---- KDS
+      { t: "kds", f: "Data stream và shard trong KDS là gì?", b: "<b>Data stream</b>: tập hợp các shard.<br><b>Shard</b>: chuỗi data record, một đơn vị capacity cố định. Capacity stream = tổng capacity các shard." },
+      { t: "kds", f: "Thông lượng ghi và đọc của mỗi shard?", b: "Ghi: <b>1 MB/s hoặc 1.000 record/s</b>.<br>Đọc: <b>2 MB/s, 5 giao dịch GetRecords/s</b> (chia chung giữa consumer thường)." },
+      { t: "kds", f: "Data record gồm những gì?", b: "<b>Sequence number + partition key + data blob</b> (chuỗi byte bất biến, Kinesis không đọc/sửa)." },
+      { t: "kds", f: "Partition key hoạt động thế nào?", b: "Chuỗi Unicode <b>≤ 256 ký tự</b>; Kinesis băm <b>MD5</b> ra số 128-bit để chọn shard theo hash key range. Cùng key ⇒ cùng shard ⇒ <b>giữ thứ tự</b>." },
+      { t: "kds", f: "Thứ tự record trong KDS được đảm bảo ở phạm vi nào?", b: "<b>Trong một shard</b> (theo partition key), không phải trên toàn stream." },
+      { t: "kds", f: "Sequence number do ai gán, đặc điểm gì?", b: "Kinesis gán sau PutRecord/PutRecords; duy nhất theo partition key trong shard, <b>tăng dần theo thời gian</b>.", x: "Không dùng làm “index” để tách tập dữ liệu." },
+      { t: "kds", f: "Retention period của KDS?", b: "Mặc định <b>24 giờ</b>, tăng tới <b>8.760 giờ (365 ngày)</b> bằng IncreaseStreamRetentionPeriod; trên 24 giờ tính thêm phí." },
+      { t: "kds", f: "Kinesis có xóa record sau khi consumer đọc không?", b: "<b>Không.</b> Record chỉ hết hạn theo retention; consumer tự checkpoint vị trí (KCL dùng DynamoDB)." },
+      { t: "kds", f: "Mã hóa và truy cập riêng tư cho KDS?", b: "<b>Server-side encryption với AWS KMS</b>, TLS khi truyền, IAM + resource-based policy (cross-account), <b>interface VPC endpoint</b> (PrivateLink)." },
+      { t: "kds", f: "KDS có tự giao dữ liệu tới S3/Redshift như Firehose không?", b: "Đáp án chuẩn của đề: <b>không</b> – cần consumer (Firehose, Lambda, KCL…). Mẫu chuẩn: <b>KDS → Firehose → S3</b>." },
+      { t: "kds", f: "Consumer Lambda/KCL xử lý theo ngữ nghĩa nào? Hệ quả?", b: "<b>At-least-once</b> ⇒ có thể trùng lặp; code consumer nên <b>idempotent</b>." },
+
+      // ---- Capacity
+      { t: "capacity", f: "3 capacity mode của KDS?", b: "<b>On-demand Standard</b>, <b>On-demand Advantage</b>, <b>Provisioned</b>. Mọi tính năng (retention, mã hóa, EFO…) có ở cả hai loại." },
+      { t: "capacity", f: "Provisioned mode tính phí và scale thế nào?", b: "Phí theo <b>shard-giờ</b> (+ PUT payload unit). Scale thủ công: <b>UpdateShardCount</b> hoặc split/merge – làm được khi đang chạy." },
+      { t: "capacity", f: "On-demand Standard: capacity ban đầu và khả năng tự đáp ứng?", b: "Stream mới <b>4 MB/s ghi, 8 MB/s đọc</b>; tự đáp ứng tới <b>2× đỉnh ghi 30 ngày</b> trước. Vượt quá 2× trong 15 phút ⇒ có thể throttle.", x: "Trả tiền theo GB ghi và đọc." },
+      { t: "capacity", f: "On-demand Advantage có gì đặc biệt?", b: "Cấp account; <b>warm throughput</b> làm nóng trước sự kiện; không phí cố định/stream; phí thấp hơn ≥ 60%; EFO tới <b>50 consumer</b>. Cam kết tối thiểu 25 MiB/s; bật rồi chờ ≥ 24 giờ mới tắt." },
+      { t: "capacity", f: "Công thức tính số shard cho provisioned?", b: "<code>ceiling(max(ghi_KB/1024, đọc_KB/2048))</code>, với đọc = ghi × số consumer." },
+      { t: "capacity", f: "5.000 thiết bị × 2 KB/s, 3 consumer dùng chung ⇒ cần bao nhiêu shard?", b: "Ghi 10.000 KB/s ⇒ 9,8; đọc 30.000 KB/s ⇒ 14,6 ⇒ <b>15 shard</b>. Dùng enhanced fan-out ⇒ chỉ cần <b>10 shard</b>." },
+      { t: "capacity", f: "Shard split và shard merge?", b: "<b>Split</b>: 1 → 2 (tăng capacity, chi phí). <b>Merge</b>: 2 → 1. Luôn theo <b>cặp</b>; shard bị tác động là parent, shard mới là child. Chỉ provisioned." },
+      { t: "capacity", f: "Đổi qua lại on-demand ↔ provisioned được bao nhiêu lần?", b: "Tối đa <b>2 lần trong 24 giờ</b> mỗi stream, không gián đoạn ứng dụng." },
+      { t: "capacity", f: "Hot shard là gì, gây lỗi gì?", b: "Partition key phân bổ lệch ⇒ một shard vượt 1 MB/s hoặc 1.000 rec/s ⇒ <b>ProvisionedThroughputExceededException</b> dù tổng stream còn dư." },
+      { t: "capacity", f: "Cách xử lý hot shard?", b: "Chọn partition key <b>độ phân tán cao</b> (userId, deviceId, hoặc ngẫu nhiên nếu không cần thứ tự); split hot shard; producer retry <b>exponential backoff</b>.", x: "Chỉ tăng tổng shard mà không đổi key thì không giải quyết được." },
+      { t: "capacity", f: "On-demand có cô lập được một partition key quá nóng không?", b: "<b>Không.</b> Tự split shard khi vượt 500 KB/s, nhưng một key không vượt được 1 MB/s · 1.000 rec/s của một shard ⇒ key rất lệch nên dùng provisioned." },
+      { t: "capacity", f: "Giới hạn GetRecords và shard iterator?", b: "GetRecords tối đa <b>10 MB / 10.000 record</b> mỗi lần; shard iterator hết hạn sau <b>5 phút</b>." },
+
+      // ---- Producer & consumer
+      { t: "consumer", f: "PutRecords ghi tối đa bao nhiêu record một lệnh? Lưu ý gì?", b: "<b>500 record</b>. Mỗi record có thể lỗi riêng ⇒ kiểm tra <b>FailedRecordCount</b> và retry phần lỗi." },
+      { t: "consumer", f: "Kinesis Producer Library (KPL) mang lại gì?", b: "Tự <b>batch, aggregation</b> (gộp record nhỏ), <b>retry</b> tự động; đổi lại thêm chút độ trễ." },
+      { t: "consumer", f: "Kinesis Agent là gì?", b: "Ứng dụng Java trên server Linux, <b>theo dõi file log</b> và gửi liên tục vào KDS hoặc Firehose." },
+      { t: "consumer", f: "Shared throughput và enhanced fan-out khác nhau thế nào?", b: "<b>Shared</b>: 2 MB/s/shard chia chung, pull GetRecords, ~200 ms (1 consumer) → ~1.000 ms (5 consumer).<br><b>EFO</b>: 2 MB/s/shard <b>riêng mỗi consumer</b>, push HTTP/2 (SubscribeToShard), <b>~70 ms</b>." },
+      { t: "consumer", f: "Tối đa bao nhiêu consumer enhanced fan-out mỗi stream?", b: "<b>20</b> (50 với On-demand Advantage). Có phí data retrieval + consumer-shard hour." },
+      { t: "consumer", f: "KCL lưu metadata ở đâu?", b: "Bảng <b>DynamoDB</b> (lease, checkpoint) – 3 bảng mỗi ứng dụng; tên ứng dụng = tên bảng + namespace metric CloudWatch." },
+      { t: "consumer", f: "<i>Parallelization factor</i> của Lambda với Kinesis?", b: "<b>1–10</b> batch đồng thời mỗi shard, <b>vẫn giữ thứ tự</b> theo partition key." },
+      { t: "consumer", f: "IteratorAge tăng liên tục nghĩa là gì, xử lý ra sao?", b: "Consumer <b>đang chậm</b>. Tăng <b>parallelization factor</b>, thêm shard, tăng batch size, dùng EFO." },
+      { t: "consumer", f: "Một record lỗi chặn cả shard trong Lambda ⇒ cấu hình gì?", b: "<b>Maximum retry attempts, maximum record age, bisect batch on function error</b>, on-failure destination (SQS/SNS/S3)." },
+      { t: "consumer", f: "Khi nào chọn KCL app trên EC2/ECS thay vì Lambda?", b: "Cần kiểm soát hoàn toàn, xử lý <b>lâu hơn 15 phút</b>, thư viện đặc thù; KCL lo cân bằng shard, checkpoint, failover." },
+      { t: "consumer", f: "Managed Service for Apache Flink dùng khi nào?", b: "Phân tích <b>có trạng thái</b>: aggregate theo cửa sổ thời gian, join stream, <b>phát hiện bất thường</b> (SQL/Java/Python)." },
+
+      // ---- Firehose
+      { t: "firehose", f: "Amazon Data Firehose là gì?", b: "Dịch vụ <b>fully managed</b> giao streaming data tới đích; không viết code consumer, <b>tự scale, không có shard</b>." },
+      { t: "firehose", f: "3 loại nguồn của Firehose?", b: "<b>Direct PUT</b> (SDK, Agent, CloudWatch Logs, EventBridge, IoT…), <b>Kinesis Data Streams</b>, <b>Amazon MSK</b>." },
+      { t: "firehose", f: "Kích thước record và giới hạn PutRecordBatch của Firehose?", b: "Record tối đa <b>1.000 KiB</b>; PutRecordBatch tối đa <b>500 record hoặc 4 MiB</b>." },
+      { t: "firehose", f: "Buffer mặc định khi đích là S3?", b: "<b>5 MB hoặc 300 giây</b> – cái nào đạt trước thì giao (dải 1–128 MB, 0–900 s)." },
+      { t: "firehose", f: "Firehose giao vào Redshift thế nào?", b: "Ghi vào <b>S3 trung gian</b> trước, rồi chạy lệnh <b>COPY</b> nạp vào Redshift." },
+      { t: "firehose", f: "Firehose giữ dữ liệu bao lâu khi đích không sẵn sàng?", b: "Tới <b>24 giờ</b> (nguồn Direct PUT); nguồn KDS thì theo retention của KDS. Lỗi ghi vào S3 error output prefix." },
+      { t: "firehose", f: "Lambda transform trong Firehose có giới hạn gì?", b: "Gọi <b>đồng bộ</b>, payload <b>6 MB</b>, Lambda tối đa <b>5 phút</b>; buffer 0,2–3 MB (mặc định 1 MB, 60 s)." },
+      { t: "firehose", f: "Record format conversion cần những thành phần nào?", b: "<b>Deserializer</b> (OpenX / Hive JSON SerDe) + <b>schema trong Glue Data Catalog</b> + <b>serializer</b> (Parquet / ORC SerDe).", x: "Dữ liệu CSV ⇒ Lambda đổi sang JSON trước." },
+      { t: "firehose", f: "Dynamic partitioning là gì?", b: "Phân vùng liên tục theo khóa trong dữ liệu (vd customer_id) vào các <b>S3 prefix</b> ⇒ Athena quét ít hơn. Mặc định <b>500 active partition</b>." },
+      { t: "firehose", f: "Zero buffering có hạn chế gì?", b: "Chỉ cho đích ứng dụng; <b>không cho S3 backup</b>, không dùng với dynamic partitioning. Interval &lt; 60 s với S3 ⇒ multipart upload, tăng phí PUT." },
+      { t: "firehose", f: "Firehose KHÔNG có đích nào hay bị bẫy?", b: "<b>DynamoDB, RDS, SQS</b>. Ghi stream vào DynamoDB ⇒ KDS + Lambda." },
+      { t: "firehose", f: "Vì sao gửi nhiều record siêu nhỏ vào Firehose tốn tiền?", b: "Phí ingest tính theo record <b>làm tròn lên 5 KB</b> ⇒ nên gom lại." },
+
+      // ---- MSK
+      { t: "msk", f: "Amazon MSK là gì?", b: "<b>Apache Kafka được quản lý</b>, mã nguồn mở – ứng dụng, công cụ, plugin Kafka dùng được <b>không sửa code</b>. MSK lo control plane." },
+      { t: "msk", f: "KRaft khác ZooKeeper thế nào trong MSK?", b: "<b>KRaft controller</b> thay ZooKeeper quản lý metadata, không tính thêm phí, không phải cấu hình." },
+      { t: "msk", f: "MSK Provisioned Standard broker có đặc điểm gì?", b: "Tự chọn instance, số broker, <b>EBS 1 GiB – 16.384 GiB/broker</b>; hỗ trợ <b>tiered storage</b>." },
+      { t: "msk", f: "MSK Express broker có ưu điểm gì?", b: "Storage tự scale, pay-as-you-go; tới <b>3× throughput</b>/broker, scale nhanh <b>20×</b>, phục hồi nhanh hơn 90%; không maintenance window; chỉ <b>3 AZ</b>." },
+      { t: "msk", f: "MSK Serverless có giới hạn gì?", b: "<b>Bắt buộc IAM access control</b> (không Kafka ACL); 200 MBps ingress, 400 MBps egress, 2.400 partition, message ≤ 8 MiB, retention không giới hạn." },
+      { t: "msk", f: "MSK tiered storage dùng để làm gì? Hạn chế?", b: "Tầng lưu trữ <b>giá rẻ, gần như vô hạn</b> – giữ dữ liệu lâu không cần thêm broker.", x: "Chỉ Provisioned Standard; không compacted topic, không t3.small; tối thiểu 3 ngày ở tầng rẻ." },
+      { t: "msk", f: "MSK Connect là gì?", b: "<b>Kafka Connect được quản lý</b>: source connector (vd Debezium CDC) và sink connector (S3, OpenSearch…); tự scale worker, tự khởi động lại task lỗi." },
+      { t: "msk", f: "MSK Replicator dùng để làm gì?", b: "Sao chép dữ liệu giữa các cluster MSK Provisioned <b>cùng hoặc khác Region</b> (≤ 1 GB/s ingress) – DR / active-active." },
+      { t: "msk", f: "Các cách xác thực API Kafka trên MSK?", b: "<b>IAM access control</b>, <b>mutual TLS</b>, <b>SASL/SCRAM</b> (mật khẩu trong Secrets Manager) + Kafka ACLs." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>multiple applications consume the same data</i>”, “<i>replay</i>”, “<i>ordering per device</i>” ⇒ ?", b: "<b>Kinesis Data Streams</b>." },
+      { t: "kw", f: "Đề có “<i>load streaming data into S3/Redshift/OpenSearch</i>”, “<i>no code</i>”, “<i>convert to Parquet</i>” ⇒ ?", b: "<b>Amazon Data Firehose</b>." },
+      { t: "kw", f: "Đề có “<i>migrate on-premises Kafka</i>”, “<i>Kafka APIs / Kafka Connect</i>” ⇒ ?", b: "<b>Amazon MSK</b> (không muốn quản lý capacity ⇒ MSK Serverless)." },
+      { t: "kw", f: "Đề có “<i>real-time analytics with SQL / sliding windows / anomaly detection</i>” ⇒ ?", b: "<b>Amazon Managed Service for Apache Flink</b>." },
+      { t: "kw", f: "Đề có “<i>multiple consumers, increased latency, ReadProvisionedThroughputExceeded</i>” ⇒ ?", b: "Bật <b>enhanced fan-out</b> cho từng consumer." },
+      { t: "kw", f: "Đề có “<i>unpredictable / spiky traffic</i>”, “<i>do not want to manage shards</i>” ⇒ ?", b: "KDS <b>on-demand mode</b>." },
+      { t: "kw", f: "Đề có “<i>stream database changes (CDC) into Kafka</i>”, “<i>Kafka to S3 without managing Connect workers</i>” ⇒ ?", b: "<b>MSK Connect</b> (Debezium source, S3 sink)." },
+      { t: "kw", f: "Đề có “<i>retain Kafka data for a long time cheaply without adding brokers</i>” ⇒ ?", b: "<b>MSK tiered storage</b>." },
+      { t: "kw", f: "Đề có “<i>DynamoDB item changes kept &gt; 24 hours / many consumers</i>” ⇒ ?", b: "<b>Kinesis Data Streams for DynamoDB</b> (DynamoDB Streams chỉ 24 giờ)." }
+    ],
+
+    pairs: [
+      ["Shard", "Đơn vị capacity: ghi 1 MB/s, đọc 2 MB/s"],
+      ["Partition key", "Băm MD5 để chọn shard, giữ thứ tự theo key"],
+      ["Sequence number", "Số Kinesis gán, tăng dần trong shard"],
+      ["Retention period", "24 giờ mặc định, tối đa 365 ngày"],
+      ["Data blob", "Khối byte bất biến, Kinesis không diễn giải"],
+      ["Hot shard", "Shard quá tải do partition key lệch"],
+      ["Shard split / merge", "Chia 1 thành 2 / gộp 2 thành 1, theo cặp"],
+      ["Warm throughput", "Làm nóng capacity ghi trước sự kiện"],
+      ["KPL", "Thư viện producer: batch, aggregation, retry"],
+      ["KCL", "Thư viện consumer: lease & checkpoint ở DynamoDB"],
+      ["Kinesis Agent", "Theo dõi file log, gửi vào KDS/Firehose"],
+      ["Enhanced fan-out", "2 MB/s/shard riêng mỗi consumer, push HTTP/2"],
+      ["Shard iterator", "Con trỏ đọc shard, hết hạn sau 5 phút"],
+      ["Parallelization factor", "1–10 batch Lambda đồng thời mỗi shard"],
+      ["IteratorAge", "Tuổi record consumer đã đọc; tăng ⇒ chậm"],
+      ["Direct PUT", "Ghi trực tiếp vào Firehose bằng PutRecord(Batch)"],
+      ["Buffer size / interval", "Gom đủ MB hoặc đủ giây thì giao"],
+      ["Record format conversion", "JSON → Parquet/ORC, schema ở Glue"],
+      ["Dynamic partitioning", "Ghi vào S3 prefix theo khóa trong dữ liệu"],
+      ["Managed Service for Apache Flink", "Xử lý stream có trạng thái (tên cũ KDA)"],
+      ["KRaft controller", "Quản lý metadata Kafka thay ZooKeeper"],
+      ["Express broker", "Broker MSK storage tự scale, 3× throughput"],
+      ["MSK Serverless", "MSK tự scale, chỉ IAM auth"],
+      ["Tiered storage", "Tầng lưu trữ MSK giá rẻ, gần như vô hạn"],
+      ["MSK Connect", "Kafka Connect được quản lý (source/sink)"],
+      ["MSK Replicator", "Sao chép giữa cluster MSK cùng/khác Region"],
+      ["SASL/SCRAM", "Xác thực Kafka bằng mật khẩu trong Secrets Manager"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn dịch vụ theo tình huống",
+        desc: "Đọc yêu cầu đề thi và chọn dịch vụ phù hợp nhất.",
+        buckets: ["Kinesis Data Streams", "Data Firehose", "Amazon MSK", "Apache Flink", "SQS", "Kinesis Video Streams"],
+        items: [
+          ["3 ứng dụng cùng đọc clickstream, replay 7 ngày", 0, "nhiều consumer độc lập, retention tới 365 ngày"],
+          ["Xử lý theo thứ tự từng thiết bị, độ trễ &lt; 1 giây", 0, "partition key = deviceId"],
+          ["Đưa CloudWatch Logs vào S3 dạng Parquet, ít vận hành", 1, "subscription filter → Firehose + format conversion"],
+          ["Nạp stream vào Splunk / OpenSearch không viết code", 1, "fully managed delivery"],
+          ["Di chuyển Kafka on-prem, giữ Kafka Connect", 2, "Kafka mã nguồn mở, không sửa code"],
+          ["Message vài MB, cấu hình Kafka tùy chỉnh", 2, "MSK cấu hình được kích thước message"],
+          ["Nhiệt độ trung bình theo cửa sổ 1 phút, phát hiện bất thường", 3, "stream processing có trạng thái"],
+          ["Hàng đợi tác vụ, xử lý một lần rồi xóa", 4, "queue, DLQ, visibility timeout"],
+          ["Video từ camera an ninh để phân tích", 5, "dữ liệu media theo thời gian"]
+        ]
+      },
+      {
+        title: "KDS: provisioned hay on-demand?",
+        desc: "Đặc điểm/tình huống nào thuộc provisioned mode, cái nào thuộc on-demand mode?",
+        buckets: ["Provisioned", "On-demand"],
+        items: [
+          ["Tính phí theo shard-giờ", 0, "trả theo số shard"],
+          ["Dùng UpdateShardCount, SplitShard, MergeShards", 0, "các API này chỉ cho provisioned"],
+          ["Lưu lượng dự đoán được, tối ưu chi phí", 0, "tính sẵn số shard"],
+          ["Key rất lệch, cần split chi tiết theo hash range", 0, "tài liệu khuyên provisioned"],
+          ["Trả tiền theo GB ghi và đọc", 1, "on-demand Standard"],
+          ["Stream mới có 4 MB/s ghi, 8 MB/s đọc", 1, "capacity khởi đầu của on-demand"],
+          ["Lưu lượng spiky, không muốn capacity planning", 1, "Kinesis tự quản shard"],
+          ["Warm throughput trước sự kiện", 1, "On-demand Advantage"]
+        ]
+      },
+      {
+        title: "Đây là đặc tính của dịch vụ nào?",
+        desc: "Xếp mỗi đặc tính kỹ thuật vào KDS, Firehose hay MSK (theo bảng so sánh của bài).",
+        buckets: ["Kinesis Data Streams", "Data Firehose", "Amazon MSK"],
+        items: [
+          ["Đơn vị song song là shard", 0, "stream = tập shard"],
+          ["Retention 24 giờ – 365 ngày", 0, "replay được"],
+          ["Enhanced fan-out ~70 ms", 0, "SubscribeToShard"],
+          ["Record tối đa 1.000 KiB", 1, "giới hạn record Firehose"],
+          ["Buffer 5 MB / 300 giây khi đích S3", 1, "giao theo buffer"],
+          ["Mức vận hành thấp nhất, không quản lý capacity", 1, "tự động hoàn toàn"],
+          ["Đơn vị song song là partition của topic", 2, "Kafka"],
+          ["Xác thực IAM, mTLS, SASL/SCRAM + Kafka ACL", 2, "nhiều lựa chọn auth"],
+          ["Tiered storage cho Provisioned", 2, "Standard broker"]
+        ]
+      },
+      {
+        title: "Sửa lỗi Kinesis thế nào?",
+        desc: "Với mỗi triệu chứng, chọn hướng xử lý đúng.",
+        buckets: ["Đổi partition key", "Thêm shard / on-demand", "Enhanced fan-out", "Tăng parallelization factor"],
+        items: [
+          ["ProvisionedThroughputExceeded, một shard nhận hầu hết traffic", 0, "hot shard do key lệch"],
+          ["Partition key là mã quốc gia, 80% từ một nước", 0, "chọn key phân tán cao như deviceId"],
+          ["Producer bị throttle, lưu lượng tăng đều", 1, "UpdateShardCount hoặc chuyển on-demand"],
+          ["5 consumer GetRecords, độ trễ ~1 giây", 2, "mỗi consumer 2 MB/s riêng"],
+          ["ReadProvisionedThroughputExceeded khi thêm consumer", 2, "hết tranh chấp throughput đọc"],
+          ["Lambda IteratorAge tăng, phải giữ thứ tự", 3, "nhiều batch song song mỗi shard"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Mỗi shard KDS ghi tối đa 1 MB/s hoặc 1.000 record/s.", true, "Đọc tối đa 2 MB/s."],
+      ["Mỗi shard KDS đọc tối đa 1 MB/s.", false, "Đọc 2 MB/s; ghi mới là 1 MB/s."],
+      ["Retention mặc định của KDS là 24 giờ, tối đa 365 ngày.", true, "8.760 giờ."],
+      ["KDS xóa record ngay khi consumer đọc xong.", false, "Record chỉ hết hạn theo retention."],
+      ["Cùng partition key thì record vào cùng shard và giữ thứ tự.", true, "Kinesis băm MD5 partition key."],
+      ["KDS đảm bảo thứ tự trên toàn bộ stream.", false, "Chỉ trong một shard."],
+      ["Partition key tối đa 256 ký tự.", true, "Chuỗi Unicode."],
+      ["PutRecords ghi tối đa 1.000 record mỗi lệnh.", false, "Tối đa 500 record."],
+      ["Chỉ tăng tổng số shard là đủ để sửa hot shard do partition key lệch.", false, "Phải đổi key phân tán hơn hoặc split đúng shard nóng."],
+      ["On-demand mode vẫn có thể bị throttle nếu lưu lượng vượt gấp đôi đỉnh cũ trong 15 phút.", true, "Phải retry."],
+      ["UpdateShardCount dùng được cho cả on-demand mode.", false, "Chỉ provisioned."],
+      ["On-demand mode không hỗ trợ enhanced fan-out.", false, "Mọi tính năng có ở cả hai mode."],
+      ["Có thể đổi capacity mode tối đa 2 lần trong 24 giờ.", true, "Không gián đoạn ứng dụng."],
+      ["Resharding luôn theo cặp: chia 1 thành 2 hoặc gộp 2 thành 1.", true, "Pairwise."],
+      ["Enhanced fan-out cho mỗi consumer 2 MB/s riêng mỗi shard.", true, "Push qua HTTP/2, ~70 ms."],
+      ["Consumer shared throughput nhận dữ liệu bằng push qua HTTP/2.", false, "Shared dùng pull GetRecords; EFO mới là push."],
+      ["KCL lưu lease và checkpoint trong bảng DynamoDB.", true, "3 bảng mỗi ứng dụng."],
+      ["Parallelization factor của Lambda làm mất thứ tự theo partition key.", false, "Vẫn giữ thứ tự theo key."],
+      ["Firehose ghi được dữ liệu vào bảng DynamoDB.", false, "Firehose không có đích DynamoDB."],
+      ["Buffer mặc định khi Firehose giao tới S3 là 5 MB hoặc 300 giây.", true, "Cái nào đạt trước thì giao."],
+      ["Tăng buffer size giúp dữ liệu xuất hiện trên S3 nhanh hơn.", false, "Buffer lớn hơn càng lâu đầy, giao chậm hơn."],
+      ["Firehose giao vào Redshift qua S3 trung gian rồi lệnh COPY.", true, "Luôn qua S3."],
+      ["Chuyển JSON sang Parquet trong Firehose cần schema trong Glue Data Catalog.", true, "Deserializer + schema + serializer."],
+      ["Firehose cho phép nhiều ứng dụng đọc lại dữ liệu đã giao.", false, "Không lưu để replay."],
+      ["Lambda transform trong Firehose chạy tối đa 15 phút.", false, "Tối đa 5 phút."],
+      ["Firehose giữ dữ liệu tới 24 giờ khi đích không sẵn sàng (nguồn Direct PUT).", true, "Nguồn KDS thì theo retention KDS."],
+      ["Dynamic partitioning dùng được với zero buffering.", false, "Zero buffering không dùng với dynamic partitioning."],
+      ["MSK Serverless hỗ trợ SASL/SCRAM và Kafka ACL.", false, "Chỉ IAM access control."],
+      ["MSK chạy Kafka mã nguồn mở nên ứng dụng Kafka không phải sửa code.", true, "Dùng API Kafka chuẩn."],
+      ["MSK tiered storage hỗ trợ cả Express broker và MSK Serverless.", false, "Chỉ Provisioned Standard broker."],
+      ["Express broker chỉ chạy trên 3 AZ.", true, "Bắt buộc 3 AZ."],
+      ["KRaft controller tính thêm phí so với ZooKeeper.", false, "Không tính thêm phí."],
+      ["SQS giữ message tối đa 14 ngày và không replay được.", true, "Cần replay lâu hơn ⇒ KDS."],
+      ["DynamoDB Streams giữ dữ liệu 24 giờ.", true, "Cần lâu hơn ⇒ Kinesis Data Streams for DynamoDB."]
+    ],
+
+    map: {
+      t: "Bài 35 · Streaming: Kinesis & MSK",
+      c: [
+        { t: "Bức tranh tổng thể", icon: "cat/Analytics.svg", c: [
+          { t: "Pipeline", v: "producer → stream storage → consumer" },
+          { t: "SQS", v: "nhận rồi xóa, không replay" },
+          { t: "KDS", v: "log theo shard, nhiều consumer, replay" },
+          { t: "Firehose", v: "buffer rồi giao tới một đích" },
+          { t: "MSK", v: "Kafka được quản lý" },
+          { t: "Video Streams", v: "video từ camera, thiết bị" }
+        ] },
+        { t: "Kinesis Data Streams", icon: "svc/Amazon-Kinesis-Data-Streams.svg", c: [
+          { t: "Record", v: "sequence number + partition key + blob" },
+          { t: "Partition key", v: "≤ 256 ký tự, MD5 → shard, thứ tự trong shard" },
+          { t: "Mỗi shard", v: "ghi 1 MB/s · 1.000 rec/s; đọc 2 MB/s · 5 TPS" },
+          { t: "Retention", v: "24 giờ → 365 ngày" },
+          { t: "Độ trễ", v: "put-to-get &lt; 1 giây" },
+          { t: "Bảo mật", v: "KMS, TLS, VPC endpoint" }
+        ] },
+        { t: "Capacity & hot shard", icon: "svc/Amazon-Kinesis.svg", c: [
+          { t: "Provisioned", v: "shard-giờ, UpdateShardCount, split/merge" },
+          { t: "On-demand Standard", v: "theo GB, 4 MB/s đầu, 2× đỉnh 30 ngày" },
+          { t: "On-demand Advantage", v: "warm throughput, EFO 50 consumer" },
+          { t: "Số shard", v: "ceil(max(ghi/1024, đọc/2048))" },
+          { t: "Hot shard", v: "đổi key phân tán, split, retry backoff" }
+        ] },
+        { t: "Producer & consumer", icon: "res/AWS-Lambda_Lambda-Function.svg", c: [
+          { t: "Producer", v: "SDK (PutRecords 500), KPL, Kinesis Agent, IoT…" },
+          { t: "Shared", v: "2 MB/s chia chung, pull, 200 → 1.000 ms" },
+          { t: "Enhanced fan-out", v: "2 MB/s riêng, push HTTP/2, ~70 ms, 20 consumer" },
+          { t: "Lambda", v: "parallelization factor 1–10, lỗi chặn shard" },
+          { t: "KCL", v: "lease/checkpoint ở DynamoDB" },
+          { t: "Flink", v: "cửa sổ thời gian, phát hiện bất thường" }
+        ] },
+        { t: "Amazon Data Firehose", icon: "svc/Amazon-Kinesis-Firehose.svg", c: [
+          { t: "Nguồn", v: "Direct PUT · KDS · MSK" },
+          { t: "Đích", v: "S3, Redshift (S3 + COPY), OpenSearch, Splunk, Iceberg, HTTP" },
+          { t: "Buffer S3", v: "5 MB / 300 s mặc định" },
+          { t: "Xử lý", c: [
+            { t: "Lambda transform", v: "đồng bộ, ≤ 5 phút" },
+            { t: "Format conversion", v: "JSON → Parquet/ORC, schema Glue" },
+            { t: "Dynamic partitioning", v: "S3 prefix theo khóa, 500 partition" }
+          ] },
+          { t: "Không có", v: "replay, đích DynamoDB/RDS/SQS" }
+        ] },
+        { t: "Amazon MSK", icon: "svc/Amazon-Managed-Streaming-for-Apache-Kafka.svg", c: [
+          { t: "Standard broker", v: "EBS ≤ 16 TiB/broker, tiered storage" },
+          { t: "Express broker", v: "3× throughput, storage tự scale, 3 AZ" },
+          { t: "Serverless", v: "chỉ IAM auth, 200/400 MBps" },
+          { t: "MSK Connect", v: "Kafka Connect managed (CDC, S3 sink)" },
+          { t: "MSK Replicator", v: "sao chép cluster, DR" },
+          { t: "Xác thực", v: "IAM · mTLS · SASL/SCRAM + ACL" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

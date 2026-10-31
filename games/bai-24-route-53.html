@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 24 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Route-53.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="24" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-24-route-53.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "dns", name: "Route 53 & DNS" },
+      { id: "zone", name: "Hosted zone" },
+      { id: "rec", name: "Record, Alias, TTL" },
+      { id: "pol", name: "Routing policy" },
+      { id: "hc", name: "Health check & failover" },
+      { id: "res", name: "Resolver & DNS lai" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Route 53 & DNS
+      { t: "dns", f: "3 chức năng chính của Amazon Route 53?", b: "<b>Domain registration</b> · <b>DNS routing</b> · <b>Health checking</b> (dùng riêng hoặc kết hợp).", x: "Tên “53” lấy từ cổng 53 của DNS." },
+      { t: "dns", f: "Luồng phân giải DNS khi gõ www.example.com?", b: "Trình duyệt → <b>DNS resolver</b> (ISP) → <b>root</b> → <b>TLD .com</b> (trả 4 name server Route 53) → <b>Route 53 authoritative</b> trả IP → resolver cache theo <b>TTL</b>." },
+      { t: "dns", f: "Traffic ứng dụng có đi qua Route 53 không?", b: "<b>Không.</b> Route 53 chỉ trả lời “IP là gì”; traffic đi thẳng từ client tới tài nguyên." },
+      { t: "dns", f: "Control plane và data plane của Route 53 nằm ở đâu?", b: "<b>Control plane</b> (API tạo/sửa record, đăng ký domain): <b>us-east-1</b>.<br><b>Data plane</b> (trả lời DNS): toàn cầu, <b>200+ PoP</b>.", x: "Failover lúc thảm họa nên dựa vào data plane (health check + failover record), không gọi API sửa record." },
+      { t: "dns", f: "SLA availability của DNS Route 53?", b: "<b>100%</b>." },
+      { t: "dns", f: "Quota hosted zone và record mặc định?", b: "<b>500</b> hosted zone mỗi account · <b>10.000</b> record mỗi hosted zone (đều tăng được)." },
+      { t: "dns", f: "Phân biệt domain registrar và domain registry.", b: "<b>Registrar</b>: công ty được ICANN công nhận để bán tên miền (vd Amazon Registrar).<br><b>Registry</b>: sở hữu quyền bán một TLD, giữ CSDL authoritative (vd VeriSign với .com)." },
+      { t: "dns", f: "Đăng ký domain ở nhà đăng ký khác có dùng Route 53 làm DNS được không?", b: "<b>Được.</b> Tạo public hosted zone rồi trỏ <b>NS record</b> tại registrar về 4 name server Route 53 – không bắt buộc chuyển đăng ký." },
+
+      // ---- Hosted zone
+      { t: "zone", f: "Hosted zone là gì?", b: "Container chứa record của một tên miền và mọi subdomain; trùng tên với tên miền." },
+      { t: "zone", f: "Public và private hosted zone khác nhau thế nào?", b: "<b>Public</b>: trả lời truy vấn từ internet.<br><b>Private</b>: chỉ trả lời trong các <b>VPC đã associate</b> (hoặc qua Resolver inbound endpoint)." },
+      { t: "zone", f: "Điều kiện để VPC dùng được private hosted zone?", b: "VPC bật <code>enableDnsHostnames</code> và <code>enableDnsSupport</code> = true, và đã <b>associate</b> với zone." },
+      { t: "zone", f: "Routing policy nào KHÔNG dùng được trong private hosted zone?", b: "<b>IP-based routing</b>." },
+      { t: "zone", f: "Private hosted zone associate được VPC ở account khác không?", b: "<b>Được</b> – tạo authorization rồi associate qua CLI/API/SDK." },
+      { t: "zone", f: "NS record của hosted zone có đặc điểm gì?", b: "Liệt kê <b>4 name server</b> ở <b>4 TLD khác nhau</b> (.com, .net, .org, .co.uk) để tăng sẵn sàng. AWS khuyên không thêm/sửa/xóa NS/SOA." },
+      { t: "zone", f: "Minimum TTL trong SOA record quyết định điều gì?", b: "Thời gian <b>negative caching</b> câu trả lời NXDOMAIN/NODATA (lấy giá trị nhỏ hơn giữa minimum TTL và TTL của SOA)." },
+      { t: "zone", f: "Reusable delegation set là gì?", b: "Bộ <b>4 name server dùng chung</b> cho nhiều hosted zone; chỉ tạo qua API/CLI/SDK, không đổi được name server của zone đã tạo." },
+      { t: "zone", f: "Split-view DNS cấu hình thế nào?", b: "Tạo <b>public và private hosted zone cùng tên</b>, associate VPC với private zone; mỗi zone record riêng (vd public → ALB internet-facing, private → ALB internal)." },
+      { t: "zone", f: "Private zone example.com khớp nhưng không có record api.example.com – kết quả?", b: "<b>NXDOMAIN</b>, không chuyển ra public DNS.", x: "Bẫy split-view: quên tạo record trong private zone." },
+      { t: "zone", f: "Private hosted zone và Resolver forwarding rule cùng tên gắn cùng VPC – cái nào thắng?", b: "<b>Resolver rule thắng</b> (truy vấn bị forward về on-premises)." },
+      { t: "zone", f: "Delegate subdomain cho team khác thế nào?", b: "Tạo hosted zone cho subdomain, rồi tạo <b>NS record</b> trong zone cha trỏ tới 4 name server của zone con." },
+      { t: "zone", f: "Các bước chuyển DNS đang chạy sang Route 53 không gián đoạn?", b: "Tạo zone + record → <b>hạ TTL NS</b> xuống 60–900 s → chờ TTL cũ (2 ngày) hết → đổi NS tại registrar → theo dõi → tăng TTL lại.", x: "TTL NS điển hình 172.800 s (2 ngày). DNSSEC: gỡ DS record trước." },
+
+      // ---- Record, Alias, TTL
+      { t: "rec", f: "Record CNAME có những hạn chế gì?", b: "<b>Không tạo được ở zone apex</b>; tên đã có CNAME thì không có record khác cùng tên; tính phí truy vấn." },
+      { t: "rec", f: "Giá trị của record MX phải là gì?", b: "Tên của record <b>A/AAAA</b>, không phải CNAME. Số ưu tiên nhỏ hơn được ưu tiên hơn." },
+      { t: "rec", f: "Record CAA dùng để làm gì?", b: "Chỉ định <b>CA nào được phép cấp chứng chỉ</b> SSL/TLS cho domain (vd cho phép ACM)." },
+      { t: "rec", f: "Alias record là gì?", b: "Phần mở rộng riêng của Route 53 trỏ tới <b>tài nguyên AWS</b> được chọn hoặc record cùng zone; trả về IP hiện tại và tự theo dõi thay đổi." },
+      { t: "rec", f: "Alias target được hỗ trợ?", b: "<b>ELB</b> (ALB/NLB/CLB), <b>CloudFront</b>, <b>S3 static website</b>, <b>API Gateway</b>, VPC interface endpoint, Global Accelerator, Elastic Beanstalk, App Runner, record cùng zone…", x: "Không trỏ được tới tên DNS của EC2 instance." },
+      { t: "rec", f: "Alias vs CNAME: 4 khác biệt chính?", b: "Alias: <b>được ở apex</b>, <b>miễn phí</b> truy vấn tới tài nguyên AWS, <b>không đặt TTL</b>, có <b>Evaluate Target Health</b>.<br>CNAME: trỏ đâu cũng được nhưng không ở apex, tính phí." },
+      { t: "rec", f: "Alias tới S3 static website cần điều kiện gì về tên?", b: "Tên <b>bucket trùng tên record</b> (vd bucket www.example.com cho record www.example.com)." },
+      { t: "rec", f: "Muốn trỏ tên tới một EC2 instance thì làm gì?", b: "<b>A record với Elastic IP</b>, hoặc đặt sau load balancer rồi alias tới LB." },
+      { t: "rec", f: "TTL dài và TTL ngắn – đánh đổi?", b: "<b>Dài</b>: ít truy vấn ⇒ rẻ, nhanh (cache hit), nhưng đổi IP chậm có hiệu lực.<br><b>Ngắn</b>: thay đổi nhanh, nhưng tốn phí hơn." },
+      { t: "rec", f: "Đổi record xong mà một số người dùng vẫn vào server cũ – vì sao?", b: "Do <b>TTL / cache</b> của resolver. Lần sau hạ TTL trước khi thay đổi." },
+
+      // ---- Routing policy
+      { t: "pol", f: "Simple routing có health check không?", b: "<b>Không.</b> Một record có thể nhiều IP, trả tất cả theo thứ tự ngẫu nhiên – IP chết vẫn được trả." },
+      { t: "pol", f: "Weighted routing tính tỉ lệ thế nào? Weight trong khoảng nào?", b: "Tỉ lệ = weight / tổng weight. Weight <b>0–255</b>. Weight 0 ⇒ ngừng gửi traffic.", x: "Mọi record weight 0 ⇒ chia đều. Record weight 0 chỉ dùng khi mọi record weight &gt; 0 đều unhealthy." },
+      { t: "pol", f: "Latency-based routing chọn câu trả lời dựa trên gì?", b: "<b>Region có độ trễ thấp nhất</b> tới người dùng, theo dữ liệu đo đạc thay đổi theo thời gian." },
+      { t: "pol", f: "Geolocation routing: vùng chồng lấn và vị trí không khớp xử lý thế nào?", b: "Chồng lấn ⇒ <b>vùng nhỏ nhất thắng</b> (Canada thắng Bắc Mỹ). Không khớp ⇒ dùng <b>Default record</b>; không có default ⇒ “<b>no answer</b>”." },
+      { t: "pol", f: "Geoproximity routing và bias?", b: "Gửi tới tài nguyên <b>gần nhất</b>; <b>bias +1…+99</b> mở rộng vùng, <b>−1…−99</b> thu hẹp. Biased distance = distance × [1 − bias/100].", x: "Bản đồ trực quan bias chỉ có trong Traffic Flow." },
+      { t: "pol", f: "Multivalue answer routing trả bao nhiêu record?", b: "Tối đa <b>8 record khỏe</b>, chọn ngẫu nhiên; tất cả unhealthy ⇒ trả tối đa 8 record unhealthy.", x: "Không phải load balancer: không sticky session, không kiểm tra layer 7." },
+      { t: "pol", f: "IP-based routing hoạt động thế nào?", b: "Bạn khai <b>CIDR block → CIDR location → CIDR collection</b>; record tham chiếu location. Prefix dài nhất IPv4 <b>/24</b>, IPv6 <b>/48</b>.", x: "Không dùng trong private hosted zone; 5 collection/account." },
+      { t: "pol", f: "Geolocation khác Latency ở điểm nào?", b: "<b>Geolocation</b>: theo vị trí/quốc gia người dùng (tuân thủ, bản quyền).<br><b>Latency</b>: Region phản hồi nhanh nhất (hiệu năng) – có thể gửi sang nước khác." },
+      { t: "pol", f: "EDNS0 (edns-client-subnet) giúp gì?", b: "Resolver gửi một phần IP người dùng để Route 53 ước lượng <b>vị trí chính xác hơn</b> (latency, geolocation, geoproximity)." },
+      { t: "pol", f: "Traffic Flow là gì?", b: "Trình soạn thảo trực quan tạo <b>traffic policy</b> lồng nhiều routing policy thành cây (vd latency → weighted → ALB), có version." },
+
+      // ---- Health check
+      { t: "hc", f: "3 loại health check của Route 53?", b: "<b>Endpoint</b> (IP/domain, HTTP/HTTPS/TCP) · <b>Calculated</b> (theo các health check con) · <b>CloudWatch alarm</b> (theo data stream của metric)." },
+      { t: "hc", f: "Khi nào endpoint được coi là healthy?", b: "Khi <b>hơn 18%</b> health checker báo healthy." },
+      { t: "hc", f: "Request interval của health check?", b: "<b>30 giây</b> (standard) hoặc <b>10 giây</b> (fast, thêm phí); không đổi được sau khi tạo." },
+      { t: "hc", f: "Điều kiện pass của health check HTTP/HTTPS?", b: "Mở TCP trong <b>4 giây</b>, nhận status <b>2xx/3xx</b> trong <b>2 giây</b>. String matching: chuỗi nằm trong <b>5.120 byte</b> đầu body.", x: "HTTPS check không xác thực chứng chỉ." },
+      { t: "hc", f: "Health check cho instance chỉ có IP private làm thế nào?", b: "Tạo <b>CloudWatch metric + alarm</b> (vd StatusCheckFailed) rồi tạo health check dựa trên <b>CloudWatch alarm</b>.", x: "Health checker nằm ngoài VPC, không kiểm tra được IP private." },
+      { t: "hc", f: "Calculated health check dùng khi nào?", b: "Khi trạng thái phụ thuộc nhiều health check con: AND, OR, “ít nhất x trong y” (tối đa 256 child).", x: "Không lồng calculated trong calculated." },
+      { t: "hc", f: "Evaluate Target Health là gì?", b: "Với <b>alias</b>, Route 53 dùng sức khỏe của chính tài nguyên đích (vd target group của ALB) thay cho health check riêng." },
+      { t: "hc", f: "Failover routing: cả primary và secondary unhealthy thì trả gì?", b: "Trả <b>primary</b>. Secondary không gắn health check ⇒ primary unhealthy thì luôn trả secondary." },
+      { t: "hc", f: "Không record nào healthy thì Route 53 làm gì?", b: "Coi <b>tất cả là healthy</b> và chọn theo routing policy (vẫn phải trả lời)." },
+      { t: "hc", f: "Active-active và active-passive failover cấu hình bằng gì?", b: "<b>Active-active</b>: mọi policy trừ Failover + health check.<br><b>Active-passive</b>: <b>Failover</b> policy, hoặc weighted với weight 0 cho bên dự phòng." },
+      { t: "hc", f: "Muốn nhận thông báo khi health check fail?", b: "CloudWatch alarm trên metric <b>HealthCheckStatus</b> + <b>SNS</b>, đều ở <b>us-east-1</b>." },
+      { t: "hc", f: "Thời gian failover bằng DNS ≈ bao lâu?", b: "Thời gian <b>health check phát hiện lỗi + TTL</b>. Muốn nhanh ⇒ TTL thấp (vd 60 s) hoặc Global Accelerator." },
+      { t: "hc", f: "Disabled và Invert health check khác nhau thế nào?", b: "<b>Disabled</b>: luôn coi healthy (traffic vẫn tới).<br><b>Invert</b>: đảo trạng thái – dùng để chủ động rút traffic." },
+
+      // ---- Resolver
+      { t: "res", f: "Route 53 (VPC) Resolver nằm ở địa chỉ nào?", b: "<b>VPC+2</b> (vd 10.0.0.2 cho VPC 10.0.0.0/16) – AmazonProvidedDNS; có sẵn trong mọi VPC." },
+      { t: "res", f: "Inbound endpoint dùng cho chiều nào?", b: "<b>On-premises → VPC</b>: DNS on-prem dùng <b>conditional forwarder</b> trỏ tới IP của inbound endpoint để phân giải private hosted zone." },
+      { t: "res", f: "Outbound endpoint + forwarding rule dùng cho chiều nào?", b: "<b>VPC → on-premises</b>: rule cho domain (vd corp.example.com) forward tới IP DNS server on-prem; rule associate với VPC." },
+      { t: "res", f: "Vì sao on-premises không hỏi thẳng VPC+2 được?", b: "Địa chỉ <b>VPC+2 chỉ dùng được từ trong VPC</b> ⇒ cần inbound endpoint (qua VPN/DX)." },
+      { t: "res", f: "Nhiều account/VPC cần cùng forwarding rule – làm gì?", b: "Chia sẻ rule qua <b>AWS RAM</b> (hoặc dùng <b>Route 53 Profiles</b>)." },
+      { t: "res", f: "Nhiều Resolver rule cùng khớp – rule nào thắng?", b: "Rule có <b>domain cụ thể nhất</b>." },
+      { t: "res", f: "Quota Resolver cần nhớ?", b: "<b>6</b> IP mỗi endpoint · <b>10.000</b> truy vấn UDP/giây mỗi IP · <b>4</b> endpoint/Region/account · <b>1.000</b> rule · <b>300</b> VPC mỗi private hosted zone." },
+      { t: "res", f: "Route 53 Profiles là gì?", b: "Gom private hosted zone, Resolver rule, DNS Firewall rule group… thành profile áp dụng cho <b>tới 1.000 VPC</b>, chia sẻ qua RAM." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>point the apex domain to an ALB / CloudFront / S3 website</i>” ⇒ ?", b: "<b>Alias record</b> (A/AAAA)." },
+      { t: "kw", f: "Đề có “<i>send 10% of traffic to the new version</i>”, “<i>canary</i>”, “<i>A/B testing</i>” ⇒ ?", b: "<b>Weighted routing</b>." },
+      { t: "kw", f: "Đề có “<i>route users to the Region with the lowest latency</i>” ⇒ ?", b: "<b>Latency routing</b>." },
+      { t: "kw", f: "Đề có “<i>users in Germany must be served from eu-central-1</i>”, “<i>distribution rights</i>” ⇒ ?", b: "<b>Geolocation</b> + default record." },
+      { t: "kw", f: "Đề có “<i>static maintenance page in S3 when the site is down</i>” ⇒ ?", b: "<b>Failover routing</b>: primary = ALB (Evaluate Target Health), secondary = S3 website." },
+      { t: "kw", f: "Đề có “<i>return multiple IPs, only healthy ones, without a load balancer</i>” ⇒ ?", b: "<b>Multivalue answer</b>." },
+      { t: "kw", f: "Đề có “<i>route users from a specific ISP / IP range</i>” ⇒ ?", b: "<b>IP-based routing</b>." },
+      { t: "kw", f: "Đề có “<i>shift more traffic to a Region by expanding its geographic area</i>” ⇒ ?", b: "<b>Geoproximity</b> (bias dương)." },
+      { t: "kw", f: "Đề có “<i>on-premises servers must resolve records in a private hosted zone</i>” ⇒ ?", b: "<b>Resolver inbound endpoint</b> + conditional forwarder." },
+      { t: "kw", f: "Đề có “<i>EC2 must resolve names in the on-premises domain</i>” ⇒ ?", b: "<b>Resolver outbound endpoint</b> + forwarding rule." },
+      { t: "kw", f: "Đề có “<i>same domain, different answers for internal and external users</i>” ⇒ ?", b: "<b>Split-view DNS</b>: public + private hosted zone cùng tên." }
+    ],
+
+    pairs: [
+      ["DNS", "Hệ thống dịch tên miền sang địa chỉ IP"],
+      ["Domain registrar", "Công ty ICANN công nhận để bán tên miền"],
+      ["TLD", "Phần cuối tên miền: .com, .org, .vn"],
+      ["DNS resolver", "Trung gian hỏi lần lượt name server, cache kết quả"],
+      ["Authoritative name server", "Nắm thông tin chính thức của một zone"],
+      ["Hosted zone", "Container chứa record của tên miền và subdomain"],
+      ["Private hosted zone", "Chỉ trả lời trong VPC đã associate"],
+      ["Zone apex", "Tên gốc của zone (example.com), không đặt CNAME"],
+      ["Alias record", "Trỏ tới tài nguyên AWS, dùng ở apex, miễn phí"],
+      ["CNAME", "Trỏ một tên tới tên miền khác, không ở apex"],
+      ["TTL", "Số giây resolver được cache câu trả lời"],
+      ["Negative caching", "Cache NXDOMAIN/NODATA theo minimum TTL của SOA"],
+      ["Reusable delegation set", "Cùng 4 name server cho nhiều hosted zone"],
+      ["Split-view DNS", "Public + private zone cùng tên, trả lời khác nhau"],
+      ["Weighted routing", "Chia traffic theo tỉ lệ weight 0–255"],
+      ["Failover routing", "Primary/secondary cho active-passive"],
+      ["Geolocation routing", "Theo vị trí người dùng, cần default record"],
+      ["Bias", "−99 → +99, thu hẹp/mở rộng vùng geoproximity"],
+      ["Multivalue answer", "Tối đa 8 record khỏe, chọn ngẫu nhiên"],
+      ["CIDR collection", "Tập dải IP người dùng cho IP-based routing"],
+      ["Calculated health check", "Parent theo dõi tối đa 256 health check con"],
+      ["Evaluate Target Health", "Alias dùng sức khỏe của tài nguyên đích"],
+      ["VPC Resolver", "DNS đệ quy ở VPC+2, có sẵn mọi VPC"],
+      ["Inbound endpoint", "Cho on-premises hỏi DNS vào VPC"],
+      ["Outbound endpoint", "Cho VPC forward truy vấn ra on-premises"],
+      ["Conditional forwarder", "DNS on-prem gửi một domain tới inbound endpoint"],
+      ["Route 53 Profiles", "Áp cấu hình DNS cho nhiều VPC/account"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn routing policy",
+        desc: "Đọc tình huống đề và chọn routing policy phù hợp nhất.",
+        buckets: ["Simple", "Weighted", "Latency", "Failover", "Geolocation", "Geoproximity", "Multivalue answer", "IP-based"],
+        items: [
+          ["Một web server duy nhất, không cần health check", 0, "record DNS chuẩn"],
+          ["Chuyển dần 10% traffic sang phiên bản mới", 1, "tỉ lệ theo weight"],
+          ["Blue/green: tăng green 10 → 50 → 100", 1, "điều chỉnh weight dần"],
+          ["Người dùng toàn cầu đi tới Region phản hồi nhanh nhất", 2, "dựa trên đo độ trễ"],
+          ["Site chính hỏng thì trả trang bảo trì trên S3", 3, "active-passive primary/secondary"],
+          ["Người dùng Đức phải dùng tài nguyên ở eu-central-1 vì luật", 4, "theo quốc gia, cần default record"],
+          ["Nội dung theo ngôn ngữ / bản quyền theo quốc gia", 4, "use case trong tài liệu"],
+          ["Mở rộng vùng phục vụ của một Region bằng bias", 5, "geoproximity có bias"],
+          ["Trả nhiều IP, chỉ IP còn sống, không có load balancer", 6, "tối đa 8 record khỏe"],
+          ["Người dùng của một ISP cụ thể đi endpoint riêng", 7, "ánh xạ CIDR người dùng"]
+        ]
+      },
+      {
+        title: "Alias hay CNAME?",
+        desc: "Đặc điểm hoặc tình huống sau thuộc Alias record hay CNAME record?",
+        buckets: ["Alias record", "CNAME record"],
+        items: [
+          ["Tạo được ở zone apex example.com", 0, "giao thức DNS cấm CNAME ở apex"],
+          ["Miễn phí truy vấn tới tài nguyên AWS", 0, "CNAME tính phí"],
+          ["Có Evaluate Target Health", 0, "CNAME phải gắn health check riêng"],
+          ["Không đặt được TTL khi trỏ tới ALB/CloudFront", 0, "dùng TTL của tài nguyên"],
+          ["Hiện như A/AAAA khi dig", 0, "trả về IP trực tiếp"],
+          ["Trỏ app.example.com tới myapp.herokuapp.com", 1, "alias không trỏ ra ngoài AWS"],
+          ["Trỏ tới bất kỳ tên DNS nào", 1, "kể cả ngoài Route 53"],
+          ["Trỏ tới record trong Route 53 bị tính 2 truy vấn", 1, "đặc điểm tính phí CNAME"],
+          ["Chuyển hướng mọi type truy vấn", 1, "alias phải khớp type"]
+        ]
+      },
+      {
+        title: "Loại health check / cơ chế phù hợp",
+        desc: "Chọn loại health check hoặc cơ chế phù hợp với tình huống.",
+        buckets: ["Endpoint health check", "Calculated health check", "CloudWatch alarm health check", "Evaluate Target Health"],
+        items: [
+          ["Kiểm tra web server có Elastic IP qua HTTP /health", 0, "health checker gửi request qua internet"],
+          ["Kiểm tra chuỗi “OK” trong body trả về", 0, "string matching trong 5.120 byte đầu"],
+          ["Unhealthy khi ít hơn 2 trong 4 web server khỏe", 1, "quy tắc x trong y"],
+          ["Gộp trạng thái nhiều health check bằng AND/OR", 1, "parent – child"],
+          ["Instance chỉ có IP private", 2, "health checker ở ngoài VPC"],
+          ["Failover theo tỉ lệ lỗi ứng dụng hoặc DynamoDB throttles", 2, "dựa trên data stream metric"],
+          ["Alias tới ALB, dùng sức khỏe target group", 3, "không cần health check riêng"],
+          ["Alias tới một nhóm weighted record", 3, "còn một record khỏe ⇒ alias healthy"]
+        ]
+      },
+      {
+        title: "Inbound hay outbound Resolver endpoint?",
+        desc: "Tình huống DNS lai sau cần inbound endpoint hay outbound endpoint + rule?",
+        buckets: ["Inbound endpoint", "Outbound endpoint + rule"],
+        items: [
+          ["Server on-prem phân giải db.aws.example.com trong private zone", 0, "on-prem → VPC"],
+          ["DNS on-prem cấu hình conditional forwarder tới IP trong VPC", 0, "forwarder trỏ tới inbound IP"],
+          ["On-prem phân giải tên interface endpoint với private DNS", 0, "cần inbound endpoint"],
+          ["EC2 phân giải app.corp.example.com trên DNS on-prem", 1, "VPC → on-prem"],
+          ["Forward domain corp.local tới DNS server 192.168.1.10", 1, "forwarding rule"],
+          ["Chia sẻ rule cho nhiều account qua RAM", 1, "forwarding rule chia sẻ được"],
+          ["Một endpoint dùng chung cho nhiều VPC cùng Region", 1, "outbound endpoint dùng chung được"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Route 53 có ba chức năng: domain registration, DNS routing, health checking.", true, "Dùng riêng lẻ hoặc kết hợp."],
+      ["Traffic ứng dụng đi qua Route 53 trước khi tới ALB.", false, "Route 53 chỉ trả lời DNS; traffic đi thẳng."],
+      ["Control plane của Route 53 nằm ở us-east-1.", true, "Data plane phân tán toàn cầu 200+ PoP."],
+      ["Muốn dùng Route 53 làm DNS thì bắt buộc chuyển đăng ký tên miền về Route 53.", false, "Chỉ cần trỏ NS tại registrar về Route 53."],
+      ["Mỗi hosted zone có 4 name server authoritative.", true, "Ở 4 TLD khác nhau."],
+      ["Private hosted zone yêu cầu VPC bật enableDnsHostnames và enableDnsSupport.", true, "Thiếu một trong hai thì không phân giải được."],
+      ["Private hosted zone hỗ trợ IP-based routing.", false, "IP-based là policy duy nhất không hỗ trợ."],
+      ["Private hosted zone có thể associate với VPC ở account khác.", true, "Tạo authorization rồi associate."],
+      ["Private zone khớp mà thiếu record thì truy vấn được chuyển ra public DNS.", false, "Trả NXDOMAIN."],
+      ["Resolver forwarding rule thắng private hosted zone trùng tên gắn cùng VPC.", true, "Truy vấn bị forward về on-premises."],
+      ["Có thể tạo CNAME ở zone apex example.com.", false, "Giao thức DNS cấm; dùng alias."],
+      ["Truy vấn alias tới tài nguyên AWS được miễn phí.", true, "CNAME thì tính phí."],
+      ["Có thể đặt TTL cho alias trỏ tới ALB.", false, "Alias tới tài nguyên AWS dùng TTL của tài nguyên."],
+      ["Alias có thể trỏ tới tên DNS của một EC2 instance.", false, "Dùng A record với Elastic IP hoặc đặt sau LB."],
+      ["Giá trị record MX có thể là một CNAME.", false, "Phải là tên của A/AAAA."],
+      ["TTL dài giúp giảm số truy vấn và chi phí Route 53.", true, "Nhưng thay đổi có hiệu lực chậm."],
+      ["Trước khi migration DNS nên hạ TTL của NS record.", true, "Xuống 60–900 giây, chờ TTL cũ hết rồi đổi NS."],
+      ["Simple routing loại bỏ IP không khỏe khỏi câu trả lời.", false, "Simple không có health check."],
+      ["Weight của weighted record nhận giá trị 0–255.", true, "Weight 0 ⇒ ngừng gửi traffic."],
+      ["Nếu mọi weighted record đều có weight 0, Route 53 không trả lời.", false, "Trả lời với xác suất như nhau."],
+      ["Latency routing luôn gửi người dùng tới Region gần nhất về địa lý.", false, "Chọn theo độ trễ đo được, có thể thay đổi theo thời gian."],
+      ["Geolocation không có default record thì người dùng vị trí không khớp nhận “no answer”.", true, "Nên tạo default record."],
+      ["Với geolocation, record Canada thắng record Bắc Mỹ cho người dùng Canada.", true, "Vùng nhỏ nhất thắng."],
+      ["Bias dương trong geoproximity thu hẹp vùng phục vụ của tài nguyên.", false, "Bias dương mở rộng, âm thu hẹp."],
+      ["Multivalue answer trả tối đa 8 record khỏe.", true, "Chọn ngẫu nhiên."],
+      ["Multivalue answer có thể thay thế hoàn toàn load balancer.", false, "Không sticky session, không layer 7."],
+      ["Endpoint healthy khi hơn 18% health checker báo healthy.", true, "Tránh kết luận sai do mạng cục bộ."],
+      ["Health checker của Route 53 kiểm tra được IP private trong VPC.", false, "Dùng health check theo CloudWatch alarm."],
+      ["Request interval của health check có thể đổi từ 30 s sang 10 s sau khi tạo.", false, "Không đổi được sau khi tạo."],
+      ["Failover routing: cả primary và secondary unhealthy thì Route 53 trả primary.", true, "Theo tài liệu Route 53."],
+      ["Không record nào healthy thì Route 53 coi tất cả là healthy.", true, "Vẫn phải trả lời truy vấn."],
+      ["Health check HTTPS kiểm tra chứng chỉ còn hạn.", false, "Không xác thực chứng chỉ."],
+      ["Tắt (Disabled) health check khiến Route 53 coi tài nguyên unhealthy.", false, "Disabled ⇒ luôn coi healthy; dùng Invert để rút traffic."],
+      ["On-premises có thể gửi truy vấn thẳng tới địa chỉ VPC+2.", false, "Cần Resolver inbound endpoint."],
+      ["Outbound endpoint + forwarding rule giúp EC2 phân giải tên miền on-premises.", true, "Chạy qua VPN/DX."],
+      ["Resolver forwarding rule có thể chia sẻ cho account khác qua AWS RAM.", true, "Hoặc dùng Route 53 Profiles."]
+    ],
+
+    map: {
+      t: "Bài 24 · Amazon Route 53",
+      c: [
+        { t: "Tổng quan", icon: "svc/Amazon-Route-53.svg", c: [
+          { t: "3 chức năng", v: "registration · DNS routing · health check" },
+          { t: "Luồng truy vấn", v: "resolver → root → TLD → Route 53 → cache TTL" },
+          { t: "Control plane", v: "us-east-1" },
+          { t: "Data plane", v: "200+ PoP, SLA 100%" },
+          { t: "Quota", v: "500 zone/account · 10.000 record/zone" }
+        ] },
+        { t: "Hosted zone", icon: "res/Amazon-Route-53-Hosted-Zone.svg", c: [
+          { t: "Public", v: "internet, NS + SOA tự tạo" },
+          { t: "Private", v: "VPC associate, cần DnsHostnames + DnsSupport, không IP-based" },
+          { t: "Split-view", v: "public + private cùng tên" },
+          { t: "Chồng lấn", v: "most specific · thiếu record ⇒ NXDOMAIN · rule thắng zone" },
+          { t: "Migration", v: "hạ TTL NS → chờ 2 ngày → đổi NS" }
+        ] },
+        { t: "Record & TTL", icon: "res/Amazon-Route-53_Route-Table.svg", c: [
+          { t: "Alias", v: "apex, miễn phí, không TTL, Evaluate Target Health" },
+          { t: "CNAME", v: "trỏ đâu cũng được, không ở apex, tính phí" },
+          { t: "MX", v: "trỏ tới A/AAAA, số nhỏ ưu tiên" },
+          { t: "TTL dài", v: "rẻ, chậm cập nhật" },
+          { t: "TTL ngắn", v: "đổi nhanh, tốn phí" }
+        ] },
+        { t: "8 routing policy", icon: "svc/Amazon-Route-53.svg", c: [
+          { t: "Simple", v: "không health check" },
+          { t: "Weighted", v: "0–255, canary/blue-green" },
+          { t: "Latency", v: "Region nhanh nhất" },
+          { t: "Failover", v: "active-passive" },
+          { t: "Geolocation", v: "vị trí người dùng, cần default" },
+          { t: "Geoproximity", v: "khoảng cách + bias ±99" },
+          { t: "Multivalue", v: "≤ 8 record khỏe" },
+          { t: "IP-based", v: "CIDR collection, không private zone" }
+        ] },
+        { t: "Health check", icon: "res/Amazon-CloudWatch_Alarm.svg", c: [
+          { t: "Loại", v: "endpoint · calculated · CloudWatch alarm" },
+          { t: "Healthy", v: "&gt; 18% checker · 30 s / 10 s" },
+          { t: "HTTP(S)", v: "TCP 4 s + 2xx/3xx trong 2 s" },
+          { t: "IP private", v: "dùng CloudWatch alarm" },
+          { t: "Quy tắc chọn", c: [
+            { t: "Không record nào khỏe", v: "coi tất cả healthy" },
+            { t: "Failover cả hai hỏng", v: "trả primary" }
+          ] },
+          { t: "Failover time", v: "phát hiện lỗi + TTL" }
+        ] },
+        { t: "Resolver & DNS lai", icon: "res/Amazon-Route-53_Resolver.svg", c: [
+          { t: "VPC Resolver", v: "VPC+2, có sẵn mọi VPC" },
+          { t: "Inbound", v: "on-prem → VPC, conditional forwarder" },
+          { t: "Outbound + rule", v: "VPC → on-prem, rule chia sẻ qua RAM" },
+          { t: "Yêu cầu", v: "VPN/DX, IP ở ≥ 2 AZ" },
+          { t: "Profiles", v: "cấu hình DNS cho tới 1.000 VPC" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

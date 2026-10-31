@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 20 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Virtual-Private-Cloud.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="20" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-20-vpc-basics.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "vpc", name: "VPC & default VPC" },
+      { id: "cidr", name: "CIDR & địa chỉ IP" },
+      { id: "sub", name: "Subnet & route table" },
+      { id: "igw", name: "Internet Gateway & IPv6" },
+      { id: "nat", name: "NAT Gateway & NAT instance" },
+      { id: "bastion", name: "Bastion & truy cập quản trị" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- VPC
+      { t: "vpc", f: "Amazon VPC là gì?", b: "Mạng ảo <b>cô lập logic</b> do bạn định nghĩa, thuộc <b>một Region</b> và trải trên mọi AZ của Region đó." },
+      { t: "vpc", f: "Default VPC có CIDR và subnet thế nào?", b: "CIDR <b>172.31.0.0/16</b>; một default subnet <b>/20</b> ở mỗi AZ (4.096 địa chỉ)." },
+      { t: "vpc", f: "AWS cấu hình sẵn gì cho default VPC?", b: "Gắn <b>IGW</b>, route <b>0.0.0.0/0 → igw</b> trong main route table, default SG, default NACL, DHCP options; instance <b>tự nhận public IPv4</b>.", x: "⇒ Mọi default subnet đều là public subnet." },
+      { t: "vpc", f: "Nondefault VPC mới tạo có gì?", b: "Chỉ có <b>local route</b> trong main route table – không IGW, không tự gán public IP." },
+      { t: "vpc", f: "IAM deny <code>CreateInternetGateway</code> có chặn được IGW của default VPC không?", b: "<b>Không</b> – AWS tự tạo IGW khi gọi <code>CreateDefaultVpc</code>. Phải deny cả <b>CreateDefaultVpc</b>.", x: "Chặn tập trung traffic qua IGW ⇒ VPC Block Public Access." },
+      { t: "vpc", f: "VPC Block Public Access có những chế độ nào?", b: "<b>Bidirectional</b> (chặn cả hai chiều qua IGW và egress-only IGW) và <b>ingress-only</b> (chặn chiều vào, vẫn cho NAT/EIGW đi ra); có exclusion cho VPC/subnet." },
+      { t: "vpc", f: "Thành phần VPC nào miễn phí, thành phần nào tính phí?", b: "<b>Miễn phí</b>: VPC, subnet, route table, IGW, egress-only IGW, private IPv4.<br><b>Tính phí</b>: NAT gateway, <b>mọi public IPv4</b>, Reachability Analyzer, Traffic Mirroring, IPAM…" },
+
+      // ---- CIDR
+      { t: "cidr", f: "Kích thước cho phép của VPC và subnet IPv4?", b: "Từ <b>/16</b> (65.536 địa chỉ) tới <b>/28</b> (16 địa chỉ)." },
+      { t: "cidr", f: "3 dải private RFC 1918?", b: "<b>10.0.0.0/8</b> · <b>172.16.0.0/12</b> · <b>192.168.0.0/16</b>." },
+      { t: "cidr", f: "5 địa chỉ AWS giữ lại trong subnet 10.0.0.0/24?", b: "<b>.0</b> network · <b>.1</b> VPC router · <b>.2</b> DNS · <b>.3</b> dự phòng · <b>.255</b> broadcast." },
+      { t: "cidr", f: "Số IP dùng được trong subnet /24, /26, /27, /28?", b: "/24 = <b>251</b> · /26 = <b>59</b> · /27 = <b>27</b> · /28 = <b>11</b>.", x: "Luôn lấy 2^(32 − prefix) rồi trừ 5." },
+      { t: "cidr", f: "Cần ít nhất 100 IP dùng được – subnet nhỏ nhất là gì?", b: "<b>/25</b> = 128 − 5 = <b>123</b> IP. (/26 chỉ 59.)" },
+      { t: "cidr", f: "VPC hết địa chỉ IP thì làm gì?", b: "Thêm <b>secondary IPv4 CIDR</b> rồi tạo subnet mới. <b>Không resize</b> được CIDR đã có.", x: "Mặc định 5 CIDR/VPC, tăng tới 50; AWS tự thêm local route." },
+      { t: "cidr", f: "Quota mặc định: VPC/Region, subnet/VPC, IPv4 CIDR/VPC?", b: "<b>5</b> VPC/Region · <b>200</b> subnet/VPC · <b>5</b> IPv4 CIDR/VPC (tới 50)." },
+      { t: "cidr", f: "Dải nào không được dùng làm CIDR VPC?", b: "0.0.0.0/8, <b>127.0.0.0/8</b> (loopback), <b>169.254.0.0/16</b> (link-local), <b>224.0.0.0/4</b> (multicast); nên tránh 172.17.0.0/16." },
+      { t: "cidr", f: "Nhập CIDR 100.68.0.18/18 thì AWS tạo gì?", b: "CIDR được chuẩn hóa thành <b>100.68.0.0/18</b>." },
+      { t: "cidr", f: "Vì sao phải quy hoạch CIDR không chồng lấn từ đầu?", b: "VPC sẽ <b>peering</b>, nối Transit Gateway/Direct Connect hoặc on-premises ⇒ CIDR <b>không được chồng lấn</b>." },
+      { t: "cidr", f: "IPv6 CIDR của VPC và subnet có kích thước thế nào?", b: "VPC: /44 tới /60 (Amazon-provided thường <b>/56</b>), tối đa 5 block. Subnet: /44 tới /64, phổ biến <b>/64</b>." },
+      { t: "cidr", f: "VPC chỉ có subnet IPv6-only có cần IPv4 CIDR không?", b: "<b>Có.</b> Mọi VPC đều phải có IPv4 CIDR." },
+
+      // ---- Subnet & route
+      { t: "sub", f: "Một subnet có thể trải nhiều AZ không?", b: "<b>Không.</b> Subnet nằm trọn trong <b>một AZ</b>; HA ⇒ subnet ở ≥ 2 AZ." },
+      { t: "sub", f: "Điều gì quyết định subnet là public hay private?", b: "<b>Route table</b> gắn với subnet. AWS không có “công tắc” public/private." },
+      { t: "sub", f: "Phân biệt public, private, VPN-only, isolated subnet.", b: "<b>Public</b>: route tới IGW.<br><b>Private</b>: không route IGW, ra Internet qua NAT.<br><b>VPN-only</b>: route tới VGW, không IGW.<br><b>Isolated</b>: không route ra ngoài VPC." },
+      { t: "sub", f: "Instance có public IP nhưng subnet không có route tới IGW thì sao?", b: "<b>Vẫn không ra Internet được.</b>", x: "Cần đủ: IGW gắn VPC + route tới IGW + public IP + SG/NACL cho phép." },
+      { t: "sub", f: "Main route table là gì?", b: "Route table có sẵn khi tạo VPC, điều khiển mọi subnet <b>chưa gắn tường minh</b>. Không xóa được, có thể thay bằng custom route table." },
+      { t: "sub", f: "Best practice với main route table?", b: "Giữ <b>chỉ local route</b>, gắn tường minh từng subnet với custom route table ⇒ subnet quên gắn không vô tình thành public." },
+      { t: "sub", f: "Local route là gì?", b: "Route cho giao tiếp <b>trong VPC</b>, có trong <b>mọi</b> route table; mỗi CIDR của VPC có một local route." },
+      { t: "sub", f: "Thứ tự ưu tiên chọn route?", b: "1. <b>Longest prefix match</b><br>2. Trùng hoàn toàn: <b>static</b> route<br>3. Route tham chiếu <b>prefix list</b><br>4. <b>Propagated</b>: DX BGP → VPN static → VPN BGP" },
+      { t: "sub", f: "Edge association (gateway route table) dùng để làm gì?", b: "Gắn route table vào <b>IGW/VGW</b> để đẩy traffic đi vào qua <b>firewall/IDS appliance</b> (GWLB endpoint) trước khi tới subnet." },
+      { t: "sub", f: "Một subnet gắn được bao nhiêu route table?", b: "<b>Một</b> tại một thời điểm; một route table gắn được nhiều subnet." },
+      { t: "sub", f: "Quota route table?", b: "<b>200</b> route table/VPC · <b>500</b> route không-propagated/bảng (tới 1.000) · <b>100</b> propagated route/bảng (không tăng)." },
+      { t: "sub", f: "Route 0.0.0.0/0 có bao gồm IPv6 không?", b: "<b>Không.</b> IPv6 cần route riêng <b>::/0</b>; SG/NACL cũng có rule IPv4 và IPv6 riêng." },
+      { t: "sub", f: "Công cụ phân tích vì sao không tới được đích?", b: "<b>Reachability Analyzer</b>: phân tích route table, SG, NACL giữa nguồn và đích." },
+
+      // ---- IGW & IPv6
+      { t: "igw", f: "Đặc điểm của Internet Gateway?", b: "<b>Scale ngang, dự phòng, HA</b>, không giới hạn băng thông, <b>miễn phí</b>; hai chiều; hỗ trợ IPv4 và IPv6." },
+      { t: "igw", f: "IGW làm NAT kiểu gì với IPv4?", b: "<b>NAT 1:1</b>: đổi private IP ↔ public IPv4/Elastic IP của instance. Instance không “thấy” public IP trên ENI." },
+      { t: "igw", f: "Một VPC gắn được bao nhiêu IGW?", b: "<b>Một</b> IGW tại một thời điểm.", x: "Phương án “tạo 2 IGW cho HA” luôn sai." },
+      { t: "igw", f: "Checklist để instance ra Internet qua IGW?", b: "1. Attach IGW vào VPC<br>2. Route 0.0.0.0/0 (và/hoặc ::/0) → igw<br>3. Public IPv4/EIP hoặc IPv6<br>4. SG + NACL cho phép" },
+      { t: "igw", f: "Egress-only internet gateway là gì?", b: "“NAT gateway của <b>IPv6</b>”: chỉ cho IPv6 đi ra, chặn Internet khởi tạo vào; <b>stateful</b>, không dịch địa chỉ, <b>miễn phí</b>." },
+      { t: "igw", f: "Route cho egress-only IGW?", b: "<b>::/0 → eigw-id</b> trong route table của subnet." },
+      { t: "igw", f: "IGW, NAT gateway, egress-only IGW có gắn security group được không?", b: "<b>Không</b> – cả ba đều không. Kiểm soát bằng NACL của subnet." },
+      { t: "igw", f: "Workload IPv6-only cần gọi dịch vụ chỉ có IPv4 ⇒ dùng gì?", b: "<b>NAT64</b> trên NAT gateway + <b>DNS64</b> của Route 53 Resolver." },
+
+      // ---- NAT
+      { t: "nat", f: "NAT gateway làm gì?", b: "Cho instance ở private subnet <b>đi ra</b> ngoài VPC, nhưng bên ngoài <b>không khởi tạo kết nối vào</b> được." },
+      { t: "nat", f: "Public NAT gateway đặt ở đâu và cần gì?", b: "Ở <b>public subnet</b>, bắt buộc gắn <b>Elastic IP</b> lúc tạo; route ra IGW." },
+      { t: "nat", f: "Private NAT gateway dùng khi nào?", b: "Private subnet nói chuyện với VPC khác/on-premises qua TGW/VGW, đặc biệt khi <b>CIDR chồng lấn</b>. Không gắn được EIP." },
+      { t: "nat", f: "Thông số hiệu năng của NAT gateway?", b: "Băng thông <b>5 → 100 Gbps</b> · <b>1M → 10M pps</b> · <b>55.000</b> kết nối đồng thời mỗi IP tới mỗi đích · tối đa <b>8 IP</b> (zonal)." },
+      { t: "nat", f: "Vì sao cần một NAT gateway mỗi AZ?", b: "NAT gateway là tài nguyên <b>zonal</b>: AZ chứa NAT sập ⇒ AZ khác dùng chung mất Internet. Route private subnet tới NAT <b>cùng AZ</b> còn tránh phí cross-AZ." },
+      { t: "nat", f: "Regional NAT gateway khác zonal thế nào?", b: "<b>Không cần public subnet</b>, tự mở rộng theo AZ có workload, một NAT ID cho mọi AZ, tới <b>32 IP/AZ</b>.", x: "Không hỗ trợ private NAT." },
+      { t: "nat", f: "Chi phí NAT gateway tính thế nào? Cách giảm?", b: "Theo <b>giờ</b> + <b>GB dữ liệu xử lý</b>. Giảm: NAT cùng AZ, dùng <b>gateway endpoint S3/DynamoDB</b> (miễn phí) hoặc interface endpoint." },
+      { t: "nat", f: "NAT instance cần cấu hình đặc biệt gì?", b: "Ở public subnet, có public IP/EIP, <b>tắt source/destination check</b>." },
+      { t: "nat", f: "NAT instance làm được gì mà NAT gateway không làm được?", b: "Gắn <b>security group</b>, <b>port forwarding</b>, kiêm <b>bastion</b>, chọn instance type." },
+      { t: "nat", f: "NAT gateway và NAT instance xử lý timeout khác nhau thế nào?", b: "NAT gateway gửi <b>RST</b>; NAT instance gửi <b>FIN</b>." },
+      { t: "nat", f: "Có route traffic từ VPC peer vào NAT gateway để ra Internet được không?", b: "<b>Không hỗ trợ</b> (Client → Peering → NAT → Internet). Từ VPN/DX qua VGW cũng không; qua transit gateway thì được." },
+
+      // ---- Bastion
+      { t: "bastion", f: "Bastion host là gì?", b: "EC2 nhỏ ở <b>public subnet</b>, điểm duy nhất nhận SSH/RDP từ Internet; admin “nhảy” tiếp vào instance private." },
+      { t: "bastion", f: "Cấu hình security group chuẩn cho bastion?", b: "SG bastion: inbound 22/3389 <b>chỉ từ dải IP công ty</b>. SG instance private: inbound 22/3389 <b>chỉ từ SG của bastion</b>.", x: "Mở 0.0.0.0/0 là đáp án sai." },
+      { t: "bastion", f: "EC2 Instance Connect Endpoint (EICE) là gì?", b: "Proxy TCP <b>xác thực IAM</b>, log <b>CloudTrail</b>; SSH/RDP tới instance private <b>không cần bastion, public IP hay IGW</b>; không phí thêm." },
+      { t: "bastion", f: "Giới hạn của EC2 Instance Connect Endpoint?", b: "1 endpoint mỗi VPC và subnet · <b>20</b> kết nối đồng thời · phiên tối đa <b>1 giờ</b>; cho traffic quản trị." },
+      { t: "bastion", f: "Session Manager cần gì để hoạt động với instance private?", b: "<b>SSM Agent</b>, IAM instance profile, và đường ra tới endpoint Systems Manager (<b>NAT</b> hoặc <b>interface endpoint</b>). Không mở port inbound." },
+      { t: "bastion", f: "Làm bastion highly available thế nào?", b: "<b>Auto Scaling group</b> trải ≥ 2 AZ (hoặc min = max = 1 để tự thay)." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>private instances need outbound internet, highly available, least overhead</i>” ⇒ ?", b: "<b>NAT gateway ở public subnet, một cái mỗi AZ</b>." },
+      { t: "kw", f: "Đề có “<i>single NAT gateway, AZ failed, other AZ lost internet</i>” ⇒ ?", b: "Thêm <b>NAT gateway mỗi AZ</b> + route table riêng từng AZ (hoặc regional NAT gateway)." },
+      { t: "kw", f: "Đề có “<i>large data from private subnet to S3 is expensive (NAT charges)</i>” ⇒ ?", b: "<b>S3 gateway endpoint</b>." },
+      { t: "kw", f: "Đề có “<i>partner must allow-list a fixed IP for outbound traffic from many private instances</i>” ⇒ ?", b: "<b>NAT gateway với Elastic IP</b>." },
+      { t: "kw", f: "Đề có “<i>IPv6 instances outbound only, block inbound</i>” ⇒ ?", b: "<b>Egress-only internet gateway</b> + route ::/0." },
+      { t: "kw", f: "Đề có “<i>new subnet cannot reach internet, other subnet can</i>” ⇒ ?", b: "Subnet mới đang dùng <b>main route table</b> ⇒ gắn đúng <b>custom route table</b> có route tới IGW/NAT." },
+      { t: "kw", f: "Đề có “<i>inspect all inbound internet traffic before it reaches subnets</i>” ⇒ ?", b: "<b>Gateway route table</b> (edge association) gắn vào IGW, trỏ tới firewall / GWLB endpoint." },
+      { t: "kw", f: "Đề có “<i>SSH to private instances without exposing inbound ports / without bastion, IAM auditing</i>” ⇒ ?", b: "<b>Session Manager</b> hoặc <b>EC2 Instance Connect Endpoint</b>." },
+      { t: "kw", f: "Đề có “<i>must not have any internet access, even outbound</i>” ⇒ ?", b: "<b>Isolated subnet</b>; truy cập S3/DynamoDB bằng VPC endpoint." },
+      { t: "kw", f: "Đề nhắc SG cho NAT, port forwarding, “cheapest, tự quản” ⇒ ?", b: "<b>NAT instance</b>. Các trường hợp khác ⇒ NAT gateway." }
+    ],
+
+    pairs: [
+      ["Amazon VPC", "Mạng ảo cô lập logic trong một Region"],
+      ["Default VPC", "172.31.0.0/16, có IGW, subnet /20 public mỗi AZ"],
+      ["CIDR block", "Dải IP dạng địa chỉ/prefix, vd 10.0.0.0/16"],
+      ["RFC 1918", "Dải IPv4 riêng: 10/8, 172.16/12, 192.168/16"],
+      ["Secondary CIDR", "Khối CIDR phụ thêm vào VPC khi hết IP"],
+      ["Reserved IP addresses", "4 địa chỉ đầu + 1 cuối mỗi subnet"],
+      ["Isolated subnet", "Không có route ra ngoài VPC"],
+      ["VPN-only subnet", "Route tới VGW, không route tới IGW"],
+      ["Dual-stack subnet", "Subnet có cả IPv4 và IPv6"],
+      ["Implicit router", "Router ngầm của VPC, địa chỉ base+1"],
+      ["Main route table", "Bảng mặc định cho subnet chưa gắn tường minh"],
+      ["Local route", "Tuyến trong VPC, có trong mọi route table"],
+      ["Longest prefix match", "Route cụ thể nhất khớp đích thắng"],
+      ["Propagated route", "Route VPN tự thêm từ virtual private gateway"],
+      ["Edge association", "Gắn route table vào IGW/VGW để chèn appliance"],
+      ["Prefix list", "Nhóm CIDR có tên dùng làm destination"],
+      ["Internet gateway", "Kết nối hai chiều VPC ↔ Internet, NAT 1:1"],
+      ["NAT gateway", "Cho private subnet đi ra, chặn chiều vào"],
+      ["NAT instance", "EC2 tự quản làm NAT, tắt source/dest check"],
+      ["Egress-only IGW", "Outbound-only cho IPv6, stateful, miễn phí"],
+      ["NAT64 / DNS64", "Cho workload IPv6 gọi đích chỉ có IPv4"],
+      ["Bastion host", "Điểm SSH/RDP duy nhất vào mạng private"],
+      ["EC2 Instance Connect Endpoint", "Proxy TCP xác thực IAM tới instance private"],
+      ["VPC Block Public Access", "Chặn traffic qua IGW/EIGW toàn account/Region"]
+    ],
+
+    sorts: [
+      {
+        title: "Loại subnet theo route table",
+        desc: "Dựa vào route của subnet (ngoài local route), xếp vào đúng loại subnet.",
+        buckets: ["Public subnet", "Private subnet", "VPN-only subnet", "Isolated subnet"],
+        items: [
+          ["0.0.0.0/0 → igw-…", 0, "có route trực tiếp tới IGW"],
+          ["::/0 → igw-… (IPv6)", 0, "route IPv6 tới IGW cũng là public"],
+          ["Subnet chứa ALB internet-facing và NAT gateway", 0, "cần route tới IGW"],
+          ["0.0.0.0/0 → nat-…", 1, "ra Internet qua NAT device"],
+          ["App server tải patch nhưng không bị gọi vào", 1, "private + NAT gateway"],
+          ["10.50.0.0/16 → vgw-…, không có IGW", 2, "chỉ tới mạng công ty qua VPN"],
+          ["Chỉ có 10.0.0.0/16 → local", 3, "không route ra ngoài VPC"],
+          ["Database tuân thủ, không truy cập Internet kể cả outbound", 3, "isolated, dùng VPC endpoint nếu cần"]
+        ]
+      },
+      {
+        title: "NAT gateway hay NAT instance?",
+        desc: "Mỗi đặc điểm thuộc về NAT gateway hay NAT instance?",
+        buckets: ["NAT gateway", "NAT instance"],
+        items: [
+          ["AWS quản lý, không cần patch", 0, "dịch vụ managed"],
+          ["Scale tới 100 Gbps", 0, "băng thông tự scale"],
+          ["Gửi RST cho kết nối hết hạn", 0, "timeout behavior"],
+          ["Không gắn được security group", 0, "kiểm soát bằng NACL"],
+          ["Phải tắt source/destination check", 1, "EC2 chuyển tiếp gói không phải của mình"],
+          ["Hỗ trợ port forwarding", 1, "tự cấu hình"],
+          ["Dùng kiêm bastion được", 1, "là một EC2"],
+          ["Băng thông phụ thuộc instance type", 1, "tự chọn type/size"],
+          ["Tự viết script failover", 1, "không có HA sẵn"]
+        ]
+      },
+      {
+        title: "Chọn gateway cho nhu cầu",
+        desc: "Chọn thành phần đúng cho từng nhu cầu kết nối.",
+        buckets: ["Internet gateway", "NAT gateway", "Egress-only IGW", "Gateway endpoint"],
+        items: [
+          ["Web server cần nhận kết nối từ Internet (IPv4)", 0, "hai chiều + public IP"],
+          ["Instance IPv6 vừa đi ra vừa nhận kết nối vào", 0, "IGW hỗ trợ IPv6 hai chiều"],
+          ["Private instance IPv4 chỉ cần đi ra", 1, "outbound-only IPv4"],
+          ["Workload IPv6-only gọi dịch vụ chỉ có IPv4", 1, "NAT64 + DNS64"],
+          ["Nhiều instance private đi ra bằng một IP cố định", 1, "Elastic IP của NAT"],
+          ["Instance IPv6 chỉ đi ra, chặn chiều vào", 2, "outbound-only IPv6"],
+          ["Giảm phí NAT khi truyền dữ liệu lớn tới S3", 3, "S3 gateway endpoint miễn phí"],
+          ["Isolated subnet cần đọc DynamoDB", 3, "không cần IGW/NAT"]
+        ]
+      },
+      {
+        title: "Bastion, Instance Connect Endpoint hay Session Manager?",
+        desc: "Mỗi đặc điểm thuộc cách quản trị instance private nào?",
+        buckets: ["Bastion host", "EC2 Instance Connect Endpoint", "Session Manager"],
+        items: [
+          ["Cần public subnet, Elastic IP, tự patch OS", 0, "EC2 trung gian"],
+          ["Xác thực bằng SSH key, audit tự cấu hình", 0, "cách truyền thống"],
+          ["Phương án cổ điển: SSH từ mạng công ty vào private subnet", 0, "jump box"],
+          ["Proxy TCP xác thực IAM, không cần IGW hay public IP", 1, "EICE"],
+          ["Tối đa 20 kết nối đồng thời, phiên 1 giờ", 1, "giới hạn EICE"],
+          ["Không mở port inbound nào trên instance", 2, "kết nối qua SSM Agent"],
+          ["Cần SSM Agent và đường ra NAT/interface endpoint", 2, "điều kiện Session Manager"],
+          ["Ghi log phiên vào S3/CloudWatch Logs", 2, "log phiên tích hợp"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["VPC thuộc một Region và trải trên mọi AZ của Region đó.", true, "Subnet mới gắn với một AZ."],
+      ["Một subnet có thể trải qua hai AZ.", false, "Subnet nằm trọn trong một AZ."],
+      ["Default VPC dùng CIDR 172.31.0.0/16.", true, "Mỗi AZ có subnet /20."],
+      ["Nondefault VPC mới tạo có sẵn internet gateway.", false, "Chỉ có local route."],
+      ["Kích thước VPC lớn nhất là /16 và nhỏ nhất là /28.", true, "65.536 → 16 địa chỉ."],
+      ["Subnet /27 có 32 địa chỉ IP dùng được.", false, "32 − 5 = 27."],
+      ["Subnet /28 có 11 IP dùng được.", true, "16 − 5."],
+      ["Địa chỉ base+2 của VPC là Amazon DNS.", true, "AWS cũng giữ base+2 của mỗi subnet."],
+      ["Có thể mở rộng CIDR /24 của subnet thành /23.", false, "Không resize được; thêm secondary CIDR, tạo subnet mới."],
+      ["Primary CIDR của VPC có thể gỡ bỏ.", false, "Không gỡ được primary CIDR."],
+      ["Hai VPC peering với nhau không được có CIDR chồng lấn.", true, "Phải quy hoạch IP từ đầu."],
+      ["Có subnet IPv6-only thì VPC không cần IPv4 CIDR.", false, "Mọi VPC phải có IPv4 CIDR."],
+      ["Loại subnet public/private do route table quyết định.", true, "Không có công tắc trên subnet."],
+      ["Instance có public IP luôn ra được Internet.", false, "Cần route tới IGW trong subnet."],
+      ["Subnet không gắn tường minh sẽ dùng main route table.", true, "Ngầm định."],
+      ["Main route table có thể bị xóa.", false, "Không xóa được, chỉ thay thế."],
+      ["Route 10.10.2.15/32 được ưu tiên hơn 10.10.2.0/24.", true, "Longest prefix match."],
+      ["Propagated route thắng static route khi destination trùng nhau.", false, "Static route thắng."],
+      ["Route 0.0.0.0/0 cũng áp dụng cho traffic IPv6.", false, "IPv6 cần ::/0."],
+      ["Một VPC có thể gắn hai IGW để tăng HA.", false, "Mỗi VPC chỉ gắn 1 IGW; IGW đã HA sẵn."],
+      ["Internet gateway không tính phí.", true, "Chỉ tính data transfer và public IPv4."],
+      ["IGW thực hiện NAT 1:1 cho IPv4.", true, "Đổi private IP ↔ public IP/EIP."],
+      ["Public NAT gateway phải đặt ở public subnet.", true, "Đặt ở private subnet thì không ra Internet."],
+      ["Có thể gắn security group vào NAT gateway.", false, "Chỉ kiểm soát bằng NACL."],
+      ["NAT gateway là tài nguyên zonal.", true, "Khuyến nghị một NAT mỗi AZ."],
+      ["NAT gateway cho phép người dùng Internet truy cập ứng dụng trong private subnet.", false, "Chỉ outbound; dùng load balancer ở public subnet."],
+      ["Regional NAT gateway cần đặt trong public subnet.", false, "Chỉ cần chọn VPC."],
+      ["NAT instance phải tắt source/destination check.", true, "Vì chuyển tiếp gói tin không phải của nó."],
+      ["Egress-only internet gateway dùng cho IPv4.", false, "Chỉ IPv6; IPv4 outbound dùng NAT gateway."],
+      ["Egress-only internet gateway là stateful.", true, "Gửi phản hồi trở lại cho instance."],
+      ["NAT gateway có thể dùng làm bastion để SSH vào.", false, "Không nhận kết nối vào, không hỗ trợ bastion."],
+      ["EC2 Instance Connect Endpoint không cần instance có public IP.", true, "Và VPC không cần IGW."],
+      ["Session Manager yêu cầu mở port 22 inbound.", false, "Không mở port inbound nào."],
+      ["S3 gateway endpoint giúp giảm phí xử lý dữ liệu của NAT gateway.", true, "Traffic tới S3 không qua NAT nữa."]
+    ],
+
+    map: {
+      t: "Bài 20 · VPC cơ bản",
+      c: [
+        { t: "VPC", icon: "svc/Amazon-Virtual-Private-Cloud.svg", c: [
+          { t: "Phạm vi", v: "một Region, trải mọi AZ" },
+          { t: "Default VPC", v: "172.31.0.0/16, subnet /20/AZ, có IGW, public IP" },
+          { t: "Nondefault VPC", v: "chỉ local route" },
+          { t: "Block Public Access", v: "bidirectional / ingress-only" },
+          { t: "Phí", v: "NAT gateway + mọi public IPv4; VPC/IGW miễn phí" }
+        ] },
+        { t: "CIDR & IP", icon: "res/Amazon-EC2_Elastic-IP-Address.svg", c: [
+          { t: "Kích thước", v: "/16 → /28" },
+          { t: "RFC 1918", v: "10/8 · 172.16/12 · 192.168/16" },
+          { t: "5 IP giữ lại", v: ".0 network · .1 router · .2 DNS · .3 dự phòng · cuối broadcast" },
+          { t: "Số IP dùng được", v: "/24 = 251 · /27 = 27 · /28 = 11" },
+          { t: "Hết IP", v: "thêm secondary CIDR (5, tới 50), không resize" },
+          { t: "IPv6", v: "VPC /56, subnet /64; vẫn cần IPv4 CIDR" }
+        ] },
+        { t: "Subnet", icon: "res/Amazon-VPC_Router.svg", c: [
+          { t: "Vị trí", v: "nằm trọn một AZ" },
+          { t: "Public", v: "route tới IGW" },
+          { t: "Private", v: "ra ngoài qua NAT" },
+          { t: "VPN-only", v: "route tới VGW" },
+          { t: "Isolated", v: "không route ra ngoài VPC" }
+        ] },
+        { t: "Route table", icon: "res/Amazon-Route-53_Route-Table.svg", c: [
+          { t: "Main", v: "subnet chưa gắn tường minh; giữ chỉ local route" },
+          { t: "Local route", v: "có trong mọi bảng" },
+          { t: "Ưu tiên", v: "longest prefix → static → prefix list → propagated" },
+          { t: "Edge association", v: "route table của IGW/VGW chèn firewall" },
+          { t: "IPv4 ≠ IPv6", v: "0.0.0.0/0 không gồm ::/0" }
+        ] },
+        { t: "Internet & IPv6", icon: "res/Amazon-VPC_Internet-Gateway.svg", c: [
+          { t: "IGW", v: "HA, miễn phí, hai chiều, NAT 1:1, 1 IGW/VPC" },
+          { t: "Checklist", v: "IGW + route + public IP + SG/NACL" },
+          { t: "Egress-only IGW", v: "IPv6 outbound-only, stateful, miễn phí" },
+          { t: "NAT64/DNS64", v: "IPv6-only gọi đích IPv4" },
+          { t: "Security group", v: "không gắn vào IGW/NAT/EIGW" }
+        ] },
+        { t: "NAT", icon: "res/Amazon-VPC_NAT-Gateway.svg", c: [
+          { t: "Public NAT", v: "public subnet + EIP, chỉ outbound" },
+          { t: "Private NAT", v: "tới VPC/on-prem, CIDR chồng lấn" },
+          { t: "Hiệu năng", v: "5→100 Gbps, 55.000 kết nối/IP/đích, 8 IP" },
+          { t: "HA", v: "zonal ⇒ 1 NAT/AZ, route cùng AZ" },
+          { t: "Regional NAT", v: "không cần public subnet, 32 IP/AZ" },
+          { t: "NAT instance", v: "tắt src/dst check, SG, port forwarding" },
+          { t: "Giảm phí", v: "gateway endpoint S3/DynamoDB" }
+        ] },
+        { t: "Truy cập quản trị", icon: "res/Amazon-EC2_Instance.svg", c: [
+          { t: "Bastion", v: "public subnet, SG chỉ IP công ty" },
+          { t: "SG private", v: "chỉ cho SG của bastion" },
+          { t: "EICE", v: "IAM + CloudTrail, không public IP, 20 kết nối, 1 giờ" },
+          { t: "Session Manager", v: "không mở port, cần SSM Agent + NAT/endpoint" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

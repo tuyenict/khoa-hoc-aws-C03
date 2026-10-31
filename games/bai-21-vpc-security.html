@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 21 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/res/Amazon-VPC_Network-Access-Control-List.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="21" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-21-vpc-security.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "state", name: "Stateful vs stateless" },
+      { id: "cmp", name: "Security Group vs NACL" },
+      { id: "nacl", name: "Network ACL chi tiết" },
+      { id: "eph", name: "Ephemeral ports & chẩn đoán" },
+      { id: "flow", name: "VPC Flow Logs" },
+      { id: "nfw", name: "AWS Network Firewall & công cụ khác" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Stateful / stateless
+      { t: "state", f: "Stateful khác stateless thế nào?", b: "<b>Stateful</b>: nhớ kết nối ⇒ response tự được phép.<br><b>Stateless</b>: không nhớ ⇒ phải cho phép <b>cả chiều về</b> tường minh." },
+      { t: "state", f: "Security group là stateful hay stateless?", b: "<b>Stateful.</b> Inbound được phép thì response tự được ra, <b>bất kể outbound rule</b>." },
+      { t: "state", f: "Network ACL là stateful hay stateless?", b: "<b>Stateless.</b> Cho phép inbound không có nghĩa response được phép ra." },
+      { t: "state", f: "Một kết nối HTTPS tới web server gồm những luồng nào?", b: "<b>Request</b>: client:50123 → server:443 (inbound).<br><b>Response</b>: server:443 → client:50123 (outbound, tới <b>ephemeral port</b> của client)." },
+      { t: "state", f: "Với NACL, phục vụ HTTPS cần những rule nào?", b: "Inbound <b>TCP 443</b> + outbound <b>TCP tới dải ephemeral port</b> của client (thực tế 1024–65535)." },
+      { t: "state", f: "Sửa outbound rule của SG có ảnh hưởng response của kết nối inbound đã được phép không?", b: "<b>Không</b> – SG stateful.", x: "Bẫy: đáp án “add an outbound rule to the security group”." },
+      { t: "state", f: "Thứ tự traffic đi vào instance qua các lớp?", b: "IGW → <b>route table</b> → <b>NACL</b> (subnet) → <b>security group</b> (ENI) → instance. Chiều ra ngược lại." },
+      { t: "state", f: "Defense in depth trong VPC nghĩa là gì?", b: "Không dựa vào một lớp: SG là cơ chế chính, NACL là lớp dự phòng phòng khi instance được launch với <b>SG sai</b>." },
+
+      // ---- So sánh
+      { t: "cmp", f: "SG và NACL hoạt động ở cấp nào?", b: "<b>SG</b>: cấp instance (network interface).<br><b>NACL</b>: cấp subnet." },
+      { t: "cmp", f: "Loại rule của SG và NACL?", b: "<b>SG</b>: chỉ <b>allow</b>.<br><b>NACL</b>: <b>allow và deny</b>." },
+      { t: "cmp", f: "SG và NACL đánh giá rule thế nào?", b: "<b>SG</b>: đánh giá <b>tất cả</b> rule rồi mới quyết định.<br><b>NACL</b>: theo <b>số thứ tự tăng dần</b>, dừng ở rule khớp đầu tiên." },
+      { t: "cmp", f: "Nguồn/đích trong rule SG và NACL có thể là gì?", b: "<b>SG</b>: CIDR, <b>security group khác</b>, prefix list.<br><b>NACL</b>: <b>chỉ CIDR</b>." },
+      { t: "cmp", f: "Mặc định khi tạo mới SG và custom NACL?", b: "<b>SG</b>: không inbound, outbound cho tất cả.<br><b>Custom NACL</b>: <b>deny tất cả</b> (chỉ rule *).<br><b>Default NACL</b>: allow tất cả." },
+      { t: "cmp", f: "Gắn kết của SG và NACL?", b: "<b>SG</b>: nhiều SG mỗi ENI (mặc định 5, tới 16).<br><b>NACL</b>: mỗi subnet <b>đúng 1</b> NACL; một NACL gắn nhiều subnet." },
+      { t: "cmp", f: "Quota rule của SG và NACL?", b: "<b>SG</b>: 60 inbound + 60 outbound; trần rule/SG × SG/ENI = 1.000.<br><b>NACL</b>: <b>20</b> rule mỗi chiều (tối đa <b>40</b>); 200 NACL/VPC." },
+      { t: "cmp", f: "Muốn chặn một IP cụ thể đang tấn công ⇒ SG hay NACL?", b: "<b>NACL deny rule</b> (số nhỏ hơn allow). SG không có deny.", x: "Chặn theo IP ở lớp HTTP trên ALB/CloudFront ⇒ AWS WAF IP set." },
+      { t: "cmp", f: "Muốn “chỉ cho phép traffic từ load balancer” ⇒ dùng gì?", b: "<b>SG của instance tham chiếu SG của ALB</b>. NACL chỉ có CIDR nên không làm được." },
+      { t: "cmp", f: "Traffic nào SG và NACL đều không lọc được?", b: "<b>Amazon DNS</b> (Route 53 Resolver), <b>DHCP</b>, <b>IMDS</b> (169.254.169.254), ECS task metadata, Windows license activation, <b>Time Sync</b>, IP router của default VPC.", x: "Chặn DNS độc hại ⇒ Route 53 Resolver DNS Firewall; lạm dụng metadata ⇒ IMDSv2." },
+      { t: "cmp", f: "SG và NACL có tính phí không?", b: "<b>Cả hai đều miễn phí</b>." },
+
+      // ---- NACL chi tiết
+      { t: "nacl", f: "Subnet không gắn NACL tường minh thì dùng NACL nào?", b: "Tự động gắn với <b>default network ACL</b>." },
+      { t: "nacl", f: "NACL có lọc traffic giữa hai instance trong cùng subnet không?", b: "<b>Không.</b> NACL chỉ đánh giá traffic <b>vào và rời subnet</b>; trong cùng subnet chỉ chịu SG." },
+      { t: "nacl", f: "Rule number của NACL có giá trị từ đâu tới đâu?", b: "<b>1 – 32766</b>; xét từ nhỏ nhất, khớp là áp dụng, bỏ qua rule số lớn hơn.", x: "AWS khuyên đánh số cách quãng 10 hoặc 100." },
+      { t: "nacl", f: "Default NACL có những rule nào?", b: "<b>100</b> allow all IPv4 · <b>101</b> allow all IPv6 · <b>*</b> deny (IPv4 và IPv6) – giống nhau cho inbound/outbound." },
+      { t: "nacl", f: "Rule * của NACL là gì?", b: "Rule cuối cùng <b>DENY</b> mọi thứ không khớp; <b>không xóa được</b>." },
+      { t: "nacl", f: "Rule 100 ALLOW 443 từ 0.0.0.0/0, rule 200 DENY 198.51.100.7/32 ⇒ IP đó vào 443 được không?", b: "<b>Được</b> – rule 100 khớp trước và dừng. Muốn chặn, DENY phải có số nhỏ hơn (vd 90)." },
+      { t: "nacl", f: "Gắn custom NACL mới vào subnet thì traffic thế nào?", b: "<b>Mọi traffic dừng</b> – custom NACL mặc định deny all cho tới khi thêm allow rule cả hai chiều." },
+      { t: "nacl", f: "Vì sao không dùng NACL để chặn hàng nghìn IP?", b: "Quota chỉ 20 (tối đa 40) rule mỗi chiều ⇒ dùng <b>AWS WAF</b> hoặc <b>Network Firewall</b>." },
+      { t: "nacl", f: "NACL làm ALB báo target unhealthy khi nào?", b: "Khi NACL subnet backend <b>chặn health check</b> từ subnet của ALB (deny 0.0.0.0/0 hoặc CIDR liên quan)." },
+      { t: "nacl", f: "IPv4 và IPv6 trong NACL được đánh giá thế nào?", b: "<b>Riêng biệt</b>: rule IPv4 không bao giờ áp cho traffic IPv6." },
+
+      // ---- Ephemeral
+      { t: "eph", f: "Ephemeral port là gì?", b: "<b>Cổng nguồn tạm thời</b> client tự chọn khi khởi tạo request; response quay về đúng cổng đó. Dải phụ thuộc OS của client." },
+      { t: "eph", f: "Dải ephemeral port của Linux (Amazon Linux)?", b: "<b>32768–61000</b>." },
+      { t: "eph", f: "Dải ephemeral port của Windows Server 2008+ / Windows 10?", b: "<b>49152–65535</b>. (Windows tới Server 2003: 1025–5000.)" },
+      { t: "eph", f: "Dải ephemeral port của ELB, NAT gateway, Lambda?", b: "<b>1024–65535</b>." },
+      { t: "eph", f: "Instance trong VPC làm client gọi ra 443 ⇒ NACL cần gì?", b: "Outbound <b>TCP 443</b> + inbound <b>ephemeral port của chính instance</b> (Amazon Linux 32768–61000)." },
+      { t: "eph", f: "Instance private tải patch qua NAT gateway – NACL subnet public cần mở gì?", b: "Inbound <b>1024–65535</b> cho response về NAT gateway (dải NAT dùng)." },
+      { t: "eph", f: "Web server sau NACL, user bị timeout ⇒ đáp án đúng thường là?", b: "Thêm NACL <b>outbound TCP 1024–65535</b> tới 0.0.0.0/0.", x: "Sai hay gặp: mở outbound 443, hoặc sửa security group." },
+      { t: "eph", f: "Mở dải 1024–65535 nhưng muốn chặn vài port trong đó?", b: "Thêm rule <b>DENY số nhỏ hơn</b> rule allow dải rộng." },
+      { t: "eph", f: "Reachability Analyzer làm gì?", b: "Phân tích <b>cấu hình tĩnh</b> (route, SG, NACL…) giữa 2 tài nguyên, <b>không gửi gói tin thật</b>; chỉ ra thành phần đang chặn." },
+
+      // ---- Flow Logs
+      { t: "flow", f: "VPC Flow Logs ghi lại gì?", b: "<b>Metadata</b> IP traffic vào/ra network interface (5-tuple, packets, bytes, ACCEPT/REJECT) – <b>không ghi payload</b>." },
+      { t: "flow", f: "Tạo flow log ở những cấp nào?", b: "<b>VPC, subnet, network interface</b>. Cấp VPC/subnet bao phủ cả ENI tạo sau." },
+      { t: "flow", f: "Flow Logs publish tới đâu?", b: "<b>CloudWatch Logs</b>, <b>Amazon S3</b>, <b>Amazon Data Firehose</b>." },
+      { t: "flow", f: "Aggregation interval của Flow Logs?", b: "Tối đa <b>10 phút</b> (mặc định) hoặc <b>1 phút</b>; instance Nitro luôn ≤ 1 phút. Không real-time." },
+      { t: "flow", f: "Có sửa được cấu hình flow log sau khi tạo không?", b: "<b>Không</b> (IAM role, định dạng record…) ⇒ xóa và tạo flow log mới.", x: "Đáp án “modify flow log to add tcp-flags” là sai." },
+      { t: "flow", f: "Flow log có record inbound ACCEPT, response outbound REJECT ⇒ thành phần nào chặn?", b: "<b>NACL</b> (stateless) chặn chiều về. SG stateful không chặn response của request đã cho phép." },
+      { t: "flow", f: "Traffic nào Flow Logs không ghi lại?", b: "Tới <b>Amazon DNS</b>, Windows license activation, <b>169.254.169.254</b> (IMDS), 169.254.169.123 (Time Sync), <b>DHCP, ARP</b>, IP router default VPC…" },
+      { t: "flow", f: "Cần nội dung gói tin để IDS/pháp chứng ⇒ dùng gì thay Flow Logs?", b: "<b>Traffic Mirroring</b> (copy gói tin đầy đủ từ ENI) hoặc <b>Network Firewall</b>." },
+      { t: "flow", f: "Trường log-status của flow log có những giá trị nào?", b: "<b>OK</b> · <b>NODATA</b> (không có traffic) · <b>SKIPDATA</b> (bỏ sót do giới hạn/lỗi)." },
+      { t: "flow", f: "Flow Logs có ảnh hưởng hiệu năng mạng không?", b: "<b>Không</b> – thu thập ngoài đường đi của traffic." },
+      { t: "flow", f: "Xóa flow log thì dữ liệu cũ ở đích ra sao?", b: "<b>Vẫn còn</b>; chỉ dừng ghi log mới." },
+
+      // ---- Network Firewall
+      { t: "nfw", f: "AWS Network Firewall là gì?", b: "Tường lửa mạng <b>stateful, managed</b> kèm <b>IDS/IPS</b> (Suricata) ở <b>biên VPC</b>: lọc domain, deep packet inspection, nhận diện giao thức." },
+      { t: "nfw", f: "Network Firewall làm được gì mà SG/NACL không làm được?", b: "<b>Lọc theo domain</b> (allow/deny list), <b>DPI</b>, IPS, lọc giao thức bất kể port, TLS inspection." },
+      { t: "nfw", f: "Stateless engine và stateful engine của Network Firewall?", b: "<b>Stateless</b> (xét trước): từng gói, dừng ở rule khớp đầu – giống NACL; Pass/Drop/Forward.<br><b>Stateful</b>: theo luồng – giống SG nhưng <b>mặc định cho qua</b>; Pass/Drop/Alert/Reject." },
+      { t: "nfw", f: "Làm sao đưa Network Firewall vào đường đi của traffic?", b: "<b>Sửa route table</b>: protected subnet 0.0.0.0/0 → firewall endpoint; firewall subnet 0.0.0.0/0 → IGW; IGW route table (edge association) → endpoint.", x: "Tạo firewall mà không sửa route ⇒ không lọc gì." },
+      { t: "nfw", f: "Vì sao không đặt workload trong firewall subnet?", b: "Firewall endpoint <b>không lọc traffic của chính subnet chứa nó</b>." },
+      { t: "nfw", f: "Kiểm tra tập trung traffic cho nhiều VPC ⇒ kiến trúc gì?", b: "<b>Inspection VPC + Transit Gateway + Network Firewall</b> (mô hình centralized)." },
+      { t: "nfw", f: "AWS Firewall Manager dùng để làm gì?", b: "Áp chính sách <b>WAF, Shield Advanced, SG, Network Firewall, DNS Firewall</b> đồng loạt cho các account trong Organizations." },
+      { t: "nfw", f: "Route 53 Resolver DNS Firewall dùng khi nào?", b: "Lọc <b>truy vấn DNS</b> gửi tới Route 53 Resolver – chặn domain độc hại, DNS exfiltration (SG/NACL không chặn được)." },
+      { t: "nfw", f: "Network Firewall ghi log những gì?", b: "Chỉ traffic qua <b>stateful engine</b>: flow logs, alert logs (DROP/ALERT/REJECT), TLS logs ⇒ S3, CloudWatch Logs, Firehose." },
+      { t: "nfw", f: "Amazon GuardDuty liên quan Flow Logs thế nào?", b: "Phân tích Flow Logs, CloudTrail, DNS logs để <b>phát hiện</b> mối đe dọa (không chặn); không cần tự bật flow log cho GuardDuty." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>SG allows 443, NACL allows inbound 443, users get timeouts</i>” ⇒ ?", b: "NACL thiếu <b>outbound ephemeral ports</b> (1024–65535)." },
+      { t: "kw", f: "Đề có “<i>block a specific IP address attacking the application</i>” ⇒ ?", b: "<b>NACL deny rule</b> với số nhỏ hơn allow." },
+      { t: "kw", f: "Đề có “<i>subnet-level, explicit deny, rule order</i>” ⇒ ?", b: "<b>Network ACL</b>." },
+      { t: "kw", f: "Đề có “<i>instance-level, reference another security group</i>” ⇒ ?", b: "<b>Security group</b>." },
+      { t: "kw", f: "Đề có “<i>determine why two resources cannot connect without sending traffic</i>” ⇒ ?", b: "<b>Reachability Analyzer</b>." },
+      { t: "kw", f: "Đề có “<i>identify rejected connections / audit IP traffic</i>” ⇒ ?", b: "<b>VPC Flow Logs</b>." },
+      { t: "kw", f: "Đề có “<i>analyze flow logs with SQL, low cost, long retention</i>” ⇒ ?", b: "Flow Logs → <b>S3 + Amazon Athena</b>." },
+      { t: "kw", f: "Đề có “<i>alarm when rejected SSH attempts exceed a threshold</i>” ⇒ ?", b: "Flow Logs → <b>CloudWatch Logs + metric filter + alarm</b>." },
+      { t: "kw", f: "Đề có “<i>filter outbound traffic by domain name, IPS, Suricata</i>” ⇒ ?", b: "<b>AWS Network Firewall</b>." },
+      { t: "kw", f: "Đề có “<i>protect web app from SQL injection / XSS</i>” ⇒ ?", b: "<b>AWS WAF</b> (lớp 7 trên ALB/CloudFront/API Gateway), không phải Network Firewall." },
+      { t: "kw", f: "Đề có “<i>third-party virtual firewall appliances</i>” ⇒ ?", b: "<b>Gateway Load Balancer</b>; managed AWS ⇒ Network Firewall." },
+      { t: "kw", f: "Đề có “<i>enforce firewall rules across all accounts in the organization</i>” ⇒ ?", b: "<b>AWS Firewall Manager</b>." }
+    ],
+
+    pairs: [
+      ["Stateful", "Nhớ kết nối, tự cho traffic trả về"],
+      ["Stateless", "Không nhớ kết nối, phải mở cả chiều về"],
+      ["Defense in depth", "Nhiều lớp bảo mật chồng lên nhau"],
+      ["Network ACL", "Tường lửa stateless cấp subnet, allow + deny"],
+      ["Security group", "Tường lửa stateful cấp ENI, chỉ allow"],
+      ["Custom network ACL", "NACL tự tạo, mặc định deny all"],
+      ["Default network ACL", "NACL có sẵn, mặc định allow all"],
+      ["Rule number", "1–32766, xét từ nhỏ đến lớn, khớp đầu thắng"],
+      ["Rule *", "Rule DENY cuối cùng, không xóa được"],
+      ["Ephemeral port", "Cổng nguồn tạm thời nơi response quay về"],
+      ["Reachability Analyzer", "Phân tích cấu hình tĩnh, chỉ ra thành phần chặn"],
+      ["VPC Flow Logs", "Metadata IP traffic của network interface"],
+      ["Aggregation interval", "Khoảng gộp dữ liệu flow log: 10 hoặc 1 phút"],
+      ["REJECT", "Giá trị action khi SG/NACL chặn"],
+      ["Traffic Mirroring", "Copy gói tin đầy đủ từ ENI để phân tích"],
+      ["AWS Network Firewall", "Firewall stateful + IPS managed ở biên VPC"],
+      ["IDS / IPS", "Phát hiện / ngăn chặn xâm nhập"],
+      ["Deep packet inspection", "Kiểm tra cả nội dung gói tin"],
+      ["Suricata", "IPS mã nguồn mở của stateful engine"],
+      ["Firewall subnet", "Subnet riêng chứa firewall endpoint mỗi AZ"],
+      ["Domain list rule group", "Allow/deny traffic theo tên miền"],
+      ["Inspection VPC", "VPC chứa firewall, nối VPC khác qua Transit Gateway"],
+      ["AWS Firewall Manager", "Áp chính sách tường lửa đa account"],
+      ["DNS Firewall", "Lọc truy vấn DNS tới Route 53 Resolver"]
+    ],
+
+    sorts: [
+      {
+        title: "Security Group hay Network ACL?",
+        desc: "Mỗi đặc điểm thuộc về security group hay network ACL?",
+        buckets: ["Security group", "Network ACL"],
+        items: [
+          ["Hoạt động ở cấp network interface", 0, "cấp instance"],
+          ["Chỉ có rule allow", 0, "không deny được"],
+          ["Đánh giá tất cả rule rồi mới quyết định", 0, "không theo thứ tự"],
+          ["Tham chiếu được SG khác làm nguồn", 0, "vd SG của ALB"],
+          ["Response tự động được phép", 0, "stateful"],
+          ["Có rule deny", 1, "chặn được IP cụ thể"],
+          ["Xét theo số thứ tự, dừng ở rule khớp đầu", 1, "1–32766"],
+          ["Nguồn/đích chỉ là CIDR", 1, "không tham chiếu SG"],
+          ["Mỗi subnet gắn đúng một", 1, "1 NACL/subnet"],
+          ["Bản tự tạo mặc định deny all", 1, "custom NACL chỉ có rule *"],
+          ["Không lọc traffic trong cùng subnet", 1, "chỉ xét traffic vào/ra subnet"]
+        ]
+      },
+      {
+        title: "Dải ephemeral port của client",
+        desc: "Xếp mỗi loại client vào dải ephemeral port theo tài liệu AWS.",
+        buckets: ["32768–61000", "49152–65535", "1024–65535", "1025–5000"],
+        items: [
+          ["Amazon Linux", 0, "nhiều Linux kernel"],
+          ["Nhiều Linux kernel khác", 0, "dải Linux"],
+          ["Windows Server 2008 trở về sau", 1, "Windows mới"],
+          ["Windows 10", 1, "giống Windows Server 2008+"],
+          ["Elastic Load Balancing", 2, "request từ ELB"],
+          ["NAT gateway", 2, "NAT gateway dùng 1024–65535"],
+          ["AWS Lambda", 2, "Lambda functions"],
+          ["Windows tới Windows Server 2003", 3, "Windows cũ"]
+        ]
+      },
+      {
+        title: "Chọn công cụ bảo mật / giám sát mạng",
+        desc: "Chọn công cụ phù hợp nhất cho yêu cầu đề.",
+        buckets: ["Network ACL", "Security group", "Network Firewall", "AWS WAF", "DNS Firewall", "Flow Logs", "Reachability Analyzer"],
+        items: [
+          ["Chặn dải IP đang tấn công ở cấp subnet", 0, "deny rule"],
+          ["Guard rail thô cho cả subnet chứa NAT gateway", 0, "NAT gateway không gắn được SG"],
+          ["DB chỉ nhận traffic từ SG của app tier", 1, "security group referencing"],
+          ["Chỉ cho outbound tới *.amazonaws.com và domain được duyệt", 2, "domain list rule group"],
+          ["IPS với rule Suricata ở biên VPC", 2, "stateful engine Suricata"],
+          ["Chặn SQL injection trên ALB", 3, "lớp 7 HTTP"],
+          ["Ngăn instance phân giải domain độc hại", 4, "lọc truy vấn DNS"],
+          ["Biết kết nối nào bị REJECT trong tuần qua", 5, "dữ liệu traffic thực tế"],
+          ["Tìm rule đang chặn mà không gửi traffic", 6, "phân tích cấu hình tĩnh"]
+        ]
+      },
+      {
+        title: "Đọc triệu chứng ⇒ nguyên nhân",
+        desc: "Xác định nguyên nhân khả dĩ nhất cho triệu chứng.",
+        buckets: ["NACL thiếu ephemeral ports", "Custom NACL deny all", "Thứ tự rule NACL sai", "SG inbound chặn"],
+        items: [
+          ["Flow Logs: inbound ACCEPT, outbound REJECT", 0, "NACL stateless chặn response"],
+          ["Instance private có NAT, route đúng nhưng không tải được patch", 0, "NACL private thiếu inbound ephemeral"],
+          ["Web server sau NACL: SG mở 443, NACL inbound 443, user timeout", 0, "thiếu outbound 1024–65535"],
+          ["Gắn NACL mới tạo vào subnet, mọi traffic chết", 1, "chỉ có rule * DENY"],
+          ["Đã thêm DENY cho IP nhưng IP vẫn vào được", 2, "DENY có số lớn hơn ALLOW"],
+          ["Rule 100 ALLOW all, rule 200 DENY một IP", 2, "rule 100 khớp trước"],
+          ["Flow Logs chỉ có inbound REJECT, NACL đã allow", 3, "SG inbound không cho phép"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Security group là stateful.", true, "Response tự được phép."],
+      ["Network ACL tự cho phép response của traffic inbound đã được allow.", false, "NACL stateless, phải mở chiều về."],
+      ["Security group hỗ trợ rule deny.", false, "SG chỉ có allow."],
+      ["NACL đánh giá rule theo số thứ tự tăng dần và dừng ở rule khớp đầu tiên.", true, "Rule số nhỏ hơn thắng."],
+      ["Security group đánh giá tất cả rule trước khi quyết định.", true, "Theo bảng so sánh của AWS."],
+      ["Rule NACL có thể dùng security group làm nguồn.", false, "NACL chỉ dùng CIDR."],
+      ["Một subnet có thể gắn đồng thời hai NACL.", false, "Mỗi subnet đúng 1 NACL tại một thời điểm."],
+      ["Một NACL có thể gắn với nhiều subnet.", true, "Quan hệ một-nhiều."],
+      ["Custom NACL mới tạo cho phép mọi traffic.", false, "Custom NACL deny all; default NACL mới allow all."],
+      ["Rule * của NACL có thể xóa được.", false, "Rule * không xóa được."],
+      ["NACL lọc traffic giữa hai instance trong cùng subnet.", false, "Chỉ lọc traffic vào/rời subnet."],
+      ["Muốn chặn một IP bằng NACL, rule DENY phải có số nhỏ hơn rule ALLOW tương ứng.", true, "Khớp đầu tiên thắng."],
+      ["Mặc định một NACL có 20 rule mỗi chiều, tăng tối đa 40.", true, "Quota NACL."],
+      ["Mặc định mỗi network interface gắn được tối đa 5 security group.", true, "Tăng tới 16."],
+      ["SG và NACL có thể chặn truy vấn tới Amazon DNS (Route 53 Resolver).", false, "Không lọc được; dùng DNS Firewall."],
+      ["Dải ephemeral port của Amazon Linux là 32768–61000.", true, "Nhiều Linux kernel."],
+      ["NAT gateway dùng dải ephemeral 49152–65535.", false, "NAT gateway dùng 1024–65535."],
+      ["Mở outbound 443 trên NACL là đủ để response của web server tới client.", false, "Response đi tới ephemeral port của client."],
+      ["Reachability Analyzer gửi gói tin thật để kiểm tra kết nối.", false, "Phân tích cấu hình tĩnh."],
+      ["Flow log cấp VPC tự bao phủ cả ENI được tạo sau.", true, "AWS tự tạo log stream mới."],
+      ["VPC Flow Logs ghi lại nội dung (payload) gói tin.", false, "Chỉ metadata; payload dùng Traffic Mirroring."],
+      ["Có thể sửa flow log hiện có để thêm trường tcp-flags.", false, "Phải xóa và tạo flow log mới."],
+      ["Flow Logs có thể publish tới Amazon Data Firehose.", true, "Cùng CloudWatch Logs và S3."],
+      ["Flow Logs là luồng dữ liệu thời gian thực.", false, "Có aggregation interval và độ trễ giao log."],
+      ["Flow Logs không ghi traffic tới 169.254.169.254.", true, "Traffic IMDS không được ghi."],
+      ["Flow Logs có thể chặn traffic độc hại.", false, "Chỉ quan sát, không chặn."],
+      ["Network Firewall lọc được traffic theo tên miền.", true, "Domain list rule group."],
+      ["Tạo Network Firewall là đủ, không cần sửa route table.", false, "Phải route traffic qua firewall endpoint."],
+      ["Stateful engine của Network Firewall mặc định cho qua traffic.", true, "Khác SG mặc định chặn."],
+      ["Workload đặt trong firewall subnet vẫn được firewall bảo vệ.", false, "Endpoint không lọc traffic của subnet chứa nó."],
+      ["AWS WAF là lựa chọn để chặn SQL injection trên ALB.", true, "WAF hoạt động ở lớp 7."],
+      ["Amazon GuardDuty chặn traffic độc hại trong VPC.", false, "GuardDuty chỉ phát hiện."]
+    ],
+
+    map: {
+      t: "Bài 21 · Bảo mật mạng VPC",
+      c: [
+        { t: "Stateful vs stateless", icon: "res/Firewall.svg", c: [
+          { t: "Stateful (SG)", v: "nhớ kết nối, response tự được phép" },
+          { t: "Stateless (NACL)", v: "phải mở chiều về (ephemeral)" },
+          { t: "Thứ tự vào", v: "IGW → route table → NACL → SG → instance" },
+          { t: "Defense in depth", v: "SG chính, NACL lớp dự phòng" }
+        ] },
+        { t: "SG vs NACL", icon: "res/Amazon-VPC_Network-Access-Control-List.svg", c: [
+          { t: "Cấp", v: "SG: ENI · NACL: subnet" },
+          { t: "Rule", v: "SG: chỉ allow · NACL: allow + deny" },
+          { t: "Đánh giá", v: "SG: tất cả · NACL: số tăng dần, khớp đầu" },
+          { t: "Nguồn/đích", v: "SG: CIDR/SG/prefix list · NACL: chỉ CIDR" },
+          { t: "Quota", v: "SG 60 rule, 5→16 SG/ENI · NACL 20→40 rule" },
+          { t: "Không lọc", v: "Amazon DNS, DHCP, IMDS, Time Sync" }
+        ] },
+        { t: "NACL chi tiết", icon: "res/Amazon-VPC_Network-Access-Control-List.svg", c: [
+          { t: "Default NACL", v: "rule 100/101 allow all, rule * deny" },
+          { t: "Custom NACL", v: "chỉ rule * ⇒ deny all" },
+          { t: "Rule number", v: "1–32766, đánh số cách quãng" },
+          { t: "Chặn IP", v: "DENY số nhỏ hơn ALLOW" },
+          { t: "Cùng subnet", v: "NACL không lọc" }
+        ] },
+        { t: "Ephemeral ports", icon: "res/Amazon-VPC_Router.svg", c: [
+          { t: "Linux", v: "32768–61000" },
+          { t: "Windows 2008+ / 10", v: "49152–65535" },
+          { t: "ELB, NAT GW, Lambda", v: "1024–65535" },
+          { t: "Server", v: "inbound 443 + outbound ephemeral client" },
+          { t: "Client", v: "outbound 443 + inbound ephemeral của mình" },
+          { t: "Thực tế", v: "mở 1024–65535, DENY port xấu số nhỏ hơn" }
+        ] },
+        { t: "VPC Flow Logs", icon: "res/Amazon-VPC_Flow-Logs.svg", c: [
+          { t: "Cấp", v: "VPC / subnet / ENI" },
+          { t: "Đích", v: "CloudWatch Logs · S3 · Data Firehose" },
+          { t: "Interval", v: "10 phút hoặc 1 phút, không real-time" },
+          { t: "Đọc record", v: "inbound ACCEPT + outbound REJECT ⇒ NACL" },
+          { t: "Giới hạn", v: "không sửa được, không payload, không DNS/IMDS/DHCP" },
+          { t: "Phân tích", v: "S3 + Athena · CloudWatch metric filter" }
+        ] },
+        { t: "Network Firewall", icon: "svc/AWS-Network-Firewall.svg", c: [
+          { t: "Bản chất", v: "stateful managed + IPS Suricata ở biên VPC" },
+          { t: "Khả năng", v: "lọc domain, DPI, TLS inspection" },
+          { t: "Engine", v: "stateless trước (như NACL) → stateful (mặc định pass)" },
+          { t: "Định tuyến", v: "sửa route table + IGW edge association" },
+          { t: "Firewall subnet", v: "riêng mỗi AZ, không đặt workload" },
+          { t: "Tập trung", v: "inspection VPC + TGW; Firewall Manager đa account" }
+        ] },
+        { t: "Chọn công cụ", icon: "res/Amazon-VPC_Reachability-Analyzer.svg", c: [
+          { t: "Reachability Analyzer", v: "cấu hình tĩnh, không gửi traffic" },
+          { t: "AWS WAF", v: "lớp 7: SQLi, XSS trên ALB/CloudFront" },
+          { t: "DNS Firewall", v: "lọc truy vấn DNS tới Resolver" },
+          { t: "Traffic Mirroring", v: "copy gói tin có payload" },
+          { t: "GuardDuty", v: "phát hiện từ Flow Logs/CloudTrail/DNS, không chặn" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 3 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/cat/Customer-Enablement.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="3" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-03-shared-responsibility.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "model", name: "OF vs IN the cloud" },
+      { id: "svc", name: "Ranh giới theo dịch vụ" },
+      { id: "ctrl", name: "Inherited · Shared · Customer Specific" },
+      { id: "root", name: "Root user & tác vụ chỉ-root" },
+      { id: "mfa", name: "Best practices & MFA" },
+      { id: "org", name: "Root tập trung & giám sát" },
+      { id: "sup", name: "AWS Support plans" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Mô hình
+      { t: "model", f: "Shared Responsibility Model chia trách nhiệm thế nào (2 cụm từ)?", b: "<b>AWS</b>: Security <b>OF</b> the cloud.<br><b>Khách hàng</b>: Security <b>IN</b> the cloud." },
+      { t: "model", f: "“Security OF the cloud” gồm những gì?", b: "Hạ tầng chạy mọi dịch vụ AWS: <b>hardware, software, networking, facilities</b> + hạ tầng toàn cầu (Regions, AZs, Edge Locations).", x: "Với dịch vụ managed, AWS lo thêm OS, platform và việc vá chúng." },
+      { t: "model", f: "Phần “Security IN the cloud” của khách hàng được quyết định bởi điều gì?", b: "<b>Dịch vụ AWS mà khách hàng chọn</b> (cùng mức tích hợp vào môi trường IT và luật/quy định áp dụng)." },
+      { t: "model", f: "Hai thứ <b>luôn luôn</b> là trách nhiệm của khách hàng, kể cả với serverless?", b: "<b>Dữ liệu khách hàng</b> và <b>IAM</b> (quản lý định danh, quyền truy cập)." },
+      { t: "model", f: "Từ khóa nào trong câu hỏi ⇒ trách nhiệm của AWS?", b: "<b>physical security, data center, hardware, hypervisor/virtualization layer, global infrastructure, decommissioning storage devices</b>." },
+      { t: "model", f: "Từ khóa nào trong câu hỏi ⇒ trách nhiệm của khách hàng?", b: "<b>customer data, IAM users/roles/policies, security group rules, guest OS patching (EC2), encryption choice, application code</b>." },
+      { t: "model", f: "Encryption at rest cho S3: AWS hay khách hàng chịu trách nhiệm?", b: "<b>Chia sẻ</b>: AWS cung cấp khả năng mã hóa và hạ tầng khóa (KMS); <b>khách hàng</b> chọn bật/cấu hình mã hóa, key policy, quyền truy cập.", x: "Bẫy: “AWS chịu trách nhiệm hoàn toàn về mã hóa dữ liệu của khách hàng” ⇒ sai." },
+
+      // ---- Theo dịch vụ
+      { t: "svc", f: "Với Amazon EC2 (IaaS), khách hàng chịu trách nhiệm những gì?", b: "• <b>Guest OS</b>, gồm cập nhật và security patches<br>• Phần mềm/ứng dụng tự cài<br>• Cấu hình <b>security group</b>", x: "AWS: “requires the customer to perform all of the necessary security configuration and management tasks”." },
+      { t: "svc", f: "Với dịch vụ abstracted (S3, DynamoDB), khách hàng vẫn chịu trách nhiệm gì?", b: "• Quản lý <b>dữ liệu</b>, gồm <b>tùy chọn mã hóa</b><br>• <b>Phân loại tài sản</b> (classifying assets)<br>• Dùng <b>IAM</b> cấp quyền phù hợp" },
+      { t: "svc", f: "Với Amazon RDS (managed), AWS lo gì và khách hàng lo gì?", b: "<b>AWS</b>: OS và vá database engine.<br><b>Khách hàng</b>: mạng (SG, subnet, public access), IAM + DB users, bật encryption/TLS, retention backup, bật Multi-AZ, chọn maintenance window." },
+      { t: "svc", f: "Ai vá guest OS trên EC2? Có thể tự động hóa bằng gì?", b: "<b>Khách hàng</b>. Tự động hóa bằng <b>AWS Systems Manager Patch Manager</b>.", x: "Dùng Patch Manager thì trách nhiệm vẫn là của khách hàng." },
+      { t: "svc", f: "Security group do AWS cung cấp, vậy ai chịu trách nhiệm rule của nó?", b: "<b>Khách hàng</b>. Mở port 22 ra <code>0.0.0.0/0</code> là lỗi của khách hàng." },
+      { t: "svc", f: "Sao lưu dữ liệu với RDS và S3: ai làm gì?", b: "<b>RDS</b>: AWS chạy automated backup; khách hàng cấu hình retention, snapshot.<br><b>S3</b>: khách hàng bật Versioning, Replication." },
+      { t: "svc", f: "Tính sẵn sàng hạ tầng: EC2 so với RDS?", b: "<b>EC2</b>: khách hàng tự thiết kế Multi-AZ.<br><b>RDS</b>: khách hàng bật Multi-AZ, <b>AWS thực hiện failover</b>." },
+      { t: "svc", f: "Với AWS Lambda, khách hàng còn chịu trách nhiệm gì?", b: "<b>Function code, dependencies</b>, execution role/resource policy, VPC config (nếu gắn VPC), dữ liệu xử lý và biến môi trường.", x: "AWS lo OS và runtime được quản lý." },
+      { t: "svc", f: "“Firewall” của S3 do khách hàng cấu hình gồm những gì?", b: "<b>Bucket policy, Block Public Access, VPC endpoint policy</b>." },
+      { t: "svc", f: "Muốn chuyển <b>nhiều trách nhiệm bảo mật nhất</b> sang AWS ⇒ làm gì?", b: "Dùng dịch vụ <b>managed/serverless</b>: MySQL trên EC2 → <b>RDS/Aurora</b>; cron trên EC2 → <b>Lambda + EventBridge Scheduler</b>; file server tự quản → <b>S3 / EFS / FSx</b>." },
+      { t: "svc", f: "Chạy EC2 trên Dedicated Host thì AWS có vá guest OS không?", b: "<b>Không.</b> Dedicated Host chỉ là phần cứng chuyên dụng; guest OS vẫn do khách hàng vá." },
+
+      // ---- Controls
+      { t: "ctrl", f: "<b>Inherited Controls</b> là gì? Ví dụ?", b: "Control khách hàng <b>kế thừa hoàn toàn</b> từ AWS: <b>Physical and Environmental controls</b> (bảo mật vật lý, điện, làm mát, chống cháy…)." },
+      { t: "ctrl", f: "<b>Shared Controls</b> là gì?", b: "Control áp dụng cho <b>cả lớp hạ tầng lẫn lớp khách hàng</b>, nhưng trong hai bối cảnh khác nhau." },
+      { t: "ctrl", f: "Kể tên 3 Shared Controls AWS nêu.", b: "<b>Patch Management · Configuration Management · Awareness &amp; Training</b>." },
+      { t: "ctrl", f: "Patch Management là Shared Control vì sao?", b: "<b>AWS</b> vá và sửa lỗi trong hạ tầng; <b>khách hàng</b> vá guest OS và ứng dụng." },
+      { t: "ctrl", f: "Awareness &amp; Training được chia thế nào?", b: "AWS đào tạo <b>nhân viên AWS</b>; khách hàng phải đào tạo <b>nhân viên của mình</b>." },
+      { t: "ctrl", f: "<b>Customer Specific Controls</b> là gì? Ví dụ?", b: "Control <b>chỉ khách hàng</b> chịu trách nhiệm, dựa trên ứng dụng họ triển khai: <b>Service and Communications Protection</b>, <b>Zone Security</b>." },
+      { t: "ctrl", f: "AWS Artifact dùng để làm gì?", b: "Cổng tải <b>báo cáo kiểm toán bên thứ ba</b> của AWS (SOC, ISO, PCI…): bằng chứng cho phần “OF the cloud” và Inherited Controls." },
+      { t: "ctrl", f: "Dịch vụ nào giúp khách hàng làm phần việc của mình trong Patch/Configuration Management?", b: "<b>AWS Systems Manager</b> (Patch Manager, State Manager); kiểm chứng cấu hình bằng <b>AWS Config</b> rules." },
+      { t: "ctrl", f: "AWS Security Hub làm gì?", b: "Đánh giá <b>tư thế bảo mật tổng thể</b> theo tiêu chuẩn (CIS, AWS Foundational Security Best Practices…)." },
+
+      // ---- Root
+      { t: "root", f: "AWS account root user là gì? Đăng nhập bằng gì?", b: "Định danh duy nhất có <b>toàn quyền</b> mọi dịch vụ, tài nguyên và billing; đăng nhập bằng <b>email + mật khẩu</b> dùng khi tạo tài khoản." },
+      { t: "root", f: "Có thể giới hạn root user bằng IAM policy trong chính tài khoản không?", b: "<b>Không.</b> Chỉ <b>SCP</b> (Organizations) mới giới hạn được root của <b>member account</b>." },
+      { t: "root", f: "Thay vì root, nên dùng gì cho công việc hằng ngày?", b: "Một <b>administrative user</b>: tài khoản đơn lẻ dùng <b>IAM roles</b>; nhiều tài khoản dùng <b>IAM Identity Center</b>. Ưu tiên <b>temporary credentials</b>." },
+      { t: "root", f: "Tác vụ quản lý tài khoản nào cần root user?", b: "• Đổi <b>email, mật khẩu root, access key root</b> (standalone)<br>• <b>Close</b> / <b>reopen</b> account<br>• <b>Restore IAM user permissions</b> khi admin duy nhất tự thu hồi quyền" },
+      { t: "root", f: "Tác vụ S3 nào chỉ root user làm được?", b: "• Bật <b>MFA Delete</b> cho bucket<br>• Sửa/xóa <b>bucket policy deny-all</b> làm khóa bucket" },
+      { t: "root", f: "Các tác vụ chỉ-root ngoài account management và S3?", b: "Bật <b>IAM access to Billing console</b>; đăng ký <b>seller</b> RI Marketplace; đăng ký <b>GovCloud</b>; khôi phục <b>KMS key unmanageable</b> qua Support; gỡ <b>SQS policy deny-all</b>." },
+      { t: "root", f: "Đổi Support plan, tạo IAM user, bật CloudTrail có cần root không?", b: "<b>Không.</b> IAM user/role đủ quyền làm được.", x: "Đổi tên tài khoản, contact, alternate contacts, bật Region cũng không cần root." },
+      { t: "root", f: "MFA Delete trên S3: ai bật, bằng cách nào, điều kiện gì?", b: "<b>Chỉ root user</b>, qua <b>CLI/API</b>, bucket cần <b>versioning</b>.", x: "Bẫy: “IAM administrator enables MFA Delete in the console”." },
+
+      // ---- MFA & best practices
+      { t: "mfa", f: "Root user đăng ký được tối đa bao nhiêu thiết bị MFA?", b: "<b>8 thiết bị</b> (kết hợp mọi loại), mỗi IAM user cũng tối đa 8." },
+      { t: "mfa", f: "MFA cho root có bắt buộc không? Thời hạn ân hạn?", b: "<b>Bắt buộc</b> với mọi loại tài khoản (standalone, management, member). Chưa bật thì phải đăng ký trong <b>14 ngày</b> kể từ lần đăng nhập console đầu tiên." },
+      { t: "mfa", f: "Yêu cầu mật khẩu root user?", b: "<b>8–128 ký tự</b>, ít nhất <b>3 trong 4 loại</b> (hoa, thường, số, đặc biệt), không trùng tên tài khoản/email." },
+      { t: "mfa", f: "Có nên tạo access key cho root user không? Cần CLI thì sao?", b: "<b>Không.</b> Cần CLI/SDK thì dùng lệnh <code>aws login</code> để nhận credentials tạm thời, tự xoay vòng." },
+      { t: "mfa", f: "<i>Multi-person approval</i> cho root sign-in là gì?", b: "Không để một người nắm cả mật khẩu và MFA: nhóm A giữ <b>mật khẩu</b>, nhóm B giữ <b>MFA</b>." },
+      { t: "mfa", f: "Vì sao email root nên là <b>group email</b>?", b: "Email doanh nghiệp quản lý, chuyển tới nhiều người ⇒ AWS liên hệ không bị chậm khi một cá nhân nghỉ phép/nghỉ việc." },
+      { t: "mfa", f: "Account recovery mechanisms của root gồm gì? Bảo vệ thế nào?", b: "<b>Email</b> và <b>số điện thoại</b> đăng ký. Hai nhóm người quản lý hai kênh; không ai nắm cả hai." },
+      { t: "mfa", f: "Loại MFA nào AWS khuyến nghị mạnh nhất? Vì sao?", b: "<b>Passkeys &amp; security keys (FIDO)</b>: mật mã khóa công khai, <b>phishing-resistant</b>.", x: "Chỉ bật được qua console, không qua CLI/API." },
+      { t: "mfa", f: "Virtual authenticator app và hardware TOTP token khác nhau thế nào?", b: "<b>Virtual app</b>: ứng dụng điện thoại TOTP, miễn phí, AWS coi là giải pháp tạm thời.<br><b>Hardware TOTP</b>: thiết bị sinh mã 6 số, mua từ link AWS chỉ định." },
+      { t: "mfa", f: "SMS MFA có còn là lựa chọn đúng không?", b: "<b>Không.</b> AWS đã ngừng hỗ trợ bật SMS MFA." },
+      { t: "mfa", f: "Có nhiều thiết bị MFA, mất một thiết bị thì sao?", b: "Chỉ cần <b>một</b> thiết bị để đăng nhập ⇒ dùng thiết bị còn lại, không cần quy trình khôi phục." },
+      { t: "mfa", f: "Bật MFA cho root có áp dụng cho IAM user không?", b: "<b>Không.</b> Chỉ ảnh hưởng root; mỗi IAM user có cấu hình MFA riêng." },
+
+      // ---- Org & giám sát
+      { t: "org", f: "<i>Centralized root access</i> làm gì với member accounts?", b: "<b>Xóa root credentials</b> (mật khẩu, access key, signing certificate, MFA) của member accounts; tác vụ đặc quyền làm từ management account / delegated admin.", x: "Tài khoản mới tạo trong Organizations mặc định không có root credentials." },
+      { t: "org", f: "<code>sts:AssumeRoot</code> dùng để làm gì?", b: "Mở <b>phiên root đặc quyền ngắn hạn</b> trên member account (privileged task), vd mở khóa S3 bucket / SQS queue có policy deny-all." },
+      { t: "org", f: "Member account còn root credentials, muốn chặn hành động của root ⇒ ?", b: "Dùng <b>SCP</b> deny mọi hành động của root (trừ một số tác vụ chỉ-root)." },
+      { t: "org", f: "Cảnh báo khi root đăng nhập: luồng dịch vụ chuẩn?", b: "<b>CloudTrail</b> ghi sự kiện → <b>EventBridge rule</b> (userIdentity.type = Root) → <b>SNS</b> gửi email đội bảo mật.", x: "GuardDuty bổ sung finding RootCredentialUsage." },
+      { t: "org", f: "AWS Config managed rules nào kiểm tra root?", b: "<code>root-account-mfa-enabled</code>, <code>iam-root-access-key-check</code>." },
+      { t: "org", f: "Trusted Advisor có check gì về root? Gói nào có?", b: "Security check “<b>MFA on Root Account</b>”, có cả ở gói <b>Basic</b>." },
+      { t: "org", f: "Đã xóa root credentials ở member account, rule MFA báo “not applicable” có phải lỗi?", b: "<b>Không</b> phải lỗi; đó là hệ quả của best practice." },
+
+      // ---- Support
+      { t: "sup", f: "Gói Basic Support gồm gì? Có technical case không?", b: "<b>Miễn phí</b>: account &amp; billing, tăng service quota, forums, service health, tài liệu, Trusted Advisor <b>core checks</b>. <b>Không có technical support case</b>." },
+      { t: "sup", f: "Business Support+: giá và điểm chính?", b: "Từ <b>$29/tháng/tài khoản</b>; 24/7 phone/web/chat; <b>&lt; 30 phút</b> business-critical down; 500+ check Trusted Advisor; <b>AWS Support API</b>; không có TAM." },
+      { t: "sup", f: "Enterprise Support: giá tối thiểu và điểm chính?", b: "Tối thiểu <b>$5,000/tháng</b> (giảm từ $15,000); <b>designated TAM</b>; <b>&lt; 15 phút</b> business-critical; Security Incident Response, TA Priority." },
+      { t: "sup", f: "Unified Operations khác Enterprise ở điểm nào?", b: "<b>&lt; 5 phút</b> cho business-critical; TAM + <b>Domain Specialist Engineer</b>; Infrastructure Event Management; 24/7 workload monitoring." },
+      { t: "sup", f: "Thời gian phản hồi theo severity (gói trả phí hiện tại)?", b: "General guidance &lt; 24h · System impaired &lt; 12h · Production impaired &lt; 4h · Production down &lt; <b>1h</b> · Business-critical down: <b>30 / 15 / 5 phút</b> (Business+ / Enterprise / Unified Ops)." },
+      { t: "sup", f: "Các gói legacy nào bị ngừng và từ khi nào?", b: "<b>Developer, Business, Enterprise On-Ramp</b> ngừng từ <b>1/1/2027</b> (vẫn có ở GovCloud)." },
+      { t: "sup", f: "Gói Developer (legacy) có đặc điểm gì?", b: "Dev/test; hỗ trợ <b>email giờ hành chính</b>; nhanh nhất System impaired <b>&lt; 12 giờ</b>; core checks; không TAM." },
+      { t: "sup", f: "Enterprise On-Ramp và Enterprise (cũ) khác nhau về TAM và phản hồi?", b: "<b>On-Ramp</b>: pool of TAMs, &lt; 30 phút.<br><b>Enterprise</b>: designated TAM, &lt; 15 phút." },
+      { t: "sup", f: "Thời gian phản hồi của Support có phải SLA bảo đảm không?", b: "<b>Không.</b> AWS “will make every reasonable effort”, không phải SLA." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>compliance reports, SOC/PCI/ISO attestation of AWS</i>” ⇒ ?", b: "<b>AWS Artifact</b>." },
+      { t: "kw", f: "Đề có “<i>patch the database engine with least operational overhead</i>” ⇒ ?", b: "Chuyển sang <b>Amazon RDS/Aurora</b> (AWS vá engine trong maintenance window)." },
+      { t: "kw", f: "Đề có “<i>reduce the security responsibility of the company</i>” ⇒ ?", b: "Dịch vụ <b>managed/serverless</b>: Lambda, Fargate, S3, DynamoDB." },
+      { t: "kw", f: "Đề có “<i>secure the root user / newly created account</i>” ⇒ ?", b: "<b>MFA</b> + <b>không access key root</b> + admin role/<b>Identity Center</b> + mật khẩu mạnh + email nhóm.", x: "“Share root credentials” hay “root access keys for automation” luôn sai." },
+      { t: "kw", f: "Đề có “<i>notify the security team whenever the root user signs in</i>” + LEAST overhead ⇒ ?", b: "<b>CloudTrail + EventBridge rule + SNS</b>." },
+      { t: "kw", f: "Đề có “<i>restrict root in member accounts</i>” ⇒ ?", b: "<b>SCP</b> hoặc <b>centralized root access</b> (Organizations)." },
+      { t: "kw", f: "Đề có “<i>designated TAM, 15-minute response</i>” ⇒ ?", b: "<b>Enterprise Support</b>." },
+      { t: "kw", f: "Đề có “<i>cheapest plan with 24/7 phone and &lt; 1 hour production down</i>” ⇒ ?", b: "<b>Business / Business Support+</b>." },
+      { t: "kw", f: "Đề hỏi “<i>Which control is fully inherited from AWS?</i>” ⇒ ?", b: "<b>Physical and environmental controls</b>." }
+    ],
+
+    pairs: [
+      ["Security OF the cloud", "Phần AWS lo: hạ tầng chạy mọi dịch vụ"],
+      ["Security IN the cloud", "Phần khách hàng lo, tùy dịch vụ được chọn"],
+      ["IaaS (Amazon EC2)", "Khách hàng cấu hình bảo mật từ guest OS trở lên"],
+      ["Abstracted service", "S3, DynamoDB: AWS lo hạ tầng, OS, platform"],
+      ["Guest OS", "OS trong máy ảo EC2, khách hàng quản lý và vá"],
+      ["Inherited Controls", "Kế thừa hoàn toàn từ AWS (physical &amp; environmental)"],
+      ["Shared Controls", "Patch, configuration, awareness &amp; training"],
+      ["Customer Specific Controls", "Chỉ khách hàng lo, vd zone security"],
+      ["AWS Artifact", "Cổng tải báo cáo kiểm toán SOC, ISO, PCI"],
+      ["Root user", "Toàn quyền, đăng nhập bằng email + mật khẩu"],
+      ["MFA", "Thêm yếu tố thứ hai ngoài mật khẩu"],
+      ["Passkey / Security key", "MFA FIDO, khóa công khai, chống phishing"],
+      ["TOTP", "Mã dùng một lần theo thời gian (app, hardware token)"],
+      ["Temporary credentials", "Do IAM role/STS cấp, tự hết hạn"],
+      ["Account recovery mechanisms", "Email và số điện thoại đăng ký của root"],
+      ["Multi-person approval", "Tách người giữ mật khẩu và người giữ MFA"],
+      ["Centralized root access", "Xóa root credentials ở member accounts"],
+      ["sts:AssumeRoot", "Phiên root đặc quyền ngắn hạn trên member account"],
+      ["Delegated administrator", "Member account được giao quản trị một dịch vụ"],
+      ["MFA Delete", "S3 đòi MFA khi xóa phiên bản; chỉ root bật được"],
+      ["TAM", "Chuyên gia AWS được chỉ định (Enterprise trở lên)"],
+      ["Infrastructure Event Management", "AWS hỗ trợ scaling cho sự kiện lớn"],
+      ["Concierge Support", "Hỗ trợ tận tình billing/account (gói Enterprise)"],
+      ["Case severity", "Mức nghiêm trọng: general guidance → business-critical"]
+    ],
+
+    sorts: [
+      {
+        title: "AWS hay khách hàng chịu trách nhiệm?",
+        desc: "Theo Shared Responsibility Model, mỗi hạng mục thuộc về AWS (OF the cloud) hay khách hàng (IN the cloud)?",
+        buckets: ["AWS (OF the cloud)", "Khách hàng (IN the cloud)"],
+        items: [
+          ["Bảo mật vật lý data center", 0, "facilities là hạ tầng AWS"],
+          ["Vá hypervisor / lớp ảo hóa của EC2", 0, "virtualization layer là hạ tầng"],
+          ["Hủy thiết bị lưu trữ hết vòng đời", 0, "decommissioning storage devices ⇒ AWS"],
+          ["Vá OS của RDS instance", 0, "RDS là managed: AWS lo OS"],
+          ["Vá runtime của Lambda", 0, "runtime được AWS quản lý"],
+          ["Mạng toàn cầu: Regions, AZs, Edge Locations", 0, "global infrastructure ⇒ AWS"],
+          ["Vá guest OS của EC2", 1, "EC2 là IaaS"],
+          ["Cấu hình rule security group", 1, "AWS cung cấp SG, khách hàng cấu hình"],
+          ["Chọn SSE-S3/SSE-KMS cho bucket", 1, "khách hàng quản lý tùy chọn mã hóa"],
+          ["Quản lý quyền IAM user", 1, "IAM luôn là của khách hàng"],
+          ["Phân loại dữ liệu nhạy cảm trong S3", 1, "classifying assets; có thể dùng Macie"],
+          ["Code và dependencies của Lambda function", 1, "code ứng dụng luôn là của khách hàng"],
+          ["Bật Multi-AZ cho RDS", 1, "khách hàng bật, AWS thực hiện failover"]
+        ]
+      },
+      {
+        title: "Loại control",
+        desc: "Xếp mỗi control vào đúng nhóm: Inherited (kế thừa hoàn toàn từ AWS), Shared (cả hai, bối cảnh khác nhau), Customer Specific (chỉ khách hàng).",
+        buckets: ["Inherited", "Shared", "Customer Specific"],
+        items: [
+          ["Physical and environmental controls", 0, "khách hàng kế thừa hoàn toàn"],
+          ["Hệ thống chữa cháy trong data center", 0, "thuộc physical &amp; environmental"],
+          ["Điện, làm mát data center", 0, "thuộc physical &amp; environmental"],
+          ["Patch management", 1, "AWS vá hạ tầng, khách hàng vá guest OS/app"],
+          ["Configuration management", 1, "AWS cấu hình thiết bị hạ tầng, khách hàng cấu hình OS/DB/app"],
+          ["Awareness &amp; training", 1, "mỗi bên đào tạo nhân viên của mình"],
+          ["Zone security", 2, "định tuyến/phân vùng dữ liệu theo môi trường bảo mật"],
+          ["Service and communications protection", 2, "dựa trên ứng dụng khách hàng triển khai"]
+        ]
+      },
+      {
+        title: "Có cần root user không?",
+        desc: "Tác vụ nào bắt buộc dùng root user credentials, tác vụ nào IAM user/role đủ quyền làm được?",
+        buckets: ["Chỉ root user", "IAM user/role làm được"],
+        items: [
+          ["Bật MFA Delete cho S3 bucket", 0, "nằm trong danh sách chỉ-root"],
+          ["Gỡ bucket policy deny-all làm khóa bucket", 0, "chỉ root (hoặc sts:AssumeRoot)"],
+          ["Đóng tài khoản standalone", 0, "close account cần root"],
+          ["Đổi email root của tài khoản standalone", 0, "change account settings"],
+          ["Bật IAM access vào Billing console", 0, "tác vụ billing chỉ-root"],
+          ["Đăng ký seller trên RI Marketplace", 0, "tác vụ EC2 chỉ-root"],
+          ["Khôi phục quyền khi admin IAM duy nhất tự thu hồi", 0, "restore IAM user permissions"],
+          ["Đổi AWS Support plan", 1, "không nằm trong danh sách chỉ-root"],
+          ["Tạo IAM user", 1, "admin IAM làm được"],
+          ["Bật CloudTrail", 1, "IAM user/role đủ quyền làm được"],
+          ["Đổi alternate contacts", 1, "theo tài liệu hiện tại không cần root"],
+          ["Bật một opt-in Region", 1, "không cần root"]
+        ]
+      },
+      {
+        title: "Chọn gói Support rẻ nhất đáp ứng",
+        desc: "Với mỗi yêu cầu, gói Support (danh mục hiện tại) nào là MOST cost-effective?",
+        buckets: ["Basic", "Business Support+", "Enterprise Support", "Unified Operations"],
+        items: [
+          ["Chỉ cần hỏi về billing và tăng service quota", 0, "Basic miễn phí là đủ"],
+          ["Trusted Advisor core checks, không cần technical case", 0, "Basic có core checks"],
+          ["24/7 phone, &lt; 1 giờ khi production down, không cần TAM", 1, "gói thấp nhất có 24/7 và &lt; 1 giờ"],
+          ["Cần AWS Support API và full Trusted Advisor checks", 1, "Business Support+ đã có"],
+          ["Cần designated TAM", 2, "TAM bắt đầu từ Enterprise"],
+          ["Phản hồi &lt; 15 phút cho business-critical down", 2, "Business Support+ chỉ &lt; 30 phút"],
+          ["Phản hồi &lt; 5 phút từ Incident Management Engineer", 3, "chỉ Unified Operations"],
+          ["Cần Domain Specialist Engineer + 24/7 workload monitoring", 3, "tính năng của Unified Operations"]
+        ]
+      },
+      {
+        title: "Dịch vụ nào cho mục đích này?",
+        desc: "Chọn dịch vụ đúng cho từng nhu cầu bảo mật/tuân thủ trong bài.",
+        buckets: ["AWS Artifact", "CloudTrail + EventBridge + SNS", "AWS Config", "SCP / centralized root access", "Systems Manager Patch Manager"],
+        items: [
+          ["Auditor cần báo cáo SOC 2, PCI DSS của AWS", 0, "cổng báo cáo tuân thủ"],
+          ["Bằng chứng cho Inherited Controls", 0, "báo cáo kiểm toán bên thứ ba"],
+          ["Email cho đội bảo mật khi root đăng nhập", 1, "managed, gần real time"],
+          ["Kiểm tra root-account-mfa-enabled", 2, "managed rule của Config"],
+          ["Phát hiện root còn access key (iam-root-access-key-check)", 2, "managed rule của Config"],
+          ["Chặn hành động của root ở member accounts", 3, "IAM policy không giới hạn được root"],
+          ["Xóa hẳn root credentials ở 150 member accounts", 3, "centralized root access"],
+          ["Tự động vá guest OS cho đội EC2", 4, "trách nhiệm vẫn của khách hàng"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["AWS chịu trách nhiệm Security OF the cloud, khách hàng chịu trách nhiệm Security IN the cloud.", true, "Hai cụm từ cốt lõi của mô hình."],
+      ["AWS chịu trách nhiệm vá guest OS trên EC2 instance.", false, "EC2 là IaaS: guest OS do khách hàng vá."],
+      ["Vì EC2 được khởi chạy từ AMI do AWS cung cấp nên AWS phải vá OS của instance.", false, "AMI chỉ là điểm khởi đầu; sau khi chạy, vá OS là việc khách hàng."],
+      ["Dùng Systems Manager Patch Manager thì trách nhiệm vá guest OS chuyển sang AWS.", false, "Chỉ là công cụ tự động hóa; trách nhiệm vẫn của khách hàng."],
+      ["Với Amazon RDS, AWS vá OS và database engine.", true, "Khách hàng chọn maintenance window, bật auto minor version upgrade."],
+      ["Dữ liệu khách hàng vẫn là trách nhiệm của khách hàng khi dùng dịch vụ serverless.", true, "Dữ liệu và IAM luôn thuộc khách hàng."],
+      ["Vì S3 là dịch vụ managed, AWS tự phân loại và bảo vệ dữ liệu nhạy cảm nên khách hàng không còn trách nhiệm.", false, "Khách hàng vẫn lo quyền truy cập, phân loại và tùy chọn mã hóa."],
+      ["Cấu hình rule của security group là trách nhiệm của khách hàng.", true, "AWS cung cấp tính năng, khách hàng cấu hình."],
+      ["Bảo mật vật lý data center là Inherited Control.", true, "Physical and environmental: kế thừa hoàn toàn từ AWS."],
+      ["Patch management là Inherited Control.", false, "Đó là Shared Control: AWS vá hạ tầng, khách hàng vá guest OS/app."],
+      ["Awareness &amp; training là Shared Control.", true, "Mỗi bên đào tạo nhân viên của mình."],
+      ["Zone security là Shared Control.", false, "Zone security là Customer Specific control."],
+      ["AWS Artifact cung cấp báo cáo SOC, ISO, PCI của AWS.", true, "Cổng báo cáo tuân thủ."],
+      ["Có thể gắn IAM policy để giới hạn root user trong chính tài khoản đó.", false, "IAM policy không giới hạn được root; chỉ SCP với member account."],
+      ["Root user tối đa đăng ký được 8 thiết bị MFA.", true, "Kết hợp mọi loại MFA."],
+      ["Root user chỉ đăng ký được 1 thiết bị MFA.", false, "Tối đa 8 thiết bị."],
+      ["Nếu chưa bật MFA, root user có 14 ngày ân hạn kể từ lần đăng nhập console đầu tiên.", true, "MFA cho root là bắt buộc."],
+      ["MFA cho root chỉ bắt buộc với management account.", false, "Bắt buộc với mọi loại tài khoản: standalone, management, member."],
+      ["SMS MFA là lựa chọn MFA được AWS khuyến nghị.", false, "AWS đã ngừng hỗ trợ bật SMS MFA."],
+      ["Passkey/security key FIDO là loại MFA phishing-resistant.", true, "AWS khuyến nghị mạnh nhất."],
+      ["Passkey có thể bật qua AWS CLI.", false, "Chỉ bật được qua console."],
+      ["Tạo access key cho root và xoay vòng mỗi 30 ngày là best practice.", false, "Không nên tạo access key root; dùng <code>aws login</code> nếu cần CLI."],
+      ["Đổi AWS Support plan bắt buộc phải dùng root user.", false, "IAM user/role đủ quyền làm được."],
+      ["Chỉ root user mới bật được MFA Delete cho S3 bucket.", true, "Kể cả admin có AdministratorAccess cũng không làm được."],
+      ["Bật MFA cho root user cũng áp dụng MFA cho mọi IAM user.", false, "Mỗi IAM user có cấu hình MFA riêng."],
+      ["Tài khoản mới tạo trong AWS Organizations mặc định không có root credentials khi bật centralized root access.", true, "Tác vụ đặc quyền làm qua sts:AssumeRoot."],
+      ["Cảnh báo khi root đăng nhập với ít overhead nhất: CloudTrail + EventBridge + SNS.", true, "Managed, gần real time."],
+      ["VPC Flow Logs ghi lại sự kiện đăng nhập console của root.", false, "Flow Logs ghi traffic mạng trong VPC."],
+      ["Gói Basic Support cho phép mở technical support case.", false, "Basic chỉ hỗ trợ account &amp; billing."],
+      ["Enterprise Support có designated TAM.", true, "Business Support+ không có TAM."],
+      ["Business Support+ phản hồi trong 15 phút cho business-critical system down.", false, "Business Support+ &lt; 30 phút; Enterprise &lt; 15 phút."],
+      ["Thời gian phản hồi của AWS Support là SLA được bảo đảm.", false, "AWS chỉ “make every reasonable effort”."],
+      ["Gói Developer, Business, Enterprise On-Ramp ngừng từ 1/1/2027.", true, "Vẫn còn ở AWS GovCloud (US)."],
+      ["Trusted Advisor check “MFA on Root Account” có ở gói Basic.", true, "Thuộc core checks."]
+    ],
+
+    map: {
+      t: "Bài 3 · Shared Responsibility, root user & Support",
+      c: [
+        { t: "Shared Responsibility", icon: "cat/Security-Identity-Compliance.svg", c: [
+          { t: "AWS", v: "OF the cloud: hardware, software, networking, facilities" },
+          { t: "Khách hàng", v: "IN the cloud: tùy dịch vụ chọn" },
+          { t: "Luôn của khách hàng", v: "dữ liệu + IAM" },
+          { t: "Mã hóa", v: "AWS cung cấp khả năng; khách hàng chọn bật, key policy" }
+        ] },
+        { t: "Ranh giới theo dịch vụ", icon: "svc/Amazon-EC2.svg", c: [
+          { t: "EC2 (IaaS)", v: "khách hàng vá guest OS, app, security group" },
+          { t: "RDS (managed)", v: "AWS vá OS + engine; khách hàng mạng, IAM, encryption, Multi-AZ" },
+          { t: "Lambda", v: "khách hàng: code, dependencies, execution role" },
+          { t: "S3 / DynamoDB", v: "khách hàng: dữ liệu, mã hóa, phân loại, IAM" },
+          { t: "Giảm trách nhiệm", v: "chuyển sang managed/serverless (RDS, Lambda, S3)" }
+        ] },
+        { t: "IT controls", icon: "svc/AWS-Artifact.svg", c: [
+          { t: "Inherited", v: "physical &amp; environmental" },
+          { t: "Shared", v: "patch, configuration, awareness &amp; training" },
+          { t: "Customer Specific", v: "service &amp; communications protection, zone security" },
+          { t: "AWS Artifact", v: "báo cáo SOC, ISO, PCI" },
+          { t: "Công cụ phía khách hàng", v: "Systems Manager, Config, Security Hub" }
+        ] },
+        { t: "Root user", icon: "svc/AWS-Identity-and-Access-Management.svg", c: [
+          { t: "Định danh", v: "email + mật khẩu tạo tài khoản, toàn quyền" },
+          { t: "Giới hạn", v: "IAM policy không giới hạn được; SCP cho member" },
+          { t: "Hằng ngày", v: "admin qua IAM role / Identity Center" },
+          { t: "Tác vụ chỉ-root", c: [
+            { t: "Account", v: "đổi email/mật khẩu root, close/reopen, restore IAM perms" },
+            { t: "S3 / SQS", v: "MFA Delete, gỡ policy deny-all" },
+            { t: "Khác", v: "Billing IAM access, RI seller, GovCloud, KMS key" }
+          ] }
+        ] },
+        { t: "Best practices & MFA", icon: "res/AWS-Identity-Access-Management_MFA-Token.svg", c: [
+          { t: "MFA", v: "bắt buộc, ≤ 8 thiết bị, 14 ngày ân hạn" },
+          { t: "Mật khẩu", v: "8–128 ký tự, ≥ 3 loại" },
+          { t: "Access key root", v: "không tạo; dùng aws login" },
+          { t: "Multi-person approval", v: "tách người giữ mật khẩu và MFA" },
+          { t: "Email", v: "group email, quản lý kênh khôi phục" },
+          { t: "Loại MFA", c: [
+            { t: "Passkey / security key", v: "FIDO, phishing-resistant, chỉ console" },
+            { t: "Virtual app / hardware TOTP", v: "mã theo thời gian" },
+            { t: "SMS", v: "đã ngừng" }
+          ] }
+        ] },
+        { t: "Root tập trung & giám sát", icon: "svc/AWS-Organizations.svg", c: [
+          { t: "Centralized root access", v: "xóa root credentials ở member accounts" },
+          { t: "sts:AssumeRoot", v: "privileged task từ management / delegated admin" },
+          { t: "SCP", v: "deny hành động root ở member" },
+          { t: "Cảnh báo", v: "CloudTrail → EventBridge → SNS; GuardDuty" },
+          { t: "Kiểm tra", v: "Config rules, Security Hub, Trusted Advisor" }
+        ] },
+        { t: "AWS Support plans", icon: "svc/AWS-Support.svg", c: [
+          { t: "Basic", v: "miễn phí, account/billing, core checks" },
+          { t: "Business Support+", v: "$29+, 24/7, &lt; 1h prod down, &lt; 30 phút critical" },
+          { t: "Enterprise", v: "$5,000+, designated TAM, &lt; 15 phút" },
+          { t: "Unified Operations", v: "&lt; 5 phút, TAM + DSE" },
+          { t: "Legacy", v: "Developer/Business/On-Ramp ngừng 1/1/2027" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

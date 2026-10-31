@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 26 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-RDS.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="26" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-26-rds.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "ovw", name: "Tổng quan RDS" },
+      { id: "maz", name: "Multi-AZ" },
+      { id: "rr", name: "Read replica" },
+      { id: "bk", name: "Backup · Snapshot · PITR" },
+      { id: "stor", name: "Storage & mở rộng" },
+      { id: "proxy", name: "RDS Proxy" },
+      { id: "sec", name: "Bảo mật & mã hóa" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Tổng quan
+      { t: "ovw", f: "Amazon RDS là gì?", b: "Dịch vụ <b>CSDL quan hệ được quản lý</b>: AWS lo cài đặt, vá OS/DB, backup, HA, scaling.", x: "AWS khuyến nghị RDS là lựa chọn mặc định cho hầu hết workload CSDL quan hệ." },
+      { t: "ovw", f: "6 DB engine của RDS (không tính Aurora)?", b: "<b>IBM Db2, MariaDB, Microsoft SQL Server, MySQL, Oracle, PostgreSQL</b>.", x: "Aurora có User Guide riêng (Bài 27)." },
+      { t: "ovw", f: "Với RDS, khách hàng vẫn chịu trách nhiệm phần nào?", b: "<b>Query tuning, thiết kế schema</b>, giám sát hiệu năng, <b>Security Group</b>, quyết định bật Multi-AZ, retention, mã hóa.", x: "AWS lo scaling, HA, backup, vá DB và OS, phần cứng." },
+      { t: "ovw", f: "Có SSH vào host RDS được không? Cần quyền OS thì chọn gì?", b: "<b>Không.</b> Cần quyền OS ⇒ <b>DB tự cài trên EC2</b> hoặc <b>RDS Custom</b> (Oracle / SQL Server)." },
+      { t: "ovw", f: "DB instance là gì?", b: "<b>Môi trường CSDL cô lập</b>, khối xây dựng cơ bản của RDS; chứa một hoặc nhiều database, truy cập qua <b>endpoint DNS</b>." },
+      { t: "ovw", f: "Các họ DB instance class?", b: "General purpose <b>db.m*</b> · Memory optimized <b>db.r*, db.x*, db.z*</b> · Compute optimized <b>db.c*</b> · Burstable <b>db.t*</b>.", x: "db.m7g.2xlarge = thế hệ 7, Graviton3, size 2xlarge." },
+      { t: "ovw", f: "Các loại storage của RDS?", b: "<b>gp2/gp3</b>: rẻ, đa dụng.<br><b>io1/io2 Block Express</b>: I/O-intensive, độ trễ thấp ổn định, khuyến nghị production.<br><b>Magnetic</b>: deprecated.", x: "Storage dựa trên Amazon EBS." },
+      { t: "ovw", f: "DB subnet group là gì?", b: "Tập subnet (thường <b>private subnet ở ≥ 2 AZ</b>) mà RDS được phép đặt instance và standby; tối đa <b>20 subnet</b>." },
+      { t: "ovw", f: "Mẫu Security Group kinh điển cho RDS?", b: "SG của DB chỉ cho phép inbound <b>từ SG của tầng ứng dụng</b> (tham chiếu SG, không dùng dải IP); Publicly accessible = <b>No</b>." },
+      { t: "ovw", f: "Database chạy 24/7 ổn định, muốn giảm chi phí ⇒ ?", b: "<b>Reserved DB instances</b> (cam kết 1 hoặc 3 năm)." },
+      { t: "ovw", f: "Quota mặc định: số DB instance và storage tối đa?", b: "<b>40 DB instance</b> / Region / account (adjustable) · <b>64 TiB</b> / DB instance · <b>100.000 GB</b> tổng storage / Region." },
+
+      // ---- Multi-AZ
+      { t: "maz", f: "Multi-AZ DB instance hoạt động thế nào?", b: "1 <b>standby</b> ở AZ khác, sao chép <b>synchronous</b> ⇒ RPO gần 0 khi mất một AZ.", x: "Write/commit latency có thể cao hơn Single-AZ." },
+      { t: "maz", f: "Standby của Multi-AZ DB instance có phục vụ đọc không?", b: "<b>Không.</b> “The high availability option isn't a scaling solution for read-only scenarios.”", x: "Muốn đọc thêm ⇒ read replica hoặc Multi-AZ DB cluster." },
+      { t: "maz", f: "Thời gian failover của Multi-AZ DB instance?", b: "Thường <b>60–120 giây</b>." },
+      { t: "maz", f: "Failover Multi-AZ diễn ra thế nào?", b: "Promote standby → RDS <b>đổi bản ghi DNS (CNAME)</b> của endpoint → ứng dụng <b>kết nối lại</b> → dựng standby mới.", x: "Endpoint giữ nguyên, không cần sửa ứng dụng." },
+      { t: "maz", f: "Kể vài nguyên nhân gây failover tự động.", b: "Vá OS trong maintenance window · host unhealthy · mất mạng/sự cố AZ · modify instance class · primary busy · storage hỏng · <b>Reboot with failover</b>." },
+      { t: "maz", f: "Multi-AZ DB cluster gồm gì?", b: "<b>1 writer + 2 reader</b> ở <b>3 AZ</b>, sao chép <b>semisynchronous</b>, reader đọc được qua <b>reader endpoint</b>." },
+      { t: "maz", f: "Semisynchronous replication nghĩa là gì?", b: "Commit khi <b>ít nhất một reader xác nhận đã nhận</b> ⇒ write latency thấp hơn Multi-AZ DB instance." },
+      { t: "maz", f: "Thời gian failover và engine của Multi-AZ DB cluster?", b: "Thường <b>&lt; 35 giây</b>; chỉ <b>MySQL và PostgreSQL</b>, trên instance class có NVMe SSD cục bộ.", x: "Multi-AZ DB cluster KHÔNG phải Aurora DB cluster." },
+      { t: "maz", f: "Ứng dụng Java vẫn gọi IP cũ sau failover ⇒ sửa thế nào?", b: "Đặt <b>JVM DNS TTL ≤ 60 giây</b> (<code>networkaddress.cache.ttl=60</code>) hoặc dùng <b>RDS Proxy</b>." },
+      { t: "maz", f: "Chuyển một Single-AZ sang Multi-AZ có phải tạo lại DB không?", b: "<b>Không.</b> Chỉ cần <b>Modify</b> và chọn Multi-AZ; endpoint giữ nguyên." },
+
+      // ---- Read replica
+      { t: "rr", f: "Read replica sao chép kiểu gì? Đọc từ replica nhất quán ra sao?", b: "<b>Asynchronous</b> ⇒ có replica lag, đọc là <b>eventually consistent</b>." },
+      { t: "rr", f: "Tối đa bao nhiêu read replica / primary?", b: "<b>15</b>.", x: "Với Oracle, AWS khuyên ≤ 5 để giảm lag." },
+      { t: "rr", f: "Điều kiện bắt buộc để tạo read replica?", b: "Nguồn phải bật <b>automated backup</b> (retention ≠ 0)." },
+      { t: "rr", f: "RDS có tự chia tải đọc/ghi sang replica không?", b: "<b>Không.</b> Replica có <b>endpoint riêng</b>, ứng dụng tự chỉ định endpoint cho query đọc." },
+      { t: "rr", f: "Read replica có auto scaling không?", b: "<b>Không</b>, phải tự thêm/xóa (khác Aurora Replicas)." },
+      { t: "rr", f: "Phí data transfer khi sao chép sang read replica?", b: "<b>Cùng Region: miễn phí</b>. <b>Cross-Region: có phí</b> truyền dữ liệu.", x: "Replica tính tiền như một DB instance bình thường." },
+      { t: "rr", f: "Promote read replica nghĩa là gì?", b: "Biến replica thành <b>DB độc lập đọc/ghi</b>; sao chép bị cắt <b>vĩnh viễn</b>. Thao tác <b>thủ công</b>.", x: "Không phải failover tự động như Multi-AZ." },
+      { t: "rr", f: "3 mục đích của cross-Region read replica?", b: "<b>Disaster recovery</b> · <b>đọc gần người dùng</b> ở Region khác · <b>di chuyển giữa Region</b>." },
+      { t: "rr", f: "Tạo replica mã hóa ở Region khác cần gì?", b: "Nguồn phải mã hóa, và chỉ định <b>KMS key của Region đích</b> (KMS key gắn với Region).", x: "RDS chỉ đảm bảo tối đa 5 cross-Region replica / nguồn." },
+      { t: "rr", f: "Engine nào cho replica của replica? Engine nào cho replica ghi được?", b: "Replica của replica: <b>MariaDB, MySQL</b>, một số PostgreSQL.<br>Replica ghi được: chỉ <b>MySQL/MariaDB</b>." },
+      { t: "rr", f: "Read replica có giải quyết high availability không?", b: "<b>Không.</b> Không tự failover, phải promote thủ công; endpoint thay đổi." },
+
+      // ---- Backup
+      { t: "bk", f: "Automated backup gồm những gì?", b: "<b>Snapshot hằng ngày</b> trong backup window + upload <b>transaction log lên S3 mỗi 5 phút</b>." },
+      { t: "bk", f: "Backup retention period của DB instance?", b: "<b>0–35 ngày</b> (0 = tắt). Mặc định <b>7 ngày</b> (console), <b>1 ngày</b> (CLI/API).", x: "Multi-AZ DB cluster: 1–35 ngày. Đổi 0 ↔ khác 0 gây outage." },
+      { t: "bk", f: "Point-in-time restore tạo ra gì?", b: "Luôn tạo <b>DB instance MỚI</b> với <b>endpoint mới</b>; instance nguồn không đổi.", x: "Instance mới dùng default parameter group / option group." },
+      { t: "bk", f: "Latest restorable time thường cách hiện tại bao lâu?", b: "Khoảng <b>5 phút</b> (do log upload mỗi 5 phút)." },
+      { t: "bk", f: "Khác nhau giữa automated backup và manual snapshot khi xóa DB?", b: "Automated backup <b>bị xóa</b> (trừ khi chọn Retain automated backups). Manual snapshot <b>vẫn còn</b>.", x: "Nên tạo final snapshot khi xóa DB." },
+      { t: "bk", f: "Quota manual snapshot?", b: "<b>100 / Region</b> (adjustable); không áp cho automated backup." },
+      { t: "bk", f: "Backup storage miễn phí bao nhiêu?", b: "Bằng <b>100% tổng storage đã cấp phát</b> trong Region." },
+      { t: "bk", f: "Snapshot mã hóa bằng AWS managed key có share cho account khác được không?", b: "<b>Không.</b> Phải dùng <b>customer managed key</b> và cấp quyền key cho account đích." },
+      { t: "bk", f: "Cần lưu backup rất lâu (vd 7 năm) ⇒ ?", b: "<b>AWS Backup</b> backup plan retention dài (có thể Vault Lock), manual snapshot định kỳ, hoặc <b>export snapshot sang S3</b> (Parquet).", x: "Automated backup tối đa 35 ngày." },
+
+      // ---- Storage
+      { t: "stor", f: "3 điều kiện để storage autoscaling kích hoạt?", b: "Trống <b>≤ 10%</b> · kéo dài <b>≥ 5 phút</b> · lần sửa trước đã xong và <b>&lt; 4 lần sửa / 24 giờ</b>." },
+      { t: "stor", f: "Mỗi lần autoscaling tăng bao nhiêu?", b: "Giá trị lớn nhất trong: <b>10 GiB</b> · <b>10%</b> storage hiện tại · mức tăng dự đoán <b>7 giờ</b> tới." },
+      { t: "stor", f: "Maximum storage threshold là gì?", b: "Tham số <b>MaxAllocatedStorage</b>: trần autoscaling, phải lớn hơn storage hiện tại ≥ 10% (khuyên ≥ 26%)." },
+      { t: "stor", f: "RDS có giảm được allocated storage không?", b: "<b>Không bao giờ</b>, kể cả Modify. Muốn nhỏ lại ⇒ tạo instance mới rồi migrate hoặc <b>Blue/Green Deployment</b>." },
+      { t: "stor", f: "CPU/RAM cao cho cả đọc lẫn ghi ⇒ ?", b: "<b>Scale up instance class</b> (scale dọc)." },
+      { t: "stor", f: "IOPS không đủ, latency I/O cao ⇒ ?", b: "Chuyển <b>Provisioned IOPS (io1/io2)</b> hoặc tăng IOPS gp3." },
+      { t: "stor", f: "Blue/Green Deployments dùng để làm gì?", b: "Tạo môi trường <b>green</b> đồng bộ với production <b>blue</b> để nâng cấp engine/schema/storage rồi <b>switchover</b> nhanh." },
+
+      // ---- RDS Proxy
+      { t: "proxy", f: "RDS Proxy mang lại những gì?", b: "<b>Connection pooling + multiplexing</b> serverless, <b>failover nhanh</b>, ép <b>IAM auth</b>, lấy mật khẩu từ <b>Secrets Manager</b>." },
+      { t: "proxy", f: "Vì sao RDS Proxy giúp failover nhanh hơn?", b: "Proxy giữ <b>cùng endpoint/IP</b>, tự chuyển sang primary mới; client không bị ảnh hưởng bởi <b>DNS propagation / DNS cache</b>.", x: "Chỉ kết nối đang giữa transaction bị hủy." },
+      { t: "proxy", f: "Pinning trong RDS Proxy là gì?", b: "Giữ phiên trên <b>một kết nối cố định</b> khi không chắc tái sử dụng an toàn (vd đổi biến phiên, câu lệnh &gt; 16 KB) ⇒ giảm hiệu quả pooling." },
+      { t: "proxy", f: "Giới hạn mạng của RDS Proxy?", b: "Phải <b>cùng VPC</b> với DB, <b>không thể publicly accessible</b>, không dùng VPC tenancy dedicated." },
+      { t: "proxy", f: "RDS Proxy gắn được vào read replica không?", b: "<b>Không</b>, chỉ gắn với <b>writer</b>. Không dùng cho DB tự cài trên EC2." },
+      { t: "proxy", f: "Quota RDS Proxy?", b: "<b>20 proxy</b> / account / Region · <b>200 secret</b> / proxy · 20 endpoint bổ sung / proxy." },
+      { t: "proxy", f: "Tăng max_connections có thay được RDS Proxy không?", b: "<b>Không</b> nên: chỉ chữa triệu chứng, mỗi kết nối vẫn tốn RAM, tốn tiền hơn." },
+
+      // ---- Bảo mật
+      { t: "sec", f: "IAM database authentication hỗ trợ engine nào? Token sống bao lâu?", b: "<b>MariaDB, MySQL, PostgreSQL</b>. Token SigV4 sống <b>15 phút</b>.", x: "IAM policy cần action <code>rds-db:connect</code>; bắt buộc SSL/TLS." },
+      { t: "sec", f: "Secrets Manager quản lý master password của RDS thế nào?", b: "RDS tự sinh, lưu và <b>xoay vòng mỗi 7 ngày</b> (mặc định, đổi được), không sửa ứng dụng." },
+      { t: "sec", f: "Encryption at rest của RDS mã hóa những gì?", b: "AES-256 qua KMS: <b>storage, log, automated backup, read replica, snapshot</b>." },
+      { t: "sec", f: "Bật mã hóa trên DB instance đang chạy được không?", b: "<b>Không.</b> Chỉ bật khi tạo; cũng không tắt được. Không đổi được KMS key sau khi tạo." },
+      { t: "sec", f: "Quy trình mã hóa DB đang chạy không mã hóa?", b: "① <b>Snapshot</b> → ② <b>copy snapshot + Enable encryption</b> (KMS key) → ③ <b>restore</b> instance mới → ④ đổi endpoint ứng dụng.", x: "Cách giảm downtime: Blue/Green Deployment." },
+      { t: "sec", f: "Tạo replica mã hóa từ nguồn không mã hóa được không?", b: "<b>Không</b> (và ngược lại)." },
+      { t: "sec", f: "Disable KMS key của RDS thì sao?", b: "DB chuyển <b>inaccessible-encryption-credentials-recoverable</b>; có <b>7 ngày</b> để bật lại key." },
+      { t: "sec", f: "Dữ liệu sao chép từ nguồn sang read replica có được mã hóa khi truyền không?", b: "<b>Luôn được mã hóa</b>, kể cả cross-Region, dù có mã hóa at rest hay không." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>migrate on-premises MySQL/Oracle… least operational overhead</i>” ⇒ ?", b: "<b>Amazon RDS</b> (hoặc Aurora), không tự cài DB trên EC2." },
+      { t: "kw", f: "Đề có “<i>access to the underlying operating system</i>” ⇒ ?", b: "<b>DB trên EC2</b> hoặc <b>RDS Custom</b> (Oracle / SQL Server)." },
+      { t: "kw", f: "Đề có “<i>highly available, automatic failover, survive the loss of an AZ</i>” ⇒ ?", b: "<b>Multi-AZ</b>." },
+      { t: "kw", f: "Đề có “<i>failover in under 35 seconds</i>”, “<i>standby should serve read traffic</i>” ⇒ ?", b: "<b>Multi-AZ DB cluster</b>." },
+      { t: "kw", f: "Đề có “<i>reporting queries slow down production</i>”, “<i>offload read traffic</i>” ⇒ ?", b: "<b>Read replica</b>.", x: "Đọc lặp lại cùng dữ liệu, cần micro-giây ⇒ ElastiCache." },
+      { t: "kw", f: "Đề có “<i>DR in another Region, RPO of minutes, read access there</i>” ⇒ ?", b: "<b>Cross-Region read replica</b>, promote khi cần.", x: "RPO giây, RTO &lt; 1 phút cross-Region ⇒ Aurora Global Database." },
+      { t: "kw", f: "Đề có “<i>restore to the state 10 minutes before an accidental DELETE</i>” ⇒ ?", b: "<b>Point-in-time restore</b> ⇒ instance mới, trỏ ứng dụng sang endpoint mới." },
+      { t: "kw", f: "Đề có “<i>Lambda… too many connections</i>” ⇒ ?", b: "<b>RDS Proxy</b>." },
+      { t: "kw", f: "Đề có “<i>rotate the database password automatically</i>” ⇒ ?", b: "<b>AWS Secrets Manager</b>, không phải Parameter Store (không tự rotate)." },
+      { t: "kw", f: "Đề có “<i>connect without storing credentials, use IAM roles</i>” ⇒ ?", b: "<b>IAM database authentication</b> + IAM role của EC2/Lambda." },
+      { t: "kw", f: "Đề có “<i>storage filling up unpredictably, LEAST operational overhead</i>” ⇒ ?", b: "<b>Storage autoscaling</b> + maximum storage threshold.", x: "CloudWatch alarm + Lambda chạy được nhưng tốn công vận hành hơn." },
+      { t: "kw", f: "Đề có “<i>DB only used during business hours / dev-test, reduce cost</i>” ⇒ ?", b: "<b>Stop DB instance</b> (tự khởi động lại sau tối đa 7 ngày) hoặc snapshot rồi xóa." }
+    ],
+
+    pairs: [
+      ["Amazon RDS", "CSDL quan hệ được quản lý cho 6 engine"],
+      ["DB instance", "Môi trường CSDL cô lập, khối cơ bản của RDS"],
+      ["DB instance class", "Quyết định CPU/RAM: db.m, db.r, db.c, db.t…"],
+      ["DB parameter group", "Tập cấu hình engine áp cho instance"],
+      ["DB subnet group", "Các subnet (≥ 2 AZ) RDS được đặt instance"],
+      ["Multi-AZ DB instance", "1 standby đồng bộ, không đọc, failover 60–120 s"],
+      ["Multi-AZ DB cluster", "1 writer + 2 reader / 3 AZ, failover &lt; 35 s"],
+      ["Semisynchronous replication", "Commit khi ≥ 1 replica xác nhận đã nhận"],
+      ["Asynchronous replication", "Primary không chờ replica, replica có thể trễ"],
+      ["Read replica", "Bản sao chỉ đọc, tối đa 15 / primary"],
+      ["Promote", "Biến replica thành DB đọc/ghi độc lập"],
+      ["Replica lag", "Độ trễ giữa primary và replica (ReplicaLag)"],
+      ["Backup retention period", "0–35 ngày, 0 = tắt automated backup"],
+      ["Latest restorable time", "Thời điểm khôi phục mới nhất, ~5 phút trước"],
+      ["Final snapshot", "Bản chụp tạo lúc xóa DB instance"],
+      ["Maximum storage threshold", "Trần dung lượng cho storage autoscaling"],
+      ["RDS Proxy", "Proxy gom kết nối, failover nhanh, IAM auth"],
+      ["Pinning", "Ghim phiên vào một kết nối cố định"],
+      ["Authentication token", "Mã xác thực IAM sống 15 phút"],
+      ["TDE", "Mã hóa cấp engine của Oracle / SQL Server"],
+      ["RDS Custom", "RDS cho Oracle/SQL Server có quyền OS"],
+      ["Blue/Green Deployment", "Môi trường green đồng bộ rồi switchover"],
+      ["Enhanced Monitoring", "Metric hệ điều hành thời gian thực"],
+      ["Performance Insights", "Phân tích tải CSDL, tìm query gây tải"]
+    ],
+
+    sorts: [
+      {
+        title: "Multi-AZ DB instance, Multi-AZ DB cluster hay Read replica?",
+        desc: "Đặc điểm sau thuộc lựa chọn nào trong bảng so sánh của bài?",
+        buckets: ["Multi-AZ DB instance", "Multi-AZ DB cluster", "Read replica"],
+        items: [
+          ["1 standby, sao chép synchronous", 0, "standby ở AZ khác, chờ failover"],
+          ["Standby không nhận kết nối đọc", 0, "HA không phải giải pháp scale đọc"],
+          ["Failover thường 60–120 giây", 0, "đổi CNAME của endpoint"],
+          ["Hỗ trợ mọi engine, SQL Server dùng DBM/AG", 0, "cluster chỉ MySQL/PostgreSQL"],
+          ["1 writer + 2 reader ở 3 AZ", 1, "reader vừa đọc vừa là đích failover"],
+          ["Sao chép semisynchronous", 1, "commit khi ≥ 1 reader xác nhận"],
+          ["Failover thường dưới 35 giây", 1, "nhanh hơn Multi-AZ DB instance"],
+          ["Có cluster endpoint và reader endpoint", 1, "ghi qua cluster, đọc qua reader"],
+          ["Sao chép asynchronous, tối đa 15", 2, "có replica lag"],
+          ["Có thể đặt ở Region khác", 2, "cross-Region read replica cho DR"],
+          ["Promote thủ công, không tự failover", 2, "không phải giải pháp HA"],
+          ["Yêu cầu bật automated backup trên nguồn", 2, "retention ≠ 0"]
+        ]
+      },
+      {
+        title: "Triệu chứng ⇒ cách mở rộng RDS",
+        desc: "Chọn giải pháp đúng theo triệu chứng trong đề.",
+        buckets: ["Storage autoscaling", "Scale up instance class", "Read replica", "Provisioned IOPS", "RDS Proxy"],
+        items: [
+          ["Sắp hết dung lượng, tăng trưởng khó đoán", 0, "tự tăng, không downtime"],
+          ["Game mobile tăng người dùng nhanh, từng gần đầy disk", 0, "đúng ví dụ tài liệu"],
+          ["CPU/RAM cao cho cả đọc lẫn ghi", 1, "scale dọc, vd r6g.large → r6g.2xlarge"],
+          ["Query báo cáo nặng làm chậm giao dịch", 2, "tách tải đọc ra endpoint riêng"],
+          ["Workload đọc nhiều vượt năng lực một instance", 2, "scale out đọc, tối đa 15"],
+          ["IOPS không đủ, latency I/O cao", 3, "io1/io2 hoặc tăng IOPS gp3"],
+          ["Lambda gây lỗi “too many connections”", 4, "pooling + multiplexing"],
+          ["Ứng dụng phụ thuộc DNS khi failover", 4, "proxy giữ nguyên endpoint"]
+        ]
+      },
+      {
+        title: "Automated backup hay Manual snapshot?",
+        desc: "Đặc điểm sau thuộc cơ chế sao lưu nào?",
+        buckets: ["Automated backup", "Manual snapshot"],
+        items: [
+          ["Do RDS tạo trong backup window", 0, "snapshot hằng ngày"],
+          ["Retention 1–35 ngày", 0, "0 = tắt"],
+          ["Point-in-time recovery tới từng giây", 0, "snapshot + log mỗi 5 phút"],
+          ["Bị xóa khi xóa DB (trừ khi Retain)", 0, "nên tạo final snapshot"],
+          ["Muốn share phải copy thành manual trước", 0, "không share trực tiếp"],
+          ["Giữ tới khi bạn tự xóa", 1, "không hết hạn"],
+          ["Vẫn còn sau khi xóa DB instance", 1, "độc lập với instance"],
+          ["Share trực tiếp cho account khác", 1, "nếu dùng customer managed key"],
+          ["Quota 100 / Region", 1, "quota không áp cho automated backup"]
+        ]
+      },
+      {
+        title: "Yêu cầu bảo mật ⇒ giải pháp",
+        desc: "Chọn cơ chế bảo mật RDS phù hợp với yêu cầu đề.",
+        buckets: ["IAM DB authentication", "Secrets Manager", "Snapshot → copy mã hóa → restore", "Security Group tham chiếu SG"],
+        items: [
+          ["EC2 kết nối MySQL không lưu mật khẩu, dùng IAM role", 0, "token 15 phút"],
+          ["Quản lý truy cập DB tập trung bằng IAM, bắt buộc SSL", 0, "rds-db:connect"],
+          ["Rotate mật khẩu DB tự động mỗi 30 ngày", 1, "Parameter Store không tự rotate"],
+          ["Không hard-code mật khẩu master, hỗ trợ mọi engine", 1, "RDS-managed secret"],
+          ["DB tạo 2 năm trước chưa mã hóa phải mã hóa bằng CMK", 2, "không Modify bật mã hóa được"],
+          ["Cần read replica mã hóa cho nguồn không mã hóa", 2, "phải mã hóa nguồn trước qua snapshot"],
+          ["Chỉ tầng ứng dụng được truy cập database", 3, "inbound từ SG của app tier"],
+          ["Không cho phép DB nhận kết nối từ Internet", 3, "private subnet, Publicly accessible = No"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["RDS hỗ trợ 6 DB engine (không tính Aurora).", true, "Db2, MariaDB, SQL Server, MySQL, Oracle, PostgreSQL."],
+      ["Với RDS, AWS chịu trách nhiệm query tuning.", false, "Query tuning, schema, SG là trách nhiệm khách hàng."],
+      ["Bạn có thể SSH vào host của RDS DB instance.", false, "Không có quyền OS; cần thì EC2 hoặc RDS Custom."],
+      ["Standby của Multi-AZ DB instance có thể dùng để chạy báo cáo.", false, "Standby không nhận kết nối."],
+      ["Multi-AZ DB instance sao chép đồng bộ sang standby.", true, "Synchronous ⇒ RPO gần 0 khi mất AZ."],
+      ["Multi-AZ giúp khôi phục khi lỡ DROP TABLE.", false, "Lệnh được sao chép sang standby ngay; dùng PITR/snapshot."],
+      ["Standby Multi-AZ có thể đặt ở Region khác.", false, "Mọi AZ của Multi-AZ cùng một Region."],
+      ["Khi Multi-AZ failover, endpoint của DB giữ nguyên.", true, "RDS đổi CNAME trỏ sang instance mới."],
+      ["Multi-AZ DB cluster có failover thường dưới 35 giây.", true, "Nhanh hơn 60–120 s của Multi-AZ DB instance."],
+      ["Multi-AZ DB cluster hỗ trợ cả Oracle và SQL Server.", false, "Chỉ MySQL và PostgreSQL."],
+      ["Multi-AZ DB cluster chính là Aurora DB cluster.", false, "Tài liệu cảnh báo hai loại này khác nhau."],
+      ["Chuyển Single-AZ sang Multi-AZ chỉ cần Modify, không cần sửa ứng dụng.", true, "Endpoint không đổi."],
+      ["Một primary có tối đa 15 read replica.", true, "Quota “Read replicas per primary”."],
+      ["Có thể tạo read replica khi automated backup đang tắt.", false, "Nguồn phải có retention ≠ 0."],
+      ["RDS tự động chia query đọc sang read replica.", false, "Ứng dụng phải tự dùng endpoint của replica."],
+      ["Read replica của RDS có auto scaling.", false, "Phải tự thêm/xóa, khác Aurora Replicas."],
+      ["Sao chép sang read replica cùng Region không tốn phí data transfer.", true, "Cross-Region mới có phí."],
+      ["Read replica tự failover khi primary hỏng.", false, "Phải promote thủ công."],
+      ["Promote read replica sẽ cắt quan hệ sao chép vĩnh viễn.", true, "Replica thành DB độc lập."],
+      ["Automated backup retention tối đa là 35 ngày.", true, "0–35 ngày cho DB instance."],
+      ["Point-in-time restore ghi đè lên DB instance hiện tại.", false, "Luôn tạo instance mới với endpoint mới."],
+      ["Transaction log được upload lên S3 mỗi 5 phút.", true, "Nên latest restorable time ~5 phút trước."],
+      ["Manual snapshot bị xóa theo khi xóa DB instance.", false, "Manual snapshot vẫn còn tới khi bạn xóa."],
+      ["Snapshot mã hóa bằng AWS managed key share được cho account khác.", false, "Phải dùng customer managed key."],
+      ["RDS có thể tự giảm storage khi dữ liệu ít đi.", false, "Không bao giờ giảm storage, kể cả Modify."],
+      ["Storage autoscaling kích hoạt khi dung lượng trống ≤ 10% trong ít nhất 5 phút.", true, "Cộng thêm điều kiện &lt; 4 lần sửa / 24 giờ."],
+      ["RDS Proxy có thể đặt publicly accessible.", false, "Proxy không thể public và phải cùng VPC với DB."],
+      ["RDS Proxy có thể gắn vào read replica của RDS DB instance.", false, "Chỉ gắn với writer."],
+      ["RDS Proxy giúp failover không phụ thuộc DNS cache của client.", true, "Proxy giữ nguyên endpoint/IP."],
+      ["IAM DB authentication token có hiệu lực 15 phút.", true, "Chỉ dùng lúc kết nối."],
+      ["IAM DB authentication hỗ trợ Oracle.", false, "Chỉ MariaDB, MySQL, PostgreSQL."],
+      ["Có thể Modify một DB instance đang chạy để bật encryption at rest.", false, "Phải snapshot → copy có mã hóa → restore."],
+      ["Secrets Manager mặc định xoay vòng master password mỗi 7 ngày.", true, "Có thể đổi chu kỳ."],
+      ["Systems Manager Parameter Store tự rotate mật khẩu DB.", false, "Parameter Store không tự rotate; dùng Secrets Manager."],
+      ["Dữ liệu sao chép sang read replica luôn được mã hóa khi truyền.", true, "Kể cả cross-Region."]
+    ],
+
+    map: {
+      t: "Bài 26 · Amazon RDS",
+      c: [
+        { t: "Tổng quan", icon: "svc/Amazon-RDS.svg", c: [
+          { t: "Engine", v: "Db2, MariaDB, SQL Server, MySQL, Oracle, PostgreSQL" },
+          { t: "AWS lo", v: "OS, patch, backup, HA, scaling" },
+          { t: "Bạn lo", v: "query tuning, schema, SG, cấu hình" },
+          { t: "Không có quyền OS", v: "cần thì EC2 / RDS Custom" },
+          { t: "Storage", v: "gp2/gp3 · io1/io2 (production) · Magnetic deprecated" },
+          { t: "Mạng", v: "DB subnet group private ≥ 2 AZ · SG tham chiếu SG app" },
+          { t: "Chi phí 24/7", v: "Reserved DB instances 1/3 năm" }
+        ] },
+        { t: "Multi-AZ", icon: "res/Amazon-Aurora_Amazon-RDS-Instance-Aternate.svg", c: [
+          { t: "DB instance", c: [
+            { t: "Cấu trúc", v: "1 standby, synchronous" },
+            { t: "Đọc", v: "standby không đọc được" },
+            { t: "Failover", v: "60–120 s, đổi CNAME, endpoint giữ nguyên" }
+          ] },
+          { t: "DB cluster", c: [
+            { t: "Cấu trúc", v: "1 writer + 2 reader / 3 AZ, semisynchronous" },
+            { t: "Đọc", v: "reader endpoint" },
+            { t: "Failover", v: "&lt; 35 s · chỉ MySQL, PostgreSQL" }
+          ] },
+          { t: "Không bảo vệ", v: "xóa nhầm dữ liệu, sự cố cả Region" },
+          { t: "Test", v: "Reboot with failover" }
+        ] },
+        { t: "Read replica", icon: "res/Amazon-Aurora_Amazon-RDS-Instance.svg", c: [
+          { t: "Sao chép", v: "asynchronous, eventually consistent" },
+          { t: "Số lượng", v: "tối đa 15 / primary" },
+          { t: "Điều kiện", v: "nguồn bật automated backup" },
+          { t: "Endpoint", v: "riêng, ứng dụng tự trỏ" },
+          { t: "Promote", v: "thủ công, cắt sao chép vĩnh viễn" },
+          { t: "Cross-Region", v: "DR, đọc gần người dùng; có phí, KMS key Region đích" }
+        ] },
+        { t: "Backup & PITR", icon: "res/AWS-Backup_Backup-Restore.svg", c: [
+          { t: "Automated", v: "snapshot hằng ngày + log mỗi 5 phút" },
+          { t: "Retention", v: "0–35 ngày (console 7, CLI 1)" },
+          { t: "PITR", v: "tạo instance MỚI, endpoint mới" },
+          { t: "Manual snapshot", v: "giữ tới khi xóa, 100 / Region" },
+          { t: "Lưu dài hạn", v: "AWS Backup, export S3" }
+        ] },
+        { t: "Storage & mở rộng", icon: "res/Amazon-Elastic-Block-Store_Volume-gp3.svg", c: [
+          { t: "Autoscaling", v: "trống ≤ 10%, ≥ 5 phút, &lt; 4 lần / 24 h" },
+          { t: "Mức tăng", v: "max(10 GiB, 10%, dự đoán 7 h)" },
+          { t: "Giảm storage", v: "không bao giờ ⇒ migrate / Blue/Green" },
+          { t: "CPU/RAM", v: "scale up instance class" },
+          { t: "IOPS", v: "io1/io2 hoặc tăng IOPS gp3" }
+        ] },
+        { t: "RDS Proxy", icon: "res/Amazon-RDS-Proxy-Instance.svg", c: [
+          { t: "Chức năng", v: "pooling + multiplexing, serverless" },
+          { t: "Failover", v: "giữ endpoint, không phụ thuộc DNS" },
+          { t: "Xác thực", v: "IAM auth + Secrets Manager" },
+          { t: "Giới hạn", v: "cùng VPC, không public, chỉ gắn writer" },
+          { t: "Use case", v: "Lambda + RDS, too many connections" }
+        ] },
+        { t: "Bảo mật & mã hóa", icon: "svc/AWS-Key-Management-Service.svg", c: [
+          { t: "IAM DB auth", v: "MariaDB/MySQL/PostgreSQL, token 15 phút" },
+          { t: "Secrets Manager", v: "rotate master password, mặc định 7 ngày" },
+          { t: "At rest", v: "KMS AES-256, chỉ bật khi tạo" },
+          { t: "Mã hóa DB cũ", v: "snapshot → copy mã hóa → restore" },
+          { t: "In transit", v: "SSL/TLS; replica luôn mã hóa khi truyền" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 45 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Well-Architected-Tool.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="45" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-45-review-architecture-patterns.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "exam", name: "Đề thi & chiến thuật" },
+      { id: "guide", name: "Decision Guides" },
+      { id: "tier", name: "Mẫu 3-tier" },
+      { id: "sls", name: "Mẫu serverless" },
+      { id: "evt", name: "Mẫu event-driven" },
+      { id: "multi", name: "Multi-Region & DR" },
+      { id: "pair", name: "Cặp dễ nhầm" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Đề thi
+      { t: "exam", f: "Cấu trúc đề SAA-C03 (số câu, điểm đậu)?", b: "<b>65 câu</b> (50 tính điểm + 15 unscored ẩn) · thang 100–1.000 · đậu <b>720</b> · chấm <b>bù trừ</b>." },
+      { t: "exam", f: "Thời gian trung bình cho mỗi câu?", b: "Khoảng <b>2 phút</b> (130 phút / 65 câu)." },
+      { t: "exam", f: "Tỷ trọng 4 domain?", b: "D1 Secure <b>30%</b> · D2 Resilient <b>26%</b> · D3 High-Performing <b>24%</b> · D4 Cost-Optimized <b>20%</b>." },
+      { t: "exam", f: "Exam Guide có phải danh sách đầy đủ nội dung thi?", b: "<b>Không</b> – chỉ có task statement kèm ví dụ; mọi dịch vụ in-scope đều có thể xuất hiện." },
+      { t: "exam", f: "5 bước giải một câu tình huống?", b: "1. Đọc <b>câu hỏi cuối</b> trước<br>2. Gạch <b>từ khóa yêu cầu</b><br>3. Gạch <b>ràng buộc ưu tiên</b><br>4. <b>Loại trừ</b> phương án sai rõ<br>5. Chọn phương án <b>managed, ít thành phần</b>; &gt; 2 phút ⇒ flag" },
+      { t: "exam", f: "Distractor nguy hiểm ở điểm nào?", b: "Thường <b>đúng kỹ thuật</b> nhưng <b>vi phạm ràng buộc</b> của đề." },
+      { t: "exam", f: "“<i>Operations team is small</i>” / “<i>does not want to manage servers</i>” ngầm yêu cầu gì?", b: "<b>Least operational overhead</b> ⇒ managed/serverless." },
+      { t: "exam", f: "Ràng buộc “<i>without modifying the application</i>” ⇒ ưu tiên gì?", b: "Thêm <b>lớp hạ tầng</b>: ALB, Global Accelerator, RDS Proxy, Storage Gateway, EFS, MGN.", x: "Loại: viết lại microservices, đổi sang DynamoDB, dùng SDK mới." },
+      { t: "exam", f: "Phân bổ thời gian 2 lượt làm bài?", b: "Lượt 1 (~90–100 phút): trả lời cả 65 câu, flag câu khó · Lượt 2 (~20–30 phút): xem câu flag · 5 phút cuối: <b>không để trống</b>." },
+      { t: "exam", f: "Ở lượt 2, khi nào mới đổi đáp án?", b: "Chỉ khi phát hiện <b>một ràng buộc đã đọc sót</b> (vd “NOT”, “cost-effective”)." },
+
+      // ---- Decision Guides
+      { t: "guide", f: "AWS Decision Guides và Reference Architecture Diagrams khác nhau thế nào?", b: "<b>Decision Guides</b>: so sánh có cấu trúc, tiêu chí chọn dịch vụ.<br><b>Reference Architecture</b>: sơ đồ mẫu có <b>bước đánh số</b>." },
+      { t: "guide", f: "SQS, SNS, EventBridge khác nhau về mô hình?", b: "<b>SQS</b>: pull (queue) · <b>SNS</b>: push (pub/sub) · <b>EventBridge</b>: event bus với rule." },
+      { t: "guide", f: "SQS lưu message bao lâu? Long polling tối đa?", b: "Tối đa <b>14 ngày</b>; long polling chờ tối đa <b>20 giây</b>." },
+      { t: "guide", f: "EventBridge retry mặc định thế nào? Có đảm bảo thứ tự không?", b: "Retry <b>24 giờ, tới 185 lần</b> (exponential backoff + jitter); <b>không đảm bảo thứ tự</b>." },
+      { t: "guide", f: "Lambda: thời gian chạy, memory, concurrency mặc định?", b: "Tối đa <b>15 phút</b>/lần gọi · memory <b>128 MB – 10 GB</b> (tới 6 vCPU) · concurrency <b>1.000/Region</b>." },
+      { t: "guide", f: "Lambda: giới hạn package và free tier?", b: "Package <b>250 MB</b> unzipped, container image <b>10 GB</b> · free tier <b>1 triệu request + 400.000 GB-giây</b>/tháng." },
+      { t: "guide", f: "Fargate: giới hạn tài nguyên và thời gian chạy?", b: "<b>0,25 – 32 vCPU</b>, memory tới <b>244 GiB</b>, ephemeral storage tới 200 GiB, <b>không giới hạn thời gian chạy</b>." },
+      { t: "guide", f: "Fargate tính tiền thế nào?", b: "Theo giây (<b>tối thiểu 1 phút</b>) cho vCPU + memory đã cấp; có Fargate Spot." },
+      { t: "guide", f: "Lambda và Fargate có đủ điều kiện Compute Savings Plans không?", b: "<b>Có</b> – giảm tới <b>66%</b>." },
+
+      // ---- 3-tier
+      { t: "tier", f: "Ba tầng của 3-tier architecture?", b: "<b>Web</b> (presentation) · <b>Application</b> (logic) · <b>Data</b>." },
+      { t: "tier", f: "Luồng chính của 3-tier theo reference architecture?", b: "Route 53 → CloudFront + WAF + ACM → <b>ALB internet-facing</b> → web ASG (private) → <b>internal ALB</b> → app ASG → <b>RDS Multi-AZ + ElastiCache</b>; S3 tĩnh, EFS file chung." },
+      { t: "tier", f: "NAT gateway trong 3-tier đặt thế nào?", b: "<b>Một NAT gateway trong mỗi public subnet</b> (mỗi AZ).", x: "Một NAT cho mọi AZ = single point of failure + phí cross-AZ." },
+      { t: "tier", f: "Session mất khi ASG scale in ⇒ sửa thế nào?", b: "Đưa session ra <b>ElastiCache</b> hoặc <b>DynamoDB</b> ⇒ tầng web stateless.", x: "Sticky session chỉ là giải pháp tạm." },
+      { t: "tier", f: "DB quá tải vì đọc nhiều, báo cáo chậm ⇒ ?", b: "<b>Read replica</b> và/hoặc <b>ElastiCache</b>." },
+      { t: "tier", f: "DB chịu mất một AZ, failover tự động ⇒ ?", b: "<b>RDS Multi-AZ</b> (standby đồng bộ) hoặc <b>Aurora</b>." },
+      { t: "tier", f: "Read replica có phải giải pháp HA của RDS không?", b: "<b>Không</b> – bất đồng bộ, phải promote. HA là Multi-AZ; standby Multi-AZ (instance) <b>không phục vụ đọc</b>." },
+      { t: "tier", f: "DB chỉ nhận kết nối từ app tier ⇒ cấu hình gì?", b: "Security group của DB cho phép inbound từ <b>security group của app tier</b> (tham chiếu SG, không dùng CIDR)." },
+      { t: "tier", f: "Tải tăng theo giờ cao điểm đã biết ⇒ scaling nào?", b: "<b>Scheduled scaling</b>; có chu kỳ ⇒ predictive; còn lại target tracking." },
+      { t: "tier", f: "ALB hay NLB?", b: "<b>ALB</b>: Layer 7, path/host routing, HTTP.<br><b>NLB</b>: IP tĩnh, TCP/UDP, cực nhiều kết nối." },
+
+      // ---- Serverless
+      { t: "sls", f: "Thành phần của mẫu serverless web app?", b: "<b>S3 + CloudFront</b> (front-end) · <b>Cognito</b> · <b>API Gateway</b> · <b>Lambda</b> · <b>DynamoDB</b>." },
+      { t: "sls", f: "HTTPS + custom domain cho CloudFront ⇒ ACM cert ở Region nào?", b: "<b>us-east-1</b>." },
+      { t: "sls", f: "Chặn client gọi API quá nhiều ⇒ ?", b: "API Gateway <b>throttling / usage plan + API key</b>." },
+      { t: "sls", f: "Cognito user pool khác identity pool thế nào?", b: "<b>User pool</b>: đăng ký/đăng nhập, social/SAML, JWT.<br><b>Identity pool</b>: cấp <b>credentials AWS tạm</b> cho client." },
+      { t: "sls", f: "Lambda cạn kết nối database ⇒ ?", b: "<b>RDS Proxy</b>." },
+      { t: "sls", f: "Lambda cold start ⇒ giảm bằng gì?", b: "<b>Provisioned concurrency</b> hoặc <b>SnapStart</b>." },
+      { t: "sls", f: "DynamoDB: đọc micro-giây / tải thất thường / multi-Region / phản ứng thay đổi ⇒ ?", b: "<b>DAX</b> / <b>on-demand</b> / <b>global tables</b> / <b>Streams</b>." },
+      { t: "sls", f: "“<i>Static website, highly available, lowest cost</i>” ⇒ ?", b: "<b>S3 static website</b> (+ CloudFront nếu cần HTTPS/global). Không dựng EC2." },
+
+      // ---- Event-driven
+      { t: "evt", f: "Queue-based load leveling là gì?", b: "Producer gửi job vào <b>SQS</b>, worker lấy theo tốc độ riêng ⇒ hấp thụ đỉnh tải; worker hỏng message vẫn còn." },
+      { t: "evt", f: "Reference “Autoscaling Asynchronous Job Queues” scale worker theo gì?", b: "CloudWatch theo dõi <b>độ sâu hàng đợi SQS</b> ⇒ ECS đổi desiredCount (từ 0) cho task Fargate." },
+      { t: "evt", f: "Fan-out pattern?", b: "Publish lên <b>SNS topic</b> → mỗi hệ thống có <b>SQS queue</b> riêng subscribe; filter policy để chỉ nhận loại cần." },
+      { t: "evt", f: "Upload file lên S3 rồi xử lý tự động, lượng lớn ⇒ ?", b: "S3 Event Notification → Lambda; lượng lớn/xử lý chậm ⇒ <b>chèn SQS</b> để đệm." },
+      { t: "evt", f: "Quy trình nhiều bước, retry, chờ phê duyệt, rollback ⇒ ?", b: "<b>AWS Step Functions</b> (Saga pattern cho giao dịch phân tán)." },
+      { t: "evt", f: "Saga pattern là gì?", b: "Giao dịch phân tán có <b>bù trừ</b>: mỗi bước có thao tác hoàn tác khi bước sau lỗi." },
+      { t: "evt", f: "Pipeline streaming điển hình?", b: "<b>Kinesis Data Streams</b> → <b>Firehose</b> (transform, Parquet) → <b>S3</b> → Glue Data Catalog → <b>Athena / QuickSight</b>." },
+      { t: "evt", f: "Message lỗi lặp lại phải cô lập để phân tích ⇒ ?", b: "<b>Dead-letter queue</b>." },
+      { t: "evt", f: "Orchestration khác choreography thế nào?", b: "<b>Orchestration</b>: điều phối tập trung (Step Functions).<br><b>Choreography</b>: phối hợp phi tập trung qua event (EventBridge)." },
+
+      // ---- Multi-Region
+      { t: "multi", f: "4 chiến lược DR từ rẻ tới đắt?", b: "<b>Backup &amp; restore</b> (giờ) → <b>Pilot light</b> (DB chạy, app tắt) → <b>Warm standby</b> (thu nhỏ nhưng chạy) → <b>Multi-site active/active</b> (gần 0)." },
+      { t: "multi", f: "Aurora Global Database: số Region phụ, độ trễ, promote?", b: "Tới <b>5 Region phụ</b> · độ trễ điển hình <b>&lt; 1 giây</b> · promote <b>&lt; 1 phút</b>; write forwarding." },
+      { t: "multi", f: "Ba chiến lược ghi trong active/active?", b: "<b>Write global</b> (Aurora Global DB) · <b>Write local</b> (DynamoDB global tables, last writer wins) · <b>Write partitioned</b> (S3 replication hai chiều)." },
+      { t: "multi", f: "Dữ liệu quan hệ cần nhất quán mạnh, ghi nhiều Region ⇒ write local hay write global?", b: "<b>Write global</b>; không dùng write local của DynamoDB (last writer wins)." },
+      { t: "multi", f: "Định tuyến traffic giữa các Region bằng gì?", b: "<b>Route 53</b> (latency/geoproximity + health check, ARC) · <b>Global Accelerator</b> (anycast IP, traffic dial) · CloudFront origin failover." },
+      { t: "multi", f: "Failover nên dựa vào data plane hay control plane?", b: "<b>Data plane</b> (sẵn sàng cao hơn); đảm bảo service quotas ở Region DR đủ." },
+      { t: "multi", f: "Đề chỉ yêu cầu “highly available” ⇒ Multi-AZ hay multi-Region?", b: "<b>Multi-AZ</b> là đủ và rẻ hơn.", x: "Multi-Region chỉ khi Region outage, DR cross-Region, hoặc người dùng toàn cầu." },
+
+      // ---- Cặp dễ nhầm
+      { t: "pair", f: "CloudFront vs Global Accelerator?", b: "<b>CloudFront</b>: cache HTTP(S).<br><b>Global Accelerator</b>: static anycast IP, TCP/UDP, failover nhanh không phụ thuộc DNS." },
+      { t: "pair", f: "Multi-AZ vs Read replica?", b: "HA/failover ⇒ <b>Multi-AZ</b>; scale đọc ⇒ <b>read replica</b>." },
+      { t: "pair", f: "Gateway vs Interface endpoint?", b: "<b>Gateway</b>: S3/DynamoDB, miễn phí.<br><b>Interface</b>: hầu hết dịch vụ khác, truy cập từ on-prem, có phí (PrivateLink)." },
+      { t: "pair", f: "Security group vs NACL?", b: "<b>SG</b>: stateful, chỉ allow, cấp ENI.<br><b>NACL</b>: stateless, có deny, cấp subnet (chặn IP cụ thể)." },
+      { t: "pair", f: "CloudTrail vs CloudWatch vs Config?", b: "Ai gọi API ⇒ <b>CloudTrail</b> · metric/log/alarm ⇒ <b>CloudWatch</b> · lịch sử cấu hình &amp; tuân thủ ⇒ <b>Config</b>." },
+      { t: "pair", f: "Kinesis Data Streams vs Firehose?", b: "Xử lý tùy biến real-time, nhiều consumer, replay ⇒ <b>Data Streams</b>; chỉ đổ vào đích, không code ⇒ <b>Firehose</b>." },
+      { t: "pair", f: "SQS FIFO vs EventBridge khi cần thứ tự?", b: "<b>SQS FIFO</b> (hoặc SNS FIFO cho fan-out có thứ tự); EventBridge không đảm bảo thứ tự." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "“<i>Processing takes 30–60 minutes</i>” ⇒ ?", b: "Không chọn Lambda (15 phút) ⇒ <b>Fargate/ECS, AWS Batch</b> hoặc chia nhỏ bằng Step Functions." },
+      { t: "kw", f: "“<i>Orders are lost when processing tier fails</i>” ⇒ ?", b: "Chèn <b>SQS</b> giữa hai tầng; scale worker theo độ sâu hàng đợi." },
+      { t: "kw", f: "“<i>Route events from a SaaS partner / to another account by content</i>” ⇒ ?", b: "<b>Amazon EventBridge</b>." },
+      { t: "kw", f: "“<i>Ingest streaming data to S3 in Parquet, least operational overhead</i>” ⇒ ?", b: "<b>Amazon Data Firehose</b> (record format conversion)." },
+      { t: "kw", f: "“<i>Migrate app using JMS/AMQP/MQTT without code change</i>” ⇒ ?", b: "<b>Amazon MQ</b>." },
+      { t: "kw", f: "“<i>Delegate permissions but limit maximum permissions</i>” ⇒ ?", b: "<b>Permissions boundary</b>." },
+      { t: "kw", f: "“<i>Prevent all accounts from using a Region / disabling CloudTrail</i>” ⇒ ?", b: "<b>SCP</b> trong Organizations." },
+      { t: "kw", f: "“<i>FIPS 140-2 level 3, single-tenant HSM</i>” ⇒ ?", b: "<b>CloudHSM</b>." },
+      { t: "kw", f: "“<i>Find PII in S3</i>” / “<i>vulnerability scanning EC2, ECR</i>” ⇒ ?", b: "<b>Macie</b> / <b>Inspector</b>." },
+      { t: "kw", f: "“<i>Highest IOPS for a database on EBS</i>” ⇒ ?", b: "<b>io2 Block Express</b>; throughput tuần tự giá rẻ ⇒ st1." },
+      { t: "kw", f: "“<i>Intermittent / unpredictable relational DB load</i>” ⇒ ?", b: "<b>Aurora Serverless v2</b>." },
+      { t: "kw", f: "“<i>Steady-state 1–3 years, flexible across family/Region/Fargate/Lambda</i>” ⇒ ?", b: "<b>Compute Savings Plans</b>." },
+      { t: "kw", f: "“<i>Transfer 100s of TB with limited bandwidth</i>” ⇒ ?", b: "<b>Snowball Edge</b>; online định kỳ ⇒ DataSync." }
+    ],
+
+    pairs: [
+      ["Unscored question", "15 câu thử nghiệm ẩn trong đề"],
+      ["Compensatory scoring", "Không cần đậu từng domain"],
+      ["Distractor", "Hợp lý, đúng chủ đề nhưng sai ràng buộc"],
+      ["Flag for review", "Đánh dấu để xem lại câu hỏi"],
+      ["AWS Decision Guides", "So sánh có cấu trúc giữa dịch vụ AWS"],
+      ["Reference architecture", "Sơ đồ mẫu có bước đánh số của AWS"],
+      ["3-tier architecture", "Web · application · data"],
+      ["Internal load balancer", "LB nội bộ giữa các tầng"],
+      ["SPOF", "Thành phần hỏng thì cả hệ thống ngừng"],
+      ["Queue-based load leveling", "SQS đệm đỉnh tải cho worker"],
+      ["Fan-out", "SNS → nhiều SQS"],
+      ["Orchestration", "Điều phối tập trung bằng Step Functions"],
+      ["Choreography", "Phối hợp phi tập trung qua event"],
+      ["Saga pattern", "Giao dịch phân tán có thao tác bù trừ"],
+      ["CQRS", "Tách luồng ghi và luồng đọc"],
+      ["Event sourcing", "Lưu trạng thái dưới dạng chuỗi sự kiện"],
+      ["Eventual consistency", "Dữ liệu đồng bộ sau một khoảng trễ"],
+      ["Write global", "Mọi lệnh ghi về một Region"],
+      ["Write local", "Ghi tại Region gần nhất"],
+      ["Last writer wins", "Bản ghi sau cùng thắng khi xung đột"],
+      ["Traffic dial", "% traffic mỗi endpoint group (Global Accelerator)"],
+      ["Data plane", "Phục vụ thời gian thực, sẵn sàng cao hơn"],
+      ["Dead-letter queue", "Cô lập message lỗi lặp lại"]
+    ],
+
+    sorts: [
+      {
+        title: "Ràng buộc đề ⇒ ưu tiên hay loại bỏ?",
+        desc: "Với ràng buộc nêu trong ngoặc, phương án này thường được ưu tiên hay bị loại?",
+        buckets: ["Thường ưu tiên", "Thường loại bỏ"],
+        items: [
+          ["(Least overhead) Firehose, AWS Backup, tính năng native", 0, "managed service có sẵn"],
+          ["(Least overhead) Cron job tự viết trên EC2", 1, "tự vận hành"],
+          ["(Cost-effective) Spot cho batch chịu gián đoạn", 0, "rẻ nhất cho tải chịu gián đoạn"],
+          ["(Cost-effective) NAT gateway cho traffic S3", 1, "nên dùng gateway endpoint"],
+          ["(Cost-effective) Multi-Region khi chỉ cần Multi-AZ", 1, "đắt hơn mức cần"],
+          ["(Highly available) ALB + ASG ≥ 2 AZ, RDS Multi-AZ", 0, "Multi-AZ"],
+          ["(Highly available) Một NAT gateway cho mọi AZ", 1, "single point of failure"],
+          ["(Without code change) RDS Proxy, Storage Gateway, EFS", 0, "thêm lớp hạ tầng"],
+          ["(Without code change) Viết lại thành microservices", 1, "phải sửa code"],
+          ["(Most secure) IAM role, private subnet + VPC endpoint", 0, "least privilege"],
+          ["(Most secure) Access key trong code", 1, "không an toàn"]
+        ]
+      },
+      {
+        title: "SQS, SNS hay EventBridge?",
+        desc: "Chọn dịch vụ tích hợp phù hợp theo decision guide.",
+        buckets: ["Amazon SQS", "Amazon SNS", "Amazon EventBridge"],
+        items: [
+          ["Consumer poll message, long polling 20 giây", 0, "mô hình pull"],
+          ["Đệm request để worker co giãn độc lập", 0, "queue-based load leveling"],
+          ["Lưu message tới 14 ngày", 0, "SNS/EventBridge không lưu"],
+          ["Gửi cùng thông báo tới email, SMS, mobile push", 1, "push pub/sub"],
+          ["Fan-out một event tới nhiều queue", 1, "SNS → nhiều SQS"],
+          ["Route event theo nội dung tới account khác", 2, "event pattern + cross-account"],
+          ["Tích hợp event từ SaaS partner", 2, "SaaS integration"],
+          ["Chạy tác vụ theo lịch (cron)", 2, "EventBridge Scheduler"]
+        ]
+      },
+      {
+        title: "Lambda hay Fargate?",
+        desc: "Yêu cầu nào hợp với Lambda, yêu cầu nào hợp với Fargate?",
+        buckets: ["AWS Lambda", "AWS Fargate"],
+        items: [
+          ["Function chạy theo event, dưới 15 phút", 0, "giới hạn 15 phút"],
+          ["Tải thấp, thất thường, hưởng free tier", 0, "1 triệu request + 400.000 GB-giây"],
+          ["Tạo thumbnail khi upload lên S3", 0, "S3 event → Lambda"],
+          ["Tính tiền theo request + GB-giây", 0, "mô hình giá của Lambda"],
+          ["Xử lý mất 30–60 phút", 1, "không giới hạn thời gian"],
+          ["Cần 32 vCPU và 200 GiB memory", 1, "Lambda tối đa 10 GB"],
+          ["Process liên tục, kết nối bền", 1, "container chạy dài"],
+          ["Microservices container không muốn quản EC2", 1, "ECS on Fargate"]
+        ]
+      },
+      {
+        title: "Yêu cầu ⇒ mẫu kiến trúc",
+        desc: "Tình huống thuộc mẫu kiến trúc nào trong bài?",
+        buckets: ["3-tier web app", "Serverless web app", "Event-driven", "Multi-Region active-active"],
+        items: [
+          ["ALB internet-facing → web ASG → internal ALB → app ASG", 0, "web/app/data tier"],
+          ["RDS Multi-AZ + ElastiCache + EFS cho file chung", 0, "tầng dữ liệu của 3-tier"],
+          ["S3 + CloudFront → Cognito → API Gateway → Lambda → DynamoDB", 1, "mọi thành phần serverless"],
+          ["REST API, traffic khó đoán, không muốn quản server", 1, "API Gateway + Lambda + DynamoDB"],
+          ["SNS topic fan-out tới queue thanh toán, kho, email", 2, "fan-out"],
+          ["Kinesis → Firehose → S3 → Athena", 2, "streaming pipeline"],
+          ["Step Functions điều phối saga có bù trừ", 2, "orchestration"],
+          ["Người chơi ở 3 Region đọc/ghi độ trễ thấp, downtime gần 0", 3, "DynamoDB global tables + Global Accelerator"],
+          ["Route 53 latency routing tới đầy đủ stack ở nhiều Region", 3, "mọi Region phục vụ traffic"]
+        ]
+      },
+      {
+        title: "Từ khóa thuộc domain nào?",
+        desc: "Từ khóa đề dưới đây thuộc domain nào trong cheat sheet?",
+        buckets: ["D1 Secure", "D2 Resilient", "D3 High-performing", "D4 Cost-optimized"],
+        items: [
+          ["Rotate database credentials automatically ⇒ Secrets Manager", 0],
+          ["Detect threats from VPC Flow Logs, DNS ⇒ GuardDuty", 0],
+          ["WORM, cannot be deleted for N years ⇒ Object Lock", 0],
+          ["Decouple components, no lost orders ⇒ SQS", 1],
+          ["Replicate on-prem servers for DR ⇒ Elastic Disaster Recovery", 1],
+          ["Trace requests across microservices ⇒ X-Ray", 1],
+          ["DynamoDB microsecond reads ⇒ DAX", 2],
+          ["HPC low latency between instances ⇒ cluster placement group", 2],
+          ["Unknown access pattern on S3 ⇒ Intelligent-Tiering", 3],
+          ["Requester should pay for downloads ⇒ Requester Pays", 3]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Đề SAA-C03 có 65 câu, trong đó 15 câu không tính điểm.", true, "50 câu tính điểm + 15 unscored ẩn."],
+      ["Bạn biết được câu nào là câu unscored.", false, "Không được đánh dấu ⇒ làm mọi câu nghiêm túc."],
+      ["Đoán sai bị trừ điểm nên đôi khi nên bỏ trống.", false, "Không trừ điểm; bỏ trống tính sai."],
+      ["Phải đậu từng domain mới đậu kỳ thi.", false, "Compensatory scoring: chỉ cần tổng đạt 720."],
+      ["Exam Guide liệt kê đầy đủ mọi nội dung có thể thi.", false, "Chỉ có task statement kèm ví dụ."],
+      ["Domain Resilient chiếm 26% đề.", true, "D1 30 · D2 26 · D3 24 · D4 20."],
+      ["Khi hai phương án đều đúng, ưu tiên phương án managed và ít thành phần nhất.", true, "Bước 5 trong quy trình giải."],
+      ["Nên đọc câu hỏi cuối (Which solution…?) trước.", true, "Để biết đề hỏi gì."],
+      ["Distractor thường sai về kỹ thuật một cách rõ ràng.", false, "Thường đúng kỹ thuật nhưng vi phạm ràng buộc."],
+      ["SQS là mô hình push tới subscriber.", false, "SQS là pull; SNS mới là push."],
+      ["SQS giữ message tối đa 14 ngày.", true, "Tới khi xử lý xong hoặc hết hạn."],
+      ["EventBridge đảm bảo thứ tự event.", false, "Không đảm bảo thứ tự; cần thứ tự ⇒ SQS FIFO."],
+      ["EventBridge retry mặc định 24 giờ, tới 185 lần.", true, "Exponential backoff + jitter."],
+      ["Lambda chạy tối đa 15 phút mỗi lần gọi.", true, "Tác vụ dài ⇒ Fargate/Batch/Step Functions."],
+      ["Lambda memory tối đa 32 GB.", false, "Tối đa 10 GB; 32 vCPU là của Fargate."],
+      ["Fargate không giới hạn thời gian chạy.", true, "Hợp tác vụ dài, process liên tục."],
+      ["Fargate tính tiền theo giây, tối thiểu 1 phút.", true, "Cho vCPU + memory đã cấp."],
+      ["Một NAT gateway dùng chung cho mọi AZ là thiết kế highly available.", false, "Là SPOF; đặt NAT trong mỗi AZ."],
+      ["Read replica là giải pháp HA chính của RDS.", false, "HA là Multi-AZ; read replica để scale đọc."],
+      ["Standby của RDS Multi-AZ (kiểu instance) phục vụ được truy vấn đọc.", false, "Standby không phục vụ đọc."],
+      ["Sticky session là giải pháp lâu dài cho session khi ASG scale in.", false, "Chỉ là tạm; đưa session ra ElastiCache/DynamoDB."],
+      ["Cho DB chỉ nhận kết nối từ app tier bằng cách tham chiếu security group của app tier.", true, "Không dùng CIDR."],
+      ["Cert ACM cho CloudFront phải ở us-east-1.", true, "Theo bài (kiến thức phổ biến)."],
+      ["Cognito identity pool cấp credentials AWS tạm cho client.", true, "User pool lo đăng nhập, JWT."],
+      ["Lambda cạn kết nối RDS nên tăng instance size của RDS.", false, "Dùng RDS Proxy."],
+      ["Chuỗi Lambda gọi nhau là cách tốt nhất để điều phối nhiều bước có retry và phê duyệt.", false, "Dùng Step Functions."],
+      ["Firehose chuyển đổi được dữ liệu sang Parquet khi giao vào S3.", true, "Record format conversion."],
+      ["Aurora Global Database hỗ trợ tới 5 Region phụ.", true, "Độ trễ điển hình dưới 1 giây."],
+      ["DynamoDB global tables giải quyết xung đột bằng last writer wins.", true, "Write local."],
+      ["Đề chỉ yêu cầu highly available thì nên chọn multi-Region.", false, "Multi-AZ là đủ và rẻ hơn."],
+      ["Replication liên tục sang Region khác thay thế được backup.", false, "Xóa nhầm/hỏng dữ liệu cũng được replicate."],
+      ["NACL là stateful và chỉ có rule allow.", false, "Đó là SG; NACL stateless, có deny."],
+      ["Gateway endpoint hỗ trợ S3 và DynamoDB, miễn phí.", true, "Interface endpoint có phí."],
+      ["Chỉ cần đổ dữ liệu streaming vào S3 không code thì dùng Kinesis Data Streams là tốt nhất.", false, "Firehose trực tiếp là đủ."]
+    ],
+
+    map: {
+      t: "Bài 45 · Ôn tổng mẫu kiến trúc",
+      c: [
+        { t: "Đề thi", icon: "svc/AWS-Well-Architected-Tool.svg", c: [
+          { t: "Cấu trúc", v: "65 câu (15 unscored) · đậu 720 · ~2 phút/câu" },
+          { t: "Domain", v: "Secure 30 · Resilient 26 · Performing 24 · Cost 20" },
+          { t: "Chấm", v: "bù trừ · không trừ điểm · không bỏ trống" },
+          { t: "Thời gian", v: "lượt 1 hết 65 câu · lượt 2 xem flag" }
+        ] },
+        { t: "Chiến thuật", icon: "cat/Customer-Enablement.svg", c: [
+          { t: "Quy trình", v: "câu hỏi cuối → từ khóa → ràng buộc → loại trừ → managed" },
+          { t: "Least overhead", v: "serverless, managed, tính năng native" },
+          { t: "Cost-effective", v: "Spot, SP/RI, lifecycle, gateway endpoint" },
+          { t: "No code change", v: "ALB, RDS Proxy, Storage Gateway, EFS, MGN" },
+          { t: "Tín hiệu ẩn", v: "team nhỏ ⇒ overhead · spiky ⇒ serverless/SQS" }
+        ] },
+        { t: "Decision Guides", icon: "cat/Management-Governance.svg", c: [
+          { t: "SQS", v: "pull · 14 ngày · long polling 20 s · FIFO" },
+          { t: "SNS", v: "push · fan-out · filter policy" },
+          { t: "EventBridge", v: "rule · cross-account · SaaS · không thứ tự" },
+          { t: "Lambda", v: "15 phút · 128 MB–10 GB · 1.000 concurrency" },
+          { t: "Fargate", v: "không giới hạn thời gian · 32 vCPU · 244 GiB" }
+        ] },
+        { t: "3-tier", icon: "res/Elastic-Load-Balancing_Application-Load-Balancer.svg", c: [
+          { t: "Luồng", v: "Route 53 → CloudFront/WAF → ALB → web → internal ALB → app → RDS" },
+          { t: "HA", v: "mọi tầng ≥ 2 AZ · NAT mỗi AZ" },
+          { t: "Stateless", v: "session ra ElastiCache/DynamoDB" },
+          { t: "DB", v: "Multi-AZ = HA · read replica = scale đọc" },
+          { t: "Bảo mật", v: "SG tham chiếu SG · Secrets Manager · OAC" }
+        ] },
+        { t: "Serverless", icon: "cat/Serverless.svg", c: [
+          { t: "Stack", v: "S3+CloudFront · Cognito · API Gateway · Lambda · DynamoDB" },
+          { t: "Lambda", v: "cold start ⇒ provisioned concurrency/SnapStart" },
+          { t: "Kết nối RDS", v: "RDS Proxy" },
+          { t: "Cognito", v: "user pool đăng nhập · identity pool credentials tạm" }
+        ] },
+        { t: "Event-driven", icon: "cat/Application-Integration.svg", c: [
+          { t: "Load leveling", v: "SQS đệm · scale theo độ sâu hàng đợi" },
+          { t: "Fan-out", v: "SNS → nhiều SQS" },
+          { t: "Orchestration", v: "Step Functions · Saga" },
+          { t: "Streaming", v: "Kinesis → Firehose → S3 → Athena" },
+          { t: "Lỗi lặp lại", v: "dead-letter queue" }
+        ] },
+        { t: "Multi-Region", icon: "svc/AWS-Global-Accelerator.svg", c: [
+          { t: "DR", v: "backup → pilot light → warm standby → active/active" },
+          { t: "Write global", v: "Aurora Global DB · 5 Region phụ · promote &lt; 1 phút" },
+          { t: "Write local", v: "DynamoDB global tables · last writer wins" },
+          { t: "Định tuyến", v: "Route 53 / ARC · Global Accelerator" },
+          { t: "Nhớ", v: "Multi-AZ ≠ multi-Region · replication ≠ backup" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

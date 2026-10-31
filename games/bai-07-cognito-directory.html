@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 7 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Cognito.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="7" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-07-cognito-directory.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "big", name: "Ai đăng nhập, vào đâu?" },
+      { id: "up", name: "Cognito user pool" },
+      { id: "use", name: "API Gateway · ALB · AppSync · M2M" },
+      { id: "ip", name: "Cognito identity pool" },
+      { id: "mad", name: "AWS Managed Microsoft AD" },
+      { id: "adc", name: "AD Connector & Simple AD" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Bức tranh tổng thể
+      { t: "big", f: "Ba “thế giới định danh” mà đề SAA-C03 hay trộn lẫn?", b: "<b>Workforce vào AWS account</b> ⇒ IAM Identity Center<br><b>Customer / app users</b> ⇒ Amazon Cognito<br><b>Windows/AD workloads</b> ⇒ AWS Directory Service" },
+      { t: "big", f: "Amazon Cognito phục vụ ai? (CIAM là gì?)", b: "Người dùng của <b>web &amp; mobile app</b> – <b>CIAM</b> (Customer identity and access management), scale tới hàng triệu, hỗ trợ social login." },
+      { t: "big", f: "Có nên tạo IAM user cho khách hàng của ứng dụng?", b: "<b>Không bao giờ.</b> IAM user dành cho định danh quản trị AWS; khách hàng dùng Cognito.", x: "“Create an IAM user per customer”, “embed access keys in the app” ⇒ loại ngay." },
+      { t: "big", f: "Cognito khác IAM Identity Center thế nào?", b: "<b>Cognito</b>: người dùng của <b>ứng dụng</b> (CIAM).<br><b>IAM Identity Center</b>: <b>nhân sự</b> truy cập nhiều AWS account / ứng dụng doanh nghiệp.", x: "Cả hai đều “SSO” và nối được SAML IdP – đừng để bị lừa." },
+      { t: "big", f: "Theo tài liệu Directory Service, SaaS app scale lớn cần social identity nên dùng gì?", b: "<b>Amazon Cognito</b>, không phải Directory Service." },
+
+      // ---- User pool
+      { t: "up", f: "Cognito user pool là gì?", b: "<b>User directory</b> dựa trên chuẩn <b>OpenID Connect (OIDC)</b>, xác thực người dùng và cấp <b>JWT</b> cho app/API (<i>authentication</i>)." },
+      { t: "up", f: "Hai vai trò user pool có thể đóng cùng lúc?", b: "<b>Standalone OIDC IdP</b>: lưu local users (nguồn authoritative).<br><b>Service provider / relying party</b> tới IdP bên thứ ba (Google, Facebook, Apple, Amazon, SAML, OIDC) – gom về một định dạng JWT của riêng bạn." },
+      { t: "up", f: "Ba loại token của user pool?", b: "<b>ID token</b>: danh tính (username, email…).<br><b>Access token</b>: scope để gọi API.<br><b>Refresh token</b>: lấy ID + access token mới; opaque, thu hồi được." },
+      { t: "up", f: "Thời hạn refresh token mặc định và khoảng cấu hình?", b: "Mặc định <b>30 ngày</b>, chỉnh từ <b>60 phút đến 10 năm</b>." },
+      { t: "up", f: "Thời hạn ID/access token mặc định?", b: "Mặc định <b>1 giờ</b> (cấu hình <b>5 phút – 1 ngày</b>).", x: "Khuyến nghị dùng ~75% thời gian sống rồi mới lấy token mới và cache token." },
+      { t: "up", f: "Refresh token rotation hoạt động thế nào?", b: "Mỗi lần refresh trả <b>refresh token mới</b>, token cũ vô hiệu (grace period tối đa <b>60 giây</b>).", x: "Rotation KHÔNG kéo dài thời hạn gốc của phiên." },
+      { t: "up", f: "Đăng xuất người dùng khỏi mọi thiết bị bằng API nào?", b: "<code>GlobalSignOut</code> / <code>AdminUserGlobalSignOut</code>. Revoke một refresh token = đăng xuất một phiên." },
+      { t: "up", f: "Ba feature plan của user pool?", b: "<b>Lite</b>: cơ bản, chi phí thấp.<br><b>Essentials</b> (<b>mặc định</b>): managed login, passwordless, passkey, email MFA, tùy biến access token.<br><b>Plus</b>: Essentials + <b>threat protection</b>." },
+      { t: "up", f: "Cognito tính phí theo gì?", b: "<b>Monthly active users (MAU)</b> và tính năng dùng. Plan áp cho cả user pool, đổi được bất cứ lúc nào." },
+      { t: "up", f: "Plus plan (threat protection) thêm gì?", b: "Phát hiện <b>compromised credentials</b>, đăng nhập bất thường – <b>adaptive authentication</b>; log/export hoạt động kèm <b>risk score</b>.", x: "Tên cũ: advanced security features." },
+      { t: "up", f: "Lambda trigger của Cognito phải trả lời trong bao lâu?", b: "<b>5 giây</b> (không đổi được). Hàm trả lỗi ⇒ bước đó thất bại – cách chặn có chủ đích." },
+      { t: "up", f: "Chỉ cho đăng ký bằng email công ty ⇒ trigger nào?", b: "<b>Pre sign-up</b> Lambda trigger (cũng dùng để auto-confirm)." },
+      { t: "up", f: "Thêm/sửa/ẩn claim trong token ⇒ trigger nào?", b: "<b>Pre token generation</b>.", x: "Tùy biến access token cần plan khác Lite." },
+      { t: "up", f: "Di chuyển user cũ sang user pool mà giữ nguyên mật khẩu?", b: "<b>Migrate user</b> Lambda trigger – just-in-time migration khi sign-in/quên mật khẩu.", x: "Import CSV KHÔNG mang theo mật khẩu ⇒ user phải reset." },
+      { t: "up", f: "Tự xây CAPTCHA / câu hỏi bí mật khi đăng nhập ⇒ trigger nào?", b: "<b>Define / Create / Verify auth challenge</b> (custom authentication flow)." },
+      { t: "up", f: "MFA, threat protection có áp dụng cho federated users không?", b: "<b>Không.</b> Federated users được IdP gốc (Google, Okta…) xác thực." },
+      { t: "up", f: "Các phương thức MFA của user pool?", b: "<b>SMS, TOTP</b> (authenticator app), <b>email OTP</b> hoặc thiết bị của user.", x: "Email MFA cần Essentials trở lên." },
+      { t: "up", f: "Token user pool có phải AWS credentials không?", b: "<b>Không.</b> Là JWT. Muốn gọi S3/DynamoDB bằng SigV4 phải đổi qua <b>identity pool</b>." },
+
+      // ---- Dùng token
+      { t: "use", f: "Bảo vệ REST API trên API Gateway bằng user pool thế nào?", b: "<b>Cognito user pool authorizer</b>: API Gateway tự xác minh JWT, kiểm tra scope; thiếu/sai token ⇒ <b>401</b>, back end không cần code kiểm tra." },
+      { t: "use", f: "ALB xác thực người dùng bằng action nào?", b: "<code>authenticate-cognito</code> (user pool) hoặc <code>authenticate-oidc</code> (IdP OIDC bất kỳ).", x: "Chỉ hỗ trợ trên <b>HTTPS listener</b>; không có trên NLB." },
+      { t: "use", f: "Yêu cầu với app client khi dùng ALB authenticate-cognito?", b: "Có <b>client secret</b>, dùng <b>authorization code grant</b>, scope trả về ID token (vd <code>openid</code>)." },
+      { t: "use", f: "Cookie và thời hạn phiên của ALB authenticate?", b: "Cookie <b>AWSELB</b>; SessionTimeout mặc định <b>7 ngày</b>. Phải đăng nhập xong trong <b>15 phút</b>, nếu không ⇒ 401." },
+      { t: "use", f: "ALB chuyển claim người dùng tới target qua header nào?", b: "<code>x-amzn-oidc-data</code> (JWT ký ES256), <code>x-amzn-oidc-accesstoken</code>, <code>x-amzn-oidc-identity</code>." },
+      { t: "use", f: "Ba giá trị OnUnauthenticatedRequest của ALB?", b: "<b>authenticate</b> (mặc định, chuyển tới IdP) · <b>allow</b> (cho qua, không claim) · <b>deny</b> (trả 401, hợp SPA gọi AJAX)." },
+      { t: "use", f: "AppSync dùng Cognito theo hai chế độ nào?", b: "<code>AMAZON_COGNITO_USER_POOLS</code> (token user pool) hoặc <code>AWS_IAM</code> (credentials từ identity pool)." },
+      { t: "use", f: "M2M trong user pool hoạt động thế nào?", b: "App client có client secret + grant <b>client_credentials</b>; Cognito chỉ cấp <b>access token</b> (không ID, không refresh), mang <b>custom scopes</b> của resource server.", x: "Lưu lượng lớn ⇒ cache token để tránh chạm quota token endpoint." },
+
+      // ---- Identity pool
+      { t: "ip", f: "Cognito identity pool làm gì?", b: "Đổi token đáng tin cậy (user pool, social, SAML, OIDC) lấy <b>temporary AWS credentials</b> qua <b>STS</b> để app gọi trực tiếp S3, DynamoDB… (<i>authorization</i>)." },
+      { t: "ip", f: "Identity pool có bắt buộc đi cùng user pool không?", b: "<b>Không.</b> Hai thành phần độc lập; identity pool nhận token trực tiếp từ Google/SAML/OIDC được." },
+      { t: "ip", f: "Unauthenticated (guest) identity là gì?", b: "Khách chưa đăng nhập vẫn nhận identity ID + credentials giới hạn. Phải bật <b>Guest access</b> và gán <b>unauthenticated role</b> quyền rất hẹp." },
+      { t: "ip", f: "Developer-authenticated identities là gì?", b: "Authenticated identity do <b>back end xác thực của riêng bạn</b> (developer provider)." },
+      { t: "ip", f: "Role-based access control trong identity pool chọn role thế nào?", b: "<b>Default role</b>; <b>role theo rule</b> (so khớp claim, tối đa <b>25 rule/provider</b>); hoặc <b>role theo group</b> (<code>cognito:preferred_role</code>)." },
+      { t: "ip", f: "ABAC trong identity pool hoạt động thế nào?", b: "Ánh xạ attribute trong claim thành <b>principal tags</b> của phiên STS; policy dùng điều kiện <code>aws:PrincipalTag</code>. Mặc định map <code>sub</code> và <code>aud</code>." },
+      { t: "ip", f: "Mỗi user chỉ truy cập prefix S3 của riêng mình ⇒ policy variable nào?", b: "<code>${cognito-identity.amazonaws.com:sub}</code> trong policy của <b>authenticated role</b> (hoặc ABAC principal tags)." },
+      { t: "ip", f: "Trust policy của role cho identity pool cần gì?", b: "Principal <code>cognito-identity.amazonaws.com</code>, action <code>sts:AssumeRoleWithWebIdentity</code>, điều kiện <code>aud</code> = đúng identity pool, <code>amr</code> = authenticated." },
+      { t: "ip", f: "Enhanced flow khác basic (classic) flow?", b: "<b>Enhanced</b> (mặc định): identity pool chọn role.<br><b>Basic</b>: bỏ qua lựa chọn role, app tự gọi <code>AssumeRoleWithWebIdentity</code>; phải chủ động bật." },
+      { t: "ip", f: "Quy tắc nhớ user pool vs identity pool?", b: "<b>Authentication</b> ⇒ user pool.<br><b>Authorization tới tài nguyên AWS</b> ⇒ identity pool." },
+      { t: "ip", f: "Khi nào chỉ cần user pool, không cần identity pool?", b: "App chỉ gọi <b>API của bạn</b> (API Gateway, ALB, AppSync, back end) – các dịch vụ này hiểu JWT." },
+      { t: "ip", f: "Khi nào dùng cả user pool lẫn identity pool?", b: "App vừa <b>đăng nhập người dùng</b> vừa cần <b>truy cập trực tiếp</b> S3/DynamoDB/IoT/Kinesis." },
+
+      // ---- Managed Microsoft AD
+      { t: "mad", f: "AWS Managed Microsoft AD là gì?", b: "<b>Microsoft AD thật</b> (Windows Server 2019) do AWS vận hành, chạy trong VPC của bạn; AWS lo giám sát, replicate, snapshot hằng ngày, vá phần mềm." },
+      { t: "mad", f: "Managed Microsoft AD triển khai tối thiểu bao nhiêu DC?", b: "<b>2 domain controller</b> ở <b>2 AZ khác nhau</b>; thêm DC để scale." },
+      { t: "mad", f: "Standard vs Enterprise Edition?", b: "<b>Standard</b>: tới ~5.000 nhân viên, ~<b>30.000</b> objects.<br><b>Enterprise</b>: ~<b>500.000</b> objects, hỗ trợ <b>multi-Region replication</b>." },
+      { t: "mad", f: "Hybrid Edition dùng để làm gì?", b: "Mở rộng <b>AD self-managed hiện có</b> lên AWS, không đồng bộ định danh, dùng credentials hiện có." },
+      { t: "mad", f: "Managed Microsoft AD hỗ trợ những loại trust nào?", b: "<b>External</b> và <b>forest</b>, theo <b>one-way incoming / outgoing</b> và <b>two-way</b>." },
+      { t: "mad", f: "Dịch vụ nào bắt buộc two-way trust?", b: "AWS Enterprise Apps: <b>WorkSpaces, QuickSight, Chime, Connect, WorkDocs, WorkMail, IAM Identity Center, Management Console</b>.", x: "EC2, RDS, FSx chạy được với one-way hoặc two-way." },
+      { t: "mad", f: "Điều kiện để lập trust với AD on-premises?", b: "Kết nối <b>VPN / Direct Connect</b>, mở port AD, bật Kerberos pre-authentication, DNS conditional forwarder hai phía, NetBIOS/domain name khác nhau." },
+      { t: "mad", f: "Resource forest là mô hình gì?", b: "Định danh ở lại AD hiện có; forest trên AWS quản lý tài nguyên AWS – cô lập vận hành mà vẫn SSO." },
+      { t: "mad", f: "Multi-Region replication của Managed AD có đặc điểm gì?", b: "Chỉ <b>Enterprise</b>; replicate toàn bộ (user, group, GPO, trust, schema), mỗi Region mới có <b>2 DC</b>, giữ nguyên <b>directory_id</b>." },
+      { t: "mad", f: "Directory sharing cho phép gì?", b: "Chia sẻ Managed AD cho <b>AWS account khác</b> để domain join EC2 từ nhiều account.", x: "AD Connector KHÔNG chia sẻ được." },
+      { t: "mad", f: "RDS for SQL Server / FSx for Windows cần Windows Authentication ⇒ directory nào?", b: "<b>AWS Managed Microsoft AD</b>. AD Connector và Simple AD không tương thích RDS SQL Server." },
+
+      // ---- AD Connector & Simple AD
+      { t: "adc", f: "AD Connector là gì?", b: "<b>Directory gateway (proxy)</b> chuyển yêu cầu về AD on-premises, <b>không cache</b> thông tin nào trên cloud; chỉ cần một service account." },
+      { t: "adc", f: "Mất kết nối tới on-premises thì AD Connector ra sao?", b: "<b>Không xác thực được</b> – vì không có bản sao trên cloud." },
+      { t: "adc", f: "Giới hạn chính của AD Connector?", b: "Không transitive trust; <b>1-1 với domain</b>; không chia sẻ cho account khác; <b>không multi-VPC aware</b>; không tương thích RDS SQL Server." },
+      { t: "adc", f: "Kích thước AD Connector và giới hạn user?", b: "<b>Small</b> / <b>Large</b>; không giới hạn số user hay connection – muốn tăng hiệu năng thì dàn tải qua nhiều AD Connector." },
+      { t: "adc", f: "MFA với AD Connector?", b: "Tích hợp hạ tầng MFA <b>RADIUS</b> hiện có ở on-premises." },
+      { t: "adc", f: "Simple AD là gì?", b: "Thư mục độc lập do AWS quản lý, chạy <b>Samba 4</b>, chi phí thấp, tính năng AD cơ bản.", x: "Không còn mở cho khách hàng mới." },
+      { t: "adc", f: "Kích thước Simple AD?", b: "<b>Small</b>: tới 500 user (~2.000 objects).<br><b>Large</b>: tới 5.000 user (~20.000 objects)." },
+      { t: "adc", f: "Simple AD KHÔNG có gì?", b: "<b>MFA, trust</b>, schema extension, LDAPS, PowerShell AD cmdlets; không hỗ trợ RDS SQL Server, FSx, IAM Identity Center." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>mobile app users, sign-up/sign-in, social identity providers, millions of users</i>” ⇒ ?", b: "<b>Amazon Cognito user pool</b> (+ managed login)." },
+      { t: "kw", f: "Đề có “<i>upload directly to S3 with temporary credentials</i>”, “<i>guest access</i>” ⇒ ?", b: "<b>Cognito identity pool</b>." },
+      { t: "kw", f: "Đề có “<i>employees, multiple AWS accounts, SSO to console</i>” ⇒ ?", b: "<b>IAM Identity Center</b>, không phải Cognito." },
+      { t: "kw", f: "Đề có “<i>detect compromised credentials, adaptive authentication</i>” ⇒ ?", b: "<b>Plus plan</b> / threat protection." },
+      { t: "kw", f: "Đề có “<i>add authentication to a web app behind an ALB without changing code</i>” ⇒ ?", b: "ALB <b>authenticate-cognito / authenticate-oidc</b> trên <b>HTTPS listener</b>." },
+      { t: "kw", f: "Đề có “<i>IoT devices / microservices call an API without a human user</i>” ⇒ ?", b: "User pool <b>M2M – client credentials grant</b>." },
+      { t: "kw", f: "Đề có “<i>migrate SharePoint / .NET / SQL Server apps needing AD, fully managed, highly available</i>” ⇒ ?", b: "<b>AWS Managed Microsoft AD</b>.", x: "Tự dựng DC trên EC2 = overhead cao." },
+      { t: "kw", f: "Đề có “<i>keep identities on-premises; AWS workloads keep working if the link is down</i>” ⇒ ?", b: "<b>Managed Microsoft AD + forest trust</b>." },
+      { t: "kw", f: "Đề có “<i>existing on-premises AD credentials for WorkSpaces; do not store or sync directory data in the cloud</i>” ⇒ ?", b: "<b>AD Connector</b>." },
+      { t: "kw", f: "Đề có “<i>small, low-cost directory, basic AD compatibility</i>” ⇒ ?", b: "<b>Simple AD</b>." },
+      { t: "kw", f: "Đề có “<i>AD-aware applications in multiple Regions with low latency</i>” ⇒ ?", b: "<b>Enterprise Edition + multi-Region replication</b>." }
+    ],
+
+    pairs: [
+      ["CIAM", "Quản lý định danh khách hàng của ứng dụng"],
+      ["User pool", "User directory + OIDC IdP (authentication)"],
+      ["Identity pool", "Đổi token lấy temporary AWS credentials"],
+      ["ID token", "Claim danh tính: username, email…"],
+      ["Access token", "Scope để gọi API"],
+      ["Refresh token", "Lấy token mới; mặc định 30 ngày"],
+      ["Managed login", "Trang đăng nhập do AWS host (classic hosted UI)"],
+      ["MAU", "Người dùng hoạt động hằng tháng – cơ sở tính phí"],
+      ["Threat protection", "Phát hiện mật khẩu lộ, đăng nhập rủi ro (Plus)"],
+      ["Passkey", "Khóa truy cập FIDO2, đăng nhập không mật khẩu"],
+      ["Migrate user trigger", "Chuyển user cũ dần khi đăng nhập, giữ mật khẩu"],
+      ["Pre token generation", "Thêm/sửa/ẩn claim trong token"],
+      ["Client credentials grant", "M2M: chỉ cấp access token, không có user"],
+      ["Guest identity", "Khách chưa đăng nhập, credentials rất hẹp"],
+      ["Principal tag", "Tag phiên STS dùng cho ABAC"],
+      ["AD Connector", "Proxy về AD on-premises, không cache"],
+      ["Simple AD", "Thư mục Samba 4 nhỏ, rẻ, không trust/MFA"],
+      ["AWS Managed Microsoft AD", "AD thật do AWS vận hành, 2 DC ở 2 AZ"],
+      ["Resource forest", "Forest AWS quản lý tài nguyên, định danh ở nơi khác"],
+      ["Selective authentication", "Chỉ tài khoản được phép mới đi qua trust"],
+      ["Directory sharing", "Chia sẻ Managed AD cho AWS account khác"],
+      ["RADIUS", "Giao thức tích hợp MFA cho Directory Service"],
+      ["LDAPS", "LDAP mã hóa SSL/TLS"],
+      ["Seamless domain join", "EC2 tự động gia nhập miền"]
+    ],
+
+    sorts: [
+      {
+        title: "Ai đăng nhập ⇒ dịch vụ nào?",
+        desc: "Xác định “thế giới định danh” rồi chọn dịch vụ đúng.",
+        buckets: ["Cognito user pool", "Cognito identity pool", "IAM Identity Center", "AWS Directory Service"],
+        items: [
+          ["2 triệu khách hàng đăng nhập mobile app bằng Google/Facebook", 0, "CIAM, social login"],
+          ["Microservice/IoT gọi API không có người dùng", 0, "M2M – client_credentials"],
+          ["Bảo vệ REST API trên API Gateway chỉ cho user đã đăng nhập", 0, "Cognito user pool authorizer"],
+          ["App tải ảnh trực tiếp lên S3 bằng credentials tạm thời", 1, "đổi token lấy AWS credentials qua STS"],
+          ["Khách chưa đăng nhập được đọc catalog trong DynamoDB", 1, "unauthenticated (guest) identity"],
+          ["Nhân viên SSO vào console của 50 AWS account", 2, "workforce vào nhiều account"],
+          ["Nhân viên dùng permission set trong Organizations", 2, "Identity Center (Bài 6)"],
+          ["SharePoint, SQL Server cần domain thật, Group Policy", 3, "AWS Managed Microsoft AD"],
+          ["Nhân viên dùng tài khoản AD on-prem để vào WorkSpaces", 3, "AD Connector hoặc Managed AD + trust"]
+        ]
+      },
+      {
+        title: "Tính năng của user pool hay identity pool?",
+        desc: "Theo bảng so sánh trong bài: tính năng thuộc thành phần nào?",
+        buckets: ["User pool", "Identity pool"],
+        items: [
+          ["Cấp ID token (OIDC IdP)", 0, "identity pool không cấp ID token"],
+          ["Lưu user profile (user directory)", 0, "user pool là user directory"],
+          ["Managed login, MFA, threat protection", 0, "tính năng xác thực"],
+          ["Cấp access token (OAuth scopes) cho API của bạn", 0, "authorization server"],
+          ["Lambda triggers (pre sign-up, migrate user…)", 0, "tùy biến flow của user pool"],
+          ["Đổi token lấy temporary AWS credentials", 1, "IAM web identity authorization"],
+          ["Guest (unauthenticated) access", 1, "chỉ identity pool hỗ trợ"],
+          ["ABAC bằng principal tags", 1, "attributes for access control"],
+          ["Chọn IAM role theo rule (≤ 25 rule/provider)", 1, "role-based access control"]
+        ]
+      },
+      {
+        title: "Chọn loại directory",
+        desc: "Managed Microsoft AD, AD Connector hay Simple AD?",
+        buckets: ["AWS Managed Microsoft AD", "AD Connector", "Simple AD"],
+        items: [
+          ["RDS for SQL Server dùng Windows Authentication", 0, "chỉ Managed AD tương thích"],
+          ["Trust với AD on-premises, workload chạy tiếp khi mất kết nối", 0, "user nằm sẵn trong Managed AD"],
+          ["Chia sẻ directory cho nhiều AWS account", 0, "directory sharing"],
+          ["Ứng dụng AD-aware ở nhiều Region", 0, "Enterprise + multi-Region replication"],
+          ["Cần schema extension, LDAPS", 0, "Simple AD không có"],
+          ["Không được lưu/đồng bộ dữ liệu thư mục lên cloud", 1, "proxy, không cache"],
+          ["Dùng hạ tầng RADIUS MFA on-prem cho WorkSpaces", 1, "chuyển tiếp về AD on-prem"],
+          ["Thư mục nhỏ, chi phí thấp, tối đa 500 user", 2, "Simple AD Small"],
+          ["Ứng dụng tương thích Samba, không cần trust/MFA", 2, "Samba 4"]
+        ]
+      },
+      {
+        title: "Lambda trigger nào?",
+        desc: "Chọn Lambda trigger của user pool phù hợp với yêu cầu.",
+        buckets: ["Pre sign-up", "Post confirmation", "Migrate user", "Pre token generation", "Define/Create/Verify auth challenge"],
+        items: [
+          ["Chỉ chấp nhận đăng ký bằng email công ty", 0, "kiểm tra trước khi tạo user"],
+          ["Tự động confirm user khi đăng ký", 0, "auto-confirm trong pre sign-up"],
+          ["Tạo bản ghi profile trong DynamoDB sau khi xác nhận", 1, "chạy sau confirmation"],
+          ["Gửi email chào mừng", 1, "post confirmation"],
+          ["Chuyển 2 triệu user cũ mà không bắt reset mật khẩu", 2, "just-in-time migration"],
+          ["Thêm claim tùy chỉnh vào ID/access token", 3, "chỉnh claim"],
+          ["Thêm bước CAPTCHA khi đăng nhập", 4, "custom authentication flow"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["User pool cấp temporary AWS credentials dùng được trực tiếp với AWS CLI.", false, "User pool chỉ cấp JWT; AWS credentials do identity pool (qua STS) cấp."],
+      ["Identity pool có thể cấp credentials giới hạn cho guest chưa đăng nhập.", true, "Unauthenticated identities với role quyền hẹp."],
+      ["Identity pool luôn phải tích hợp với một user pool.", false, "Hai thành phần độc lập; identity pool nhận token trực tiếp từ SAML/OIDC/social."],
+      ["User pool có thể là OIDC IdP cấp JWT cho API mà không cần identity pool.", true, "Ví dụ API Gateway authorizer xác minh JWT trực tiếp."],
+      ["MFA của user pool áp dụng cho người dùng đăng nhập qua Facebook.", false, "MFA không áp dụng cho federated users."],
+      ["Refresh token của user pool mặc định có hạn 30 ngày.", true, "Chỉnh được từ 60 phút đến 10 năm."],
+      ["Refresh token rotation kéo dài thời hạn gốc của phiên.", false, "Rotation không kéo dài thời hạn gốc."],
+      ["Lambda trigger của Cognito phải trả lời trong 5 giây.", true, "Không đổi được."],
+      ["Feature plan mặc định của user pool mới là Lite.", false, "Mặc định là Essentials."],
+      ["Threat protection (compromised credentials, adaptive auth) có ở Plus plan.", true, "Plus = Essentials + threat protection."],
+      ["Import user bằng CSV mang theo mật khẩu cũ của người dùng.", false, "Import CSV không mang mật khẩu; dùng migrate user trigger."],
+      ["Action authenticate-cognito dùng được trên HTTP listener của ALB.", false, "Chỉ hỗ trợ HTTPS listener."],
+      ["Network Load Balancer hỗ trợ action authenticate-cognito.", false, "Chỉ Application Load Balancer có action này."],
+      ["App client dùng cho ALB authenticate-cognito phải có client secret.", true, "Kèm authorization code grant."],
+      ["M2M bằng client_credentials chỉ nhận access token, không có ID hay refresh token.", true, "Không có người dùng nên không có ID token."],
+      ["S3 chấp nhận ID token của user pool trong header Authorization.", false, "Request S3 phải ký SigV4 bằng AWS credentials."],
+      ["Policy variable ${cognito-identity.amazonaws.com:sub} giới hạn mỗi user vào prefix S3 riêng.", true, "Đặt trong policy của authenticated role."],
+      ["Role-based access control của identity pool cho phép tối đa 25 rule mỗi provider.", true, "Rule áp theo thứ tự."],
+      ["Basic (classic) flow là luồng mặc định của identity pool.", false, "Enhanced flow là mặc định; basic phải chủ động bật."],
+      ["Cognito là lựa chọn đúng cho nhân viên SSO vào console của nhiều AWS account.", false, "Đó là IAM Identity Center."],
+      ["AWS Managed Microsoft AD chạy ít nhất 2 domain controller ở 2 AZ.", true, "Có tính sẵn sàng cao trong VPC của bạn."],
+      ["Standard Edition hỗ trợ multi-Region replication.", false, "Chỉ Enterprise Edition."],
+      ["Enterprise Edition chứa tới khoảng 500.000 directory objects.", true, "Standard khoảng 30.000."],
+      ["WorkSpaces dùng Managed AD với trust tới AD on-prem cần two-way trust.", true, "AWS Enterprise Apps bắt buộc two-way trust."],
+      ["AD Connector lưu bản sao user trên AWS để xác thực khi mất mạng.", false, "AD Connector không cache gì; mất kết nối là không xác thực được."],
+      ["AD Connector có thể chia sẻ cho AWS account khác.", false, "Chỉ Managed Microsoft AD hỗ trợ directory sharing."],
+      ["AD Connector tương thích RDS for SQL Server.", false, "Chỉ Managed Microsoft AD tương thích."],
+      ["AD Connector hỗ trợ MFA qua RADIUS on-premises.", true, "Tích hợp hạ tầng RADIUS hiện có."],
+      ["Simple AD hỗ trợ trust relationship với AD on-premises.", false, "Simple AD không có trust, không có MFA."],
+      ["Simple AD chạy trên Samba 4.", true, "Samba 4 Active Directory Compatible Server."],
+      ["Simple AD Large hỗ trợ tới 5.000 user.", true, "Small tới 500 user."],
+      ["Managed Microsoft AD dùng được làm identity source cho IAM Identity Center.", true, "AD Connector cũng được; Simple AD thì không."]
+    ],
+
+    map: {
+      t: "Bài 7 · Cognito & Directory Service",
+      c: [
+        { t: "Ai đăng nhập?", icon: "cat/Security-Identity-Compliance.svg", c: [
+          { t: "Khách hàng app", v: "Cognito user pool" },
+          { t: "App gọi thẳng S3/DynamoDB", v: "Cognito identity pool" },
+          { t: "Nhân viên, nhiều account", v: "IAM Identity Center" },
+          { t: "Workload Windows/AD", v: "AWS Directory Service" },
+          { t: "Không bao giờ", v: "IAM user / access key cho khách hàng" }
+        ] },
+        { t: "User pool", icon: "svc/Amazon-Cognito.svg", c: [
+          { t: "Bản chất", v: "user directory + OIDC IdP + authorization server" },
+          { t: "Token", c: [
+            { t: "ID / access", v: "mặc định 1 giờ (5 phút – 1 ngày)" },
+            { t: "Refresh", v: "30 ngày (60 phút – 10 năm), rotation" }
+          ] },
+          { t: "Feature plan", v: "Lite · Essentials (mặc định) · Plus (threat protection)" },
+          { t: "Lambda trigger", v: "trả lời trong 5 giây; pre sign-up, migrate user, pre token gen" },
+          { t: "Federated users", v: "không áp MFA / threat protection" }
+        ] },
+        { t: "Dùng token", icon: "svc/Amazon-API-Gateway.svg", c: [
+          { t: "API Gateway", v: "Cognito user pool authorizer, sai token ⇒ 401" },
+          { t: "ALB", v: "authenticate-cognito/oidc, chỉ HTTPS listener" },
+          { t: "Phiên ALB", v: "cookie AWSELB, mặc định 7 ngày, đăng nhập trong 15 phút" },
+          { t: "Header", v: "x-amzn-oidc-data (JWT ES256)" },
+          { t: "AppSync", v: "AMAZON_COGNITO_USER_POOLS hoặc AWS_IAM" },
+          { t: "M2M", v: "client_credentials, chỉ access token" }
+        ] },
+        { t: "Identity pool", icon: "res/AWS-Identity-Access-Management_AWS-STS.svg", c: [
+          { t: "Bản chất", v: "token ⇒ temporary AWS credentials (STS)" },
+          { t: "Identity", v: "authenticated · guest (role hẹp)" },
+          { t: "Role-based", v: "default / rule (≤ 25) / preferred_role theo group" },
+          { t: "ABAC", v: "claim ⇒ principal tags, aws:PrincipalTag" },
+          { t: "Prefix riêng", v: "${cognito-identity.amazonaws.com:sub}" },
+          { t: "Quy tắc", v: "authentication = user pool · authorization = identity pool" }
+        ] },
+        { t: "Managed Microsoft AD", icon: "res/AWS-Directory-Service_AWS-Managed-Microsoft-AD.svg", c: [
+          { t: "Bản chất", v: "AD thật, Windows Server 2019, 2 DC ở 2 AZ" },
+          { t: "Edition", v: "Standard ~30k · Enterprise ~500k · Hybrid" },
+          { t: "Trust", v: "external/forest, one-way/two-way" },
+          { t: "Two-way bắt buộc", v: "WorkSpaces, QuickSight, Identity Center, Console" },
+          { t: "Mở rộng", v: "multi-Region (Enterprise), directory sharing" },
+          { t: "Workload", v: "RDS SQL Server, FSx Windows, SharePoint, .NET" }
+        ] },
+        { t: "AD Connector & Simple AD", icon: "res/AWS-Directory-Service_AD-Connector.svg", c: [
+          { t: "AD Connector", v: "proxy về AD on-prem, không cache, cần VPN/DX" },
+          { t: "Giới hạn AD Connector", v: "1-1 domain, không share, không multi-VPC, không RDS SQL" },
+          { t: "Simple AD", v: "Samba 4, Small 500 / Large 5.000 user" },
+          { t: "Simple AD thiếu", v: "MFA, trust, schema extension, LDAPS" },
+          { t: "Lưu ý", v: "Simple AD không mở cho khách hàng mới" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

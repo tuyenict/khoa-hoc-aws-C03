@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 36 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Athena.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="36" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-36-analytics.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "lake", name: "Data lake & data warehouse" },
+      { id: "athena", name: "Amazon Athena" },
+      { id: "glue", name: "AWS Glue" },
+      { id: "lf", name: "AWS Lake Formation" },
+      { id: "rs", name: "Amazon Redshift" },
+      { id: "emr", name: "Amazon EMR" },
+      { id: "osqs", name: "OpenSearch & QuickSight" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Data lake / warehouse
+      { t: "lake", f: "Data lake là gì? Trên AWS gồm những gì?", b: "Kho tập trung chứa dữ liệu <b>có cấu trúc, bán cấu trúc, phi cấu trúc</b> ở định dạng gốc. AWS: <b>S3</b> (lưu) + <b>Glue Data Catalog</b> (metadata) + <b>Lake Formation</b> (quyền)." },
+      { t: "lake", f: "Data warehouse trên AWS là dịch vụ nào, đặc điểm?", b: "<b>Amazon Redshift</b>: dữ liệu được nạp vào bảng có schema rõ ràng; tối ưu cho truy vấn phức tạp, join bảng lớn, BI. Là <b>OLAP</b>." },
+      { t: "lake", f: "Schema-on-read và schema-on-write khác nhau thế nào?", b: "<b>Schema-on-read</b> (data lake): định nghĩa schema lúc đọc, nhiều engine cùng đọc.<br><b>Schema-on-write</b> (warehouse): nạp dữ liệu vào bảng có schema sẵn." },
+      { t: "lake", f: "OLAP khác OLTP thế nào, dịch vụ tương ứng?", b: "<b>OLAP</b>: phân tích ⇒ <b>Redshift</b>.<br><b>OLTP</b>: giao dịch ⇒ <b>RDS / Aurora / DynamoDB</b>." },
+      { t: "lake", f: "Các tầng của pipeline phân tích trên AWS?", b: "Thu nhận → <b>S3</b> → <b>Glue Data Catalog</b> → <b>Glue / EMR</b> → <b>Athena / Redshift</b> → <b>QuickSight</b>." },
+      { t: "lake", f: "ETL khác ELT thế nào?", b: "<b>ETL</b>: trích xuất – biến đổi – nạp.<br><b>ELT</b>: nạp trước rồi biến đổi trong đích." },
+
+      // ---- Athena
+      { t: "athena", f: "Amazon Athena là gì?", b: "Dịch vụ <b>interactive query serverless</b>, chạy <b>SQL chuẩn trực tiếp trên S3</b>, không cần nạp dữ liệu; trả tiền theo truy vấn. Có cả Apache Spark trên Athena." },
+      { t: "athena", f: "Athena tính phí thế nào?", b: "Theo <b>lượng dữ liệu quét</b> mỗi truy vấn (~5 USD/TB, tối thiểu 10 MB/truy vấn).", x: "Giảm dữ liệu quét = giảm tiền + tăng tốc." },
+      { t: "athena", f: "Cách giảm chi phí / tăng tốc Athena?", b: "<b>Parquet/ORC</b> + <b>nén</b> + <b>partition</b> theo cột hay lọc (ngày) + <b>gộp file nhỏ</b> + chỉ SELECT cột cần.", x: "Tăng “instance size” không phải đáp án – Athena serverless." },
+      { t: "athena", f: "3 đặc tính khiến Parquet/ORC hợp với Athena?", b: "<b>Nén theo cột</b>, <b>predicate pushdown</b> (dùng min/max của block để bỏ qua block), <b>splitting</b> (đọc song song)." },
+      { t: "athena", f: "Hive-style partition và cách nạp partition mới?", b: "Đường dẫn dạng <code>year=2026/month=10/</code>; nạp bằng <b>MSCK REPAIR TABLE</b>. Non-Hive style (<code>2026/10/31/</code>) ⇒ <b>ALTER TABLE ADD PARTITION</b>." },
+      { t: "athena", f: "Partition projection là gì?", b: "Athena <b>tính giá trị và vị trí partition từ thuộc tính bảng</b> thay vì tra metastore ⇒ nhanh hơn, khỏi quản lý partition." },
+      { t: "athena", f: "Cách chuyển dữ liệu sang Parquet?", b: "<b>Athena CTAS</b> (một lần), <b>Glue ETL job</b> (theo lịch), <b>Firehose record format conversion</b> (streaming)." },
+      { t: "athena", f: "Athena workgroup dùng để làm gì?", b: "Tài nguyên IAM để <b>tách team/tải</b>, lịch sử truy vấn riêng, enforce vị trí & mã hóa kết quả, <b>data usage controls</b> (per-query hủy, per-workgroup bắn SNS)." },
+      { t: "athena", f: "Giới hạn workgroup của Athena?", b: "Tối đa <b>1.000 workgroup/Region</b>; workgroup <b>primary</b> không xóa được." },
+      { t: "athena", f: "Athena Federated Query là gì?", b: "Chạy SQL <b>tại chỗ trên nguồn ngoài S3</b> (DynamoDB, RDS, Redshift, CloudWatch Logs…) qua <b>data source connector chạy bằng Lambda</b>; join nhiều nguồn trong một câu SQL.", x: "Không hỗ trợ INSERT INTO nguồn federated." },
+      { t: "athena", f: "Xóa bảng Athena có xóa dữ liệu S3 không?", b: "<b>Không.</b> Bảng chỉ là metadata (external table); dữ liệu vẫn nằm trong S3." },
+      { t: "athena", f: "Nhiều schema khác nhau dưới cùng một S3 prefix gây gì cho Athena?", b: "Truy vấn trả <b>0 kết quả hoặc lỗi</b> ⇒ mỗi bảng một prefix riêng." },
+
+      // ---- Glue
+      { t: "glue", f: "AWS Glue là gì?", b: "Dịch vụ <b>data integration serverless</b>: khám phá (crawler), lập danh mục (Data Catalog), ETL Spark; kết nối <b>hơn 70 nguồn</b>; pay-as-you-go." },
+      { t: "glue", f: "Glue Data Catalog có đặc điểm gì?", b: "Kho metadata bền vững, <b>1 catalog / account / Region</b>; dùng chung cho Athena, EMR, Redshift Spectrum, Lake Formation; thay thế Hive metastore.", x: "Không lưu dữ liệu, không chạy truy vấn." },
+      { t: "glue", f: "Glue crawler làm gì?", b: "Kết nối data store, chạy <b>classifier</b> suy ra schema, rồi <b>tạo/cập nhật bảng và partition</b> trong Data Catalog; chạy theo lịch để phát hiện thay đổi." },
+      { t: "glue", f: "Crawler gặp <code>s3://sales/year=2019/month=Jan/day=1</code> sẽ tạo gì?", b: "<b>1 bảng</b> <code>sales</code> với partition key year, month, day (không phải nhiều bảng)." },
+      { t: "glue", f: "Classifier tùy biến chạy trước hay sau classifier có sẵn?", b: "<b>Chạy trước</b>; classifier đầu tiên nhận diện được sẽ được dùng." },
+      { t: "glue", f: "Glue tính phí ETL job thế nào?", b: "Theo giờ dựa trên số <b>DPU</b> (1 DPU = 1 worker); không tính thời gian khởi động/tắt." },
+      { t: "glue", f: "Job bookmark dùng để làm gì? Mặc định?", b: "Lưu trạng thái lần chạy trước để <b>chỉ xử lý dữ liệu mới</b>. Mặc định <b>Disable</b>; tùy chọn Enable / Disable / Pause." },
+      { t: "glue", f: "Job bookmark với S3 và JDBC dựa vào đâu?", b: "<b>S3</b>: last modified time của object.<br><b>JDBC</b>: bookmark key (mặc định primary key tuần tự)." },
+      { t: "glue", f: "Glue Studio khác Glue DataBrew thế nào?", b: "<b>Studio</b>: visual job editor kéo-thả, sinh code Spark.<br><b>DataBrew</b>: chuẩn bị dữ liệu <b>không cần code</b> cho analyst." },
+      { t: "glue", f: "FindMatches trong Glue làm gì?", b: "ML có sẵn để <b>khử trùng lặp</b>, tìm bản ghi gần giống nhau." },
+      { t: "glue", f: "Nguồn streaming (Kinesis, Kafka) có dùng crawler được không?", b: "<b>Không</b> – định nghĩa bảng thủ công." },
+      { t: "glue", f: "Glue và EMR đều chạy Spark – chọn cái nào khi nào?", b: "<b>Glue</b>: ETL serverless, ít vận hành.<br><b>EMR</b>: toàn quyền cấu hình, framework tùy biến (HBase, Presto), tận dụng Spot." },
+
+      // ---- Lake Formation
+      { t: "lf", f: "AWS Lake Formation là gì?", b: "Lớp <b>quản trị & phân quyền</b> data lake: grant/revoke kiểu RDBMS mức <b>database, bảng, cột, hàng, ô</b> trên S3 + Glue Data Catalog." },
+      { t: "lf", f: "Data filter trong Lake Formation?", b: "Giới hạn truy cập theo <b>tổ hợp cột + hàng</b> ⇒ <b>row-level và cell-level security</b> (bảo vệ PII)." },
+      { t: "lf", f: "LF-Tags (LF-TBAC) dùng để làm gì?", b: "Gắn nhãn lên database/bảng/cột rồi <b>cấp quyền theo tag</b> ⇒ thay hàng nghìn policy; cách khuyến nghị để scale quản trị." },
+      { t: "lf", f: "Credential vending trong Lake Formation là gì?", b: "Lake Formation <b>cấp quyền truy cập tạm thời</b> cho engine (Athena, EMR, Glue, Spectrum) đọc vị trí S3 đã đăng ký, rồi engine lọc cột/hàng/ô." },
+      { t: "lf", f: "Lake Formation chia sẻ cross-account bằng gì?", b: "<b>AWS RAM</b>. Cùng Organization ⇒ hiệu lực ngay; khác ⇒ lời mời phải chấp nhận. Bên nhận tạo <b>resource link</b> để Athena/Spectrum truy vấn." },
+      { t: "lf", f: "Hybrid access mode của Lake Formation?", b: "Bật quyền Lake Formation <b>dần dần</b> cho một số database/bảng/người dùng mà không phá IAM/S3 policy hiện có." },
+      { t: "lf", f: "Vì sao IAM / S3 bucket policy không đáp ứng “column-level” trên data lake?", b: "Chúng chỉ kiểm soát tới mức <b>object/prefix</b>, không ẩn được một cột trong file Parquet ⇒ cần <b>Lake Formation</b>." },
+      { t: "lf", f: "Lake Formation nhập dữ liệu từ đâu?", b: "MySQL, PostgreSQL, SQL Server, MariaDB, Oracle trên RDS/EC2 hoặc on-prem qua <b>JDBC</b>, bulk & incremental (blueprint dựng trên Glue)." },
+
+      // ---- Redshift
+      { t: "rs", f: "Leader node của Redshift làm gì? Có tính tiền không?", b: "Nhận truy vấn, parse, lập kế hoạch, điều phối compute node, tổng hợp kết quả. <b>Chỉ trả tiền compute node</b>." },
+      { t: "rs", f: "Compute node và slice?", b: "Compute node chạy kế hoạch thực thi song song (<b>MPP</b>, lưu trữ dạng cột); mỗi node chia thành nhiều <b>slice</b> (ra3.4xlarge: 4 slice)." },
+      { t: "rs", f: "Node type RA3 có ưu điểm gì?", b: "<b>Redshift managed storage</b> (SSD cache + S3) ⇒ <b>scale compute và storage độc lập</b>; tới 128 TB/node." },
+      { t: "rs", f: "Khi nào chọn DC2?", b: "Compute-intensive, dữ liệu nén <b>&lt; 1 TB</b>; SSD NVMe cục bộ, muốn thêm dung lượng phải thêm node." },
+      { t: "rs", f: "Redshift Serverless có đặc điểm gì?", b: "Không quản lý cluster, tự scale trong vài giây; <b>không tính phí khi idle</b>; đo bằng <b>RPU</b>; tổ chức bằng namespace + workgroup." },
+      { t: "rs", f: "Cách nạp dữ liệu lớn từ S3 vào Redshift hiệu quả nhất?", b: "Lệnh <b>COPY</b> (song song), không phải nhiều lệnh INSERT. Xuất ngược ra S3 bằng <b>UNLOAD</b>." },
+      { t: "rs", f: "Redshift Spectrum là gì?", b: "Truy vấn file S3 <b>không cần nạp vào Redshift</b>; xử lý ở tầng Spectrum riêng; external table định nghĩa trong Glue Data Catalog; join được với bảng cục bộ." },
+      { t: "rs", f: "Hạn chế của Redshift Spectrum?", b: "Cluster và bucket S3 <b>cùng Region</b>; <b>không UPDATE</b> external table; cần có Redshift cluster/Serverless." },
+      { t: "rs", f: "Concurrency scaling là gì?", b: "Tự thêm <b>capacity cluster tạm</b> khi truy vấn xếp hàng – cả đọc lẫn nhiều loại ghi; chỉ tính phí khi đang chạy." },
+      { t: "rs", f: "Automated snapshot của Redshift: chu kỳ và retention?", b: "~<b>8 giờ</b> hoặc mỗi <b>5 GB/node</b> thay đổi; retention mặc định <b>1 ngày</b>, đặt 1–35 ngày. Manual snapshot giữ <b>vô thời hạn</b>." },
+      { t: "rs", f: "DR cho Redshift ở Region khác?", b: "Bật <b>cross-Region snapshot copy</b> (cluster mã hóa KMS cần snapshot copy grant)." },
+      { t: "rs", f: "Redshift provisioned có tự Multi-AZ như Aurora không?", b: "<b>Không</b> – mặc định một AZ; cần snapshot/cross-Region copy hoặc bật Multi-AZ (RA3)." },
+
+      // ---- EMR
+      { t: "emr", f: "Amazon EMR dùng khi nào?", b: "Chạy <b>Hadoop, Spark, Hive, HBase, Presto</b> tùy biến trên dataset cực lớn, cần <b>toàn quyền cấu hình</b> cluster và phần mềm." },
+      { t: "emr", f: "Vai trò của primary, core, task node?", b: "<b>Primary</b>: điều phối cluster.<br><b>Core</b>: chạy task + <b>lưu HDFS</b>.<br><b>Task</b>: chỉ chạy task, không HDFS (tùy chọn)." },
+      { t: "emr", f: "Nên dùng Spot cho loại node EMR nào?", b: "<b>Task node</b>. Primary và core dùng On-Demand/Reserved.", x: "Core trên Spot ⇒ mất block HDFS, job có thể lỗi." },
+      { t: "emr", f: "HDFS khác EMRFS thế nào?", b: "<b>HDFS</b>: phân tán nhưng <b>ephemeral</b>, mất khi terminate cluster.<br><b>EMRFS</b>: truy cập <b>S3</b> như file system ⇒ dữ liệu bền độc lập với cluster." },
+      { t: "emr", f: "Transient cluster là gì?", b: "Định nghĩa sẵn <b>step</b>, chạy xong <b>tự terminate</b> ⇒ tiết kiệm. Long-running cluster phải tự tắt." },
+      { t: "emr", f: "Instance groups và instance fleets?", b: "<b>Groups</b>: mỗi nhóm một instance type.<br><b>Fleets</b>: trộn nhiều instance type, target capacity On-Demand/Spot. Không đổi được sau khi tạo cluster." },
+      { t: "emr", f: "EMR Serverless có gì đáng nhớ?", b: "Không vận hành cluster; tự cấp/giải phóng tài nguyên theo job; <b>pre-initialized capacity</b> (warm pool) để job khởi động trong vài giây." },
+
+      // ---- OpenSearch & QuickSight
+      { t: "osqs", f: "Amazon OpenSearch Service dùng cho gì?", b: "<b>Full-text search</b>, <b>log analytics</b>, giám sát ứng dụng thời gian thực, clickstream; có OpenSearch Dashboards. Tên cũ <b>Elasticsearch Service</b>." },
+      { t: "osqs", f: "Ba tầng lưu trữ của OpenSearch?", b: "<b>Hot</b> (EBS/instance store, nhanh nhất)<br><b>UltraWarm</b> (S3 + cache, <b>read-only</b>, rẻ)<br><b>Cold</b> (S3, chuyển lại warm khi cần). ISM tự chuyển theo tuổi." },
+      { t: "osqs", f: "Yêu cầu để dùng UltraWarm?", b: "<b>Dedicated master node</b>, OpenSearch/ES ≥ 6.8, không dùng với T2/T3." },
+      { t: "osqs", f: "OpenSearch Serverless: 3 loại collection?", b: "<b>Time series</b> (log), <b>Search</b> (full-text), <b>Vector search</b> (semantic, RAG). Capacity đo bằng <b>OCU</b> (6 GiB RAM)." },
+      { t: "osqs", f: "Bảo mật OpenSearch Dashboards login và truy cập riêng tư?", b: "Đăng nhập: <b>Amazon Cognito</b>, SAML, HTTP basic. Riêng tư: <b>domain trong VPC</b>. Có fine-grained access control mức index/document/field." },
+      { t: "osqs", f: "Mẫu kiến trúc thêm ô tìm kiếm full-text cho DynamoDB?", b: "<b>DynamoDB Streams → Lambda → OpenSearch</b>." },
+      { t: "osqs", f: "SPICE trong QuickSight là gì?", b: "Engine <b>in-memory</b>: import dữ liệu ⇒ dashboard nhanh, nguồn tính phí theo truy vấn (Athena) chỉ bị tính khi tạo/refresh dataset." },
+      { t: "osqs", f: "QuickSight row-level security (RLS) hoạt động thế nào?", b: "<b>Enterprise edition</b>: permissions dataset (UserName/GroupName + giá trị) ⇒ mỗi reader chỉ thấy hàng khớp; không có rule ⇒ không thấy gì." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>ad-hoc SQL on S3</i>”, “<i>serverless</i>”, “<i>pay per query</i>” ⇒ ?", b: "<b>Amazon Athena</b>." },
+      { t: "kw", f: "Đề có “<i>data warehouse</i>”, “<i>complex joins on large tables</i>”, “<i>OLAP</i>” ⇒ ?", b: "<b>Amazon Redshift</b>." },
+      { t: "kw", f: "Đề có “<i>migrate on-premises Hadoop/Spark/Hive</i>” ⇒ ?", b: "<b>Amazon EMR</b>." },
+      { t: "kw", f: "Đề có “<i>discover schema</i>”, “<i>central metadata catalog</i>”, “<i>serverless ETL</i>” ⇒ ?", b: "<b>AWS Glue</b> (crawler + Data Catalog + ETL job)." },
+      { t: "kw", f: "Đề có “<i>column/row-level access on data lake</i>”, “<i>share across accounts</i>” ⇒ ?", b: "<b>AWS Lake Formation</b>." },
+      { t: "kw", f: "Đề có “<i>query historical data in S3 and join with Redshift without loading</i>” ⇒ ?", b: "<b>Redshift Spectrum</b>." },
+      { t: "kw", f: "Đề có “<i>run SQL across S3 and DynamoDB/RDS without moving data</i>” ⇒ ?", b: "<b>Athena Federated Query</b>." },
+      { t: "kw", f: "Đề có “<i>ETL job reprocesses old files on every run</i>” ⇒ ?", b: "Bật <b>Glue job bookmark</b>." },
+      { t: "kw", f: "Đề có “<i>dashboard queries against Athena are slow and costly</i>” ⇒ ?", b: "Import vào <b>SPICE</b> và refresh theo lịch." },
+      { t: "kw", f: "Đề có “<i>retain months of logs in OpenSearch cost-effectively</i>” ⇒ ?", b: "<b>UltraWarm</b> (+ cold storage)." }
+    ],
+
+    pairs: [
+      ["Data lake", "S3 chứa mọi định dạng, schema-on-read"],
+      ["Data warehouse", "Redshift, dữ liệu có cấu trúc đã nạp"],
+      ["Predicate pushdown", "Bỏ qua block không cần đọc nhờ min/max"],
+      ["MSCK REPAIR TABLE", "Nạp partition Hive-style mới vào bảng"],
+      ["Partition projection", "Athena tính partition từ cấu hình bảng"],
+      ["CTAS", "CREATE TABLE AS SELECT – đổi sang Parquet"],
+      ["Workgroup (Athena)", "Tách team, IAM, giới hạn dữ liệu quét"],
+      ["Data source connector", "Lambda giúp Athena truy vấn nguồn ngoài S3"],
+      ["SerDe", "Cách đọc/ghi một định dạng dữ liệu"],
+      ["Glue Data Catalog", "Kho metadata, 1/account/Region"],
+      ["Crawler / Classifier", "Suy ra schema, tạo bảng & partition"],
+      ["DPU", "Đơn vị tính phí Glue job theo giờ"],
+      ["DynamicFrame", "Bảng phân tán, record tự mô tả schema"],
+      ["Job bookmark", "Chỉ xử lý dữ liệu mới giữa các lần chạy"],
+      ["Glue DataBrew", "Chuẩn bị dữ liệu không cần viết code"],
+      ["LF-Tags", "Cấp quyền Lake Formation theo thẻ"],
+      ["Data filter", "Giới hạn theo cột + hàng (cell-level)"],
+      ["Resource link", "Trỏ tới bảng được chia sẻ cross-account"],
+      ["Leader node", "Lập kế hoạch, điều phối; không tính tiền"],
+      ["RA3 managed storage", "SSD + S3, scale storage độc lập compute"],
+      ["Redshift Spectrum", "Truy vấn S3 từ Redshift, không nạp dữ liệu"],
+      ["Concurrency scaling", "Thêm cluster tạm khi truy vấn xếp hàng"],
+      ["Task node (EMR)", "Chỉ tính toán, không HDFS – hợp Spot"],
+      ["EMRFS", "Truy cập S3 như file system từ EMR"],
+      ["UltraWarm", "Tầng OpenSearch trên S3, read-only, rẻ"],
+      ["OCU", "Đơn vị capacity OpenSearch Serverless (6 GiB)"],
+      ["SPICE", "Engine in-memory của QuickSight"],
+      ["Row-level security", "Reader chỉ thấy hàng được phép (Enterprise)"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn dịch vụ phân tích",
+        desc: "Đọc tình huống đề thi và chọn dịch vụ phù hợp nhất (theo bảng quyết định của bài).",
+        buckets: ["Athena", "Redshift", "EMR", "Glue", "Lake Formation", "OpenSearch", "QuickSight"],
+        items: [
+          ["Thỉnh thoảng truy vấn SQL ALB access logs trên S3, rẻ nhất", 0, "serverless, trả theo dữ liệu quét"],
+          ["Phân tích VPC Flow Logs trên S3 khi điều tra sự cố", 0, "không cần cluster"],
+          ["BI trên petabyte dữ liệu có cấu trúc, hàng nghìn user", 1, "data warehouse MPP"],
+          ["Báo cáo tài chính join nhiều bảng rất lớn", 1, "OLAP, schema-on-write"],
+          ["Di chuyển job Hadoop/Hive on-prem, ít thay đổi", 2, "framework Hadoop được quản lý"],
+          ["Spark tùy biến với HBase, Presto, toàn quyền cấu hình", 2, "cluster tự cấu hình"],
+          ["Tự động suy ra schema dữ liệu S3 để Athena truy vấn", 3, "crawler → Data Catalog"],
+          ["Đổi CSV sang Parquet theo lịch, serverless", 3, "Glue ETL job"],
+          ["Ẩn cột PII với một nhóm analyst trên data lake", 4, "quyền mức cột"],
+          ["Ô tìm kiếm sản phẩm full-text, fuzzy", 5, "inverted index"],
+          ["Dashboard log gần thời gian thực", 5, "OpenSearch Dashboards"],
+          ["Dashboard tương tác nhúng vào web app cho lãnh đạo", 6, "BI serverless"]
+        ]
+      },
+      {
+        title: "Cặp hay nhầm",
+        desc: "Với mỗi tình huống, chọn vế đúng trong các cặp dịch vụ hay bị nhầm.",
+        buckets: ["Athena", "Redshift Spectrum", "Glue", "EMR", "QuickSight RLS", "Lake Formation"],
+        items: [
+          ["Không có Redshift, chỉ cần SQL ad-hoc trên S3", 0, "Athena rẻ và ít vận hành hơn"],
+          ["Đã có Redshift, cần join dữ liệu S3 lịch sử với bảng warehouse", 1, "Spectrum dùng external table"],
+          ["ETL serverless, ít vận hành nhất", 2, "tính theo DPU-giờ"],
+          ["Muốn tận dụng Spot và framework tùy biến", 3, "toàn quyền cấu hình cluster"],
+          ["Hạn chế hàng theo vùng chỉ trong dashboard", 4, "permissions dataset"],
+          ["Hạn chế ở tầng data lake cho mọi engine truy vấn", 5, "data filter áp dụng cho Athena, EMR, Spectrum…"]
+        ]
+      },
+      {
+        title: "Thành phần thuộc dịch vụ nào?",
+        desc: "Xếp mỗi khái niệm/tính năng vào đúng dịch vụ.",
+        buckets: ["Athena", "Glue", "Lake Formation", "Redshift", "EMR", "OpenSearch"],
+        items: [
+          ["Workgroup với data usage controls", 0, "giới hạn dữ liệu quét"],
+          ["Partition projection", 0, "tính partition từ thuộc tính bảng"],
+          ["Crawler và classifier", 1, "suy ra schema"],
+          ["Job bookmark", 1, "xử lý tăng dần"],
+          ["LF-Tags", 2, "tag-based access control"],
+          ["Credential vending", 2, "cấp quyền tạm cho engine đọc S3"],
+          ["Leader node và slice", 3, "kiến trúc MPP"],
+          ["Concurrency scaling", 3, "thêm cluster tạm"],
+          ["Primary / core / task node", 4, "loại node EMR"],
+          ["Transient cluster", 4, "auto-terminate"],
+          ["UltraWarm và cold storage", 5, "tầng lưu trữ rẻ trên S3"],
+          ["Dedicated master node", 5, "quản lý cluster OpenSearch"]
+        ]
+      },
+      {
+        title: "Mua instance gì cho node EMR?",
+        desc: "Xếp mỗi loại node/tình huống vào cách mua tối ưu chi phí mà an toàn.",
+        buckets: ["On-Demand / Reserved", "Spot"],
+        items: [
+          ["Primary node", 0, "mất primary là mất cluster"],
+          ["Core node giữ block HDFS", 0, "mất node = mất dữ liệu HDFS"],
+          ["Node chạy YARN application master", 0, "chỉ chạy trên core node"],
+          ["Task node tăng sức tính toán", 1, "job không fail khi task node bị thu hồi"],
+          ["Node chỉ tính toán, không lưu HDFS", 1, "đúng định nghĩa task node"],
+          ["Thêm năng lực tạm cho batch tối ưu chi phí", 1, "task node Spot"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Athena tính phí theo lượng dữ liệu quét mỗi truy vấn.", true, "Giảm dữ liệu quét = giảm chi phí."],
+      ["Muốn Athena chạy nhanh hơn thì tăng instance size của Athena.", false, "Athena serverless, không có instance để chọn."],
+      ["Xóa bảng Athena sẽ xóa dữ liệu trong S3.", false, "Bảng chỉ là metadata (external table)."],
+      ["MSCK REPAIR TABLE chỉ nạp được partition Hive-style.", true, "Non-Hive style dùng ALTER TABLE ADD PARTITION."],
+      ["Parquet và ORC giúp Athena chỉ đọc các cột được SELECT.", true, "Định dạng cột."],
+      ["Athena Federated Query hỗ trợ INSERT INTO vào nguồn federated.", false, "Không hỗ trợ ghi vào nguồn federated."],
+      ["Connector của Athena Federated Query chạy dưới dạng Lambda function.", true, "Trong account của bạn."],
+      ["Mỗi account có tối đa 1.000 Athena workgroup mỗi Region.", true, "Workgroup primary không xóa được."],
+      ["Glue Data Catalog lưu cả dữ liệu lẫn metadata.", false, "Chỉ metadata; dữ liệu vẫn ở S3/RDS."],
+      ["Mỗi account có một Glue Data Catalog mỗi Region.", true, "Dùng chung cho Athena, EMR, Spectrum."],
+      ["Job bookmark của Glue mặc định được bật.", false, "Mặc định Disable."],
+      ["Crawler là cách chuẩn để định nghĩa bảng cho nguồn Kinesis/Kafka.", false, "Nguồn streaming định nghĩa bảng thủ công."],
+      ["Glue ETL phù hợp xử lý từng sự kiện với độ trễ mili-giây.", false, "Glue là batch/micro-batch Spark."],
+      ["Glue DataBrew cho phép làm sạch dữ liệu không cần viết code.", true, "Dành cho analyst."],
+      ["Lake Formation cấp quyền được tới mức cột, hàng và ô.", true, "Data filters cho row/cell-level."],
+      ["Lake Formation lưu một bản sao riêng của dữ liệu data lake.", false, "Nó là lớp phân quyền; dữ liệu vẫn ở S3."],
+      ["S3 bucket policy có thể ẩn một cột trong file Parquet.", false, "Chỉ kiểm soát tới object/prefix."],
+      ["Lake Formation chia sẻ cross-account thông qua AWS RAM.", true, "Bên nhận tạo resource link."],
+      ["Redshift tính tiền cả leader node lẫn compute node.", false, "Chỉ trả tiền compute node."],
+      ["RA3 cho phép scale storage độc lập với compute.", true, "Nhờ Redshift managed storage."],
+      ["Redshift Serverless không tính phí khi data warehouse rảnh.", true, "Chỉ trả khi đang dùng."],
+      ["Redshift Spectrum hỗ trợ UPDATE trên external table.", false, "Không hỗ trợ UPDATE."],
+      ["Redshift Spectrum truy vấn được bucket S3 ở Region khác cluster.", false, "Cluster và bucket phải cùng Region."],
+      ["Manual snapshot của Redshift được giữ cả khi xóa cluster, trừ khi đặt retention.", true, "Automated snapshot thì theo retention 1–35 ngày."],
+      ["Redshift provisioned mặc định tự Multi-AZ như Aurora.", false, "Mặc định một AZ."],
+      ["Nạp dữ liệu lớn từ S3 vào Redshift nên dùng lệnh COPY.", true, "COPY chạy song song."],
+      ["Nên dùng Spot cho core node EMR để tiết kiệm tối đa.", false, "Core giữ HDFS; Spot nên dùng cho task node."],
+      ["Dữ liệu HDFS trên EMR vẫn còn sau khi terminate cluster.", false, "HDFS ephemeral; lưu bền ở S3 qua EMRFS."],
+      ["Task node EMR không lưu dữ liệu HDFS.", true, "Chỉ chạy task."],
+      ["EMR Serverless có pre-initialized capacity giúp job khởi động trong vài giây.", true, "Warm pool worker."],
+      ["Index ở tầng UltraWarm của OpenSearch có thể ghi bình thường.", false, "UltraWarm là read-only."],
+      ["OpenSearch Serverless hỗ trợ cross-Region replication cho collection.", false, "Không hỗ trợ cross-Region."],
+      ["OpenSearch Dashboards tương đương Kibana.", true, "Đề nói Kibana/ELK ⇒ OpenSearch."],
+      ["QuickSight row-level security cần Enterprise edition.", true, "Dùng permissions dataset."],
+      ["Dùng SPICE khiến mỗi lần mở dashboard đều tính phí Athena.", false, "Chỉ tính khi tạo và refresh dataset."]
+    ],
+
+    map: {
+      t: "Bài 36 · Analytics trên AWS",
+      c: [
+        { t: "Data lake & warehouse", icon: "cat/Analytics.svg", c: [
+          { t: "Data lake", v: "S3 + Glue Data Catalog + Lake Formation, schema-on-read" },
+          { t: "Data warehouse", v: "Redshift, schema-on-write, OLAP" },
+          { t: "Pipeline", v: "thu nhận → S3 → catalog → xử lý → truy vấn → QuickSight" },
+          { t: "OLTP", v: "RDS / Aurora / DynamoDB" }
+        ] },
+        { t: "Amazon Athena", icon: "svc/Amazon-Athena.svg", c: [
+          { t: "Mô hình", v: "SQL serverless trên S3, trả theo dữ liệu quét" },
+          { t: "Tối ưu", v: "Parquet/ORC + nén + partition + gộp file nhỏ" },
+          { t: "Partition", v: "MSCK REPAIR TABLE · ADD PARTITION · projection" },
+          { t: "Workgroup", v: "tách team, giới hạn quét, ≤ 1.000/Region" },
+          { t: "Federated Query", v: "connector Lambda cho DynamoDB, RDS…" }
+        ] },
+        { t: "AWS Glue", icon: "svc/AWS-Glue.svg", c: [
+          { t: "Data Catalog", v: "metadata, 1/account/Region" },
+          { t: "Crawler", v: "classifier → bảng + partition" },
+          { t: "ETL job", v: "Spark serverless, tính theo DPU" },
+          { t: "Job bookmark", v: "chỉ xử lý dữ liệu mới, mặc định Disable" },
+          { t: "Studio · DataBrew", v: "visual editor · no-code" }
+        ] },
+        { t: "Lake Formation", icon: "svc/AWS-Lake-Formation.svg", c: [
+          { t: "Quyền", v: "database / bảng / cột / hàng / ô" },
+          { t: "Data filters", v: "row & cell-level security" },
+          { t: "LF-Tags", v: "cấp quyền theo tag, khuyến nghị" },
+          { t: "Cross-account", v: "RAM + resource link" },
+          { t: "Audit", v: "CloudTrail" }
+        ] },
+        { t: "Amazon Redshift", icon: "svc/Amazon-Redshift.svg", c: [
+          { t: "Kiến trúc", v: "leader + compute node (slice), MPP, columnar" },
+          { t: "Node type", v: "RA3/RG managed storage · DC2 &lt; 1 TB" },
+          { t: "Serverless", v: "RPU, không phí khi idle" },
+          { t: "Spectrum", v: "truy vấn S3 không nạp, cùng Region" },
+          { t: "Scale & DR", v: "concurrency scaling · cross-Region snapshot copy" },
+          { t: "Snapshot", v: "~8 giờ / 5 GB-node, 1–35 ngày" }
+        ] },
+        { t: "Amazon EMR", icon: "svc/Amazon-EMR.svg", c: [
+          { t: "Dùng khi", v: "Hadoop/Spark/Hive/HBase/Presto, toàn quyền" },
+          { t: "Node", v: "primary · core (HDFS) · task (Spot)" },
+          { t: "Lưu trữ", v: "HDFS ephemeral · S3 qua EMRFS" },
+          { t: "Transient cluster", v: "chạy step rồi tự terminate" },
+          { t: "Serverless · on EKS", v: "warm pool · chạy trên cluster EKS" }
+        ] },
+        { t: "OpenSearch & QuickSight", icon: "svc/Amazon-Elasticsearch-Service.svg", c: [
+          { t: "OpenSearch", v: "full-text search, log analytics, Dashboards" },
+          { t: "Tầng lưu trữ", v: "hot · UltraWarm (S3, read-only) · cold" },
+          { t: "OpenSearch Serverless", v: "collection time series/search/vector, OCU" },
+          { t: "QuickSight", v: "BI dashboard, nhúng analytics" },
+          { t: "SPICE · RLS", v: "in-memory · hàng theo user (Enterprise)" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

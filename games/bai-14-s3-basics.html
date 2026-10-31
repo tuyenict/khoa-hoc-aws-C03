@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 14 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Simple-Storage-Service.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="14" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-14-s3-basics.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "s3", name: "S3 & bucket" },
+      { id: "obj", name: "Object & consistency" },
+      { id: "dur", name: "Durability · availability" },
+      { id: "class", name: "Storage classes" },
+      { id: "restore", name: "Restore từ archive" },
+      { id: "ver", name: "Versioning & MFA Delete" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- S3 & bucket
+      { t: "s3", f: "Amazon S3 thuộc loại lưu trữ nào? Khác EBS, EFS thế nào?", b: "<b>Object storage</b>: object = dữ liệu + metadata, truy cập qua HTTP(S) API.<br>EBS = <b>block</b> (zonal, gắn EC2) · EFS/FSx = <b>file</b> (mount từ nhiều máy).", x: "S3 không sửa một phần object – phải PUT lại cả object." },
+      { t: "s3", f: "Tên general purpose bucket phải duy nhất trong phạm vi nào?", b: "Duy nhất trên <b>mọi account, mọi Region của một partition</b> (global namespace).", x: "Tên toàn cục nhưng S3 vẫn là dịch vụ regional." },
+      { t: "s3", f: "Quy tắc đặt tên bucket?", b: "<b>3–63 ký tự</b>; chữ thường, số, dấu chấm, gạch nối; bắt đầu/kết thúc bằng chữ hoặc số; không chữ hoa, gạch dưới, không dạng IP, không hai dấu chấm liền." },
+      { t: "s3", f: "Có đổi tên hoặc đổi Region của bucket được không?", b: "<b>Không.</b> Phải tạo bucket mới rồi copy/replicate dữ liệu." },
+      { t: "s3", f: "Mỗi account có mặc định bao nhiêu general purpose bucket?", b: "<b>10.000</b> (xin tăng qua Service Quotas). Không giới hạn số object và dung lượng bucket." },
+      { t: "s3", f: "Dữ liệu S3 có tự rời Region không?", b: "<b>Không</b>, trừ khi bạn chủ động chuyển hoặc replicate." },
+      { t: "s3", f: "4 loại bucket của S3?", b: "<b>General purpose</b> (mặc định, phẳng, nhiều AZ) · <b>Directory</b> (phân cấp, 1 AZ / Dedicated Local Zone, Express One Zone) · <b>Table</b> (Apache Iceberg) · <b>Vector</b> (vector embedding)." },
+      { t: "s3", f: "Có chuyển quyền sở hữu bucket sang account khác được không?", b: "<b>Không.</b> Bucket thuộc account tạo ra nó.", x: "Xóa bucket ⇒ account khác có thể tạo lại tên đó." },
+      { t: "s3", f: "Bucket dùng Transfer Acceleration có được chứa dấu chấm trong tên không?", b: "<b>Không.</b> AWS khuyên tránh dấu chấm (trừ bucket chỉ dùng static website)." },
+
+      // ---- Object
+      { t: "obj", f: "Các thành phần của một object?", b: "<b>Key</b>, <b>version ID</b>, <b>value</b> (dữ liệu), <b>metadata</b>, subresources, thông tin phân quyền, tags." },
+      { t: "obj", f: "Độ dài tối đa của object key?", b: "<b>1.024 byte</b> UTF-8 (tính cả prefix và dấu /); phân biệt hoa thường." },
+      { t: "obj", f: "Kích thước object tối đa?", b: "<b>50 TB</b> theo tài liệu hiện tại (tài liệu/đề cũ: 5 TB)." },
+      { t: "obj", f: "Giới hạn single PUT, console upload và multipart upload?", b: "Single PUT <b>≤ 5 GB</b> · console <b>≤ 160 GB</b> · multipart <b>5 MB – 50 TB</b>, tối đa <b>10.000 part</b>, mỗi part ≤ 5 GiB." },
+      { t: "obj", f: "S3 có thư mục thật trong general purpose bucket không?", b: "<b>Không.</b> Cấu trúc phẳng; “folder” chỉ là <b>prefix</b> + delimiter (/) trong key.", x: "“Create folder” trên console tạo object 0 byte có key là prefix + /." },
+      { t: "obj", f: "User-defined metadata có giới hạn gì? Sửa thế nào?", b: "Prefix <code>x-amz-meta-</code>, <b>≤ 2 KB</b>. Sau khi upload không sửa được – phải <b>copy object</b> với metadata mới." },
+      { t: "obj", f: "Mỗi object có tối đa bao nhiêu tag?", b: "<b>10 tag</b>; key ≤ 128 ký tự, value ≤ 255 ký tự." },
+      { t: "obj", f: "Mô hình nhất quán của S3 cho PUT/DELETE object?", b: "<b>Strong read-after-write consistency</b> ở mọi Region – cả object mới, ghi đè và xóa; LIST cũng thấy ngay." },
+      { t: "obj", f: "Hai PUT cùng key cùng lúc thì sao?", b: "<b>Last-writer-wins</b>: timestamp mới nhất thắng. S3 không khóa object." },
+      { t: "obj", f: "Cấu hình bucket có nhất quán mạnh không?", b: "<b>Không – eventual consistency.</b> Bật versioning lần đầu nên chờ 15 phút trước khi PUT/DELETE." },
+      { t: "obj", f: "Object upload mặc định được mã hóa thế nào?", b: "Tự động <b>SSE-S3</b>." },
+
+      // ---- Durability
+      { t: "dur", f: "Durability thiết kế của S3?", b: "<b>99.999999999% (11 số 9)</b> cho mọi storage class, trừ RRS (99.99%)." },
+      { t: "dur", f: "Phân biệt durability và availability.", b: "<b>Durability</b>: dữ liệu có bị mất không?<br><b>Availability</b>: lúc này có đọc được không?" },
+      { t: "dur", f: "Availability thiết kế của từng lớp?", b: "Standard <b>99.99%</b> · Standard-IA / Intelligent-Tiering / Glacier IR <b>99.9%</b> · Express One Zone <b>99.95%</b> · One Zone-IA <b>99.5%</b>." },
+      { t: "dur", f: "Hai lớp nào không chịu được mất một AZ?", b: "<b>S3 One Zone-IA</b> và <b>S3 Express One Zone</b>." },
+      { t: "dur", f: "11 số 9 durability có bảo vệ khỏi xóa nhầm không?", b: "<b>Không.</b> Chỉ chống hỏng phần cứng. Xóa/ghi đè nhầm cần <b>Versioning</b>, MFA Delete, Object Lock hoặc replication." },
+      { t: "dur", f: "Reduced Redundancy Storage (RRS) có nên dùng không?", b: "<b>Không.</b> Durability chỉ 99.99%; S3 Standard còn rẻ hơn." },
+
+      // ---- Storage classes
+      { t: "class", f: "Storage class mặc định khi không chỉ định?", b: "<b>S3 Standard</b> (header x-amz-storage-class = STANDARD)." },
+      { t: "class", f: "Min storage duration và min billable size của Standard-IA / One Zone-IA?", b: "<b>30 ngày</b> · <b>128 KB</b>; có phí retrieval theo GB." },
+      { t: "class", f: "Min storage duration của các lớp Glacier?", b: "Glacier Instant Retrieval <b>90 ngày</b> (+128 KB) · Flexible Retrieval <b>90 ngày</b> · Deep Archive <b>180 ngày</b>." },
+      { t: "class", f: "Glacier Flexible / Deep Archive tính thêm metadata thế nào?", b: "<b>40 KB</b> mỗi object: 32 KB giá Glacier + 8 KB giá Standard.", x: "Hàng triệu file nhỏ ⇒ nên gom (tar/zip) trước." },
+      { t: "class", f: "Standard-IA khác One Zone-IA thế nào?", b: "<b>Standard-IA</b>: ≥ 3 AZ, 99.9%, cho dữ liệu không tạo lại được.<br><b>One Zone-IA</b>: 1 AZ, 99.5%, rẻ hơn, cho dữ liệu <b>tạo lại được</b> hoặc bản replica CRR." },
+      { t: "class", f: "S3 Express One Zone có đặc điểm gì?", b: "Độ trễ <b>single-digit ms</b>, nhanh tới <b>10×</b> Standard, chỉ trong <b>directory bucket</b> ở một AZ bạn chọn." },
+      { t: "class", f: "Các access tier tự động của Intelligent-Tiering?", b: "<b>Frequent</b> ⇒ sau 30 ngày không truy cập <b>Infrequent</b> ⇒ sau 90 ngày <b>Archive Instant</b> (vẫn mili giây)." },
+      { t: "class", f: "Tier tùy chọn của Intelligent-Tiering?", b: "<b>Archive Access</b> (≥ 90 ngày) và <b>Deep Archive Access</b> (≥ 180 ngày), cấu hình tới 730 ngày; phải restore trước khi đọc." },
+      { t: "class", f: "Intelligent-Tiering tính phí thế nào?", b: "Phí <b>monitoring & automation</b> nhỏ mỗi object; <b>không phí retrieval</b>.", x: "Object &lt; 128 KB không được theo dõi, luôn ở Frequent Access." },
+      { t: "class", f: "Lớp Glacier nào đọc trực tiếp bằng GET?", b: "<b>Glacier Instant Retrieval</b> (mili giây). Flexible và Deep Archive phải restore." },
+      { t: "class", f: "Đổi storage class của object đã có bằng cách nào?", b: "<b>Copy object</b> với lớp mới, hoặc để <b>S3 Lifecycle</b> tự chuyển theo tuổi object." },
+      { t: "class", f: "Xóa object Standard-IA sau 10 ngày thì tính phí ra sao?", b: "Vẫn bị tính phí cho phần còn lại của <b>30 ngày</b> tối thiểu.", x: "Dữ liệu chỉ lưu dưới 30 ngày ⇒ để Standard." },
+
+      // ---- Restore
+      { t: "restore", f: "Muốn đọc object ở Glacier Flexible / Deep Archive phải làm gì?", b: "Gửi <b>RestoreObject</b> ⇒ S3 tạo <b>bản sao tạm</b> đọc được; object gốc vẫn ở lớp archive." },
+      { t: "restore", f: "Thời gian restore từ Glacier Flexible Retrieval?", b: "<b>Expedited</b> 1–5 phút · <b>Standard</b> 3–5 giờ (mặc định) · <b>Bulk</b> 5–12 giờ (miễn phí)." },
+      { t: "restore", f: "Thời gian restore từ Glacier Deep Archive?", b: "<b>Standard</b> trong 12 giờ · <b>Bulk</b> trong 48 giờ. <b>Không có Expedited.</b>" },
+      { t: "restore", f: "Provisioned capacity dùng để làm gì?", b: "Bảo đảm Expedited không bị từ chối lúc nhu cầu cao: mỗi đơn vị ≥ <b>3 Expedited mỗi 5 phút</b>, tới 300 MB/s." },
+      { t: "restore", f: "Restore hàng triệu object thì dùng gì?", b: "<b>S3 Batch Operations</b>. Quota restore 1.000 transaction/giây mỗi account." },
+      { t: "restore", f: "S3 Glacier storage classes khác dịch vụ Amazon Glacier (vault) thế nào?", b: "S3 Glacier classes là <b>object trong bucket</b>, dùng S3 API, lifecycle, console. Amazon Glacier lưu archive trong <b>vault</b>, không có tính năng S3.", x: "AWS khuyến nghị dùng S3 Glacier storage classes." },
+
+      // ---- Versioning
+      { t: "ver", f: "Ba trạng thái versioning của bucket?", b: "<b>Unversioned</b> (mặc định) · <b>Enabled</b> · <b>Suspended</b>.", x: "Đã bật thì không bao giờ quay về unversioned – chỉ Suspend." },
+      { t: "ver", f: "Bật versioning thì object đã có ra sao?", b: "Giữ nguyên, có <b>version ID null</b>; chỉ cách xử lý request sau đó thay đổi." },
+      { t: "ver", f: "DELETE không kèm version ID trong bucket versioning-enabled làm gì?", b: "Chèn <b>delete marker</b> làm current version ⇒ GET trả <b>404</b>, dữ liệu vẫn còn." },
+      { t: "ver", f: "Cách nhanh nhất “undelete” object trong bucket versioning?", b: "<b>Xóa delete marker</b> (DELETE kèm versionId của marker) ⇒ version trước trở lại làm current." },
+      { t: "ver", f: "Xóa vĩnh viễn một version thế nào?", b: "<b>DELETE kèm versionId</b> (bucket owner/IAM user có quyền)." },
+      { t: "ver", f: "Versioning tính tiền thế nào?", b: "Mỗi version là <b>object đầy đủ</b>, không phải diff. File 1 GB ghi đè hằng ngày 1 tháng ⇒ ~30 GB.", x: "Kiểm soát bằng lifecycle NoncurrentVersionExpiration." },
+      { t: "ver", f: "Thao tác nào tạo version mới? Đổi tag có tạo không?", b: "Chỉ <b>PUT</b> (kể cả CopyObject). Đổi tag <b>không</b> tạo version mới." },
+      { t: "ver", f: "MFA Delete yêu cầu MFA cho những thao tác nào?", b: "<b>Đổi trạng thái versioning</b> và <b>xóa vĩnh viễn một object version</b>." },
+      { t: "ver", f: "Ai bật được MFA Delete và bằng cách nào?", b: "Chỉ <b>bucket owner (root account)</b>, chỉ qua <b>AWS CLI hoặc API</b> – không qua console.", x: "MFA Delete không dùng được cùng lifecycle configuration." },
+      { t: "ver", f: "Tính năng nào bắt buộc phải bật versioning trước?", b: "<b>S3 Replication</b> và <b>S3 Object Lock</b>." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>unknown / changing access patterns</i>”, “<i>automatically optimize cost</i>” ⇒ ?", b: "<b>S3 Intelligent-Tiering</b>." },
+      { t: "kw", f: "Đề có “<i>infrequently accessed but immediate access</i>”, dữ liệu quan trọng ⇒ ?", b: "<b>S3 Standard-IA</b>." },
+      { t: "kw", f: "Đề có “<i>can be recreated</i>”, “<i>secondary backup copy</i>”, ít truy cập, mili giây ⇒ ?", b: "<b>S3 One Zone-IA</b>." },
+      { t: "kw", f: "Đề có “<i>accessed once a quarter, retrieved in milliseconds</i>” ⇒ ?", b: "<b>S3 Glacier Instant Retrieval</b>." },
+      { t: "kw", f: "Đề có “<i>retain 7–10 years for compliance</i>”, “<i>within 48 hours</i>”, “<i>replace tape</i>” ⇒ ?", b: "<b>S3 Glacier Deep Archive</b>." },
+      { t: "kw", f: "Đề có “<i>backup accessed 1–2 times a year, minutes to hours</i>” ⇒ ?", b: "<b>S3 Glacier Flexible Retrieval</b>." },
+      { t: "kw", f: "Đề có “<i>single-digit millisecond</i>”, “<i>co-locate storage with compute in one AZ</i>” ⇒ ?", b: "<b>S3 Express One Zone</b> (directory bucket)." },
+      { t: "kw", f: "Đề có “<i>upload a 100 GB file</i>”, “<i>resume after network failure</i>” ⇒ ?", b: "<b>Multipart upload</b>." },
+      { t: "kw", f: "Đề có “<i>few archived files within minutes, must be guaranteed</i>” ⇒ ?", b: "Glacier Flexible + <b>Expedited</b> + <b>provisioned capacity</b>." },
+      { t: "kw", f: "Đề có “<i>protect from accidental deletion or overwrite</i>” ⇒ ?", b: "<b>S3 Versioning</b> (thường kèm MFA Delete)." },
+      { t: "kw", f: "Đề có “<i>shared file system mounted by many EC2 instances</i>” ⇒ S3?", b: "<b>Không</b> – đó là EFS/FSx. Boot volume/block cho DB ⇒ EBS." }
+    ],
+
+    pairs: [
+      ["Object storage", "Dữ liệu + metadata, đánh địa chỉ bằng key"],
+      ["Bucket", "Vùng chứa object, tên duy nhất trong partition"],
+      ["Directory bucket", "Bucket phân cấp một AZ cho Express One Zone"],
+      ["Object key", "Định danh duy nhất trong bucket, ≤ 1.024 byte"],
+      ["Prefix", "Phần đầu key tạo “folder” logic"],
+      ["Version ID", "Do S3 sinh; null khi chưa versioning"],
+      ["User-defined metadata", "x-amz-meta-, ≤ 2 KB, sửa phải copy"],
+      ["Multipart upload", "Bắt buộc khi object &gt; 5 GB"],
+      ["Strong read-after-write", "Đọc ngay sau ghi luôn thấy dữ liệu mới"],
+      ["Last-writer-wins", "Hai PUT đồng thời: bản mới nhất thắng"],
+      ["S3 Standard-IA", "Ít truy cập, nhiều AZ, min 30 ngày"],
+      ["S3 One Zone-IA", "Ít truy cập, 1 AZ, dữ liệu tạo lại được"],
+      ["S3 Express One Zone", "Single-digit ms, directory bucket 1 AZ"],
+      ["S3 Intelligent-Tiering", "Tự chuyển tier theo mẫu truy cập"],
+      ["Glacier Instant Retrieval", "Archive ~1 lần/quý, đọc mili giây"],
+      ["Glacier Flexible Retrieval", "Archive, restore vài phút tới 12 giờ"],
+      ["Glacier Deep Archive", "Rẻ nhất, restore ≤ 12 h / 48 h"],
+      ["Reduced Redundancy Storage", "Lớp cũ, durability 99.99%"],
+      ["Minimum storage duration", "Thời gian lưu tối thiểu bị tính phí"],
+      ["Provisioned capacity", "Bảo đảm Expedited retrieval"],
+      ["Delete marker", "Placeholder không dữ liệu; GET trả 404"],
+      ["Noncurrent version", "Phiên bản cũ, không còn là current"],
+      ["MFA Delete", "Chỉ root, chỉ CLI/API"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn storage class theo tình huống",
+        desc: "Đọc yêu cầu của đề và chọn storage class phù hợp nhất (MOST cost-effective mà vẫn đáp ứng).",
+        buckets: ["Standard", "Intelligent-Tiering", "Standard-IA", "One Zone-IA", "Express One Zone", "Glacier Instant", "Glacier Flexible", "Deep Archive"],
+        items: [
+          ["Dữ liệu production truy cập thường xuyên, không nói gì thêm", 0, "lớp mặc định"],
+          ["Dữ liệu chỉ lưu 2 tuần rồi xóa", 0, "IA/Glacier tính đủ thời hạn tối thiểu"],
+          ["Mẫu truy cập không đoán được, không muốn phí retrieval", 1, "tự chuyển tier, chỉ phí monitoring"],
+          ["Backup quan trọng, ít truy cập nhưng cần lấy ngay", 2, "nhiều AZ, mili giây"],
+          ["Thumbnail tạo lại được, ~1 lần/tháng, mili giây", 3, "1 AZ rẻ hơn, mất thì tạo lại"],
+          ["Bản replica ở Region đích của CRR", 3, "AWS khuyến nghị One Zone-IA cho replica"],
+          ["ML training cần single-digit ms, đặt cạnh compute", 4, "directory bucket 1 AZ"],
+          ["Ảnh y khoa xem mỗi quý khi tái khám, cần tải ngay", 5, "archive đọc mili giây"],
+          ["Backup/DR truy cập 1–2 lần/năm, chờ vài giờ được", 6, "restore phút tới giờ, Bulk miễn phí"],
+          ["Hồ sơ giữ 10 năm vì compliance, cần trong 48 giờ", 7, "rẻ nhất, Bulk ≤ 48 giờ"]
+        ]
+      },
+      {
+        title: "Chịu được mất một AZ?",
+        desc: "Storage class nào lưu dữ liệu trên ≥ 3 AZ, lớp nào chỉ một AZ?",
+        buckets: ["≥ 3 AZ – chịu được mất AZ", "1 AZ – không chịu được"],
+        items: [
+          ["S3 Standard", 0, "≥ 3 AZ"],
+          ["S3 Standard-IA", 0, "nhiều AZ cách xa nhau"],
+          ["S3 Intelligent-Tiering", 0, "≥ 3 AZ"],
+          ["S3 Glacier Instant Retrieval", 0, "≥ 3 AZ"],
+          ["S3 Glacier Deep Archive", 0, "≥ 3 AZ"],
+          ["S3 One Zone-IA", 1, "AZ bị phá hủy thì dữ liệu mất"],
+          ["S3 Express One Zone", 1, "directory bucket trong một AZ"]
+        ]
+      },
+      {
+        title: "Retrieval tier nào?",
+        desc: "Chọn retrieval option (hoặc lớp) phù hợp khi lấy dữ liệu archive.",
+        buckets: ["Expedited", "Standard", "Bulk", "Không cần restore"],
+        items: [
+          ["Cần gấp vài file từ Glacier Flexible trong vài phút", 0, "1–5 phút"],
+          ["Object &lt; 250 MB cần trong 1–5 phút", 0, "Expedited"],
+          ["Không chỉ định tier khi gửi RestoreObject", 1, "Standard là mặc định"],
+          ["Lấy từ Deep Archive nhanh nhất có thể", 1, "Deep Archive không có Expedited, Standard ≤ 12 giờ"],
+          ["Lấy petabyte archive, không gấp, chi phí thấp nhất", 2, "Bulk miễn phí với Glacier Flexible"],
+          ["Hồ sơ Deep Archive cho kiểm toán trong 48 giờ", 2, "Bulk ≤ 48 giờ"],
+          ["Object ở Glacier Instant Retrieval", 3, "GET trực tiếp, mili giây"],
+          ["Object ở tier Archive Instant Access của Intelligent-Tiering", 3, "vẫn truy cập mili giây"]
+        ]
+      },
+      {
+        title: "Versioning: kết quả của thao tác",
+        desc: "Trong bucket đang versioning-enabled, mỗi thao tác dẫn tới kết quả nào?",
+        buckets: ["Tạo version mới", "Chèn delete marker", "Xóa vĩnh viễn", "Không tạo version"],
+        items: [
+          ["PUT object cùng key", 0, "bản cũ thành noncurrent"],
+          ["CopyObject vào cùng key", 0, "CopyObject thực hiện PUT"],
+          ["Đổi storage class/metadata trên console", 0, "S3 tạo object mới thay thế"],
+          ["DELETE không kèm version ID", 1, "GET trả 404, dữ liệu còn"],
+          ["Lifecycle Expiration trên current version", 1, "trong bucket versioning chỉ chèn marker"],
+          ["DELETE kèm versionId của một version", 2, "xóa thật version đó"],
+          ["Lifecycle NoncurrentVersionExpiration", 2, "xóa vĩnh viễn version cũ"],
+          ["Đổi tag của object", 3, "tag không tạo version mới"],
+          ["HeadObject lấy metadata", 3, "chỉ đọc"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["S3 là dịch vụ global vì tên bucket duy nhất toàn cục.", false, "S3 là regional; dữ liệu nằm trong Region bạn chọn."],
+      ["Có thể đổi tên bucket sau khi tạo.", false, "Không đổi được tên lẫn Region."],
+      ["Tên bucket có thể chứa chữ hoa và gạch dưới.", false, "Chỉ chữ thường, số, dấu chấm, gạch nối."],
+      ["Mặc định mỗi account có 10.000 general purpose bucket.", true, "Xin tăng qua Service Quotas."],
+      ["Số object trong một bucket là không giới hạn.", true, "Dung lượng bucket cũng không giới hạn."],
+      ["Single PUT tải được object tới 5 GB.", true, "Lớn hơn phải dùng multipart upload."],
+      ["Multipart upload hỗ trợ tối đa 10.000 part.", true, "Mỗi part ≤ 5 GiB."],
+      ["General purpose bucket có cấu trúc thư mục thật.", false, "Cấu trúc phẳng; folder chỉ là prefix."],
+      ["User-defined metadata có thể sửa tại chỗ sau khi upload.", false, "Phải copy object với metadata mới."],
+      ["S3 có strong read-after-write consistency cho cả PUT ghi đè.", true, "Mọi Region, cả object mới, ghi đè và xóa."],
+      ["S3 khóa object khi có nhiều người ghi đồng thời.", false, "Không khóa; last-writer-wins."],
+      ["Cấu hình bucket cũng có strong consistency.", false, "Cấu hình bucket là eventual consistency."],
+      ["Mọi storage class hiện tại (trừ RRS) có durability 11 số 9.", true, "Availability mới khác nhau theo lớp."],
+      ["S3 One Zone-IA có availability 99.5%.", true, "Thấp nhất trong các lớp."],
+      ["S3 Standard-IA chịu được mất một AZ.", true, "Lưu trên nhiều AZ."],
+      ["S3 Express One Zone chịu được mất một AZ.", false, "Chỉ ở một AZ."],
+      ["Durability 11 số 9 bảo vệ dữ liệu khỏi người dùng xóa nhầm.", false, "Cần Versioning/MFA Delete/Object Lock."],
+      ["Object Standard-IA nhỏ hơn 128 KB bị tính như 128 KB.", true, "Minimum billable size."],
+      ["Glacier Deep Archive có minimum storage duration 90 ngày.", false, "Deep Archive là 180 ngày."],
+      ["Intelligent-Tiering thu phí retrieval khi object quay về Frequent Access.", false, "Không phí retrieval, chỉ phí monitoring."],
+      ["Object nhỏ hơn 128 KB trong Intelligent-Tiering luôn ở Frequent Access.", true, "Không được theo dõi."],
+      ["Glacier Instant Retrieval phải restore trước khi đọc.", false, "Đọc trực tiếp bằng GET, mili giây."],
+      ["Glacier Deep Archive hỗ trợ Expedited retrieval.", false, "Deep Archive chỉ Standard (≤ 12 h) và Bulk (≤ 48 h)."],
+      ["Bulk retrieval miễn phí với Glacier Flexible Retrieval.", true, "Cũng miễn phí với Intelligent-Tiering."],
+      ["Restore tạo bản sao tạm, object gốc vẫn ở lớp archive.", true, "Hết số ngày chỉ định, bản sao bị xóa."],
+      ["Object ở lớp Glacier của S3 truy cập được qua dịch vụ Amazon Glacier (vault).", false, "Hai hệ thống tách biệt."],
+      ["Versioning mặc định tắt.", true, "Phải bật rõ ràng ở cấp bucket."],
+      ["Có thể đưa bucket đã bật versioning về lại trạng thái unversioned.", false, "Chỉ có thể Suspend."],
+      ["Bật versioning gán version ID mới cho object đã có.", false, "Object đã có giữ version ID null."],
+      ["Trong bucket versioning, DELETE không kèm version ID chèn delete marker.", true, "GET trả 404 nhưng dữ liệu vẫn còn."],
+      ["Versioning chỉ lưu phần chênh lệch giữa các version.", false, "Mỗi version là object đầy đủ, tính tiền đầy đủ."],
+      ["Đổi tag object tạo version mới.", false, "Chỉ PUT mới tạo version."],
+      ["MFA Delete bật được trên console.", false, "Chỉ qua CLI/API, bởi root account."],
+      ["S3 Replication yêu cầu bật versioning.", true, "Object Lock cũng vậy."],
+      ["Đề cũ ghi kích thước object tối đa 5 TB; tài liệu hiện tại là 50 TB.", true, "Single PUT 5 GB thì không đổi."]
+    ],
+
+    map: {
+      t: "Bài 14 · Amazon S3 cơ bản",
+      c: [
+        { t: "Amazon S3", icon: "svc/Amazon-Simple-Storage-Service.svg", c: [
+          { t: "Loại", v: "object storage, regional, serverless" },
+          { t: "So sánh", v: "EBS block (zonal) · EFS file · S3 object" },
+          { t: "Sửa dữ liệu", v: "không sửa một phần, PUT lại cả object" }
+        ] },
+        { t: "Bucket", icon: "res/Amazon-Simple-Storage-Service_Bucket.svg", c: [
+          { t: "Tên", v: "3–63 ký tự, chữ thường, duy nhất trong partition" },
+          { t: "Không đổi", v: "tên và Region sau khi tạo" },
+          { t: "Quota", v: "10.000 bucket/account, object không giới hạn" },
+          { t: "Loại", v: "general purpose · directory · table · vector" }
+        ] },
+        { t: "Object", icon: "res/Amazon-Simple-Storage-Service_Object.svg", c: [
+          { t: "Thành phần", v: "key · version ID · value · metadata · tags" },
+          { t: "Key", v: "≤ 1.024 byte, prefix = folder logic" },
+          { t: "Kích thước", c: [
+            { t: "Object", v: "0 byte – 50 TB" },
+            { t: "Single PUT", v: "≤ 5 GB" },
+            { t: "Multipart", v: "5 MB – 50 TB, 10.000 part" }
+          ] },
+          { t: "Metadata", v: "user ≤ 2 KB, sửa phải copy · ≤ 10 tag" },
+          { t: "Consistency", v: "strong read-after-write · last-writer-wins" }
+        ] },
+        { t: "Durability & availability", icon: "res/Amazon-Simple-Storage-Service_S3-Standard.svg", c: [
+          { t: "Durability", v: "11 số 9 (RRS 99.99%)" },
+          { t: "Availability", v: "Standard 99.99 · IA/IT/GIR 99.9 · Express 99.95 · OZ-IA 99.5" },
+          { t: "1 AZ", v: "One Zone-IA, Express One Zone" },
+          { t: "Không phải backup", v: "xóa nhầm ⇒ Versioning" }
+        ] },
+        { t: "Storage classes", icon: "res/Amazon-Simple-Storage-Service_S3-Standard-IA.svg", c: [
+          { t: "IA", v: "30 ngày + 128 KB, phí retrieval" },
+          { t: "Glacier IR", v: "90 ngày + 128 KB, đọc mili giây" },
+          { t: "Glacier Flexible", v: "90 ngày, restore phút – giờ" },
+          { t: "Deep Archive", v: "180 ngày, rẻ nhất" },
+          { t: "Intelligent-Tiering", v: "Frequent ⇒ 30 ngày IA ⇒ 90 ngày Archive Instant, không phí retrieval" }
+        ] },
+        { t: "Restore", icon: "svc/Amazon-Simple-Storage-Service-Glacier.svg", c: [
+          { t: "Flexible", v: "Expedited 1–5 phút · Standard 3–5 giờ · Bulk 5–12 giờ" },
+          { t: "Deep Archive", v: "Standard ≤ 12 giờ · Bulk ≤ 48 giờ, không Expedited" },
+          { t: "Provisioned capacity", v: "≥ 3 Expedited mỗi 5 phút" },
+          { t: "Bản sao tạm", v: "object gốc vẫn ở archive" }
+        ] },
+        { t: "Versioning", icon: "res/Amazon-Simple-Storage-Service_Bucket-With-Objects.svg", c: [
+          { t: "Trạng thái", v: "unversioned ⇒ enabled ⇔ suspended" },
+          { t: "DELETE thường", v: "delete marker, GET 404" },
+          { t: "Undelete", v: "xóa delete marker" },
+          { t: "Chi phí", v: "mỗi version tính đầy đủ ⇒ lifecycle noncurrent" },
+          { t: "MFA Delete", v: "root + CLI/API, đổi versioning & xóa version" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

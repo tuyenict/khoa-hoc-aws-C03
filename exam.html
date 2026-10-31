@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Thi thử SAA-C03 | AWS SAA-C03</title>
+  <link rel="icon" href="assets/icons/cat/Customer-Enablement.svg">
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="stylesheet" href="assets/exam.css">
+  <script src="assets/syllabus.js"></script>
+  <script src="assets/exams-data.js"></script>
+  <script src="assets/app.js" defer></script>
+  <script src="assets/exam.js" defer></script>
+</head>
+<body data-page="exam" data-root=".">
+
+  <!-- ===== Màn hình chọn đề ===== -->
+  <div id="vPick">
+    <section class="hero home-hero">
+      <div class="wrap">
+        <div class="kicker">Thi thử · Mô phỏng phòng thi</div>
+        <h1><span id="nExams">6</span> đề thi thử SAA-C03</h1>
+        <p class="lead2">Mỗi đề 65 câu, 130 phút, đồng hồ đếm ngược như thi thật. Hết giờ hệ thống tự nộp bài.
+          Câu hỏi giữ nguyên tiếng Anh như đề thi thật. Mọi câu đều dạng tình huống, mỗi đề chia đúng tỷ lệ 4 domain của exam guide.</p>
+        <div class="exam-facts">
+          <div><b>65</b><span>câu mỗi đề</span></div>
+          <div><b>130'</b><span>thời gian (160' nếu bật ESL +30)</span></div>
+          <div><b>72%</b><span>ngưỡng đạt ước tính (~720/1000)</span></div>
+          <div><b id="nUsed">390</b><span>câu, không trùng giữa các đề</span></div>
+        </div>
+      </div>
+    </section>
+
+    <main class="wrap">
+      <div class="card ex-resume" id="resumeBox" hidden></div>
+
+      <div class="card ex-opts">
+        <label><input type="checkbox" id="optEsl"> <b>ESL +30 phút</b> — AWS cho thí sinh không dùng tiếng Anh bản ngữ đăng ký thêm 30 phút</label>
+        <label><input type="checkbox" id="optShuffle"> Xáo trộn thứ tự câu hỏi</label>
+      </div>
+
+      <div class="ex-grid" id="examList"></div>
+
+      <div class="card ex-src">
+        <h3>Nguồn câu hỏi</h3>
+        <ul>
+          <li><b>AWS (chính thức)</b> — 10 câu từ
+            <a href="https://d1.awsstatic.com/training-and-certification/docs-sa-assoc/AWS-Certified-Solutions-Architect-Associate_Sample-Questions.pdf" target="_blank" rel="noopener">SAA-C03 Sample Exam Questions</a>,
+            có giải thích chính thức, rải đều vào các đề.</li>
+          <li><b>Soạn mới</b> — câu tình huống viết riêng cho các bài mà ngân hàng cộng đồng còn thiếu
+            (EFS/FSx, AWS Backup, Disaster Recovery, EventBridge, API Gateway, AI/ML, Cost Management…), có giải thích tiếng Việt.</li>
+          <li><b>Ditectrev</b> — ngân hàng câu hỏi cộng đồng mã nguồn mở
+            <a href="https://github.com/Ditectrev/AWS-Certified-Solutions-Architect-Associate-SAA-C03-Practice-Tests-Exams-Questions-Answers" target="_blank" rel="noopener">trên GitHub</a>
+            — chỉ giữ câu dạng tình huống; đáp án đã được rà lại, câu nào sửa đáp án đều ghi lý do.</li>
+        </ul>
+        <p class="muted" id="srcStats"></p>
+        <p class="muted">Lưu ý: điểm thật của AWS là điểm quy đổi (scaled score) và có 15 câu không tính điểm; tỉ lệ 72% ở đây chỉ là ước tính.
+          Câu cộng đồng không có giải thích — khi nghi ngờ đáp án, hãy đối chiếu tài liệu AWS hoặc mở bài học được gắn ở trang kết quả.</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- ===== Màn hình làm bài ===== -->
+  <div id="vExam" hidden>
+    <div class="ex-bar">
+      <div class="ex-bar-in">
+        <b id="exTitle"></b>
+        <span class="ex-count" id="exCount"></span>
+        <span class="ex-timer" id="exTimer" title="Thời gian còn lại">--:--</span>
+        <button class="btn ghost" id="btnNav">Danh sách câu</button>
+        <button class="btn" id="btnReview">Xem lại &amp; nộp</button>
+      </div>
+      <div class="ex-prog"><i id="exProg"></i></div>
+    </div>
+    <main class="wrap ex-main">
+      <div class="card ex-q" id="qBox"></div>
+      <div class="ex-foot">
+        <button class="btn ghost" id="btnPrev">← Câu trước</button>
+        <label class="ex-flag"><input type="checkbox" id="chkFlag"> 🚩 Đánh dấu xem lại</label>
+        <button class="btn" id="btnNext">Câu sau →</button>
+      </div>
+    </main>
+    <div class="ex-drawer" id="navDrawer" hidden>
+      <div class="card">
+        <div class="ex-drawer-h"><b>Danh sách câu hỏi</b><button class="btn ghost" id="btnNavClose">Đóng</button></div>
+        <div class="ex-legend"><span class="sw ans"></span>Đã trả lời <span class="sw flag"></span>Đánh dấu <span class="sw"></span>Chưa trả lời</div>
+        <div class="ex-cells" id="navCells"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Màn hình xem lại trước khi nộp ===== -->
+  <div id="vReview" hidden>
+    <main class="wrap" style="padding-top:24px">
+      <div class="card">
+        <h2 style="margin-top:0">Xem lại bài làm</h2>
+        <p id="revSummary"></p>
+        <div class="ex-legend"><span class="sw ans"></span>Đã trả lời <span class="sw flag"></span>Đánh dấu <span class="sw"></span>Chưa trả lời</div>
+        <div class="ex-cells" id="revCells"></div>
+        <div class="ex-rev-act">
+          <button class="btn ghost" id="revAll">Xem lại tất cả</button>
+          <button class="btn ghost" id="revFlag">Xem lại câu đánh dấu</button>
+          <button class="btn ghost" id="revUn">Xem lại câu chưa làm</button>
+          <span style="flex:1"></span>
+          <button class="btn ex-end" id="revEnd">Kết thúc bài thi</button>
+        </div>
+        <p class="muted" style="margin-bottom:0">Đồng hồ vẫn chạy trong lúc xem lại: <b id="revTimer"></b></p>
+      </div>
+    </main>
+  </div>
+
+  <!-- ===== Màn hình kết quả ===== -->
+  <div id="vResult" hidden>
+    <main class="wrap" style="padding-top:24px">
+      <div class="card ex-score" id="resHead"></div>
+      <div class="ex-filter" id="resFilter">
+        <button class="btn ghost on" data-f="all">Tất cả</button>
+        <button class="btn ghost" data-f="wrong">Sai / bỏ trống</button>
+        <button class="btn ghost" data-f="flag">Đã đánh dấu</button>
+        <span style="flex:1"></span>
+        <button class="btn ghost" id="resBack">← Về danh sách đề</button>
+      </div>
+      <div id="resList"></div>
+    </main>
+  </div>
+
+  <div class="ex-modal" id="modal" hidden><div class="card"><p id="modalMsg"></p><div class="ex-modal-act" id="modalAct"></div></div></div>
+
+  <footer class="site">
+    Câu hỏi: AWS SAA-C03 Sample Exam Questions © Amazon Web Services, Inc.; ngân hàng cộng đồng Ditectrev (GitHub); câu soạn mới cho khóa học này. Dùng cho mục đích tự học.
+  </footer>
+</body>
+</html>

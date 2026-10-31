@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 31 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-EventBridge.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="31" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-31-eventbridge-stepfunctions-mq.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "eda", name: "Choreography · Orchestration" },
+      { id: "eb", name: "EventBridge: bus, rule, target" },
+      { id: "ebx", name: "Archive · Cross-account · Pipes" },
+      { id: "sch", name: "Scheduler & Schema registry" },
+      { id: "sfn", name: "Step Functions: state & pattern" },
+      { id: "wf", name: "Standard vs Express" },
+      { id: "mq", name: "Amazon MQ" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- EDA
+      { t: "eda", f: "Choreography khác orchestration thế nào?", b: "<b>Choreography</b>: không có nhạc trưởng, mỗi service phát event và các service khác tự phản ứng (<b>EventBridge</b>, SNS).<br><b>Orchestration</b>: một <b>state machine trung tâm</b> gọi từng bước (<b>Step Functions</b>)." },
+      { t: "eda", f: "Ưu và nhược của choreography?", b: "Ưu: <b>ghép lỏng tối đa</b>, thêm consumer không sửa producer.<br>Nhược: <b>khó nhìn toàn cảnh</b>, khó biết đơn hàng đang ở bước nào." },
+      { t: "eda", f: "Khi nào chọn orchestration?", b: "Quy trình <b>có thứ tự, có điều kiện, chờ người duyệt, chạy lâu</b>; cần nhìn trực quan từng execution." },
+
+      // ---- EventBridge core
+      { t: "eb", f: "Một event EventBridge có những trường chính nào?", b: "JSON gồm <code>source</code> (vd aws.ec2), <code>detail-type</code>, <code>account</code>, <code>region</code>, <code>time</code>, <code>detail</code>." },
+      { t: "eb", f: "3 loại event bus hay gặp?", b: "<b>Default</b>: có sẵn, nhận event dịch vụ AWS.<br><b>Custom</b>: event ứng dụng riêng (PutEvents).<br><b>Partner</b>: nhận event từ SaaS đối tác." },
+      { t: "eb", f: "Mỗi rule có tối đa bao nhiêu target?", b: "<b>5 target</b> (không tăng được), các target chạy <b>song song</b>." },
+      { t: "eb", f: "Rule trên custom bus có thấy event của dịch vụ AWS không?", b: "<b>Không.</b> Event dịch vụ AWS vào <b>default bus</b>; rule chỉ áp dụng cho bus nó gắn vào." },
+      { t: "eb", f: "Retry mặc định khi EventBridge giao tới target lỗi?", b: "<b>24 giờ</b> và tối đa <b>185 lần</b>, exponential backoff + jitter. Hết lượt ⇒ <b>event bị bỏ</b>.", x: "“Ensure no events are lost” ⇒ gắn DLQ (SQS) cho target." },
+      { t: "eb", f: "Input transformer dùng để làm gì?", b: "<b>Đổi hình dạng event</b> trước khi gửi tới target (lấy vài trường, ghép chuỗi…)." },
+      { t: "eb", f: "Event không khớp rule nào thì sao?", b: "EventBridge <b>bỏ qua</b> event đó." },
+      { t: "eb", f: "Managed rule là gì?", b: "Rule do <b>dịch vụ AWS tự tạo</b> trong account; chỉ xóa bằng <b>Force delete</b>, xóa sẽ làm tính năng dịch vụ đó ngừng chạy." },
+      { t: "eb", f: "Quota mặc định: rule mỗi bus, bus mỗi account/Region?", b: "<b>300 rule</b>/bus (tăng được) · <b>100 event bus</b>/account/Region." },
+      { t: "eb", f: "EventBridge (Classic) có phải hàng đợi để consumer poll không?", b: "<b>Không</b>, không giữ event. Cần đệm, xử lý theo tốc độ riêng ⇒ đặt <b>SQS làm target</b>." },
+
+      // ---- Archive/cross-account/pipes
+      { t: "ebx", f: "Archive &amp; replay của EventBridge dùng làm gì?", b: "<b>Archive</b> lưu event của bus (lọc bằng pattern, retention theo ngày hoặc vô thời hạn).<br><b>Replay</b> gửi lại event về <b>đúng source bus</b> để phục hồi sau lỗi / kiểm thử." },
+      { t: "ebx", f: "Giới hạn và lưu ý của replay?", b: "Tối đa <b>10 replay đồng thời</b>/account/Region; <b>không bảo đảm thứ tự</b> ban đầu; nên chờ ~10 phút trước khi replay." },
+      { t: "ebx", f: "Gửi event cross-account cần cấu hình gì?", b: "Bên nhận: <b>resource-based policy của bus</b> cho phép account / organization ID.<br>Bên gửi: rule có target là ARN bus bên kia + <b>IAM role</b>.", x: "Phí tính cho account gửi." },
+      { t: "ebx", f: "Account nhận có chuyển tiếp event sang account thứ ba được không?", b: "<b>Không</b> (không hop 2 lần) ⇒ gửi thẳng tới bus đích." },
+      { t: "ebx", f: "API destination là gì?", b: "Target là <b>HTTPS endpoint</b> bên ngoài; dùng <b>connection</b> xác thực Basic / OAuth / API key (lưu trong Secrets Manager)." },
+      { t: "ebx", f: "Timeout và giới hạn tốc độ của API destination?", b: "Timeout client <b>5 giây</b>; mặc định <b>300 lần/giây</b> mỗi API destination." },
+      { t: "ebx", f: "EventBridge Pipes là gì?", b: "Nối <b>một nguồn → một đích</b>: source → <b>filter</b> → <b>enrichment</b> → target. Nguồn: SQS, DynamoDB Streams, Kinesis, MQ, MSK.", x: "Chỉ trả tiền cho event khớp filter." },
+      { t: "ebx", f: "Custom Event Bus mới khác Classic ở điểm nào?", b: "Bus mới: <b>lưu event 1–365 ngày</b>, FIFO trong event group, dedup 5 phút, subscriber tự tạo (1 target).<br>Classic: rule ≤ 5 target, không lưu event (phải archive)." },
+
+      // ---- Scheduler & schema
+      { t: "sch", f: "EventBridge Scheduler có những loại lịch nào?", b: "<b>One-time</b> (một lần, kèm time zone) và <b>recurring</b> (<b>cron</b> hoặc <b>rate</b> expression, time zone, start/end date)." },
+      { t: "sch", f: "Scheduler hỗ trợ bao nhiêu lịch và gọi được những gì?", b: "<b>10 triệu lịch</b>/Region (mặc định) · <b>270+ dịch vụ</b>, <b>6.000+ API</b>." },
+      { t: "sch", f: "Flexible time window dùng để làm gì?", b: "Cho lịch chạy trong một khoảng (vd 15 phút sau mốc) để <b>dàn trải tải</b> lên target." },
+      { t: "sch", f: "Templated target khác universal target?", b: "<b>Templated</b>: thao tác phổ biến với SQS, SNS, Lambda, PutEvents.<br><b>Universal (UTP)</b>: gọi gần như <b>mọi API AWS</b> (vd ec2:StopInstances)." },
+      { t: "sch", f: "Retry và DLQ của Scheduler?", b: "At-least-once; maximum age of event <b>≤ 24 giờ</b>, maximum retries <b>≤ 185</b>; không giao được ⇒ <b>DLQ SQS</b>." },
+      { t: "sch", f: "Vì sao nên đặt ActionAfterCompletion cho one-time schedule?", b: "Để <b>tự xóa lịch</b> sau khi chạy, vì lịch đã chạy vẫn tính vào quota." },
+      { t: "sch", f: "Scheduler hơn scheduled rule (legacy) ở điểm nào?", b: "Có <b>one-time</b>, <b>time zone</b> từng lịch, 10 triệu lịch (rule chỉ 300/bus), universal target, flexible time window.", x: "Scheduled rule dùng UTC, chỉ cron/rate." },
+      { t: "sch", f: "3 loại schema registry?", b: "<b>AWS event schema registry</b> (dựng sẵn), <b>discovered</b> (do schema discovery suy ra), <b>custom</b> (bạn tạo/upload)." },
+      { t: "sch", f: "Schema discovery và code bindings giúp gì?", b: "<b>Discovery</b>: tự suy schema từ event trên bus.<br><b>Code bindings</b>: sinh code có kiểu (Java, Python, TypeScript…) dùng trong IDE.", x: "Định dạng: OpenAPI 3 và JSONSchema Draft4." },
+
+      // ---- Step Functions
+      { t: "sfn", f: "Amazon States Language (ASL) là gì?", b: "Ngôn ngữ <b>dựa trên JSON</b> định nghĩa state machine (StartAt, States…). Thiết kế kéo-thả bằng Workflow Studio." },
+      { t: "sfn", f: "Choice, Parallel, Map khác nhau thế nào?", b: "<b>Choice</b>: rẽ nhánh theo điều kiện.<br><b>Parallel</b>: chạy các <b>nhánh khác nhau</b> song song.<br><b>Map</b>: chạy <b>cùng chuỗi bước cho từng phần tử</b> dataset." },
+      { t: "sfn", f: "Distributed Map xử lý được quy mô nào?", b: "Tới <b>10.000 child execution</b> song song, đọc <b>hàng triệu object S3</b>." },
+      { t: "sfn", f: "Giá trị mặc định của Retry trong Step Functions?", b: "IntervalSeconds <b>1</b> · MaxAttempts <b>3</b> · BackoffRate <b>2.0</b>." },
+      { t: "sfn", f: "Catch dùng để làm gì?", b: "Hết retry thì <b>chuyển sang state dự phòng</b> (hoàn tiền, thông báo) – nền tảng của <b>saga pattern</b>." },
+      { t: "sfn", f: "Giới hạn payload giữa các state?", b: "<b>256 KiB</b>. Dữ liệu lớn ⇒ lưu S3, truyền con trỏ." },
+      { t: "sfn", f: "Pattern Request Response hoạt động thế nào?", b: "Gọi dịch vụ, nhận HTTP response là <b>đi tiếp ngay</b>, không chờ job xong. Hỗ trợ cả Standard và Express." },
+      { t: "sfn", f: "Pattern Run a Job (<code>.sync</code>) dùng khi nào?", b: "Gọi dịch vụ và <b>chờ job hoàn thành</b> (Batch, ECS, Glue, Athena…) mà không phải tự poll. <b>Chỉ Standard</b>." },
+      { t: "sfn", f: "Pattern <code>.waitForTaskToken</code> hoạt động thế nào?", b: "Gửi kèm <b>task token</b>, tạm dừng tới khi bên ngoài gọi <code>SendTaskSuccess</code> / <code>SendTaskFailure</code> (chờ tới 1 năm). <b>Chỉ Standard</b>.", x: "Đặt HeartbeatSeconds để tránh treo." },
+      { t: "sfn", f: "Redrive trong Step Functions là gì?", b: "Chạy tiếp execution Standard thất bại <b>từ bước lỗi</b> (trong <b>14 ngày</b>) thay vì chạy lại từ đầu." },
+      { t: "sfn", f: "Activity trong Step Functions là gì?", b: "Worker chạy <b>bên ngoài</b> (EC2, on-premises) poll lấy việc bằng GetActivityTask (chỉ Standard)." },
+
+      // ---- Standard vs Express
+      { t: "wf", f: "Thời gian chạy tối đa: Standard vs Express?", b: "<b>Standard: 1 năm</b> · <b>Express: 5 phút</b>." },
+      { t: "wf", f: "Execution semantics của Standard và Express?", b: "<b>Standard</b>: exactly-once.<br><b>Express async</b>: at-least-once · <b>Express sync</b>: at-most-once." },
+      { t: "wf", f: "Lịch sử execution lưu ở đâu?", b: "<b>Standard</b>: trong Step Functions <b>90 ngày</b>.<br><b>Express</b>: phải bật <b>CloudWatch Logs</b>." },
+      { t: "wf", f: "Cách tính tiền của Standard và Express?", b: "<b>Standard</b>: theo <b>state transition</b>.<br><b>Express</b>: theo <b>số execution + thời lượng + bộ nhớ</b>." },
+      { t: "wf", f: "Tốc độ khởi động execution: Standard vs Express?", b: "Standard <b>2.000/giây</b> · Express <b>100.000/giây</b>." },
+      { t: "wf", f: "Có đổi Standard ⇄ Express sau khi tạo không?", b: "<b>Không</b> (immutable) – phải tạo state machine mới." },
+      { t: "wf", f: "API Gateway cần trả kết quả workflow đồng bộ cho client ⇒ chọn gì?", b: "<b>Synchronous Express workflow</b>.", x: "Từ console StartSyncExecution hết hạn sau 60 s; SDK/CLI tới 5 phút." },
+
+      // ---- Amazon MQ
+      { t: "mq", f: "Amazon MQ hỗ trợ những engine nào?", b: "<b>Apache ActiveMQ Classic</b> và <b>RabbitMQ</b>." },
+      { t: "mq", f: "Protocol của Amazon MQ for ActiveMQ?", b: "<b>OpenWire, AMQP, STOMP, MQTT</b> (+ WebSocket); ứng dụng Java dùng <b>JMS</b>." },
+      { t: "mq", f: "Protocol của Amazon MQ for RabbitMQ?", b: "<b>AMQP 0-9-1</b>." },
+      { t: "mq", f: "Kiến trúc HA của ActiveMQ trên Amazon MQ?", b: "<b>Active/standby</b>: 2 broker ở 2 AZ dùng chung <b>Amazon EFS</b>; client dùng <b>failover transport</b> tới endpoint -1/-2." },
+      { t: "mq", f: "Kiến trúc HA của RabbitMQ trên Amazon MQ?", b: "<b>Cluster deployment</b>: <b>3 node</b> ở nhiều AZ sau <b>NLB</b>, queue được mirror tới mọi node." },
+      { t: "mq", f: "Chọn EBS cho ActiveMQ broker có hạn chế gì?", b: "EBS chỉ nhân bản trong <b>1 AZ</b>, <b>không hỗ trợ active/standby</b>. Cần HA + bền ⇒ <b>EFS</b>." },
+      { t: "mq", f: "So sánh throughput storage của ActiveMQ (message 1 KB)?", b: "In-memory ~<b>5.000</b>/s (không bền) · EBS ~<b>500</b>/s · EFS ~<b>80</b>/s (bền, multi-AZ)." },
+      { t: "mq", f: "Đổi storage type của broker sau khi tạo được không?", b: "<b>Không.</b> Chỉ đổi được instance type." },
+      { t: "mq", f: "Single-instance broker với storage EFS có highly available không?", b: "<b>Không</b> – broker chỉ ở 1 AZ dù storage bền multi-AZ." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>react to AWS service events</i>” (EC2 state change, GuardDuty finding…) ⇒ ?", b: "<b>EventBridge rule trên default event bus</b> → Lambda / SNS / Step Functions." },
+      { t: "kw", f: "Đề có “<i>receive events from a SaaS application with least operational overhead</i>” ⇒ ?", b: "<b>Partner event source / partner event bus</b>." },
+      { t: "kw", f: "Đề có “<i>centralize events from multiple accounts in an organization</i>” ⇒ ?", b: "Bus trung tâm + resource policy với <b>aws:PrincipalOrgID</b>; account gửi dùng rule target là bus đó." },
+      { t: "kw", f: "Đề có “<i>replay past events after fixing a bug</i>” ⇒ ?", b: "<b>EventBridge archive &amp; replay</b>." },
+      { t: "kw", f: "Đề có “<i>point-to-point from SQS / DynamoDB Streams with filtering and enrichment, no custom code</i>” ⇒ ?", b: "<b>EventBridge Pipes</b>." },
+      { t: "kw", f: "Đề có “<i>replace a cron job on an EC2 instance</i>”, “<i>stop dev instances at 7 PM</i>” ⇒ ?", b: "<b>EventBridge Scheduler</b>." },
+      { t: "kw", f: "Đề có “<i>send a reminder exactly 3 days after sign-up</i>”, “<i>millions of one-time tasks</i>” ⇒ ?", b: "<b>One-time schedule</b> của EventBridge Scheduler.", x: "SQS delay chỉ tối đa 15 phút." },
+      { t: "kw", f: "Đề có “<i>human approval step</i>”, “<i>wait for a third party to respond</i>” ⇒ ?", b: "Step Functions Standard + <b>.waitForTaskToken</b>." },
+      { t: "kw", f: "Đề có “<i>process millions of S3 objects in parallel</i>” ⇒ ?", b: "<b>Distributed Map</b>." },
+      { t: "kw", f: "Đề có “<i>migrate app using ActiveMQ / JMS / AMQP without rewriting messaging code</i>” ⇒ ?", b: "<b>Amazon MQ</b>." },
+      { t: "kw", f: "Đề có “<i>high-volume, short-duration</i>”, “<i>IoT ingestion</i>”, MOST cost-effective ⇒ ?", b: "<b>Step Functions Express workflow</b>." }
+    ],
+
+    pairs: [
+      ["Choreography", "Phi tập trung, service tự phản ứng event"],
+      ["Orchestration", "State machine trung tâm điều khiển từng bước"],
+      ["Default event bus", "Có sẵn, nhận event của dịch vụ AWS"],
+      ["Partner event bus", "Nhận event từ SaaS đối tác"],
+      ["Event pattern", "Mẫu JSON để rule lọc event"],
+      ["Input transformer", "Đổi hình dạng event trước khi tới target"],
+      ["Archive / Replay", "Lưu event / phát lại về source bus"],
+      ["API destination", "Target là HTTPS endpoint bên ngoài"],
+      ["EventBridge Pipes", "Source → filter → enrichment → target"],
+      ["EventBridge Scheduler", "Lập lịch serverless, 10 triệu lịch/Region"],
+      ["Flexible time window", "Dàn trải thời điểm gọi target"],
+      ["Universal target", "Gọi gần như mọi API AWS"],
+      ["Schema discovery", "Tự suy schema từ event trên bus"],
+      ["Code bindings", "Code có kiểu sinh từ schema"],
+      ["ASL", "Ngôn ngữ JSON định nghĩa state machine"],
+      ["Map state", "Lặp cùng các bước trên từng phần tử"],
+      ["Parallel state", "Chạy các nhánh khác nhau song song"],
+      ["Task token", "Callback: SendTaskSuccess / SendTaskFailure"],
+      ["Run a Job (.sync)", "Chờ job Batch/ECS/Glue hoàn thành"],
+      ["Standard workflow", "≤ 1 năm, exactly-once, lịch sử 90 ngày"],
+      ["Express workflow", "≤ 5 phút, 100.000 execution/giây"],
+      ["Redrive (Step Functions)", "Chạy tiếp execution lỗi từ bước hỏng"],
+      ["Active/standby broker", "2 broker ở 2 AZ dùng chung EFS"],
+      ["Quorum queue", "Queue nhân bản leader/follower ở các AZ"],
+      ["Failover transport", "Client ActiveMQ kết nối dự phòng -1/-2"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn dịch vụ tích hợp",
+        desc: "Đọc yêu cầu đề thi và chọn dịch vụ phù hợp nhất.",
+        buckets: ["EventBridge", "EventBridge Scheduler", "Step Functions Standard", "Step Functions Express", "Amazon MQ", "SQS / SNS"],
+        items: [
+          ["Gọi Lambda mỗi khi EC2 instance bị stopped", 0, "rule trên default bus"],
+          ["Nhận ticket từ SaaS partner không cần webhook", 0, "partner event bus"],
+          ["Gom event từ 50 account về account bảo mật", 0, "cross-account bus + aws:PrincipalOrgID"],
+          ["Tắt instance dev lúc 19h theo giờ địa phương", 1, "cron + time zone"],
+          ["Nhắc người dùng đúng 72 giờ sau khi đăng ký", 1, "one-time schedule"],
+          ["Phê duyệt khoản vay có thể mất 5 ngày, cần audit", 2, "chạy tới 1 năm, callback task token"],
+          ["Chờ AWS Batch job 3 giờ rồi xử lý tiếp", 2, ".sync chỉ có ở Standard"],
+          ["Thanh toán không được chạy hai lần", 2, "exactly-once"],
+          ["40.000 sự kiện IoT/giây, mỗi luồng dưới 10 giây", 3, "rẻ cho luồng ngắn khối lượng lớn"],
+          ["API Gateway trả kết quả workflow trong cùng request", 3, "Synchronous Express"],
+          ["Migrate hệ thống dùng JMS và ActiveMQ", 4, "không viết lại code messaging"],
+          ["Ứng dụng đang dùng RabbitMQ AMQP 0-9-1", 4, "Amazon MQ for RabbitMQ"],
+          ["Đệm công việc cho worker kéo theo tốc độ riêng", 5, "SQS queue"],
+          ["Gửi email/SMS tới nhiều người nhận", 5, "SNS"]
+        ]
+      },
+      {
+        title: "Standard hay Express workflow?",
+        desc: "Đặc điểm sau thuộc Step Functions Standard hay Express workflow?",
+        buckets: ["Standard", "Express"],
+        items: [
+          ["Chạy tối đa 1 năm", 0, "workflow dài"],
+          ["Exactly-once", 0, "hợp tác vụ không idempotent"],
+          ["Lịch sử execution 90 ngày trong Step Functions", 0, "auditable"],
+          ["Tính tiền theo state transition", 0, "đắt khi khối lượng rất lớn"],
+          ["Hỗ trợ .sync và .waitForTaskToken", 0, "Express chỉ Request Response"],
+          ["Distributed Map, Activities, Redrive", 0, "chỉ Standard"],
+          ["Chạy tối đa 5 phút", 1, "luồng ngắn"],
+          ["100.000 execution mỗi giây", 1, "tần suất rất cao"],
+          ["Async at-least-once, sync at-most-once", 1, "tác vụ nên idempotent"],
+          ["Log ra CloudWatch Logs", 1, "không lưu lịch sử trong Step Functions"],
+          ["Tính tiền theo execution + thời lượng + bộ nhớ", 1, "rẻ cho luồng ngắn"]
+        ]
+      },
+      {
+        title: "Integration pattern nào?",
+        desc: "Tình huống sau dùng integration pattern nào của Step Functions?",
+        buckets: ["Request Response", "Run a Job (.sync)", "Wait for Callback (.waitForTaskToken)"],
+        items: [
+          ["Publish một thông báo SNS rồi đi tiếp ngay", 0, "không chờ kết quả công việc"],
+          ["Bước gọi API trong Express workflow", 0, "Express chỉ hỗ trợ Request Response"],
+          ["Gửi message SQS rồi đi tiếp, không chờ xử lý", 0, "nhận HTTP response là đi tiếp"],
+          ["Chờ AWS Batch job hoàn thành", 1, "batch:submitJob.sync"],
+          ["Chờ ECS task chạy xong", 1, "ecs:runTask.sync"],
+          ["Chờ Glue job ETL kết thúc", 1, "Run a Job"],
+          ["Chờ quản lý duyệt trên web nội bộ", 2, "SendTaskSuccess / SendTaskFailure"],
+          ["Chờ hệ thống bên thứ ba phản hồi", 2, "task token"]
+        ]
+      },
+      {
+        title: "Loại state nào?",
+        desc: "Mỗi yêu cầu nên dùng loại state nào của Step Functions?",
+        buckets: ["Task", "Choice", "Parallel", "Map", "Wait", "Pass"],
+        items: [
+          ["Gọi Lambda kiểm tra tồn kho", 0, "đơn vị công việc"],
+          ["Chạy ECS task trong workflow", 0, "Task state gọi dịch vụ"],
+          ["Hạn mức vượt ngưỡng ⇒ chuyển quản lý duyệt", 1, "rẽ nhánh theo điều kiện"],
+          ["Chuyển video sang nhiều độ phân giải cùng lúc", 2, "nhiều nhánh khác nhau song song"],
+          ["Trừ kho, thanh toán, thông báo đồng thời", 2, "chờ tất cả nhánh xong"],
+          ["Xử lý từng sản phẩm trong đơn 30 sản phẩm", 3, "cùng chuỗi bước cho từng phần tử"],
+          ["Xử lý 2 triệu file trên S3", 3, "Distributed Map"],
+          ["Chờ 24 giờ rồi gửi email nhắc", 4, "tạm dừng một khoảng thời gian"],
+          ["Gắn giá trị mặc định cho dữ liệu", 5, "biến đổi dữ liệu, không làm việc"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Choreography dùng một state machine trung tâm điều khiển từng bước.", false, "Đó là orchestration; choreography không có nhạc trưởng."],
+      ["Default event bus tự nhận event từ các dịch vụ AWS.", true, "EC2, S3, Health… gửi vào default bus."],
+      ["Rule trên custom event bus nhận được event EC2 state change.", false, "Event dịch vụ AWS vào default bus."],
+      ["Mỗi rule EventBridge có tối đa 5 target.", true, "Không tăng được."],
+      ["Số target mỗi rule có thể tăng qua Service Quotas.", false, "5 target là giới hạn cứng."],
+      ["EventBridge mặc định retry giao event trong 24 giờ, tối đa 185 lần.", true, "Hết lượt thì event bị bỏ."],
+      ["Không cấu hình DLQ thì event giao thất bại sau hết retry vẫn được giữ lại.", false, "Event bị bỏ nếu không có DLQ."],
+      ["Replay gửi event về đúng source bus ban đầu.", true, "Không gửi sang account khác được."],
+      ["Replay bảo đảm đúng thứ tự event ban đầu.", false, "Replay không bảo đảm thứ tự."],
+      ["Timeout client của API destination là 5 giây.", true, "Cố định 5 giây."],
+      ["EventBridge Pipes nối một nguồn tới một đích với filter và enrichment.", true, "Source → filter → enrichment → target."],
+      ["Account nhận event cross-account có thể chuyển tiếp tiếp sang account thứ ba.", false, "Không hop 2 lần; gửi thẳng tới bus đích."],
+      ["EventBridge Scheduler hỗ trợ lịch chạy một lần.", true, "One-time schedule kèm time zone."],
+      ["Scheduled rule (legacy) hỗ trợ time zone cho từng lịch.", false, "Scheduled rule dùng UTC; Scheduler mới có time zone."],
+      ["EventBridge Scheduler mặc định cho 10 triệu lịch mỗi Region.", true, "Tăng được tới hàng tỷ."],
+      ["Schema registry hỗ trợ OpenAPI 3 và JSONSchema Draft4.", true, "Hai định dạng được hỗ trợ."],
+      ["Mặc định Retry của Step Functions có MaxAttempts là 3 và BackoffRate 2.0.", true, "IntervalSeconds mặc định 1."],
+      ["Payload giữa các state của Step Functions có thể tới 10 MB.", false, "Tối đa 256 KiB."],
+      ["Parallel state dùng để lặp cùng các bước trên từng phần tử dataset.", false, "Đó là Map; Parallel chạy các nhánh khác nhau."],
+      ["Distributed Map chạy tới 10.000 child execution song song.", true, "Dành cho dataset lớn trên S3."],
+      ["Express workflow hỗ trợ pattern .waitForTaskToken.", false, "Chỉ Standard hỗ trợ .sync và callback."],
+      ["Standard workflow chạy tối đa 1 năm.", true, "Express chỉ 5 phút."],
+      ["Asynchronous Express workflow có ngữ nghĩa exactly-once.", false, "Async Express là at-least-once."],
+      ["Synchronous Express workflow có ngữ nghĩa at-most-once.", true, "Chờ xong rồi trả kết quả."],
+      ["Có thể đổi Standard workflow sang Express sau khi tạo.", false, "Loại workflow không đổi được."],
+      ["Express workflow tính tiền theo số state transition.", false, "Express tính theo execution + thời lượng + bộ nhớ."],
+      ["Lịch sử execution của Express workflow cần bật CloudWatch Logs mới xem được.", true, "Không lưu trong Step Functions."],
+      ["Amazon MQ for RabbitMQ dùng protocol AMQP 0-9-1.", true, "ActiveMQ mới có OpenWire, STOMP, MQTT."],
+      ["ActiveMQ active/standby dùng chung storage Amazon EFS.", true, "EFS nhân bản trên nhiều AZ."],
+      ["ActiveMQ dùng storage EBS vẫn triển khai được active/standby.", false, "EBS không hỗ trợ active/standby."],
+      ["Có thể đổi storage type của broker Amazon MQ sau khi tạo.", false, "Chỉ đổi được instance type."],
+      ["RabbitMQ cluster deployment gồm 3 node sau một NLB.", true, "Trải trên nhiều AZ."],
+      ["Ứng dụng đang dùng JMS cần ít sửa code ⇒ nên refactor sang SQS.", false, "Chọn Amazon MQ để không viết lại code messaging."],
+      ["Lambda giới hạn 15 phút nên job dài có thể chia thành nhiều bước trong Step Functions.", true, "Hoặc dùng Task chạy ECS/Fargate/Batch."]
+    ],
+
+    map: {
+      t: "Bài 31 · EventBridge, Step Functions & Amazon MQ",
+      c: [
+        { t: "Kiến trúc hướng sự kiện", icon: "cat/Application-Integration.svg", c: [
+          { t: "Choreography", v: "service tự phản ứng event · EventBridge, SNS" },
+          { t: "Orchestration", v: "state machine trung tâm · Step Functions" },
+          { t: "Chọn orchestration", v: "có thứ tự, rẽ nhánh, chờ duyệt, chạy lâu" }
+        ] },
+        { t: "EventBridge", icon: "svc/Amazon-EventBridge.svg", c: [
+          { t: "Event bus", v: "default (AWS) · custom · partner (SaaS)" },
+          { t: "Rule", v: "event pattern, gắn 1 bus, ≤ 5 target song song" },
+          { t: "Retry", v: "24 giờ / 185 lần rồi bỏ ⇒ DLQ SQS" },
+          { t: "Archive & replay", v: "phát lại về source bus, ≤ 10 replay đồng thời" },
+          { t: "Cross-account", v: "resource policy bus + IAM role bên gửi" },
+          { t: "API destination", v: "HTTPS, connection, timeout 5 s" },
+          { t: "Pipes", v: "1 nguồn → filter → enrichment → 1 đích" }
+        ] },
+        { t: "Scheduler", icon: "res/Amazon-CloudWatch_Event-Time-Based.svg", c: [
+          { t: "Loại lịch", v: "one-time · cron · rate, có time zone" },
+          { t: "Quy mô", v: "10 triệu lịch/Region · 270+ dịch vụ" },
+          { t: "Retry", v: "≤ 185 lần, ≤ 24 giờ · DLQ SQS" },
+          { t: "So với scheduled rule", v: "rule là legacy, UTC, 300 rule/bus" }
+        ] },
+        { t: "Schema registry", icon: "res/Amazon-EventBridge_Schema-Registry.svg", c: [
+          { t: "Registry", v: "AWS · discovered · custom" },
+          { t: "Discovery", v: "tự suy schema từ event trên bus" },
+          { t: "Code bindings", v: "code có kiểu cho IDE" },
+          { t: "Định dạng", v: "OpenAPI 3 · JSONSchema Draft4" }
+        ] },
+        { t: "Step Functions", icon: "svc/AWS-Step-Functions.svg", c: [
+          { t: "State", v: "Task, Choice, Parallel, Map, Wait, Pass, Succeed/Fail" },
+          { t: "Retry", v: "1 s · 3 lần · backoff 2.0" },
+          { t: "Catch", v: "chuyển state bù trừ (saga)" },
+          { t: "Payload", v: "≤ 256 KiB" },
+          { t: "Pattern", c: [
+            { t: "Request Response", v: "đi tiếp ngay" },
+            { t: ".sync", v: "chờ job xong (chỉ Standard)" },
+            { t: ".waitForTaskToken", v: "chờ callback, human approval" }
+          ] }
+        ] },
+        { t: "Standard vs Express", icon: "svc/AWS-Step-Functions.svg", c: [
+          { t: "Standard", v: "≤ 1 năm · exactly-once · lịch sử 90 ngày · theo transition" },
+          { t: "Express", v: "≤ 5 phút · 100.000/s · theo execution + thời lượng" },
+          { t: "Express sync/async", v: "at-most-once / at-least-once" },
+          { t: "Đổi loại", v: "không được, tạo state machine mới" }
+        ] },
+        { t: "Amazon MQ", icon: "svc/Amazon-MQ.svg", c: [
+          { t: "ActiveMQ", v: "OpenWire, AMQP, STOMP, MQTT · JMS" },
+          { t: "RabbitMQ", v: "AMQP 0-9-1" },
+          { t: "HA ActiveMQ", v: "active/standby 2 AZ + EFS, failover transport" },
+          { t: "HA RabbitMQ", v: "cluster 3 node + NLB" },
+          { t: "Dùng khi", v: "migrate broker cũ, ít sửa code" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

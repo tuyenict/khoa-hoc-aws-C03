@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 12 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Elastic-Load-Balancing.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="12" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-12-elastic-load-balancing.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "core", name: "ELB & thành phần chung" },
+      { id: "alb", name: "Application Load Balancer" },
+      { id: "nlb", name: "Network Load Balancer" },
+      { id: "gwlb", name: "Gateway Load Balancer" },
+      { id: "hc", name: "Health check & cross-zone" },
+      { id: "tg", name: "Sticky · draining · slow start" },
+      { id: "tls", name: "SSL/TLS & SNI" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- ELB & thành phần chung
+      { t: "core", f: "Elastic Load Balancing làm gì?", b: "Tự động phân phối traffic tới nhiều target (EC2, container, IP, Lambda) ở <b>một hoặc nhiều AZ</b>, chỉ gửi tới target <b>khỏe</b>, tự co giãn năng lực của chính LB." },
+      { t: "core", f: "4 loại load balancer của ELB?", b: "<b>ALB</b> (Layer 7) · <b>NLB</b> (Layer 4) · <b>GWLB</b> (Layer 3) · <b>CLB</b> (thế hệ trước).", x: "CLB trong đề hầu như chỉ là phương án sai hoặc hệ thống legacy cần nâng cấp." },
+      { t: "core", f: "TTL bản ghi DNS của load balancer là bao nhiêu? Vì sao?", b: "<b>60 giây</b>, để IP các node có thể đổi nhanh khi ELB scale." },
+      { t: "core", f: "ALB yêu cầu tối thiểu bao nhiêu AZ và subnet cỡ nào?", b: "Bắt buộc <b>≥ 2 AZ</b>; mỗi subnet CIDR tối thiểu <b>/27</b> và <b>≥ 8 IP trống</b> để scale.", x: "Thiếu IP ⇒ LB chạy thiếu năng lực, có thể trả 5xx/timeout." },
+      { t: "core", f: "Bật một AZ cho load balancer thì ELB tạo gì?", b: "Một <b>load balancer node</b> trong AZ đó, có ENI riêng trong subnet.", x: "Target ở AZ chưa bật ⇒ trạng thái unused, không nhận traffic." },
+      { t: "core", f: "Phân biệt <i>internet-facing</i> và <i>internal</i> load balancer.", b: "<b>Internet-facing</b>: node có IP public, đặt ở public subnet.<br><b>Internal</b>: node chỉ có IP private, DNS vẫn resolve công khai nhưng ra IP private; chỉ client có đường vào VPC mới gọi được.", x: "Cả hai đều gửi tới target bằng IP private ⇒ target nên ở private subnet." },
+      { t: "core", f: "Bộ ba thành phần của load balancer thế hệ hiện tại?", b: "<b>Listener</b> (protocol + port) ⇒ <b>rule</b> (priority, condition, action) ⇒ <b>target group</b> (target + health check)." },
+      { t: "core", f: "<i>Default rule</i> của listener có đặc điểm gì?", b: "Luôn có, <b>không xóa được</b>, luôn được xét <b>cuối cùng</b>. Các rule khác xét theo priority từ số nhỏ tới lớn." },
+      { t: "core", f: "4 target type và loại LB hỗ trợ?", b: "<b>instance</b>, <b>ip</b>: ALB/NLB/GWLB.<br><b>lambda</b>: chỉ ALB.<br><b>alb</b>: chỉ NLB.", x: "Target type chọn lúc tạo target group, không đổi được sau đó." },
+      { t: "core", f: "Khi nào phải dùng target type <b>ip</b>?", b: "Target ở <b>VPC peer</b>, <b>on-premises</b> qua Direct Connect/VPN, <b>container</b> (mỗi task một IP), nhiều ứng dụng cùng port trên ENI khác nhau.", x: "Chỉ IP private (RFC 1918, 100.64.0.0/10), không dùng IP public." },
+      { t: "core", f: "Mẫu Security Group chuẩn cho instance sau load balancer?", b: "SG của instance chỉ cho inbound <b>từ SG của load balancer</b>, không mở 0.0.0.0/0." },
+      { t: "core", f: "ELB có phân phối traffic giữa các Region không?", b: "<b>Không</b>, ELB là dịch vụ <b>regional</b>. Đa Region ⇒ Route 53 hoặc Global Accelerator." },
+
+      // ---- ALB
+      { t: "alb", f: "ALB hỗ trợ những protocol nào?", b: "<b>HTTP, HTTPS</b>; HTTP/2, gRPC, WebSockets.", x: "ALB KHÔNG nhận UDP." },
+      { t: "alb", f: "6 loại condition của ALB?", b: "<b>path-pattern</b>, <b>host-header</b>, http-header, http-request-method, query-string, source-ip." },
+      { t: "alb", f: "Wildcard host <code>*.example.com</code> có khớp <code>example.com</code> không?", b: "<b>Không.</b> Chỉ khớp subdomain như <code>test.example.com</code>." },
+      { t: "alb", f: "Condition source-ip có đọc X-Forwarded-For không?", b: "<b>Không.</b> Đó là IP kết nối tới ALB; client sau proxy thì là IP proxy." },
+      { t: "alb", f: "Action <b>forward</b> với nhiều target group hoạt động thế nào?", b: "Gán <b>weight 0–999</b> cho từng TG (weight 0 = không nhận traffic) ⇒ blue/green, canary 90/10.", x: "TG rỗng/unhealthy thì không tự failover sang TG khác." },
+      { t: "alb", f: "Action <b>redirect</b> dùng mã HTTP nào? Use case kinh điển?", b: "<b>301</b> (vĩnh viễn) hoặc <b>302</b> (tạm thời). Default rule của listener :80 redirect sang HTTPS:443.", x: "Không redirect được HTTPS ⇒ HTTP." },
+      { t: "alb", f: "Action <b>fixed-response</b> dùng khi nào?", b: "Trả mã 2XX/4XX/5XX ngay tại ALB, <b>không tới target</b>: trang bảo trì, chặn path không hợp lệ (404)." },
+      { t: "alb", f: "Target muốn biết IP thật của client sau ALB thì làm gì?", b: "Đọc header <b>X-Forwarded-For</b> (ALB tự thêm, kèm X-Forwarded-Proto, X-Forwarded-Port)." },
+      { t: "alb", f: "3 routing algorithm của ALB (cấp target group)?", b: "<b>Round robin</b> (mặc định) · <b>Least outstanding requests</b> (request khác nhau độ phức tạp) · <b>Weighted random</b> (hỗ trợ Automatic Target Weights).", x: "Slow start chỉ dùng với round robin." },
+      { t: "alb", f: "Idle timeout mặc định của ALB? Deletion protection, access logs?", b: "Idle timeout <b>60 giây</b>; client keepalive 3.600 giây; deletion protection và access logs <b>mặc định tắt</b>." },
+      { t: "alb", f: "Sau khi kết nối WebSocket được upgrade, điều gì không còn áp dụng?", b: "<b>Listener rule</b> và <b>AWS WAF</b> không còn áp dụng; WebSocket vốn đã “sticky”." },
+
+      // ---- NLB
+      { t: "nlb", f: "NLB hỗ trợ protocol nào?", b: "<b>TCP, UDP, TLS, TCP_UDP</b>, QUIC, TCP_QUIC. Hàng triệu request/giây." },
+      { t: "nlb", f: "NLB chọn target bằng cách nào?", b: "<b>Flow hash</b>: TCP dùng protocol, IP/port nguồn-đích + sequence number; UDP dùng 5 thành phần ⇒ một flow luôn tới cùng target." },
+      { t: "nlb", f: "IP của NLB khác ALB thế nào?", b: "NLB có <b>ENI với IP tĩnh mỗi AZ</b>, gắn được <b>một Elastic IP mỗi subnet</b> (internet-facing). IP của ALB thay đổi ⇒ dùng DNS name." },
+      { t: "nlb", f: "Muốn vừa có IP tĩnh vừa có routing Layer 7?", b: "<b>NLB với target type alb</b> (NLB chuyển TCP tới ALB)." },
+      { t: "nlb", f: "Client IP preservation mặc định bật/tắt khi nào?", b: "Target <b>instance</b>: bật.<br>Target <b>ip</b> + UDP/TCP_UDP/QUIC: bật (không tắt được).<br>Target <b>ip</b> + TCP/TLS: <b>tắt</b>.<br>Qua PrivateLink: luôn là IP NLB." },
+      { t: "nlb", f: "<i>Proxy protocol v2</i> dùng để làm gì?", b: "NLB chèn <b>header nhị phân</b> chứa IP/port nguồn và đích khi không giữ được IP client.", x: "Ứng dụng phải đọc được header, nếu không sẽ lỗi (health check có thể trả 400)." },
+      { t: "nlb", f: "Security Group trên NLB có điểm gì đặc biệt?", b: "Chỉ gắn được <b>lúc tạo</b>; tạo NLB không có SG thì không thêm về sau được (phải tạo NLB mới)." },
+      { t: "nlb", f: "TLS passthrough trên NLB cấu hình thế nào?", b: "<b>TCP listener port 443</b> ⇒ target TCP 443: NLB chuyển nguyên gói đã mã hóa, certificate nằm trên target." },
+      { t: "nlb", f: "NLB có hỗ trợ mTLS trên TLS listener không?", b: "<b>Không.</b> Dùng TCP listener và xử lý mTLS trên target, hoặc dùng ALB." },
+      { t: "nlb", f: "Sticky sessions của NLB dựa trên gì?", b: "<b>Source IP</b>; không hỗ trợ với TLS/QUIC listener.", x: "Mọi client sau cùng một NAT dồn vào một target." },
+      { t: "nlb", f: "TCP idle timeout mặc định của NLB?", b: "<b>350 giây</b> (chỉnh 60–6.000)." },
+
+      // ---- GWLB
+      { t: "gwlb", f: "Gateway Load Balancer dùng để làm gì?", b: "Triển khai, scale, quản lý <b>virtual appliance bên thứ ba</b>: firewall, IDS/IPS, deep packet inspection; đóng vai <b>transparent network gateway</b>." },
+      { t: "gwlb", f: "GWLB trao đổi với appliance bằng giao thức gì?", b: "<b>GENEVE</b> trên <b>UDP port 6081</b>.", x: "SG của appliance phải cho phép UDP 6081." },
+      { t: "gwlb", f: "Traffic được đưa qua GWLB như thế nào?", b: "Bằng <b>route table</b>: <b>GWLB endpoint (GWLBE)</b> là next hop; GWLBE là VPC endpoint (PrivateLink), zonal ⇒ tạo một GWLBE mỗi AZ." },
+      { t: "gwlb", f: "Vì sao GWLB cần flow stickiness? Theo tuple nào?", b: "Firewall stateful phải thấy cả hai chiều của một luồng ⇒ <b>5-tuple</b> (mặc định), 3-tuple hoặc 2-tuple." },
+      { t: "gwlb", f: "MTU của GWLB và lưu ý?", b: "Interface MTU <b>8.500 byte</b>; GENEVE thêm 68 byte ⇒ appliance cần MTU ≥ 8.568; không hỗ trợ IP fragmentation." },
+      { t: "gwlb", f: "Đề muốn firewall <b>managed của AWS</b> (không phải appliance bên thứ ba) ⇒ ?", b: "<b>AWS Network Firewall</b>, đừng nhầm với GWLB." },
+
+      // ---- Health check & cross-zone
+      { t: "hc", f: "Health check mặc định của ALB?", b: "<b>HTTP</b>, path /, interval <b>30 s</b>, timeout <b>5 s</b>, healthy <b>5</b> lần, unhealthy <b>2</b> lần, mã thành công <b>200</b>." },
+      { t: "hc", f: "Health check mặc định của NLB và mã thành công?", b: "Protocol <b>TCP</b> mặc định; với HTTP/HTTPS mã thành công mặc định <b>200–399</b>." },
+      { t: "hc", f: "<i>Fail open</i> là gì?", b: "Khi <b>mọi target</b> trong target group đều unhealthy, LB gửi request tới <b>tất cả target</b> – gửi “thử” còn hơn trả lỗi 100%." },
+      { t: "hc", f: "Ứng dụng trả 302 tới trang login cho path health check ⇒ ?", b: "ALB coi là <b>fail</b> vì mặc định chỉ nhận <b>200</b> ⇒ sửa path hoặc matcher." },
+      { t: "hc", f: "Muốn Auto Scaling thay instance mà ELB đánh giá unhealthy?", b: "Bật <b>ELB health check</b> trong Auto Scaling group.", x: "ELB health check khác EC2 status check." },
+      { t: "hc", f: "Route 53 alias + <i>Evaluate target health</i> = Yes giúp gì?", b: "Route 53 dùng health check của target group để biết LB còn khỏe ⇒ <b>failover</b> sang LB ở Region khác hoặc trang tĩnh S3." },
+      { t: "hc", f: "Cross-zone load balancing mặc định của từng loại LB?", b: "<b>ALB</b>: luôn bật (tắt được ở cấp TG).<br><b>NLB</b>, <b>GWLB</b>: tắt.<br><b>CLB</b>: API/CLI tắt, Console bật." },
+      { t: "hc", f: "Ví dụ 2 AZ: AZ A 2 target, AZ B 8 target. Bật/tắt cross-zone mỗi target nhận bao nhiêu?", b: "<b>Bật</b>: mỗi target 10%.<br><b>Tắt</b>: target AZ A 25%, target AZ B 6,25%." },
+      { t: "hc", f: "Bật cross-zone trên NLB có phát sinh chi phí không?", b: "<b>Có</b>: phí EC2 data transfer giữa các AZ." },
+
+      // ---- Sticky, draining, slow start
+      { t: "tg", f: "Sticky sessions duration-based dùng cookie gì? Thời lượng?", b: "Cookie <b>AWSALB</b> do LB tạo; <b>1 giây – 7 ngày</b>, mặc định <b>1 ngày</b>." },
+      { t: "tg", f: "Application-based stickiness khác duration-based thế nào?", b: "Target đặt <b>custom cookie</b>, ALB sinh thêm <b>AWSALBAPP-*</b>; dùng được qua nhiều tầng ALB, không dùng với weighted target groups." },
+      { t: "tg", f: "Kiến trúc tốt hơn sticky sessions là gì?", b: "Đưa session ra <b>ElastiCache / DynamoDB</b> để server <b>stateless</b>.", x: "Sticky làm tải lệch, scale out không giúp ngay user đã “dính”." },
+      { t: "tg", f: "Deregistration delay mặc định và phạm vi?", b: "<b>300 giây</b> (0–3.600). Target ở trạng thái <b>draining</b> để request in-flight hoàn tất.", x: "“Connection draining” là tên gọi của CLB – đề dùng cả hai." },
+      { t: "tg", f: "Slow start mode làm gì? Phạm vi?", b: "Tăng tuyến tính traffic tới target mới trong <b>30–900 giây</b> (mặc định 0 = tắt) để warm up cache.", x: "Chỉ dùng với round robin." },
+      { t: "tg", f: "Target của phiên sticky bị unhealthy thì sao?", b: "ALB chọn <b>target mới</b> và cập nhật cookie – stickiness không “cứu” được target chết." },
+
+      // ---- TLS
+      { t: "tls", f: "Nguồn certificate khuyến nghị cho ALB/NLB?", b: "<b>AWS Certificate Manager (ACM)</b>: certificate do ACM cấp được <b>tự động gia hạn</b>.", x: "Certificate import vào ACM hoặc upload lên IAM phải tự gia hạn." },
+      { t: "tls", f: "SNI giải quyết vấn đề gì?", b: "Một listener, một port 443 phục vụ <b>nhiều domain, mỗi domain một certificate</b>: client gửi hostname trong TLS handshake, LB chọn certificate khớp." },
+      { t: "tls", f: "Default certificate được dùng khi nào?", b: "Khi client <b>không gửi SNI</b> hoặc <b>không certificate nào khớp</b> hostname. Mỗi HTTPS listener có đúng một default certificate." },
+      { t: "tls", f: "CLB có hỗ trợ SNI không?", b: "<b>Không</b> (mỗi CLB một certificate) – lý do phổ biến để migrate sang ALB/NLB." },
+      { t: "tls", f: "Wildcard <code>*.example.com</code> bảo vệ những tên nào?", b: "Một cấp subdomain: <code>a.example.com</code>. <b>Không</b> bảo vệ <code>example.com</code> hay <code>x.y.example.com</code>." },
+      { t: "tls", f: "Re-encryption (end-to-end) trên ALB cấu hình thế nào?", b: "HTTPS listener ⇒ target group <b>HTTPS</b>; LB giải mã rồi mã hóa lại, không kiểm tra certificate trên target (self-signed được)." },
+      { t: "tls", f: "Security policy của ELB là gì?", b: "Tổ hợp <b>protocol + cipher</b> dùng để thương lượng TLS với client, vd ELBSecurityPolicy-TLS13-1-2-2021-06." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>route based on URL path / hostname</i>”, “<i>microservices behind a single load balancer</i>” ⇒ ?", b: "<b>ALB</b> với path/host-based routing." },
+      { t: "kw", f: "Đề có “<i>Lambda behind a load balancer</i>” ⇒ ?", b: "<b>ALB</b> (target type lambda) – NLB không hỗ trợ." },
+      { t: "kw", f: "Đề có “<i>static IP / Elastic IP per AZ</i>”, “<i>partners must allowlist IPs</i>” ⇒ ?", b: "<b>NLB</b> (cần cả routing HTTP ⇒ NLB + target type alb; IP anycast toàn cầu ⇒ Global Accelerator)." },
+      { t: "kw", f: "Đề có “<i>gaming / IoT / VoIP using UDP</i>”, “<i>millions of requests per second</i>” ⇒ ?", b: "<b>NLB</b>." },
+      { t: "kw", f: "Đề có “<i>load balancer must not decrypt</i>” ⇒ ?", b: "<b>NLB TCP listener 443</b> (passthrough)." },
+      { t: "kw", f: "Đề có “<i>expose a service privately to other VPCs with PrivateLink</i>” ⇒ ?", b: "<b>NLB</b> phía sau VPC endpoint service." },
+      { t: "kw", f: "Đề có “<i>third-party virtual firewall appliances</i>”, “<i>GENEVE</i>”, “<i>bump-in-the-wire</i>” ⇒ ?", b: "<b>Gateway Load Balancer</b> + GWLB endpoints." },
+      { t: "kw", f: "Đề có “<i>gradually shift 10% of traffic to the new version</i>” ⇒ ?", b: "<b>Weighted target groups</b> trong action forward (90/10)." },
+      { t: "kw", f: "Đề có “<i>in-flight requests fail when Auto Scaling terminates instances</i>” ⇒ ?", b: "<b>Tăng deregistration delay</b> (connection draining)." },
+      { t: "kw", f: "Đề có “<i>newly launched instances are overwhelmed until caches warm up</i>” ⇒ ?", b: "<b>Slow start mode</b>." },
+      { t: "kw", f: "Đề có “<i>users lose their shopping cart</i>” khi request đi tới instance khác ⇒ ?", b: "Nhanh: <b>sticky sessions</b>; bền vững: session ra <b>ElastiCache/DynamoDB</b>." },
+      { t: "kw", f: "Đề có “<i>NLB, uneven instances per AZ, some overloaded</i>” ⇒ ?", b: "<b>Bật cross-zone load balancing</b> trên NLB (mặc định tắt)." },
+      { t: "kw", f: "Đề có “<i>multiple HTTPS websites with different certificates on a single load balancer</i>” ⇒ ?", b: "<b>ALB + certificate list + SNI</b>, certificate từ ACM." },
+      { t: "kw", f: "Đề có “<i>protect from SQL injection / XSS</i>” cho web app sau ALB ⇒ ?", b: "Gắn <b>AWS WAF web ACL</b> vào ALB." }
+    ],
+
+    pairs: [
+      ["Load balancer node", "Thành phần của LB trong mỗi AZ đã bật"],
+      ["Listener", "Kiểm tra kết nối theo protocol + port"],
+      ["Default rule", "Rule không xóa được, luôn xét cuối cùng"],
+      ["Target group", "Tập target nhận traffic, có health check riêng"],
+      ["ALB", "Layer 7: HTTP/HTTPS, path/host routing"],
+      ["NLB", "Layer 4: TCP/UDP, IP tĩnh mỗi AZ"],
+      ["GWLB", "Layer 3: virtual appliance, GENEVE 6081"],
+      ["GWLB endpoint", "VPC endpoint làm next hop tới GWLB"],
+      ["Classic Load Balancer", "Thế hệ cũ, không SNI – nên migrate"],
+      ["Weighted target groups", "Chia traffic theo weight 0–999"],
+      ["Flow hash algorithm", "Cách NLB/GWLB chọn target theo luồng"],
+      ["X-Forwarded-For", "Header chứa IP client do ALB thêm"],
+      ["Client IP preservation", "NLB giữ nguyên IP client tới target"],
+      ["Proxy protocol v2", "Header nhị phân mang thông tin kết nối gốc"],
+      ["Flow stickiness", "5/3/2-tuple tới cùng appliance"],
+      ["Fail open", "Mọi target unhealthy ⇒ gửi tới tất cả"],
+      ["Cross-zone load balancing", "Node gửi tới target ở mọi AZ"],
+      ["Zonal shift", "Rút LB khỏi AZ bị suy giảm (ARC)"],
+      ["Sticky sessions", "Gắn user với một target bằng cookie/source IP"],
+      ["Deregistration delay", "Connection draining, mặc định 300 giây"],
+      ["Slow start mode", "Tăng dần traffic cho target mới (30–900 s)"],
+      ["TLS passthrough", "LB không giải mã (NLB TCP 443)"],
+      ["SNI", "Nhiều certificate trên một listener"],
+      ["Mutual TLS (mTLS)", "Xác thực cả certificate client; chỉ ALB"]
+    ],
+
+    sorts: [
+      {
+        title: "ALB, NLB hay GWLB?",
+        desc: "Mỗi đặc điểm/tính năng thuộc loại load balancer nào?",
+        buckets: ["ALB", "NLB", "GWLB"],
+        items: [
+          ["Path-based & host-based routing", 0, "chỉ Layer 7 đọc được URL/hostname"],
+          ["Target type lambda", 0, "chỉ ALB gọi Lambda qua HTTP(S)"],
+          ["Action redirect / fixed-response", 0, "action của listener rule ALB"],
+          ["Header X-Forwarded-For", 0, "ALB thêm IP client vào header"],
+          ["Sticky sessions bằng cookie AWSALB", 0, "NLB dính theo source IP"],
+          ["Mutual TLS trên listener", 0, "NLB TLS listener không hỗ trợ mTLS"],
+          ["Gắn Elastic IP mỗi subnet", 1, "NLB có IP tĩnh mỗi AZ"],
+          ["Protocol UDP, TCP_UDP", 1, "ALB không nhận UDP"],
+          ["Target type alb", 1, "NLB chuyển TCP tới ALB"],
+          ["Endpoint service của PrivateLink", 1, "NLB đứng sau VPC endpoint service"],
+          ["Proxy protocol v2", 1, "mang IP client qua NLB"],
+          ["GENEVE UDP 6081", 2, "giao thức giữa GWLB và appliance"],
+          ["Next hop trong route table qua endpoint", 2, "GWLBE làm next hop"],
+          ["Flow stickiness 5/3/2-tuple tới appliance", 2, "firewall stateful cần thấy hai chiều"],
+          ["Không có Security Group trên LB", 2, "SG đặt trên appliance"]
+        ]
+      },
+      {
+        title: "Tình huống đề ⇒ thuộc tính/tính năng nào?",
+        desc: "Chọn thuộc tính target group hoặc tính năng phù hợp để xử lý tình huống.",
+        buckets: ["Sticky sessions", "Deregistration delay", "Slow start", "Cross-zone LB", "Weighted target groups"],
+        items: [
+          ["User bị đăng xuất vì session lưu trong RAM từng instance (sửa nhanh)", 0, "gắn user với một target bằng cookie"],
+          ["Mất giỏ hàng khi request đi sang instance khác", 0, "giải pháp nhanh là stickiness"],
+          ["Request checkout bị lỗi khi Auto Scaling scale in", 1, "chờ request in-flight hoàn tất"],
+          ["Deploy chậm vì instance ở trạng thái draining 5 phút, request rất ngắn", 1, "giảm deregistration delay"],
+          ["Instance mới bị quá tải cho tới khi cache warm up", 2, "tăng dần traffic trong 30–900 s"],
+          ["Ứng dụng JIT cần thời gian làm nóng sau khi qua health check", 2, "slow start, chỉ với round robin"],
+          ["NLB: 2 instance ở 1a quá tải, 6 instance ở 1b rảnh", 3, "NLB mặc định tắt cross-zone"],
+          ["Muốn mỗi node chia đều cho target ở mọi AZ", 3, "bật cross-zone"],
+          ["Chuyển 10% traffic sang phiên bản mới, không đổi DNS", 4, "forward với weight 90/10"],
+          ["Blue/green ngay tại load balancer", 4, "weight 0–999 cho từng target group"]
+        ]
+      },
+      {
+        title: "Mô hình mã hóa nào?",
+        desc: "Mỗi cấu hình thuộc mô hình SSL/TLS nào?",
+        buckets: ["Termination tại LB", "Re-encryption", "Passthrough", "Mutual TLS"],
+        items: [
+          ["ALB HTTPS listener ⇒ target HTTP", 0, "LB giải mã, target nhận plaintext trong VPC"],
+          ["NLB TLS listener ⇒ target TCP", 0, "TLS listener terminate tại NLB"],
+          ["Offload CPU mã hóa khỏi web server", 0, "mục đích chính của termination"],
+          ["ALB HTTPS listener ⇒ target group HTTPS", 1, "giải mã rồi mã hóa lại"],
+          ["Target dùng certificate self-signed, LB vẫn chấp nhận", 1, "LB không kiểm tra certificate trên target"],
+          ["NLB TCP listener 443 ⇒ target TCP 443", 2, "LB không giải mã"],
+          ["Compliance cấm load balancer thấy plaintext", 2, "certificate nằm trên target"],
+          ["Xác thực certificate của client bằng trust store trên ALB", 3, "mTLS chỉ có trên ALB"]
+        ]
+      },
+      {
+        title: "Mặc định: bật hay tắt?",
+        desc: "Ở cấu hình mặc định, thuộc tính sau đang bật hay tắt?",
+        buckets: ["Bật mặc định", "Tắt mặc định"],
+        items: [
+          ["Cross-zone ở cấp load balancer của ALB", 0, "luôn bật, không tắt được ở cấp LB"],
+          ["Client IP preservation với target type instance (NLB)", 0, "target thấy IP thật của client"],
+          ["Client IP preservation với target ip + UDP (NLB)", 0, "bật và không tắt được"],
+          ["Cross-zone của NLB", 1, "bật thì tốn phí data transfer giữa AZ"],
+          ["Cross-zone của GWLB", 1, "mặc định tắt"],
+          ["Client IP preservation với target ip + TCP (NLB)", 1, "target thấy IP private của NLB"],
+          ["Deletion protection của ALB", 1, "mặc định tắt"],
+          ["Access logs của ALB", 1, "lưu vào S3, mặc định tắt"],
+          ["Slow start mode", 1, "mặc định 0 = tắt"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["ALB bắt buộc bật ít nhất hai Availability Zone.", true, "ALB yêu cầu ≥ 2 AZ."],
+      ["Bản ghi DNS của load balancer có TTL 60 giây.", true, "Để IP node đổi nhanh khi scale."],
+      ["Nên hard-code IP các node của ALB vào firewall đối tác.", false, "IP node ALB thay đổi; cần IP tĩnh thì dùng NLB."],
+      ["ALB hỗ trợ gắn Elastic IP.", false, "Chỉ NLB gắn được Elastic IP mỗi subnet."],
+      ["NLB hỗ trợ target type lambda.", false, "Chỉ ALB hỗ trợ target type lambda."],
+      ["NLB có thể dùng target type alb để kết hợp IP tĩnh với routing Layer 7.", true, "NLB chuyển TCP tới ALB."],
+      ["Target type của target group có thể đổi sau khi tạo.", false, "Chọn lúc tạo và không đổi được."],
+      ["Default rule của listener được xét đầu tiên.", false, "Default rule luôn xét cuối cùng, không xóa được."],
+      ["ALB nhận được traffic UDP.", false, "ALB chỉ HTTP/HTTPS; UDP cần NLB."],
+      ["Condition source-ip của ALB đọc IP trong header X-Forwarded-For.", false, "source-ip là IP kết nối tới ALB."],
+      ["Host condition <code>*.example.com</code> khớp cả <code>example.com</code>.", false, "Chỉ khớp subdomain, không khớp tên gốc."],
+      ["Action redirect có thể chuyển HTTPS về HTTP.", false, "Không redirect được HTTPS ⇒ HTTP."],
+      ["Weighted target groups dùng weight từ 0 đến 999.", true, "Weight 0 = không nhận traffic."],
+      ["Security Group có thể thêm vào NLB bất cứ lúc nào sau khi tạo.", false, "NLB tạo không có SG thì không thêm SG về sau được."],
+      ["NLB TLS listener hỗ trợ mutual TLS.", false, "mTLS chỉ trên ALB; NLB dùng TCP listener và xử lý trên target."],
+      ["TCP listener port 443 trên NLB cho phép TLS passthrough.", true, "NLB chuyển nguyên gói đã mã hóa tới target."],
+      ["GWLB trao đổi với appliance bằng GENEVE trên UDP port 6081.", true, "SG của appliance phải mở UDP 6081."],
+      ["GWLB endpoint và application server có thể ở cùng subnet.", false, "GWLBE và application server phải ở subnet khác nhau."],
+      ["AWS Network Firewall và Gateway Load Balancer là cùng một dịch vụ.", false, "Network Firewall là firewall managed; GWLB chạy appliance bên thứ ba."],
+      ["Health check mặc định của ALB coi mã 302 là thành công.", false, "Mặc định matcher của ALB chỉ là 200."],
+      ["Khi mọi target đều unhealthy, load balancer gửi request tới tất cả target.", true, "Đó là fail open."],
+      ["Ngưỡng unhealthy mặc định là 2 lần thất bại liên tiếp.", true, "Healthy mặc định là 5 lần."],
+      ["ELB health check giống hệt EC2 status check.", false, "Khác nhau; phải bật ELB health check trong ASG."],
+      ["Cross-zone load balancing của NLB mặc định tắt.", true, "Bật ⇒ tính phí data transfer giữa AZ."],
+      ["ALB cần được bật cross-zone ở cấp load balancer.", false, "ALB luôn bật cross-zone ở cấp load balancer."],
+      ["Deregistration delay mặc định là 300 giây.", true, "Phạm vi 0–3.600 giây."],
+      ["Slow start dùng được với least outstanding requests.", false, "Slow start chỉ dùng với round robin."],
+      ["Sticky sessions vẫn giữ user ở target cũ dù target đó unhealthy.", false, "ALB chọn target mới và cập nhật cookie."],
+      ["Certificate do ACM cấp được tự động gia hạn.", true, "Managed renewal; certificate import thì tự gia hạn."],
+      ["Classic Load Balancer hỗ trợ SNI.", false, "CLB mỗi LB một certificate, không SNI."],
+      ["Wildcard <code>*.example.com</code> bảo vệ được <code>shop.example.net</code>.", false, "Chỉ bảo vệ subdomain một cấp của example.com."],
+      ["ELB có thể phân phối traffic giữa nhiều Region.", false, "ELB là regional; đa Region dùng Route 53/Global Accelerator."],
+      ["Target sau load balancer nhận traffic qua IP private nên có thể nằm trong private subnet.", true, "Cả internet-facing và internal LB đều gửi tới target bằng IP private."],
+      ["Một target có thể đăng ký vào nhiều target group.", true, "Health check cấu hình riêng theo từng target group."],
+      ["ALB tự thêm header X-Forwarded-For chứa IP client.", true, "Target thấy IP nguồn là ALB nên phải đọc header này."],
+      ["Sticky sessions của NLB dựa trên source IP.", true, "Mọi client sau cùng NAT sẽ dồn vào một target."],
+      ["Một HTTPS listener có thể phục vụ nhiều domain nhờ certificate list và SNI.", true, "LB chọn certificate theo hostname client gửi trong handshake."],
+      ["Bật cross-zone load balancing trên NLB phát sinh phí data transfer giữa AZ.", true, "Yếu tố chi phí hay hỏi trong đề."]
+    ],
+
+    map: {
+      t: "Bài 12 · Elastic Load Balancing",
+      c: [
+        { t: "ELB & thành phần", icon: "svc/Elastic-Load-Balancing.svg", c: [
+          { t: "Node", v: "1 node mỗi AZ bật · ALB ≥ 2 AZ, subnet /27 + 8 IP" },
+          { t: "DNS", v: "TTL 60 s · domain riêng ⇒ Route 53 alias" },
+          { t: "Scheme", v: "internet-facing (IP public) · internal (IP private)" },
+          { t: "Listener ⇒ rule ⇒ TG", v: "default rule xét cuối, không xóa được" },
+          { t: "Target type", v: "instance, ip · lambda (ALB) · alb (NLB)" }
+        ] },
+        { t: "ALB · Layer 7", icon: "res/Elastic-Load-Balancing_Application-Load-Balancer.svg", c: [
+          { t: "Protocol", v: "HTTP/HTTPS, HTTP/2, gRPC, WebSockets" },
+          { t: "Condition", v: "path, host, header, method, query, source-ip" },
+          { t: "Action", c: [
+            { t: "forward", v: "weight 0–999 (canary)" },
+            { t: "redirect", v: "301/302, HTTP ⇒ HTTPS" },
+            { t: "fixed-response", v: "trả mã ngay tại ALB" }
+          ] },
+          { t: "IP client", v: "X-Forwarded-For" },
+          { t: "Thuật toán", v: "round robin · least outstanding · weighted random" }
+        ] },
+        { t: "NLB · Layer 4", icon: "res/Elastic-Load-Balancing_Network-Load-Balancer.svg", c: [
+          { t: "Protocol", v: "TCP, UDP, TLS, TCP_UDP, QUIC" },
+          { t: "IP", v: "IP tĩnh mỗi AZ, Elastic IP mỗi subnet" },
+          { t: "IP client", v: "client IP preservation / Proxy protocol v2" },
+          { t: "Passthrough", v: "TCP listener 443, không mTLS trên TLS listener" },
+          { t: "SG", v: "chỉ gắn được lúc tạo" },
+          { t: "PrivateLink", v: "đứng sau VPC endpoint service" }
+        ] },
+        { t: "GWLB · Layer 3", icon: "res/Elastic-Load-Balancing_Gateway-Load-Balancer.svg", c: [
+          { t: "Mục đích", v: "firewall, IDS/IPS bên thứ ba, transparent" },
+          { t: "GENEVE", v: "UDP 6081 tới appliance" },
+          { t: "GWLBE", v: "next hop trong route table, 1 mỗi AZ" },
+          { t: "Stickiness", v: "5-tuple (mặc định), 3, 2-tuple" },
+          { t: "MTU", v: "8.500 byte, không fragmentation" }
+        ] },
+        { t: "Health check & cross-zone", icon: "svc/Amazon-CloudWatch.svg", c: [
+          { t: "ALB mặc định", v: "HTTP · 30 s · timeout 5 s · 5/2 · mã 200" },
+          { t: "NLB mặc định", v: "TCP · mã HTTP 200–399" },
+          { t: "Fail open", v: "mọi target unhealthy ⇒ gửi tất cả" },
+          { t: "Route 53", v: "Evaluate target health ⇒ failover đa Region" },
+          { t: "Cross-zone", v: "ALB luôn bật · NLB/GWLB tắt (NLB bật ⇒ phí)" },
+          { t: "Ví dụ 2+8", v: "bật 10% · tắt 25% / 6,25%" }
+        ] },
+        { t: "Thuộc tính target group", icon: "res/Amazon-EC2_Auto-Scaling.svg", c: [
+          { t: "Sticky", v: "AWSALB / app cookie, 1 s – 7 ngày (mặc định 1 ngày)" },
+          { t: "Bền vững hơn", v: "session ra ElastiCache/DynamoDB" },
+          { t: "Deregistration delay", v: "300 s (0–3.600) = connection draining" },
+          { t: "Slow start", v: "30–900 s, chỉ round robin" }
+        ] },
+        { t: "SSL/TLS", icon: "svc/AWS-Certificate-Manager.svg", c: [
+          { t: "ACM", v: "certificate ACM cấp tự gia hạn" },
+          { t: "SNI", v: "default cert + certificate list, nhiều domain một port" },
+          { t: "CLB", v: "không SNI ⇒ migrate" },
+          { t: "Mô hình", v: "termination · re-encryption · passthrough · mTLS (ALB)" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

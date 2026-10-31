@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 10 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/res/Amazon-VPC_Elastic-Network-Interface.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="10" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-10-ec2-networking-placement.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "sg", name: "Security Groups" },
+      { id: "ip", name: "Địa chỉ IP & Elastic IP" },
+      { id: "eni", name: "Elastic Network Interface" },
+      { id: "pg", name: "Placement Groups" },
+      { id: "net", name: "Enhanced networking & EFA" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Security Groups
+      { t: "sg", f: "Security group gắn ở mức nào?", b: "Mức <b>network interface (ENI)</b> – mọi IP trên cùng ENI chịu chung security group.", x: "Không gắn vào từng IP, không gắn vào subnet." },
+      { t: "sg", f: "Security group có rule deny không?", b: "<b>Không</b> – chỉ có rule <b>allow</b>. Chặn IP cụ thể ⇒ <b>Network ACL</b> hoặc AWS WAF." },
+      { t: "sg", f: "Security group mới tạo có rule gì?", b: "<b>Không có inbound</b> (chặn mọi traffic vào) và <b>một outbound allow all</b> (xóa được)." },
+      { t: "sg", f: "Default security group của VPC có rule gì?", b: "Inbound: All traffic từ <b>chính nó</b>. Outbound: All traffic tới 0.0.0.0/0.", x: "Sửa rule được nhưng không xóa được (Client.CannotDelete)." },
+      { t: "sg", f: "“Stateful” nghĩa là gì với security group?", b: "Phản hồi của traffic đã được allow <b>tự động được cho qua</b> bất kể rule chiều ngược lại – nhờ <b>connection tracking</b>." },
+      { t: "sg", f: "Nhiều security group gắn vào một instance được đánh giá thế nào?", b: "Mọi rule được <b>gộp (aggregate)</b> thành một tập duy nhất – không theo thứ tự." },
+      { t: "sg", f: "Sửa rule security group có cần restart instance không?", b: "<b>Không</b> – áp dụng ngay cho mọi instance đang gắn." },
+      { t: "sg", f: "Security group referencing là gì?", b: "Dùng <b>ID security group khác</b> làm source/destination ⇒ áp cho mọi instance mang SG đó, giao tiếp bằng private IP – hợp Auto Scaling." },
+      { t: "sg", f: "Tham chiếu security group dùng được qua những kết nối nào?", b: "Inbound: cùng VPC, <b>VPC peering</b>, <b>transit gateway</b>. Outbound: cùng VPC hoặc peering." },
+      { t: "sg", f: "Một rule tham chiếu security group tính bao nhiêu rule?", b: "<b>1 rule</b>, bất kể SG đó có bao nhiêu instance.", x: "Rule tham chiếu prefix list tính bằng max entries của list." },
+      { t: "sg", f: "Khi nào tham chiếu security group không có tác dụng?", b: "Traffic giữa hai instance đi qua <b>middlebox appliance</b> – phải dùng private IP/CIDR." },
+      { t: "sg", f: "Xóa rule SSH /32 có ngắt phiên SSH đang mở không?", b: "<b>Không</b> – kết nối tracked vẫn chạy tới khi timeout. Chặn ngay ⇒ thêm deny vào <b>NACL</b>." },
+      { t: "sg", f: "Untracked connection xảy ra khi nào?", b: "Rule TCP/UDP mở <b>0.0.0.0/0</b> và chiều ngược lại cũng mở mọi địa chỉ, mọi port. Xóa rule ⇒ <b>cắt ngay</b>." },
+      { t: "sg", f: "Security group có lọc được DNS tới Route 53 Resolver không?", b: "<b>Không</b> ⇒ dùng <b>Route 53 Resolver DNS Firewall</b>. IMDS, Time Sync (link-local) cũng không bị SG/NACL lọc." },
+      { t: "sg", f: "Quota security group quan trọng?", b: "<b>5 SG/ENI</b> (tăng tới 16) · <b>60 rule</b> inbound + 60 outbound/SG · 2.500 SG/Region." },
+      { t: "sg", f: "Vượt connection tracking allowance thì sao?", b: "Gói tin bị <b>drop</b> (không lập được kết nối mới). Theo dõi <code>conntrack_allowance_exceeded</code>; scale thêm hoặc instance lớn hơn." },
+      { t: "sg", f: "Security group vs Network ACL (4 điểm)?", b: "<b>SG</b>: gắn ENI, chỉ allow, stateful, gộp rule.<br><b>NACL</b>: gắn subnet, allow + deny, stateless, theo thứ tự số rule." },
+
+      // ---- IP
+      { t: "ip", f: "Stop/start ảnh hưởng tới private IPv4, public IPv4, EIP, IPv6 thế nào?", b: "Private IPv4 <b>giữ</b> · Public IPv4 tự gán <b>đổi mới</b> · Elastic IP <b>giữ</b> · IPv6 <b>giữ</b>." },
+      { t: "ip", f: "Elastic IP là gì?", b: "<b>Public IPv4 tĩnh</b>, thuộc account tới khi release, chỉ dùng trong <b>một Region</b>, remap sang instance/ENI khác được." },
+      { t: "ip", f: "Có Elastic IP cho IPv6 không?", b: "<b>Không.</b>" },
+      { t: "ip", f: "Quota Elastic IP mặc định?", b: "<b>5 EIP / Region</b> mỗi account – xin tăng qua Service Quotas.", x: "EIP từ pool BYOIP không tính vào quota." },
+      { t: "ip", f: "Terminate instance thì Elastic IP ra sao?", b: "Tự <b>disassociate</b>, vẫn thuộc account và <b>vẫn tính phí</b> tới khi release." },
+      { t: "ip", f: "Public IPv4 nào bị tính phí?", b: "<b>Mọi public IPv4</b>: EIP đang dùng, <b>EIP nhàn rỗi</b>, public IP của instance đang chạy (0,005 USD/giờ)." },
+      { t: "ip", f: "Gắn EIP vào instance đang có public IPv4 thì sao?", b: "Public IP cũ trả về pool; public DNS hostname đổi theo EIP. Gỡ EIP ⇒ nhận public IP mới." },
+      { t: "ip", f: "Launch vào subnet của nondefault VPC có public IP không?", b: "Phụ thuộc thuộc tính <b>auto-assign public IPv4</b> của subnet (mặc định không gán). Default VPC thì mặc định có." },
+      { t: "ip", f: "Public DNS hostname phân giải thế nào?", b: "Từ ngoài ⇒ <b>public IP/EIP</b>; từ trong VPC ⇒ <b>private IP</b>." },
+      { t: "ip", f: "Cách giảm chi phí public IPv4?", b: "Instance ở <b>private subnet sau load balancer</b>, tắt auto-assign, <b>EC2 Instance Connect Endpoint</b> cho SSH, release EIP nhàn rỗi, PrivateLink, IPv6." },
+
+      // ---- ENI
+      { t: "eni", f: "ENI mang những thuộc tính nào?", b: "Primary/secondary private IPv4, IPv6, EIP, public IPv4, <b>security groups</b>, <b>MAC address</b>, source/dest check flag." },
+      { t: "eni", f: "ENI gắn được cho instance ở AZ khác không?", b: "<b>Không</b> – ENI gắn với <b>một AZ</b>. Có thể khác subnet hoặc khác VPC cùng account (cùng AZ)." },
+      { t: "eni", f: "Primary network interface (eth0) có tháo được không?", b: "<b>Không.</b> Chỉ secondary ENI tháo được (khi running hoặc stopped)." },
+      { t: "eni", f: "Hot, warm, cold attach là gì?", b: "<b>Hot</b>: instance running · <b>Warm</b>: stopped · <b>Cold</b>: lúc launch." },
+      { t: "eni", f: "Gắn thêm ENI có tăng băng thông không?", b: "<b>Không</b> (không có NIC teaming). Muốn băng thông cao ⇒ type lớn hơn / hậu tố “n”, enhanced networking, nhiều network card." },
+      { t: "eni", f: "Giải pháp “low-budget high availability” bằng ENI?", b: "Instance lỗi ⇒ <b>chuyển secondary ENI</b> sang hot standby cùng AZ; giữ private IP, EIP, <b>MAC</b> ⇒ không sửa route/DNS." },
+      { t: "eni", f: "Instance làm NAT/router/firewall cần gì trên ENI?", b: "<b>Tắt source/destination check</b>." },
+      { t: "eni", f: "Requester-managed ENI là gì?", b: "ENI do dịch vụ AWS tạo trong VPC (RDS, NAT gateway, VPC endpoint, ELB, Lambda) – <b>không modify, không detach</b> được." },
+      { t: "eni", f: "Chỉ cần thêm IP cho instance (nhiều website/SSL) thì làm gì?", b: "Thêm <b>secondary private IPv4</b> vào primary ENI (mỗi IP gắn được một EIP).", x: "Nhiều ENI cùng subnet dễ gây asymmetric routing." },
+      { t: "eni", f: "Prefix delegation là gì?", b: "Gán cả <b>dải CIDR</b> cho ENI thay vì từng IP lẻ – tăng mật độ IP (nhiều pod/container)." },
+
+      // ---- Placement groups
+      { t: "pg", f: "Cluster placement group dùng khi nào?", b: "Cần <b>độ trễ thấp, throughput cao</b> giữa các node, traffic chủ yếu trong nhóm (HPC, MPI). Chỉ trong <b>1 AZ</b>." },
+      { t: "pg", f: "Băng thông single-flow trong cluster PG?", b: "Tới <b>10 Gbps</b> (ngoài PG: <b>5 Gbps</b>). Ra Internet/Direct Connect giới hạn 5 Gbps." },
+      { t: "pg", f: "Giảm lỗi insufficient capacity cho cluster PG thế nào?", b: "Launch đủ instance trong <b>một request</b>, <b>cùng instance type</b>; lỗi thì stop/start cả nhóm; hoặc tạo <b>ODCR</b> trong cluster PG." },
+      { t: "pg", f: "Partition placement group dùng khi nào?", b: "Workload lớn, phân tán, có nhân bản: <b>HDFS, HBase, Cassandra, Kafka</b>; mỗi partition có rack riêng; <b>topology-aware</b>." },
+      { t: "pg", f: "Giới hạn partition placement group?", b: "Tối đa <b>7 partition / AZ</b>, có thể nhiều AZ; số instance chỉ giới hạn bởi quota account." },
+      { t: "pg", f: "Spread placement group dùng khi nào?", b: "<b>Số ít instance quan trọng</b>, mỗi instance trên <b>phần cứng (rack) riêng</b> – giảm correlated failures." },
+      { t: "pg", f: "Giới hạn spread placement group (rack-level)?", b: "Tối đa <b>7 instance đang chạy / AZ / group</b>; Region 3 AZ ⇒ tối đa 21.", x: "Không hỗ trợ Dedicated Instances." },
+      { t: "pg", f: "Muốn đổi placement group của instance thì phải làm gì?", b: "Instance phải ở trạng thái <b>stopped</b> (modify-instance-placement). Không merge được placement group." },
+      { t: "pg", f: "Precision time placement group là gì?", b: "Đặt instance trên phần cứng có nguồn thời gian độ chính xác cao (PTP Hardware Clock) – DB phân tán, tài chính cần timestamp chính xác." },
+      { t: "pg", f: "Những thứ nào không launch được vào placement group?", b: "<b>Dedicated Hosts</b>; Spot cấu hình stop/hibernate khi interrupt.", x: "Capacity Blocks không hỗ trợ placement group." },
+      { t: "pg", f: "Cluster PG có highly available across AZs không?", b: "<b>Không</b> – đánh đổi availability lấy hiệu năng (1 AZ, lỗi ảnh hưởng nhiều instance)." },
+
+      // ---- Enhanced networking & EFA
+      { t: "net", f: "Enhanced networking dùng công nghệ gì và lợi ích?", b: "<b>SR-IOV</b> ⇒ băng thông cao, <b>PPS cao</b>, độ trễ thấp ổn định. <b>Không tốn thêm phí</b>." },
+      { t: "net", f: "ENA vs Intel 82599 VF?", b: "<b>ENA</b>: tới <b>100 Gbps</b>, mọi instance Nitro.<br><b>Intel 82599 VF</b>: tới <b>10 Gbps</b>, thế hệ cũ (C3, C4, M4…)." },
+      { t: "net", f: "ENA Express là gì?", b: "ENA chạy trên <b>SRD</b>: tăng single-flow từ <b>5 lên 25 Gbps</b> trong cùng Region, giảm tail latency.", x: "Cả hai đầu phải hỗ trợ và bật; không qua middlebox; không Local Zone." },
+      { t: "net", f: "Elastic Fabric Adapter (EFA) là gì?", b: "Network device cho <b>HPC/AI/ML tightly coupled</b>: <b>OS-bypass</b> qua <b>Libfabric</b>, dùng với <b>MPI, NCCL</b>, giao thức SRD." },
+      { t: "net", f: "EFA traffic có đi xuyên AZ/VPC được không?", b: "<b>Không</b> – không cross-AZ/VPC, không routable ⇒ node phải cùng AZ, thường kèm <b>cluster PG</b>." },
+      { t: "net", f: "EFA-only interface khác EFA thường?", b: "<b>EFA-only</b>: không IP networking, không gán IP, không làm primary interface. EFA thường có kèm ENA device." },
+      { t: "net", f: "Giới hạn khác của EFA?", b: "Một EFA mỗi instance (mỗi network card); <b>không hỗ trợ Outposts</b>; SG phải cho phép mọi traffic tới/từ <b>chính nó</b>." },
+      { t: "net", f: "EFA có tính phí không?", b: "<b>Không</b> – tính năng mạng tùy chọn, miễn phí." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>allow only the web tier to access the database, instances scale in and out</i>” ⇒ ?", b: "Inbound rule của sg-db với <b>source = sg-web</b>." },
+      { t: "kw", f: "Đề có “<i>block a specific malicious IP</i>” ⇒ ?", b: "<b>Network ACL</b> deny (hoặc AWS WAF cho HTTP/HTTPS)." },
+      { t: "kw", f: "Đề có “<i>must explicitly allow return traffic / ephemeral ports</i>” ⇒ ?", b: "<b>NACL</b> (stateless)." },
+      { t: "kw", f: "Đề có “<i>partners whitelist a fixed public IP; must not change after stop/start</i>” ⇒ ?", b: "<b>Elastic IP</b> (nhiều instance: NLB/NAT gateway có EIP)." },
+      { t: "kw", f: "Đề có “<i>mask the failure of an instance by rapidly remapping the address</i>” ⇒ ?", b: "<b>Elastic IP</b>." },
+      { t: "kw", f: "Đề có “<i>license tied to a MAC address; fail over to a standby quickly</i>” ⇒ ?", b: "Chuyển <b>secondary ENI</b> sang standby cùng AZ." },
+      { t: "kw", f: "Đề có “<i>HPC, MPI, tightly coupled, lowest latency</i>” ⇒ ?", b: "<b>Cluster placement group + EFA</b>." },
+      { t: "kw", f: "Đề có “<i>Cassandra/HDFS/Kafka, hundreds of instances, topology-aware</i>” ⇒ ?", b: "<b>Partition placement group</b>." },
+      { t: "kw", f: "Đề có “<i>small number of critical instances, each on distinct hardware</i>” ⇒ ?", b: "<b>Spread placement group</b> (≤ 7/AZ)." },
+      { t: "kw", f: "Đề có “<i>higher bandwidth, higher PPS, lower latency, no extra cost</i>” ⇒ ?", b: "<b>Enhanced networking (ENA)</b>." },
+      { t: "kw", f: "Đề có “<i>increase single TCP flow bandwidth beyond 5 Gbps</i>” ⇒ ?", b: "<b>ENA Express</b> (25 Gbps) hoặc cluster PG (10 Gbps)." }
+    ],
+
+    pairs: [
+      ["Security group", "Tường lửa ảo gắn ENI, chỉ allow, stateful"],
+      ["Network ACL", "Gắn subnet, allow + deny, stateless"],
+      ["Connection tracking", "Cơ chế làm security group stateful"],
+      ["Security group referencing", "Dùng ID SG khác làm source/destination"],
+      ["Prefix list", "Tập CIDR dùng lại, tính theo max entries"],
+      ["Stale rule", "Rule tham chiếu SG peer đã bị xóa"],
+      ["DNS Firewall", "Lọc truy vấn DNS mà SG không chặn được"],
+      ["Elastic IP", "Public IPv4 tĩnh, remap được, 5/Region"],
+      ["BYOIP", "Mang dải IP của mình lên AWS"],
+      ["Reverse DNS record", "IP ⇒ tên, dùng khi gửi email từ EC2"],
+      ["ENI", "Card mạng ảo gắn với một AZ"],
+      ["Source/destination check", "Tắt khi làm NAT, router, firewall"],
+      ["Requester-managed ENI", "ENI do dịch vụ AWS tạo, không detach được"],
+      ["Prefix delegation", "Gán cả dải CIDR cho ENI"],
+      ["Dual-homed instance", "Instance nối hai mạng qua hai ENI"],
+      ["Cluster PG", "1 AZ, độ trễ thấp, throughput cao"],
+      ["Partition PG", "Partition có rack riêng, ≤ 7/AZ"],
+      ["Spread PG", "Mỗi instance phần cứng riêng, ≤ 7/AZ"],
+      ["Correlated failure", "Nhiều instance hỏng cùng lúc vì chung phần cứng"],
+      ["SR-IOV", "Ảo hóa I/O hiệu năng cao của enhanced networking"],
+      ["ENA", "Adapter mạng tới 100 Gbps trên Nitro"],
+      ["ENA Express", "SRD, single-flow tới 25 Gbps"],
+      ["EFA", "OS-bypass cho HPC/ML qua Libfabric"],
+      ["OS-bypass", "Ứng dụng nói thẳng với thiết bị mạng"],
+      ["Tail latency", "Độ trễ của các request chậm nhất (p99)"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn placement group",
+        desc: "Cluster, partition hay spread cho tình huống/đặc điểm này?",
+        buckets: ["Cluster", "Partition", "Spread"],
+        items: [
+          ["CFD chạy MPI, hàng trăm node trao đổi liên tục", 0, "độ trễ thấp nhất"],
+          ["ML training phân tán cần mạng nhanh", 0, "high-bisection bandwidth"],
+          ["Chỉ trong một AZ, 10 Gbps single-flow", 0, "đặc điểm cluster"],
+          ["Cassandra 150 node, đặt replica theo rack", 1, "topology-aware"],
+          ["HDFS, HBase, Kafka", 1, "hệ phân tán có nhân bản"],
+          ["Tối đa 7 partition mỗi AZ, instance không giới hạn", 1, "chỉ bị quota account"],
+          ["5 instance critical, một lỗi rack chỉ ảnh hưởng 1 instance", 2, "mỗi instance một rack"],
+          ["Primary/secondary DB tự quản, quorum node", 2, "số ít instance quan trọng"],
+          ["Tối đa 7 instance đang chạy mỗi AZ", 2, "giới hạn spread"]
+        ]
+      },
+      {
+        title: "Security group hay Network ACL?",
+        desc: "Đặc điểm/yêu cầu thuộc thành phần nào?",
+        buckets: ["Security group", "Network ACL"],
+        items: [
+          ["Gắn vào network interface", 0, "mức instance"],
+          ["Chỉ có rule allow", 0, "không có deny"],
+          ["Phản hồi tự được cho qua (stateful)", 0, "connection tracking"],
+          ["Gộp tất cả rule để đánh giá", 0, "không theo thứ tự"],
+          ["Dùng ID security group khác làm nguồn", 0, "referencing"],
+          ["Gắn vào subnet", 1, "mức subnet"],
+          ["Có rule deny để chặn IP cụ thể", 1, "allow và deny"],
+          ["Phải mở cả chiều về (ephemeral ports)", 1, "stateless"],
+          ["Đánh giá theo thứ tự số rule", 1, "first match"],
+          ["Chặn là cắt ngay kết nối đang có", 1, "không tracking"]
+        ]
+      },
+      {
+        title: "Địa chỉ nào sau stop/start?",
+        desc: "Sau khi stop rồi start instance (EBS-backed), địa chỉ giữ nguyên hay đổi?",
+        buckets: ["Giữ nguyên", "Bị release / đổi"],
+        items: [
+          ["Primary private IPv4", 0, "giữ tới khi terminate"],
+          ["Elastic IP", 0, "vẫn gắn"],
+          ["Địa chỉ IPv6", 0, "giữ nguyên"],
+          ["Secondary private IPv4", 0, "nằm trên ENI"],
+          ["MAC address của ENI", 0, "đi theo ENI"],
+          ["Public IPv4 tự gán", 1, "nhận IP mới khi start"],
+          ["Public DNS hostname dựa trên public IP tự gán", 1, "đổi theo public IP"]
+        ]
+      },
+      {
+        title: "Tình huống ⇒ tính năng mạng",
+        desc: "Chọn tính năng phù hợp nhất cho từng yêu cầu.",
+        buckets: ["Security group referencing", "Elastic IP", "Secondary ENI", "Enhanced networking / ENA Express", "EFA + cluster PG", "Network ACL"],
+        items: [
+          ["DB chỉ nhận cổng 3306 từ web tier co giãn", 0, "source = sg-web"],
+          ["Đối tác whitelist một IP cố định của một instance", 1, "public IPv4 tĩnh"],
+          ["Thay instance hỏng mà không đổi IP công khai", 1, "remap EIP"],
+          ["License theo MAC, failover sang standby giá rẻ", 2, "ENI mang MAC"],
+          ["Tách traffic quản trị khỏi traffic ứng dụng", 2, "ENI ở subnet quản trị"],
+          ["Tăng PPS, giảm độ trễ, không tốn thêm phí", 3, "SR-IOV"],
+          ["Một luồng TCP cần hơn 5 Gbps giữa hai instance", 3, "ENA Express tới 25 Gbps"],
+          ["HPC chạy MPI cần OS-bypass", 4, "Libfabric"],
+          ["Chặn ngay IP đang tấn công SSH", 5, "deny, stateless"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Security group chỉ có rule allow.", true, "Không có rule deny."],
+      ["Security group đánh giá rule theo thứ tự số rule, khớp đầu tiên được áp dụng.", false, "Đó là NACL; security group gộp mọi rule."],
+      ["Security group mới tạo có outbound rule cho phép mọi traffic ra.", true, "Và không có inbound rule."],
+      ["Thay đổi rule security group chỉ áp cho instance launch sau đó.", false, "Áp ngay cho mọi instance đang gắn."],
+      ["Có thể xóa default security group của VPC.", false, "Không xóa được (Client.CannotDelete)."],
+      ["Instance gắn default SG nói chuyện được với nhau mọi port.", true, "Inbound All traffic từ chính SG đó."],
+      ["Phản hồi của traffic inbound đã được allow được đi ra bất kể outbound rules.", true, "Security group là stateful."],
+      ["Xóa rule SSH /32 sẽ ngắt ngay phiên SSH đang mở.", false, "Kết nối tracked vẫn chạy tới khi timeout; dùng NACL để cắt ngay."],
+      ["Security group có thể chặn truy vấn DNS tới Route 53 Resolver.", false, "Dùng Route 53 Resolver DNS Firewall."],
+      ["Tham chiếu security group trong inbound rule dùng được qua VPC peering.", true, "Cả transit gateway (inbound)."],
+      ["Mặc định một network interface gắn được tối đa 5 security group.", true, "Tăng tới 16."],
+      ["Một rule tham chiếu security group tính bằng số instance trong SG đó.", false, "Chỉ tính 1 rule."],
+      ["Public IPv4 tự gán được giữ nguyên khi stop/start.", false, "Bị release, nhận IP mới."],
+      ["Elastic IP vẫn gắn với instance sau khi stop/start.", true, "EIP là static."],
+      ["Elastic IP chuyển được sang Region khác.", false, "Chỉ dùng trong một Region."],
+      ["AWS không tính phí Elastic IP nhàn rỗi.", false, "Mọi public IPv4 đều tính phí, kể cả EIP nhàn rỗi."],
+      ["Quota mặc định là 5 Elastic IP mỗi Region.", true, "Tăng qua Service Quotas."],
+      ["Có Elastic IP cho IPv6.", false, "Không có EIP cho IPv6."],
+      ["ENI có thể gắn vào instance ở AZ khác.", false, "ENI gắn với một AZ."],
+      ["Gắn thêm ENI giúp tăng gấp đôi băng thông của instance.", false, "Không có NIC teaming; cần type lớn hơn/nhiều network card."],
+      ["Khi chuyển ENI sang instance khác, MAC address đi theo ENI.", true, "Cùng private IP, EIP, security group."],
+      ["Primary network interface (eth0) có thể tháo khỏi instance.", false, "Chỉ secondary ENI tháo được."],
+      ["Instance làm NAT phải tắt source/destination check.", true, "Mặc định bật."],
+      ["Bạn có thể detach ENI của NAT gateway.", false, "Requester-managed ENI không detach được."],
+      ["Cluster placement group có thể trải qua nhiều AZ.", false, "Chỉ trong 1 AZ."],
+      ["Partition placement group cho tối đa 7 partition mỗi AZ.", true, "Có thể nhiều AZ."],
+      ["Spread placement group cho tối đa 7 instance đang chạy mỗi AZ mỗi group.", true, "Instance thứ 8 trong AZ sẽ không launch được."],
+      ["Spread placement group phù hợp Cassandra 150 node.", false, "Giới hạn 7/AZ không đủ; dùng partition PG."],
+      ["Muốn chuyển instance sang placement group khác, instance phải stopped.", true, "Dùng modify-instance-placement."],
+      ["Có thể launch Dedicated Host vào placement group.", false, "Không hỗ trợ."],
+      ["Enhanced networking tốn thêm phí theo giờ.", false, "Không tốn thêm phí."],
+      ["ENA hỗ trợ tốc độ tới 100 Gbps.", true, "Intel 82599 VF chỉ tới 10 Gbps."],
+      ["ENA Express tăng single-flow bandwidth lên tới 25 Gbps.", true, "Từ 5 Gbps, trong cùng Region."],
+      ["EFA traffic có thể đi xuyên AZ.", false, "Không cross-AZ/VPC, không routable."],
+      ["EFA dùng OS-bypass qua Libfabric cho MPI và NCCL.", true, "Bỏ qua kernel/TCP-IP stack."],
+      ["EFA được hỗ trợ trên AWS Outposts.", false, "Không hỗ trợ trên Outposts."]
+    ],
+
+    map: {
+      t: "Bài 10 · Mạng EC2 & Placement",
+      c: [
+        { t: "Security Groups", icon: "res/Firewall.svg", c: [
+          { t: "Bản chất", v: "tường lửa ảo gắn ENI, chỉ allow, stateful" },
+          { t: "SG mới", v: "không inbound, outbound all" },
+          { t: "Default SG", v: "inbound từ chính nó, không xóa được" },
+          { t: "Referencing", v: "source = sg-xxx, hợp Auto Scaling" },
+          { t: "Tracking", v: "xóa rule không cắt kết nối tracked ⇒ NACL" },
+          { t: "Quota", v: "5 SG/ENI (16) · 60 rule mỗi chiều" }
+        ] },
+        { t: "IP & Elastic IP", icon: "res/Amazon-EC2_Elastic-IP-Address.svg", c: [
+          { t: "Stop/start", v: "public IPv4 đổi; private, IPv6, EIP giữ" },
+          { t: "Elastic IP", v: "static, 1 Region, remap, 5/Region" },
+          { t: "Terminate", v: "EIP tự disassociate, vẫn thuộc account" },
+          { t: "Chi phí", v: "mọi public IPv4, kể cả EIP nhàn rỗi" },
+          { t: "Giảm phí", v: "ALB + private subnet, Instance Connect Endpoint" }
+        ] },
+        { t: "ENI", icon: "res/Amazon-VPC_Elastic-Network-Interface.svg", c: [
+          { t: "Mang theo", v: "private IP, EIP, MAC, security group" },
+          { t: "Phạm vi", v: "gắn với 1 AZ; eth0 không tháo được" },
+          { t: "Use case", v: "management network, appliance, dual-homed, failover giá rẻ" },
+          { t: "Bẫy", v: "không tăng băng thông; NAT ⇒ tắt src/dst check" },
+          { t: "Requester-managed", v: "RDS, NAT GW, ELB, Lambda – không detach" }
+        ] },
+        { t: "Placement Groups", icon: "res/Amazon-EC2_Instances.svg", c: [
+          { t: "Cluster", v: "1 AZ, độ trễ thấp, 10 Gbps/flow, HPC" },
+          { t: "Partition", v: "≤ 7 partition/AZ, rack riêng, HDFS/Cassandra" },
+          { t: "Spread", v: "≤ 7 instance/AZ, mỗi instance một rack" },
+          { t: "Precision time", v: "nguồn thời gian chính xác, PTP" },
+          { t: "Quy tắc", v: "đổi placement khi stopped, không merge" }
+        ] },
+        { t: "Enhanced networking & EFA", icon: "res/Amazon-VPC_Elastic-Network-Adapter.svg", c: [
+          { t: "Enhanced networking", v: "SR-IOV, PPS cao, miễn phí" },
+          { t: "ENA / Intel VF", v: "100 Gbps (Nitro) / 10 Gbps (đời cũ)" },
+          { t: "ENA Express", v: "SRD, single-flow 5 ⇒ 25 Gbps" },
+          { t: "EFA", v: "OS-bypass, Libfabric, MPI/NCCL" },
+          { t: "Giới hạn EFA", v: "không cross-AZ/VPC, không Outposts" }
+        ] },
+        { t: "Kết hợp kiến trúc", icon: "cat/Compute.svg", c: [
+          { t: "HPC/CFD", v: "cluster PG + EFA, cùng type, 1 request" },
+          { t: "Web 3 tầng", v: "chuỗi SG: ALB ⇐ 0.0.0.0/0, web ⇐ sg-alb, DB ⇐ sg-web" },
+          { t: "Chặn IP tấn công", v: "NACL deny / AWS WAF" },
+          { t: "IP cố định cho đối tác", v: "EIP / NAT GW có EIP / NLB có EIP" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

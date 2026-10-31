@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 28 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-DynamoDB.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="28" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-28-dynamodb.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "ovw", name: "Tổng quan & mô hình dữ liệu" },
+      { id: "cap", name: "Capacity · RCU/WCU" },
+      { id: "idx", name: "GSI & LSI" },
+      { id: "dax", name: "DAX" },
+      { id: "str", name: "Streams & TTL" },
+      { id: "gt", name: "Global Tables" },
+      { id: "bk", name: "Backup & bảo mật" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Tổng quan & mô hình
+      { t: "ovw", f: "Amazon DynamoDB là gì?", b: "CSDL <b>NoSQL serverless</b>, fully managed, <b>key-value & document</b>, độ trễ <b>single-digit millisecond</b> ở mọi quy mô." },
+      { t: "ovw", f: "Độ sẵn sàng mặc định của bảng DynamoDB một Region?", b: "Tự sao chép qua <b>3 AZ</b>, SLA <b>99,99%</b>.", x: "Global Tables: SLA 99,999%." },
+      { t: "ovw", f: "DynamoDB có JOIN không? AWS khuyên gì?", b: "<b>Không có JOIN</b>; AWS khuyên <b>denormalize</b> mô hình dữ liệu.", x: "Vẫn có strongly consistent read và ACID transactions." },
+      { t: "ovw", f: "DynamoDB xác thực người dùng thế nào?", b: "<b>Chỉ IAM</b>, không có user name/password DB." },
+      { t: "ovw", f: "DynamoDB có version / maintenance window không?", b: "<b>Không</b>: không version, không maintenance window, bảo trì zero downtime." },
+      { t: "ovw", f: "Kích thước tối đa một item?", b: "<b>400 KB</b> (tính cả tên và giá trị attribute).", x: "Vượt ⇒ ValidationException." },
+      { t: "ovw", f: "Item lớn hơn 400 KB thì xử lý thế nào?", b: "Nén attribute · chia thành nhiều item (vertical partitioning) · <b>lưu object trong S3, chỉ lưu S3 object key</b> trong item." },
+      { t: "ovw", f: "Simple primary key vs composite primary key?", b: "<b>Simple</b>: chỉ partition key (hash), không trùng.<br><b>Composite</b>: partition key + sort key (range); trùng partition key nhưng khác sort key." },
+      { t: "ovw", f: "Kiểu dữ liệu cho attribute của primary key?", b: "Chỉ <b>String, Number hoặc Binary</b> (scalar)." },
+      { t: "ovw", f: "Giới hạn throughput của một partition?", b: "<b>3.000 read unit/giây</b> và <b>1.000 write unit/giây</b>." },
+      { t: "ovw", f: "Hot partition là gì? Cách tránh?", b: "Request dồn vào vài giá trị partition key ⇒ throttle. Tránh: key <b>cardinality cao</b> (UserID, DeviceID) hoặc <b>write sharding</b> (thêm hậu tố).", x: "Tăng WCU không vượt được giới hạn một partition." },
+      { t: "ovw", f: "Adaptive capacity là gì?", b: "DynamoDB <b>tự cân bằng capacity cho partition nóng</b> (cả on-demand và provisioned), nhưng không vượt 3.000/1.000 của một partition." },
+      { t: "ovw", f: "Eventually consistent vs strongly consistent read?", b: "<b>Eventually</b> (mặc định): có thể chưa thấy ghi mới, giá <b>một nửa</b>.<br><b>Strongly</b>: luôn mới nhất, chỉ <b>Table và LSI</b>, giá gấp đôi." },
+      { t: "ovw", f: "Scan khác Query thế nào về chi phí?", b: "<b>Scan</b> đọc toàn bộ bảng, tốn capacity theo dữ liệu đọc. Truy vấn thường xuyên theo attribute không phải key ⇒ tạo <b>GSI rồi Query</b>." },
+      { t: "ovw", f: "Quota số bảng mỗi account / Region?", b: "Ban đầu <b>2.500 bảng</b> / Region (xin tăng tới 10.000)." },
+
+      // ---- Capacity
+      { t: "cap", f: "1 RCU bằng bao nhiêu?", b: "<b>1 strongly consistent read/giây</b> hoặc <b>2 eventually consistent read/giây</b> cho item tới <b>4 KB</b>." },
+      { t: "cap", f: "1 WCU bằng bao nhiêu?", b: "<b>1 write/giây</b> cho item tới <b>1 KB</b>." },
+      { t: "cap", f: "Công thức nhanh tính RCU?", b: "⌈item / 4 KB⌉ × số lần đọc/giây; <b>chia 2</b> nếu eventually; <b>nhân 2</b> nếu transactional.", x: "Luôn làm tròn kích thước item lên trước rồi mới nhân." },
+      { t: "cap", f: "Đọc strongly consistent 100 item/giây, mỗi item 6 KB ⇒ bao nhiêu RCU?", b: "6/4 = 1,5 ⇒ làm tròn <b>2</b> ⇒ 2 × 100 = <b>200 RCU</b>.", x: "Eventually consistent ⇒ 100 RCU." },
+      { t: "cap", f: "Ghi 20 item/giây, mỗi item 2,5 KB ⇒ bao nhiêu WCU?", b: "Làm tròn <b>3 WCU</b>/item ⇒ <b>60 WCU</b>." },
+      { t: "cap", f: "RRU / WRU là gì?", b: "Read/write <b>request unit</b>: đơn vị tính tiền của <b>on-demand</b>, định nghĩa giống RCU/WCU." },
+      { t: "cap", f: "Đặc điểm on-demand capacity mode?", b: "<b>Mặc định</b>, trả theo request, không capacity planning; tức thì phục vụ tới <b>gấp đôi đỉnh trước</b>.", x: "Vượt quá gấp đôi trong 30 phút có thể throttle ⇒ pre-warm (warm throughput)." },
+      { t: "cap", f: "Bảng on-demand mới chịu ngay bao nhiêu?", b: "<b>4.000 ghi/s</b> và <b>12.000 đọc/s</b>." },
+      { t: "cap", f: "Đặc điểm provisioned capacity mode?", b: "Khai báo trước RCU/WCU, <b>trả theo giờ</b> dù dùng hay không; auto scaling target tracking (khuyên <b>70%</b>); reserved capacity." },
+      { t: "cap", f: "Vượt capacity provisioned thì sao?", b: "Request bị <b>throttle</b> (ProvisionedThroughputExceededException)." },
+      { t: "cap", f: "Giới hạn chuyển đổi capacity mode?", b: "Provisioned → on-demand: <b>tối đa 4 lần / 24 giờ</b>. On-demand → provisioned: bất cứ lúc nào." },
+      { t: "cap", f: "Giới hạn giảm capacity provisioned trong ngày?", b: "Đầu ngày 4 lần, mỗi giờ thêm 1 ⇒ tối đa <b>27 lần/ngày</b>. Tăng: không giới hạn." },
+      { t: "cap", f: "Throughput mặc định mỗi bảng?", b: "<b>40.000 RCU + 40.000 WCU</b> (tăng được). Provisioned / account / Region: 80.000 + 80.000." },
+      { t: "cap", f: "Table class Standard-IA dùng khi nào?", b: "Bảng mà <b>chi phí lưu trữ là chủ yếu</b> (log, lịch sử đơn hàng); storage rẻ hơn nhưng đọc/ghi đắt hơn." },
+
+      // ---- Index
+      { t: "idx", f: "GSI là gì?", b: "Index có <b>partition key/sort key khác hoàn toàn</b> bảng gốc, truy vấn mọi partition, throughput riêng." },
+      { t: "idx", f: "LSI là gì?", b: "Index <b>cùng partition key, khác sort key</b>; dùng RCU/WCU của bảng gốc." },
+      { t: "idx", f: "Thời điểm tạo GSI vs LSI?", b: "<b>GSI</b>: thêm/xóa bất cứ lúc nào.<br><b>LSI</b>: <b>chỉ tạo lúc tạo bảng</b>, không thêm, không xóa." },
+      { t: "idx", f: "Read consistency của GSI vs LSI?", b: "<b>GSI</b>: chỉ eventually consistent.<br><b>LSI</b>: eventually hoặc <b>strongly consistent</b>." },
+      { t: "idx", f: "Quota index mỗi bảng?", b: "<b>20 GSI</b> (mặc định, tăng được) + <b>5 LSI</b>." },
+      { t: "idx", f: "Giới hạn kích thước của LSI?", b: "Mỗi giá trị partition key: tổng item đã index <b>≤ 10 GB</b>. GSI không giới hạn." },
+      { t: "idx", f: "Projected attributes có những kiểu nào?", b: "<b>KEYS_ONLY</b>, <b>INCLUDE</b>, <b>ALL</b>; key của bảng luôn được chiếu." },
+      { t: "idx", f: "GSI của bảng provisioned thiếu WCU thì sao?", b: "Ghi vào bảng gốc cũng bị <b>throttle</b> (back-pressure) ⇒ cấp đủ WCU cho GSI." },
+
+      // ---- DAX
+      { t: "dax", f: "DynamoDB Accelerator (DAX) là gì?", b: "Cache <b>in-memory</b>, fully managed, <b>tương thích API DynamoDB</b>; đọc từ mili-giây xuống <b>micro-giây</b> (tới 10×)." },
+      { t: "dax", f: "DAX xử lý đọc strongly consistent thế nào?", b: "<b>Chuyển thẳng tới DynamoDB</b>, không cache kết quả." },
+      { t: "dax", f: "DAX xử lý ghi thế nào?", b: "<b>Write-through</b>: ghi bảng DynamoDB trước rồi vào DAX; thành công khi ghi được cả hai." },
+      { t: "dax", f: "Item cache vs query cache của DAX?", b: "<b>Item cache</b>: GetItem/BatchGetItem, TTL mặc định <b>5 phút</b>.<br><b>Query cache</b>: Query/Scan, TTL riêng. Cả hai dùng LRU." },
+      { t: "dax", f: "Cluster DAX tối đa bao nhiêu node? Cấu hình production?", b: "1 primary + tối đa 10 read replica = <b>11 node</b>. Production: <b>≥ 3 node ở 3 AZ</b>." },
+      { t: "dax", f: "DAX chạy ở đâu, truy cập qua port nào?", b: "Trong <b>VPC</b>, qua security group <b>TCP 8111</b>; chỉ phục vụ bảng cùng Region." },
+      { t: "dax", f: "Khi nào KHÔNG nên dùng DAX?", b: "Cần <b>strongly consistent</b> · ứng dụng <b>ghi nhiều</b> · ít đọc lặp lại · không cần micro-giây.", x: "DAX tốt nhất khi cache hit rate &gt; 90%." },
+      { t: "dax", f: "DAX khác ElastiCache khi cache cho DynamoDB?", b: "<b>DAX</b>: API-compatible, write-through tự động.<br><b>ElastiCache</b>: cache đa dụng, phải <b>tự viết logic cache</b>." },
+
+      // ---- Streams & TTL
+      { t: "str", f: "DynamoDB Streams là gì? Lưu bao lâu?", b: "Ghi lại thay đổi cấp item theo thứ tự (<b>CDC</b>), lưu <b>24 giờ</b>." },
+      { t: "str", f: "Đảm bảo của DynamoDB Streams?", b: "Mỗi record xuất hiện <b>đúng một lần</b> (exactly once), đúng thứ tự thay đổi của từng item." },
+      { t: "str", f: "4 StreamViewType?", b: "<b>KEYS_ONLY · NEW_IMAGE · OLD_IMAGE · NEW_AND_OLD_IMAGES</b>.", x: "Không sửa được sau khi bật." },
+      { t: "str", f: "Mỗi shard nên có tối đa bao nhiêu tiến trình đọc?", b: "<b>2</b> (global table: 1) để tránh throttle." },
+      { t: "str", f: "Mẫu kiến trúc Streams + Lambda?", b: "Event source mapping ⇒ Lambda chạy khi có record mới, vd gửi email chào mừng qua <b>Amazon SES</b>." },
+      { t: "str", f: "DynamoDB Streams vs Kinesis Data Streams for DynamoDB?", b: "<b>Streams</b>: 24 giờ, ≤ 2 consumer/shard, exactly once.<br><b>Kinesis</b>: lưu lâu hơn, nhiều consumer, có thể trùng lặp." },
+      { t: "str", f: "TTL attribute phải định dạng gì?", b: "Kiểu <b>Number</b>, <b>Unix epoch time tính bằng giây</b>.", x: "Chuỗi ISO 8601 ⇒ TTL bỏ qua." },
+      { t: "str", f: "TTL xóa item khi nào, có tốn WCU không?", b: "Trong vòng <b>vài ngày</b> sau khi hết hạn, <b>không tốn write throughput</b>." },
+      { t: "str", f: "Item hết hạn nhưng chưa bị xóa có xuất hiện khi đọc không?", b: "<b>Có</b> ⇒ dùng <b>filter expression</b> để loại khỏi kết quả." },
+      { t: "str", f: "Item bị TTL xóa có vào Streams không?", b: "<b>Có</b>, dưới dạng <b>service deletion</b> (không phải user delete); cũng bị xóa khỏi LSI/GSI." },
+
+      // ---- Global Tables
+      { t: "gt", f: "Global Tables là gì?", b: "Bảng tự sao chép qua nhiều Region, <b>multi-active</b>: mọi replica đọc và ghi, không có bảng primary." },
+      { t: "gt", f: "Mỗi Region có tối đa bao nhiêu replica của một global table?", b: "<b>1 replica / Region</b>; global table gồm ≥ 2 replica." },
+      { t: "gt", f: "MREC hoạt động thế nào?", b: "Mặc định; <b>bất đồng bộ</b>, thường ≤ 1 giây; xung đột ⇒ <b>last writer wins</b>; RPO bằng độ trễ replication." },
+      { t: "gt", f: "MRSC hoạt động thế nào?", b: "<b>Đồng bộ</b> tới ≥ 1 Region khác trước khi trả thành công; strongly consistent read luôn mới nhất; <b>RPO = 0</b>; ghi chậm hơn." },
+      { t: "gt", f: "MRSC triển khai bao nhiêu Region? Hạn chế gì?", b: "<b>Đúng 3 Region</b> (3 replica hoặc 2 replica + 1 witness). Không hỗ trợ <b>TTL, LSI, transaction</b>; chỉ same-account." },
+      { t: "gt", f: "Global Tables không đồng bộ những gì?", b: "<b>PITR</b>, deletion protection, tag, resource policy ⇒ bật PITR trên từng replica." },
+      { t: "gt", f: "Global Tables khác Aurora Global Database?", b: "<b>Global Tables</b>: mọi Region ghi, không cần promote.<br><b>Aurora Global DB</b>: 1 Region ghi, cần switchover/failover." },
+      { t: "gt", f: "Đổi consistency mode của global table sau khi tạo được không?", b: "<b>Không</b>; mọi replica phải cùng mode." },
+
+      // ---- Backup & bảo mật
+      { t: "bk", f: "PITR của DynamoDB?", b: "Backup liên tục, khôi phục tới <b>từng giây</b> trong <b>1–35 ngày</b> (mặc định 35); restore luôn tạo <b>bảng mới</b>.", x: "Phải bật trên bảng; không tốn capacity." },
+      { t: "bk", f: "On-demand backup dùng khi nào?", b: "Backup đầy đủ, <b>giữ lâu dài</b> cho tuân thủ; tích hợp <b>AWS Backup</b> (cross-account/Region, cold storage)." },
+      { t: "bk", f: "Encryption at rest của DynamoDB?", b: "<b>Luôn bật mặc định</b> bằng KMS: AWS owned key (mặc định), AWS managed key hoặc customer managed key." },
+      { t: "bk", f: "Truy cập DynamoDB từ private subnet không qua Internet/NAT?", b: "<b>Gateway VPC endpoint</b> (miễn phí, qua route table) hoặc interface endpoint." },
+      { t: "bk", f: "Phân tích phức tạp dữ liệu DynamoDB mà không ảnh hưởng bảng?", b: "<b>Export to S3</b> (+ Athena) hoặc <b>zero-ETL</b> sang Redshift/OpenSearch." },
+      { t: "bk", f: "Mỗi user chỉ truy cập item có partition key = user ID ⇒ ?", b: "<b>IAM fine-grained access control</b> (vd <code>dynamodb:LeadingKeys</code>), thường kết hợp Cognito." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>NoSQL, key-value, single-digit ms at any scale, serverless database</i>” ⇒ ?", b: "<b>Amazon DynamoDB</b>." },
+      { t: "kw", f: "Đề có “<i>complex JOINs, ad hoc SQL reports, foreign keys</i>” ⇒ ?", b: "<b>RDS / Aurora</b>, không phải DynamoDB." },
+      { t: "kw", f: "Đề có “<i>unpredictable traffic, spiky, pay only for what you use</i>” ⇒ ?", b: "<b>On-demand</b> capacity mode." },
+      { t: "kw", f: "Đề có “<i>steady, predictable traffic, most cost-effective</i>” ⇒ ?", b: "<b>Provisioned + auto scaling</b> (+ reserved capacity)." },
+      { t: "kw", f: "Đề có “<i>throttle on a few keys while total capacity is unused</i>” ⇒ ?", b: "Sửa <b>partition key design</b> / write sharding (DAX nếu là đọc)." },
+      { t: "kw", f: "Đề có “<i>query on a non-key attribute, avoid Scan</i>” ⇒ ?", b: "<b>GSI</b> với attribute đó làm partition key." },
+      { t: "kw", f: "Đề có “<i>microsecond latency, same items read repeatedly, minimal code changes</i>” ⇒ ?", b: "<b>DAX</b>." },
+      { t: "kw", f: "Đề có “<i>react to every insert/update, trigger workflow when item changes</i>” ⇒ ?", b: "<b>DynamoDB Streams + Lambda</b>." },
+      { t: "kw", f: "Đề có “<i>automatically delete session data after 24 hours, no extra cost</i>” ⇒ ?", b: "<b>TTL</b>." },
+      { t: "kw", f: "Đề có “<i>multi-Region active-active, 99.999%, low-latency reads and writes worldwide</i>” ⇒ ?", b: "<b>DynamoDB Global Tables</b>.", x: "“Strongly consistent across Regions, RPO 0” ⇒ MRSC." },
+      { t: "kw", f: "Đề có “<i>restore to any second in the last 35 days</i>” ⇒ ?", b: "<b>PITR</b> (restore ra bảng mới)." }
+    ],
+
+    pairs: [
+      ["Partition key", "Khóa được băm để chọn partition lưu item"],
+      ["Sort key", "Sắp xếp các item cùng partition key"],
+      ["Composite primary key", "Partition key + sort key"],
+      ["Hot partition", "Tải dồn vào một key ⇒ bị throttle"],
+      ["Write sharding", "Thêm hậu tố vào key để rải ghi"],
+      ["Adaptive capacity", "Tự cân bằng capacity cho partition nóng"],
+      ["RCU", "1 strongly / 2 eventually read/s cho 4 KB"],
+      ["WCU", "1 write/s cho item tới 1 KB"],
+      ["RRU / WRU", "Đơn vị tính tiền theo request của on-demand"],
+      ["Throttling", "Request bị từ chối khi vượt capacity"],
+      ["Warm throughput", "Mức phục vụ tức thì, pre-warm trước sự kiện"],
+      ["Standard-IA", "Table class rẻ storage, đắt request"],
+      ["GSI", "Khóa bất kỳ, thêm lúc nào, eventually consistent"],
+      ["LSI", "Cùng partition key, tạo cùng bảng, strongly được"],
+      ["Projected attributes", "KEYS_ONLY / INCLUDE / ALL"],
+      ["DAX", "Cache in-memory micro-giây cho DynamoDB"],
+      ["Write-through", "Ghi bảng rồi cập nhật cache cùng thao tác"],
+      ["DynamoDB Streams", "Luồng CDC thay đổi item, giữ 24 giờ"],
+      ["StreamViewType", "KEYS_ONLY, NEW, OLD, NEW_AND_OLD_IMAGES"],
+      ["TTL", "Attribute epoch giây, tự xóa item không tốn WCU"],
+      ["Global table", "Bảng multi-Region, multi-active"],
+      ["MREC", "Đa Region nhất quán cuối cùng, mặc định"],
+      ["MRSC", "Đa Region nhất quán mạnh, RPO 0, 3 Region"],
+      ["Last writer wins", "Cách MREC giải quyết xung đột ghi"],
+      ["Witness", "Thành phần MRSC giữ dữ liệu, không đọc/ghi"],
+      ["Fine-grained access control", "IAM tới mức item/attribute"]
+    ],
+
+    sorts: [
+      {
+        title: "GSI hay LSI?",
+        desc: "Đặc điểm sau thuộc Global secondary index hay Local secondary index?",
+        buckets: ["GSI", "LSI"],
+        items: [
+          ["Partition key khác hoàn toàn bảng gốc", 0, "khóa bất kỳ"],
+          ["Thêm/xóa trên bảng đang chạy", 0, "LSI chỉ tạo lúc tạo bảng"],
+          ["Chỉ eventually consistent", 0, "không có strongly consistent"],
+          ["Throughput riêng, phải đặt RCU/WCU riêng (provisioned)", 0, "scale tách biệt"],
+          ["Mặc định 20 / bảng", 0, "tăng được"],
+          ["Không lấy được attribute chưa chiếu", 0, "không fetch từ bảng"],
+          ["Cùng partition key, khác sort key", 1, "bắt buộc composite"],
+          ["Chỉ tạo được lúc tạo bảng", 1, "không thêm, không xóa sau"],
+          ["Hỗ trợ strongly consistent read", 1, "giống bảng gốc"],
+          ["≤ 10 GB mỗi giá trị partition key", 1, "item collection"],
+          ["Tối đa 5 / bảng", 1, "quota cố định"]
+        ]
+      },
+      {
+        title: "On-demand hay Provisioned?",
+        desc: "Tình huống / đặc điểm sau ứng với capacity mode nào?",
+        buckets: ["On-demand", "Provisioned"],
+        items: [
+          ["Game mới, không biết số người chơi, spike mạnh", 0, "không cần capacity planning"],
+          ["Nhàn rỗi lâu, chỉ muốn trả theo request", 0, "không traffic ⇒ không phí throughput"],
+          ["Chế độ mặc định khi tạo bảng", 0, "AWS khuyến nghị"],
+          ["Tức thì phục vụ gấp đôi đỉnh trước đó", 0, "vượt gấp đôi trong 30 phút có thể throttle"],
+          ["Traffic ổn định, cần chi phí dự đoán được", 1, "trả theo giờ cho RCU/WCU"],
+          ["Auto scaling target utilization 70%", 1, "Application Auto Scaling"],
+          ["Mua reserved capacity cho mức nền", 1, "1 hoặc 3 năm"],
+          ["Vượt capacity ⇒ ProvisionedThroughputExceededException", 1, "throttle"]
+        ]
+      },
+      {
+        title: "Tình huống ⇒ tính năng DynamoDB",
+        desc: "Chọn tính năng đúng cho yêu cầu đề.",
+        buckets: ["DAX", "Streams + Lambda", "TTL", "Global Tables", "PITR", "Gateway endpoint"],
+        items: [
+          ["Flash sale: hàng triệu lượt đọc cùng vài item, cần micro-giây", 0, "cache API-compatible"],
+          ["Giảm RCU phải mua cho workload đọc lặp lại", 0, "cache hit trả ngay"],
+          ["Gửi email chào mừng khi có khách hàng mới", 1, "Lambda trigger + SES"],
+          ["Đẩy thay đổi sang hệ thống tìm kiếm gần thời gian thực", 1, "CDC"],
+          ["Xóa session sau 24 giờ không tốn WCU", 2, "epoch seconds kiểu Number"],
+          ["Người dùng 3 châu lục ghi độ trễ thấp, không cần promote khi mất Region", 3, "multi-active"],
+          ["Script ghi đè dữ liệu 2 giờ trước, khôi phục chính xác tới giây", 4, "restore ra bảng mới"],
+          ["EC2 private subnet truy cập DynamoDB không qua NAT, miễn phí", 5, "route table + prefix list"]
+        ]
+      },
+      {
+        title: "MREC hay MRSC?",
+        desc: "Đặc điểm sau thuộc consistency mode nào của Global Tables?",
+        buckets: ["MREC", "MRSC"],
+        items: [
+          ["Mode mặc định", 0, "multi-Region eventual consistency"],
+          ["Sao chép bất đồng bộ, thường ≤ 1 giây", 0, "qua DynamoDB Streams"],
+          ["Xung đột giải quyết bằng last writer wins", 0, "theo timestamp từng item"],
+          ["Thêm/bớt replica ở bao nhiêu Region tùy ý", 0, "không giới hạn số Region"],
+          ["Độ trễ ghi thấp hơn", 0, "không chờ Region khác"],
+          ["RPO = 0", 1, "đồng bộ trước khi trả thành công"],
+          ["Đúng 3 Region, có thể dùng witness", 1, "3 replica hoặc 2 + witness"],
+          ["Không hỗ trợ TTL, LSI, transaction", 1, "hạn chế của MRSC"],
+          ["Ghi đồng thời ⇒ ReplicatedWriteConflictException", 1, "retry được"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["DynamoDB tự sao chép dữ liệu qua 3 AZ mặc định.", true, "SLA 99,99% cho bảng một Region."],
+      ["DynamoDB hỗ trợ JOIN giữa các bảng.", false, "Không có JOIN; nên denormalize."],
+      ["DynamoDB cho phép đăng nhập bằng user name/password DB.", false, "Chỉ xác thực bằng IAM."],
+      ["Kích thước tối đa một item là 400 KB.", true, "Tính cả tên và giá trị attribute."],
+      ["Video lớn nên lưu trực tiếp trong item DynamoDB.", false, "Lưu S3, chỉ lưu object key trong item."],
+      ["Mỗi partition phục vụ tối đa 3.000 read unit và 1.000 write unit mỗi giây.", true, "Theo best practice của AWS."],
+      ["Tăng WCU của bảng luôn giải quyết được hot partition.", false, "Không vượt được giới hạn một partition; sửa key hoặc write sharding."],
+      ["Chọn ngày hiện tại làm partition key cho bảng ghi nhiều là thiết kế tốt.", false, "Ít giá trị ⇒ hot partition."],
+      ["Strongly consistent read có cho GSI.", false, "Chỉ Table và LSI."],
+      ["Eventually consistent read tốn một nửa chi phí strongly consistent.", true, "1 RCU = 2 eventually read/giây."],
+      ["1 WCU cho phép ghi 1 item tới 4 KB mỗi giây.", false, "WCU tính theo 1 KB; 4 KB là của RCU."],
+      ["Đọc strongly consistent 80 item 3 KB mỗi giây cần 80 RCU.", true, "3 KB làm tròn 4 KB ⇒ 1 RCU/item."],
+      ["Transactional read tốn gấp đôi đơn vị đọc thường.", true, "Theo kiến thức phổ biến trong bài."],
+      ["On-demand là capacity mode mặc định.", true, "AWS khuyến nghị."],
+      ["Provisioned chỉ tính tiền phần capacity thực sự dùng.", false, "Trả theo giờ cho phần cấp phát, dù dùng hay không."],
+      ["Có thể chuyển provisioned sang on-demand không giới hạn số lần.", false, "Tối đa 4 lần / 24 giờ."],
+      ["Tăng capacity provisioned không bị giới hạn số lần.", true, "Chỉ giảm mới bị giới hạn."],
+      ["Có thể thêm LSI vào bảng đang chạy production.", false, "LSI chỉ tạo lúc tạo bảng; dùng GSI."],
+      ["Mặc định mỗi bảng có tối đa 20 GSI và 5 LSI.", true, "GSI tăng được qua quota."],
+      ["GSI thiếu WCU có thể làm ghi vào bảng gốc bị throttle.", true, "Back-pressure."],
+      ["DAX cache kết quả của đọc strongly consistent.", false, "Strongly consistent đi thẳng tới DynamoDB."],
+      ["DAX dùng cơ chế write-through.", true, "Ghi bảng trước rồi vào cache."],
+      ["DAX giúp tăng throughput ghi của bảng.", false, "Ghi vẫn tới DynamoDB; DAX chỉ tăng tốc đọc."],
+      ["Item cache của DAX có TTL mặc định 5 phút.", true, "Đặt khi tạo cluster."],
+      ["Cluster DAX 1 node phù hợp production.", false, "Production nên ≥ 3 node ở 3 AZ."],
+      ["DAX cluster chạy trong VPC và chỉ phục vụ bảng cùng Region.", true, "Truy cập qua security group, TCP 8111."],
+      ["DynamoDB Streams lưu thay đổi trong 7 ngày.", false, "Chỉ 24 giờ."],
+      ["Bật DynamoDB Streams làm giảm hiệu năng bảng.", false, "Streams chạy bất đồng bộ."],
+      ["StreamViewType có thể sửa sau khi bật stream.", false, "Phải tắt và tạo stream mới."],
+      ["TTL attribute dạng chuỗi ISO 8601 vẫn hoạt động.", false, "Phải là Number epoch seconds."],
+      ["TTL xóa item hết hạn mà không tốn write throughput.", true, "Xóa miễn phí."],
+      ["TTL luôn xóa item đúng giây hết hạn.", false, "Có thể trễ vài ngày; dùng filter expression."],
+      ["Item bị TTL xóa xuất hiện trong Streams dưới dạng service deletion.", true, "Có thể dùng Lambda archive sang S3."],
+      ["Global Tables có một bảng primary nhận ghi.", false, "Multi-active: mọi replica đọc và ghi."],
+      ["MRSC cho RPO bằng 0.", true, "Sao chép đồng bộ trước khi trả thành công."],
+      ["MRSC hỗ trợ TTL.", false, "MRSC không hỗ trợ TTL, LSI, transaction."],
+      ["Global Tables tự đồng bộ cấu hình PITR giữa các replica.", false, "Phải bật PITR trên từng replica."],
+      ["PITR restore ghi đè lên bảng hiện có.", false, "Restore luôn tạo bảng mới."],
+      ["Encryption at rest của DynamoDB luôn bật mặc định.", true, "Mặc định dùng AWS owned key."],
+      ["Gateway VPC endpoint cho DynamoDB có tính phí theo giờ.", false, "Gateway endpoint miễn phí."],
+      ["DynamoDB có tính năng Backtrack như Aurora MySQL.", false, "Backtrack chỉ có ở Aurora MySQL; DynamoDB dùng PITR."]
+    ],
+
+    map: {
+      t: "Bài 28 · Amazon DynamoDB",
+      c: [
+        { t: "Tổng quan & mô hình", icon: "svc/Amazon-DynamoDB.svg", c: [
+          { t: "Bản chất", v: "NoSQL serverless, key-value & document, single-digit ms" },
+          { t: "HA", v: "3 AZ, SLA 99,99%, không maintenance window" },
+          { t: "Xác thực", v: "chỉ IAM, không JOIN" },
+          { t: "Item", v: "≤ 400 KB ⇒ lớn hơn: S3 + lưu key" },
+          { t: "Primary key", v: "partition (hash) hoặc partition + sort (range)" },
+          { t: "Partition", v: "≤ 3.000 RU/s + 1.000 WU/s ⇒ key cardinality cao" },
+          { t: "Đọc", v: "eventually (mặc định, ½ giá) · strongly (table, LSI)" }
+        ] },
+        { t: "Capacity", icon: "svc/AWS-Application-Auto-Scaling.svg", c: [
+          { t: "RCU", v: "4 KB · 1 strongly / 2 eventually" },
+          { t: "WCU", v: "1 KB · 1 write/s · transactional ×2" },
+          { t: "On-demand", v: "mặc định, trả theo request, gấp đôi đỉnh trước" },
+          { t: "Provisioned", v: "trả theo giờ, auto scaling 70%, reserved" },
+          { t: "Chuyển mode", v: "provisioned → on-demand ≤ 4 lần / 24 h" },
+          { t: "Table class", v: "Standard-IA khi storage chiếm chủ yếu" }
+        ] },
+        { t: "GSI & LSI", icon: "res/Amazon-DynamoDB_Global-secondary-index.svg", c: [
+          { t: "GSI", v: "khóa bất kỳ, thêm lúc nào, eventually, 20/bảng" },
+          { t: "LSI", v: "cùng partition key, tạo cùng bảng, strongly, 5/bảng" },
+          { t: "Giới hạn LSI", v: "≤ 10 GB / partition key" },
+          { t: "Projection", v: "KEYS_ONLY · INCLUDE · ALL" }
+        ] },
+        { t: "DAX", icon: "res/Amazon-DynamoDB_Amazon-DynamoDB-Accelerator.svg", c: [
+          { t: "Vai trò", v: "cache micro-giây, API-compatible" },
+          { t: "Ghi", v: "write-through" },
+          { t: "Strongly consistent", v: "đi thẳng DynamoDB, không cache" },
+          { t: "Cluster", v: "≤ 11 node; production ≥ 3 node / 3 AZ" },
+          { t: "Cache", v: "item TTL 5 phút · query cache · LRU" }
+        ] },
+        { t: "Streams & TTL", icon: "res/Amazon-DynamoDB_Stream.svg", c: [
+          { t: "Streams", v: "CDC 24 giờ, exactly once, theo thứ tự item" },
+          { t: "View type", v: "KEYS_ONLY / NEW / OLD / NEW_AND_OLD" },
+          { t: "Trigger", v: "Lambda event source mapping" },
+          { t: "TTL", v: "Number epoch giây, xóa trong vài ngày, 0 WCU" },
+          { t: "TTL + Streams", v: "service deletion ⇒ archive S3" }
+        ] },
+        { t: "Global Tables", icon: "cat/Database.svg", c: [
+          { t: "Kiến trúc", v: "multi-Region, multi-active, SLA 99,999%" },
+          { t: "MREC", v: "mặc định, async ≤ 1 s, last writer wins" },
+          { t: "MRSC", v: "sync, đúng 3 Region, RPO 0, không TTL/LSI" },
+          { t: "Không đồng bộ", v: "PITR, deletion protection, tag" }
+        ] },
+        { t: "Backup & bảo mật", icon: "svc/AWS-Backup.svg", c: [
+          { t: "PITR", v: "từng giây, 1–35 ngày, restore ra bảng mới" },
+          { t: "On-demand backup", v: "lưu lâu, AWS Backup cross-account/Region" },
+          { t: "Mã hóa", v: "at rest luôn bật (KMS)" },
+          { t: "Mạng", v: "gateway VPC endpoint miễn phí" },
+          { t: "Analytics", v: "export to S3 + Athena, zero-ETL Redshift" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

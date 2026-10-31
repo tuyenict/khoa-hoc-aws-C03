@@ -4,6 +4,7 @@
  * - Mỗi bài có: id, file, title (EN), vi (tiếng Việt), module, domains,
  *   icons (tên file trong assets/icons), docs (link tài liệu AWS gốc).
  * - ready: true  => bài đã được gen (lệnh /aws-bai tự bật cờ này).
+ * - games: true  => đã có trang trò chơi ghi nhớ games/<file> (xem assets/games.js).
  * - Domain của đề thi:
  *   D1 Design Secure Architectures (30%)
  *   D2 Design Resilient Architectures (26%)
@@ -40,7 +41,7 @@ window.MODULES = [
 
 window.SYLLABUS = [
   /* ---------------- MODULE 0: FOUNDATIONS ---------------- */
-  { id: 1, module: 0, file: "bai-01-exam-global-infrastructure.html", ready: true,
+  { id: 1, module: 0, file: "bai-01-exam-global-infrastructure.html", ready: true, games: true,
     title: "Exam Overview & AWS Global Infrastructure",
     vi: "Tổng quan kỳ thi & hạ tầng toàn cầu của AWS",
     domains: ["D2", "D3"],
@@ -52,7 +53,7 @@ window.SYLLABUS = [
       { t: "Regions and Zones", u: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html" },
       { t: "AWS Global Infrastructure", u: "https://aws.amazon.com/about-aws/global-infrastructure/" }
     ] },
-  { id: 2, module: 0, file: "bai-02-well-architected.html", ready: true,
+  { id: 2, module: 0, file: "bai-02-well-architected.html", ready: true, games: true,
     title: "AWS Well-Architected Framework",
     vi: "Khung kiến trúc tối ưu của AWS (6 trụ cột)",
     domains: ["D1", "D2", "D3", "D4"],
@@ -63,7 +64,7 @@ window.SYLLABUS = [
       { t: "The pillars of the framework", u: "https://docs.aws.amazon.com/wellarchitected/latest/framework/the-pillars-of-the-framework.html" },
       { t: "General design principles", u: "https://docs.aws.amazon.com/wellarchitected/latest/framework/general-design-principles.html" }
     ] },
-  { id: 3, module: 0, file: "bai-03-shared-responsibility.html", ready: true,
+  { id: 3, module: 0, file: "bai-03-shared-responsibility.html", ready: true, games: true,
     title: "Shared Responsibility Model & AWS Account Basics",
     vi: "Mô hình trách nhiệm chia sẻ & tài khoản AWS",
     domains: ["D1"],
@@ -76,7 +77,7 @@ window.SYLLABUS = [
     ] },
 
   /* ---------------- MODULE 1: IAM ---------------- */
-  { id: 4, module: 1, file: "bai-04-iam-basics.html", ready: true,
+  { id: 4, module: 1, file: "bai-04-iam-basics.html", ready: true, games: true,
     title: "IAM Fundamentals: Users, Groups, Roles, Policies",
     vi: "IAM cơ bản: người dùng, nhóm, vai trò, chính sách",
     domains: ["D1"],
@@ -88,7 +89,7 @@ window.SYLLABUS = [
       { t: "Policies and permissions", u: "https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies.html" },
       { t: "Security best practices in IAM", u: "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html" }
     ] },
-  { id: 5, module: 1, file: "bai-05-iam-advanced-sts.html", ready: true,
+  { id: 5, module: 1, file: "bai-05-iam-advanced-sts.html", ready: true, games: true,
     title: "IAM Advanced: Policy Evaluation, Boundaries, STS & Federation",
     vi: "IAM nâng cao: đánh giá chính sách, giới hạn quyền, STS & liên kết định danh",
     domains: ["D1"],
@@ -100,7 +101,7 @@ window.SYLLABUS = [
       { t: "Temporary security credentials (STS)", u: "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp.html" },
       { t: "Identity providers and federation", u: "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers.html" }
     ] },
-  { id: 6, module: 1, file: "bai-06-organizations-scp.html", ready: true,
+  { id: 6, module: 1, file: "bai-06-organizations-scp.html", ready: true, games: true,
     title: "AWS Organizations, SCPs, Control Tower & IAM Identity Center",
     vi: "Quản lý nhiều tài khoản: Organizations, SCP, Control Tower, Identity Center",
     domains: ["D1", "D4"],
@@ -112,7 +113,7 @@ window.SYLLABUS = [
       { t: "What is AWS Control Tower?", u: "https://docs.aws.amazon.com/controltower/latest/userguide/what-is-control-tower.html" },
       { t: "What is IAM Identity Center?", u: "https://docs.aws.amazon.com/singlesignon/latest/userguide/what-is.html" }
     ] },
-  { id: 7, module: 1, file: "bai-07-cognito-directory.html", ready: true,
+  { id: 7, module: 1, file: "bai-07-cognito-directory.html", ready: true, games: true,
     title: "Amazon Cognito & AWS Directory Service",
     vi: "Xác thực người dùng ứng dụng: Cognito & Directory Service",
     domains: ["D1"],
@@ -124,7 +125,7 @@ window.SYLLABUS = [
     ] },
 
   /* ---------------- MODULE 2: COMPUTE ---------------- */
-  { id: 8, module: 2, file: "bai-08-ec2-basics.html", ready: true,
+  { id: 8, module: 2, file: "bai-08-ec2-basics.html", ready: true, games: true,
     title: "Amazon EC2 Fundamentals: Instance Types, AMI, User Data",
     vi: "EC2 cơ bản: loại máy chủ, AMI, User Data",
     domains: ["D3"],
@@ -136,7 +137,7 @@ window.SYLLABUS = [
       { t: "Amazon Machine Images (AMI)", u: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/AMIs.html" },
       { t: "Instance metadata and user data", u: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html" }
     ] },
-  { id: 9, module: 2, file: "bai-09-ec2-purchasing.html", ready: true,
+  { id: 9, module: 2, file: "bai-09-ec2-purchasing.html", ready: true, games: true,
     title: "EC2 Purchasing Options: On-Demand, Reserved, Savings Plans, Spot",
     vi: "Các phương thức mua EC2 & tối ưu chi phí",
     domains: ["D4"],
@@ -147,7 +148,7 @@ window.SYLLABUS = [
       { t: "Spot Instances", u: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-spot-instances.html" },
       { t: "What are Savings Plans?", u: "https://docs.aws.amazon.com/savingsplans/latest/userguide/what-is-savings-plans.html" }
     ] },
-  { id: 10, module: 2, file: "bai-10-ec2-networking-placement.html", ready: true,
+  { id: 10, module: 2, file: "bai-10-ec2-networking-placement.html", ready: true, games: true,
     title: "EC2 Networking: Security Groups, ENI, Elastic IP, Placement Groups",
     vi: "Mạng của EC2: Security Group, ENI, Elastic IP, Placement Group",
     domains: ["D1", "D3"],
@@ -159,7 +160,7 @@ window.SYLLABUS = [
       { t: "Elastic IP addresses", u: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html" },
       { t: "Placement groups", u: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/placement-groups.html" }
     ] },
-  { id: 11, module: 2, file: "bai-11-ebs-instance-store.html", ready: true,
+  { id: 11, module: 2, file: "bai-11-ebs-instance-store.html", ready: true, games: true,
     title: "EC2 Storage: Amazon EBS & Instance Store",
     vi: "Lưu trữ cho EC2: EBS & Instance Store",
     domains: ["D2", "D3"],
@@ -171,7 +172,7 @@ window.SYLLABUS = [
       { t: "EBS snapshots", u: "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-snapshots.html" },
       { t: "Instance store", u: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/InstanceStorage.html" }
     ] },
-  { id: 12, module: 2, file: "bai-12-elastic-load-balancing.html", ready: true,
+  { id: 12, module: 2, file: "bai-12-elastic-load-balancing.html", ready: true, games: true,
     title: "Elastic Load Balancing: ALB, NLB, GWLB",
     vi: "Cân bằng tải: ALB, NLB, GWLB",
     domains: ["D2", "D3"],
@@ -183,7 +184,7 @@ window.SYLLABUS = [
       { t: "Network Load Balancer", u: "https://docs.aws.amazon.com/elasticloadbalancing/latest/network/introduction.html" },
       { t: "Gateway Load Balancer", u: "https://docs.aws.amazon.com/elasticloadbalancing/latest/gateway/introduction.html" }
     ] },
-  { id: 13, module: 2, file: "bai-13-auto-scaling.html", ready: true,
+  { id: 13, module: 2, file: "bai-13-auto-scaling.html", ready: true, games: true,
     title: "Amazon EC2 Auto Scaling",
     vi: "Tự động co giãn EC2",
     domains: ["D2", "D3", "D4"],
@@ -196,7 +197,7 @@ window.SYLLABUS = [
     ] },
 
   /* ---------------- MODULE 3: STORAGE ---------------- */
-  { id: 14, module: 3, file: "bai-14-s3-basics.html", ready: true,
+  { id: 14, module: 3, file: "bai-14-s3-basics.html", ready: true, games: true,
     title: "Amazon S3 Fundamentals: Buckets, Objects, Storage Classes, Versioning",
     vi: "S3 cơ bản: bucket, object, lớp lưu trữ, phiên bản",
     domains: ["D2", "D4"],
@@ -207,7 +208,7 @@ window.SYLLABUS = [
       { t: "Storage classes", u: "https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html" },
       { t: "Versioning", u: "https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html" }
     ] },
-  { id: 15, module: 3, file: "bai-15-s3-advanced.html", ready: true,
+  { id: 15, module: 3, file: "bai-15-s3-advanced.html", ready: true, games: true,
     title: "Amazon S3 Advanced: Lifecycle, Replication, Performance, Events",
     vi: "S3 nâng cao: vòng đời, sao chép, hiệu năng, sự kiện",
     domains: ["D2", "D3", "D4"],
@@ -220,7 +221,7 @@ window.SYLLABUS = [
       { t: "Transfer Acceleration", u: "https://docs.aws.amazon.com/AmazonS3/latest/userguide/transfer-acceleration.html" },
       { t: "Event notifications", u: "https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html" }
     ] },
-  { id: 16, module: 3, file: "bai-16-s3-security.html", ready: true,
+  { id: 16, module: 3, file: "bai-16-s3-security.html", ready: true, games: true,
     title: "Amazon S3 Security: Policies, Encryption, Object Lock, Presigned URLs",
     vi: "Bảo mật S3: chính sách, mã hóa, khóa đối tượng, URL ký sẵn",
     domains: ["D1"],
@@ -233,7 +234,7 @@ window.SYLLABUS = [
       { t: "Object Lock", u: "https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html" },
       { t: "Presigned URLs", u: "https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html" }
     ] },
-  { id: 17, module: 3, file: "bai-17-efs-fsx.html", ready: true,
+  { id: 17, module: 3, file: "bai-17-efs-fsx.html", ready: true, games: true,
     title: "Shared File Storage: Amazon EFS & Amazon FSx",
     vi: "Lưu trữ file dùng chung: EFS & FSx",
     domains: ["D2", "D3"],
@@ -245,7 +246,7 @@ window.SYLLABUS = [
       { t: "FSx for Lustre", u: "https://docs.aws.amazon.com/fsx/latest/LustreGuide/what-is.html" },
       { t: "FSx for NetApp ONTAP", u: "https://docs.aws.amazon.com/fsx/latest/ONTAPGuide/what-is-fsx-ontap.html" }
     ] },
-  { id: 18, module: 3, file: "bai-18-hybrid-storage-transfer.html", ready: true,
+  { id: 18, module: 3, file: "bai-18-hybrid-storage-transfer.html", ready: true, games: true,
     title: "Hybrid Storage & Data Transfer: Storage Gateway, DataSync, Snow Family, Transfer Family",
     vi: "Lưu trữ lai & truyền dữ liệu",
     domains: ["D2", "D3"],
@@ -257,7 +258,7 @@ window.SYLLABUS = [
       { t: "AWS Snowball Edge", u: "https://docs.aws.amazon.com/snowball/latest/developer-guide/whatisedge.html" },
       { t: "AWS Transfer Family", u: "https://docs.aws.amazon.com/transfer/latest/userguide/what-is-aws-transfer-family.html" }
     ] },
-  { id: 19, module: 3, file: "bai-19-aws-backup.html", ready: true,
+  { id: 19, module: 3, file: "bai-19-aws-backup.html", ready: true, games: true,
     title: "AWS Backup",
     vi: "Sao lưu tập trung với AWS Backup",
     domains: ["D2"],
@@ -269,7 +270,7 @@ window.SYLLABUS = [
     ] },
 
   /* ---------------- MODULE 4: NETWORKING ---------------- */
-  { id: 20, module: 4, file: "bai-20-vpc-basics.html", ready: true,
+  { id: 20, module: 4, file: "bai-20-vpc-basics.html", ready: true, games: true,
     title: "Amazon VPC Fundamentals: CIDR, Subnets, Route Tables, IGW, NAT",
     vi: "VPC cơ bản: dải IP, mạng con, bảng định tuyến, IGW, NAT",
     domains: ["D1", "D2"],
@@ -282,7 +283,7 @@ window.SYLLABUS = [
       { t: "Internet gateways", u: "https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Internet_Gateway.html" },
       { t: "NAT gateways", u: "https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html" }
     ] },
-  { id: 21, module: 4, file: "bai-21-vpc-security.html", ready: true,
+  { id: 21, module: 4, file: "bai-21-vpc-security.html", ready: true, games: true,
     title: "VPC Security: Security Groups vs NACLs, Flow Logs, Network Firewall",
     vi: "Bảo mật VPC: Security Group, NACL, Flow Logs, Network Firewall",
     domains: ["D1"],
@@ -294,7 +295,7 @@ window.SYLLABUS = [
       { t: "VPC Flow Logs", u: "https://docs.aws.amazon.com/vpc/latest/userguide/flow-logs.html" },
       { t: "What is AWS Network Firewall?", u: "https://docs.aws.amazon.com/network-firewall/latest/developerguide/what-is-aws-network-firewall.html" }
     ] },
-  { id: 22, module: 4, file: "bai-22-vpc-connectivity.html", ready: true,
+  { id: 22, module: 4, file: "bai-22-vpc-connectivity.html", ready: true, games: true,
     title: "VPC Connectivity: Peering, Endpoints, PrivateLink, Transit Gateway",
     vi: "Kết nối VPC: Peering, Endpoint, PrivateLink, Transit Gateway",
     domains: ["D1", "D3", "D4"],
@@ -306,7 +307,7 @@ window.SYLLABUS = [
       { t: "Gateway endpoints", u: "https://docs.aws.amazon.com/vpc/latest/privatelink/gateway-endpoints.html" },
       { t: "What is a transit gateway?", u: "https://docs.aws.amazon.com/vpc/latest/tgw/what-is-transit-gateway.html" }
     ] },
-  { id: 23, module: 4, file: "bai-23-hybrid-networking.html", ready: true,
+  { id: 23, module: 4, file: "bai-23-hybrid-networking.html", ready: true, games: true,
     title: "Hybrid Networking: Site-to-Site VPN & AWS Direct Connect",
     vi: "Kết nối lai: VPN & Direct Connect",
     domains: ["D2", "D3"],
@@ -317,7 +318,7 @@ window.SYLLABUS = [
       { t: "What is AWS Direct Connect?", u: "https://docs.aws.amazon.com/directconnect/latest/UserGuide/Welcome.html" },
       { t: "What is AWS Client VPN?", u: "https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/what-is.html" }
     ] },
-  { id: 24, module: 4, file: "bai-24-route-53.html", ready: true,
+  { id: 24, module: 4, file: "bai-24-route-53.html", ready: true, games: true,
     title: "Amazon Route 53",
     vi: "Dịch vụ DNS Route 53 & các chính sách định tuyến",
     domains: ["D2", "D3"],
@@ -328,7 +329,7 @@ window.SYLLABUS = [
       { t: "Choosing a routing policy", u: "https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy.html" },
       { t: "Configuring DNS failover", u: "https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover.html" }
     ] },
-  { id: 25, module: 4, file: "bai-25-cloudfront-global-accelerator.html", ready: true,
+  { id: 25, module: 4, file: "bai-25-cloudfront-global-accelerator.html", ready: true, games: true,
     title: "Amazon CloudFront & AWS Global Accelerator",
     vi: "Phân phối nội dung toàn cầu: CloudFront & Global Accelerator",
     domains: ["D1", "D3"],
@@ -341,7 +342,7 @@ window.SYLLABUS = [
     ] },
 
   /* ---------------- MODULE 5: DATABASES ---------------- */
-  { id: 26, module: 5, file: "bai-26-rds.html", ready: true,
+  { id: 26, module: 5, file: "bai-26-rds.html", ready: true, games: true,
     title: "Amazon RDS: Multi-AZ, Read Replicas, RDS Proxy",
     vi: "CSDL quan hệ RDS: Multi-AZ, bản sao đọc, RDS Proxy",
     domains: ["D2", "D3"],
@@ -353,7 +354,7 @@ window.SYLLABUS = [
       { t: "Read replicas", u: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_ReadRepl.html" },
       { t: "Amazon RDS Proxy", u: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-proxy.html" }
     ] },
-  { id: 27, module: 5, file: "bai-27-aurora.html", ready: true,
+  { id: 27, module: 5, file: "bai-27-aurora.html", ready: true, games: true,
     title: "Amazon Aurora: Cluster, Serverless v2, Global Database",
     vi: "Amazon Aurora: cụm, Serverless v2, CSDL toàn cầu",
     domains: ["D2", "D3"],
@@ -364,7 +365,7 @@ window.SYLLABUS = [
       { t: "Aurora Serverless v2", u: "https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2.html" },
       { t: "Aurora Global Database", u: "https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-global-database.html" }
     ] },
-  { id: 28, module: 5, file: "bai-28-dynamodb.html", ready: true,
+  { id: 28, module: 5, file: "bai-28-dynamodb.html", ready: true, games: true,
     title: "Amazon DynamoDB",
     vi: "CSDL NoSQL DynamoDB",
     domains: ["D2", "D3", "D4"],
@@ -376,7 +377,7 @@ window.SYLLABUS = [
       { t: "DynamoDB Accelerator (DAX)", u: "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DAX.html" },
       { t: "Global tables", u: "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/GlobalTables.html" }
     ] },
-  { id: 29, module: 5, file: "bai-29-elasticache-purpose-built-db.html", ready: true,
+  { id: 29, module: 5, file: "bai-29-elasticache-purpose-built-db.html", ready: true, games: true,
     title: "Amazon ElastiCache & Purpose-Built Databases",
     vi: "Bộ nhớ đệm ElastiCache & các CSDL chuyên dụng",
     domains: ["D3"],
@@ -391,7 +392,7 @@ window.SYLLABUS = [
     ] },
 
   /* ---------------- MODULE 6: APP INTEGRATION & SERVERLESS ---------------- */
-  { id: 30, module: 6, file: "bai-30-sqs-sns.html", ready: true,
+  { id: 30, module: 6, file: "bai-30-sqs-sns.html", ready: true, games: true,
     title: "Decoupling: Amazon SQS & Amazon SNS",
     vi: "Tách rời ứng dụng: hàng đợi SQS & thông báo SNS",
     domains: ["D2", "D3"],
@@ -403,7 +404,7 @@ window.SYLLABUS = [
       { t: "What is Amazon SNS?", u: "https://docs.aws.amazon.com/sns/latest/dg/welcome.html" },
       { t: "Fanout to SQS queues", u: "https://docs.aws.amazon.com/sns/latest/dg/sns-sqs-as-subscriber.html" }
     ] },
-  { id: 31, module: 6, file: "bai-31-eventbridge-stepfunctions-mq.html", ready: true,
+  { id: 31, module: 6, file: "bai-31-eventbridge-stepfunctions-mq.html", ready: true, games: true,
     title: "Amazon EventBridge, AWS Step Functions & Amazon MQ",
     vi: "Kiến trúc hướng sự kiện & điều phối luồng công việc",
     domains: ["D2"],
@@ -414,7 +415,7 @@ window.SYLLABUS = [
       { t: "What is AWS Step Functions?", u: "https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html" },
       { t: "What is Amazon MQ?", u: "https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/welcome.html" }
     ] },
-  { id: 32, module: 6, file: "bai-32-lambda.html", ready: true,
+  { id: 32, module: 6, file: "bai-32-lambda.html", ready: true, games: true,
     title: "AWS Lambda",
     vi: "Điện toán không máy chủ với Lambda",
     domains: ["D2", "D3", "D4"],
@@ -426,7 +427,7 @@ window.SYLLABUS = [
       { t: "Lambda in a VPC", u: "https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc.html" },
       { t: "Lambda quotas", u: "https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html" }
     ] },
-  { id: 33, module: 6, file: "bai-33-api-gateway.html", ready: true,
+  { id: 33, module: 6, file: "bai-33-api-gateway.html", ready: true, games: true,
     title: "Amazon API Gateway & Serverless Architectures",
     vi: "API Gateway & kiến trúc serverless",
     domains: ["D1", "D3"],
@@ -437,7 +438,7 @@ window.SYLLABUS = [
       { t: "Throttle requests", u: "https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-throttling.html" },
       { t: "API caching", u: "https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-caching.html" }
     ] },
-  { id: 34, module: 6, file: "bai-34-containers.html", ready: true,
+  { id: 34, module: 6, file: "bai-34-containers.html", ready: true, games: true,
     title: "Containers: Amazon ECS, EKS, AWS Fargate, ECR",
     vi: "Container trên AWS: ECS, EKS, Fargate, ECR",
     domains: ["D3", "D4"],
@@ -451,7 +452,7 @@ window.SYLLABUS = [
     ] },
 
   /* ---------------- MODULE 7: ANALYTICS & ML ---------------- */
-  { id: 35, module: 7, file: "bai-35-streaming-kinesis-msk.html", ready: true,
+  { id: 35, module: 7, file: "bai-35-streaming-kinesis-msk.html", ready: true, games: true,
     title: "Streaming Data: Kinesis Data Streams, Data Firehose, MSK",
     vi: "Dữ liệu luồng thời gian thực: Kinesis & MSK",
     domains: ["D3"],
@@ -462,7 +463,7 @@ window.SYLLABUS = [
       { t: "What is Amazon Data Firehose?", u: "https://docs.aws.amazon.com/firehose/latest/dev/what-is-this-service.html" },
       { t: "What is Amazon MSK?", u: "https://docs.aws.amazon.com/msk/latest/developerguide/what-is-msk.html" }
     ] },
-  { id: 36, module: 7, file: "bai-36-analytics.html", ready: true,
+  { id: 36, module: 7, file: "bai-36-analytics.html", ready: true, games: true,
     title: "Analytics: Athena, Glue, Lake Formation, Redshift, EMR, OpenSearch, QuickSight",
     vi: "Phân tích dữ liệu & data lake",
     domains: ["D3", "D4"],
@@ -476,7 +477,7 @@ window.SYLLABUS = [
       { t: "What is Amazon EMR?", u: "https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-what-is-emr.html" },
       { t: "What is Amazon OpenSearch Service?", u: "https://docs.aws.amazon.com/opensearch-service/latest/developerguide/what-is.html" }
     ] },
-  { id: 37, module: 7, file: "bai-37-machine-learning.html", ready: true,
+  { id: 37, module: 7, file: "bai-37-machine-learning.html", ready: true, games: true,
     title: "AI/ML Services Overview",
     vi: "Tổng quan các dịch vụ AI/ML",
     domains: ["D3"],
@@ -489,7 +490,7 @@ window.SYLLABUS = [
     ] },
 
   /* ---------------- MODULE 8: SECURITY & ENCRYPTION ---------------- */
-  { id: 38, module: 8, file: "bai-38-kms-secrets.html", ready: true,
+  { id: 38, module: 8, file: "bai-38-kms-secrets.html", ready: true, games: true,
     title: "Encryption & Secrets: KMS, CloudHSM, Secrets Manager, Parameter Store, ACM",
     vi: "Mã hóa & quản lý bí mật",
     domains: ["D1"],
@@ -502,7 +503,7 @@ window.SYLLABUS = [
       { t: "Parameter Store", u: "https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-parameter-store.html" },
       { t: "What is ACM?", u: "https://docs.aws.amazon.com/acm/latest/userguide/acm-overview.html" }
     ] },
-  { id: 39, module: 8, file: "bai-39-threat-protection.html", ready: true,
+  { id: 39, module: 8, file: "bai-39-threat-protection.html", ready: true, games: true,
     title: "Threat Protection: WAF, Shield, Firewall Manager, GuardDuty, Inspector, Macie, Security Hub",
     vi: "Phòng chống tấn công & phát hiện mối đe dọa",
     domains: ["D1"],
@@ -518,7 +519,7 @@ window.SYLLABUS = [
     ] },
 
   /* ---------------- MODULE 9: MANAGEMENT & GOVERNANCE ---------------- */
-  { id: 40, module: 9, file: "bai-40-cloudwatch-cloudtrail-config.html", ready: true,
+  { id: 40, module: 9, file: "bai-40-cloudwatch-cloudtrail-config.html", ready: true, games: true,
     title: "Monitoring & Auditing: CloudWatch, CloudTrail, AWS Config",
     vi: "Giám sát & kiểm toán: CloudWatch, CloudTrail, Config",
     domains: ["D1", "D2"],
@@ -529,7 +530,7 @@ window.SYLLABUS = [
       { t: "What is AWS CloudTrail?", u: "https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-user-guide.html" },
       { t: "What is AWS Config?", u: "https://docs.aws.amazon.com/config/latest/developerguide/WhatIsConfig.html" }
     ] },
-  { id: 41, module: 9, file: "bai-41-iac-deployment.html", ready: true,
+  { id: 41, module: 9, file: "bai-41-iac-deployment.html", ready: true, games: true,
     title: "Infrastructure as Code & Operations: CloudFormation, Elastic Beanstalk, Systems Manager",
     vi: "Hạ tầng dưới dạng mã & vận hành",
     domains: ["D2"],
@@ -542,7 +543,7 @@ window.SYLLABUS = [
     ] },
 
   /* ---------------- MODULE 10: RESILIENCE, MIGRATION, COST ---------------- */
-  { id: 42, module: 10, file: "bai-42-disaster-recovery.html", ready: true,
+  { id: 42, module: 10, file: "bai-42-disaster-recovery.html", ready: true, games: true,
     title: "Disaster Recovery Strategies: RPO & RTO",
     vi: "Chiến lược khôi phục thảm họa: RPO & RTO",
     domains: ["D2", "D4"],
@@ -552,7 +553,7 @@ window.SYLLABUS = [
       { t: "Disaster recovery options in the cloud", u: "https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-options-in-the-cloud.html" },
       { t: "What is Elastic Disaster Recovery?", u: "https://docs.aws.amazon.com/drs/latest/userguide/what-is-drs.html" }
     ] },
-  { id: 43, module: 10, file: "bai-43-migration.html", ready: true,
+  { id: 43, module: 10, file: "bai-43-migration.html", ready: true, games: true,
     title: "Migration: 7 Rs, DMS, Application Migration Service, Migration Hub",
     vi: "Di chuyển hệ thống lên AWS",
     domains: ["D2", "D4"],
@@ -563,7 +564,7 @@ window.SYLLABUS = [
       { t: "What is AWS DMS?", u: "https://docs.aws.amazon.com/dms/latest/userguide/Welcome.html" },
       { t: "What is Application Migration Service?", u: "https://docs.aws.amazon.com/mgn/latest/ug/what-is-application-migration-service.html" }
     ] },
-  { id: 44, module: 10, file: "bai-44-cost-optimization.html", ready: true,
+  { id: 44, module: 10, file: "bai-44-cost-optimization.html", ready: true, games: true,
     title: "Cost Management: Cost Explorer, Budgets, CUR, Compute Optimizer, Trusted Advisor",
     vi: "Quản lý & tối ưu chi phí",
     domains: ["D4"],
@@ -575,7 +576,7 @@ window.SYLLABUS = [
       { t: "AWS Budgets", u: "https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html" },
       { t: "What is Compute Optimizer?", u: "https://docs.aws.amazon.com/compute-optimizer/latest/ug/what-is-compute-optimizer.html" }
     ] },
-  { id: 45, module: 10, file: "bai-45-review-architecture-patterns.html", ready: true,
+  { id: 45, module: 10, file: "bai-45-review-architecture-patterns.html", ready: true, games: true,
     title: "Final Review: Architecture Patterns & Exam Strategy",
     vi: "Ôn tập tổng: mẫu kiến trúc & chiến thuật làm bài",
     domains: ["D1", "D2", "D3", "D4"],

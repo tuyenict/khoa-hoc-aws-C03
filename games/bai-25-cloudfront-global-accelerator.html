@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 25 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-CloudFront.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="25" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-25-cloudfront-global-accelerator.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "cf", name: "CloudFront: tổng quan & origin" },
+      { id: "lock", name: "Khóa origin (OAC…)" },
+      { id: "cache", name: "Cache behavior & TTL" },
+      { id: "priv", name: "Signed URL/cookie & geo" },
+      { id: "fn", name: "CloudFront Functions & Lambda@Edge" },
+      { id: "ga", name: "Global Accelerator" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- CloudFront tổng quan
+      { t: "cf", f: "Amazon CloudFront là gì?", b: "<b>CDN</b>: cache và phân phối nội dung tĩnh/động, video, API qua HTTP/HTTPS (cả WebSocket, gRPC) tại <b>edge location</b> gần người dùng." },
+      { t: "cf", f: "3 lợi ích chính của CloudFront theo tài liệu?", b: "Request đi trên <b>AWS backbone</b> ⇒ giảm độ trễ · object cache ở nhiều edge ⇒ tăng availability · origin nhận ít request ⇒ <b>giảm tải origin</b>." },
+      { t: "cf", f: "Các tầng cache của CloudFront theo thứ tự?", b: "<b>POP</b> → <b>regional edge cache</b> → (tùy chọn) <b>Origin Shield</b> → origin." },
+      { t: "cf", f: "Origin Shield là gì? Khi nào hữu ích?", b: "Tầng cache tập trung trước origin, <b>gộp request trùng</b>, tăng cache hit ratio. Hữu ích khi viewer phân tán, origin on-prem băng thông thấp, video live packaging.", x: "Không phù hợp nội dung động; có phí thêm." },
+      { t: "cf", f: "Data transfer từ AWS origin (S3, ELB, API Gateway) tới CloudFront tính phí thế nào?", b: "<b>Miễn phí ($0)</b> ⇒ đặt CloudFront trước S3 thường rẻ hơn phục vụ trực tiếp từ S3." },
+      { t: "cf", f: "Price class dùng để làm gì?", b: "Giới hạn tập edge location để <b>giảm chi phí</b>: All · 200 · <b>100</b> (chỉ vùng rẻ nhất – Bắc Mỹ, châu Âu…)." },
+      { t: "cf", f: "Chứng chỉ ACM cho HTTPS giữa viewer và CloudFront phải ở Region nào?", b: "<b>us-east-1</b> (N. Virginia). Chứng chỉ giữa CloudFront và ELB origin thì ở Region của load balancer.", x: "Tạo ở ap-southeast-1 sẽ không thấy khi gắn vào CloudFront." },
+      { t: "cf", f: "Viewer protocol policy và origin protocol policy có những tùy chọn nào?", b: "<b>Viewer</b>: HTTP and HTTPS · Redirect HTTP to HTTPS · HTTPS Only.<br><b>Origin</b> (custom origin): HTTP only · HTTPS only · Match viewer." },
+      { t: "cf", f: "Origin group (origin failover) hoạt động thế nào?", b: "Primary + secondary; primary trả mã lỗi đã chọn (400, 403, 404, 416, 429, 500, 502, 503, 504) hoặc không kết nối/timeout ⇒ gửi lại request tới secondary.", x: "Chỉ failover GET, HEAD, OPTIONS; mỗi request mới vẫn tới primary trước." },
+      { t: "cf", f: "Mặc định CloudFront thử primary bao lâu trước khi failover?", b: "Tối đa <b>30 giây</b> (3 lần × 10 giây); giảm được: connection timeout 1–10 s, attempts 1–3." },
+      { t: "cf", f: "Origin failover của CloudFront khác DNS failover của Route 53 thế nào?", b: "<b>CloudFront</b>: tầng HTTP, từng request.<br><b>Route 53</b>: tầng DNS, phụ thuộc TTL. Dùng cùng nhau được." },
+      { t: "cf", f: "Phục vụ nội dung tĩnh và động từ một domain bằng CloudFront?", b: "Một distribution, <b>nhiều origin + nhiều cache behavior</b> theo path pattern (vd /api/* → ALB, * → S3)." },
+      { t: "cf", f: "Field-level encryption là gì?", b: "Mã hóa riêng từng trường nhạy cảm (vd số thẻ) <b>ngay tại edge</b> bằng public key; chỉ ứng dụng giữ private key mới giải mã." },
+
+      // ---- Khóa origin
+      { t: "lock", f: "OAC là gì và thay thế gì?", b: "<b>Origin Access Control</b>: CloudFront ký <b>SigV4</b> khi gọi S3; bucket policy cho service principal <code>cloudfront.amazonaws.com</code> + điều kiện <code>AWS:SourceArn</code>. Thay <b>OAI</b> (legacy)." },
+      { t: "lock", f: "OAC hỗ trợ những gì mà OAI không có?", b: "<b>SSE-KMS</b> · request động <b>PUT/DELETE</b> · bucket ở <b>mọi Region</b> kể cả opt-in Region mới." },
+      { t: "lock", f: "S3 static website endpoint có dùng được OAC không?", b: "<b>Không</b> (cả OAC lẫn OAI). Website endpoint là custom origin, bucket phải public.", x: "Bucket private + CloudFront ⇒ REST endpoint + OAC, dùng default root object hoặc CloudFront Function cho index.html." },
+      { t: "lock", f: "Object S3 mã hóa SSE-KMS phục vụ qua CloudFront OAC cần thêm gì?", b: "Statement trong <b>KMS key policy</b> cho principal <code>cloudfront.amazonaws.com</code> với <code>kms:Decrypt</code> (+ điều kiện AWS:SourceArn)." },
+      { t: "lock", f: "Chuyển từ OAI sang OAC không gián đoạn thế nào?", b: "1. Bucket policy cho phép <b>cả OAI và OAC</b><br>2. Đổi origin sang OAC, chờ deploy<br>3. Xóa statement OAI" },
+      { t: "lock", f: "Làm sao để ALB (custom origin) chỉ nhận traffic từ CloudFront?", b: "<b>Custom header bí mật</b> (kiểm tra bằng ALB listener rule hoặc WAF) + Security Group chỉ nhận <b>CloudFront managed prefix list</b> (origin-facing)." },
+      { t: "lock", f: "VPC origins là gì?", b: "Dùng <b>ALB, NLB, EC2 trong private subnet</b> làm origin; CloudFront vào qua ENI do dịch vụ quản lý ⇒ CloudFront là <b>điểm vào duy nhất</b>.", x: "VPC vẫn cần internet gateway (chỉ để đánh dấu). Không hỗ trợ GWLB, NLB TLS listener, gRPC." },
+      { t: "lock", f: "Vì sao cần khóa origin khi dùng signed URL / geo restriction?", b: "Nếu người dùng gọi thẳng URL S3/ALB thì <b>vòng qua CloudFront</b>, các kiểm soát ở CloudFront vô nghĩa." },
+
+      // ---- Cache
+      { t: "cache", f: "Cache behavior được so khớp thế nào?", b: "Theo <b>thứ tự</b> danh sách, <b>khớp đầu tiên thắng</b>; default behavior <code>*</code> luôn xét sau cùng.", x: "Behavior trước không yêu cầu signed URL ⇒ file khớp cả hai bị truy cập không cần chữ ký." },
+      { t: "cache", f: "CloudFront cache response của những HTTP method nào?", b: "<b>GET, HEAD</b> (và tùy chọn OPTIONS); các method khác luôn chuyển tới origin." },
+      { t: "cache", f: "Cache key mặc định gồm gì?", b: "<b>Tên miền distribution + đường dẫn URL</b>; cache policy thêm header/cookie/query string nếu cần." },
+      { t: "cache", f: "Cache key nhỏ hay lớn tốt hơn?", b: "<b>Nhỏ</b> ⇒ ít biến thể ⇒ <b>cache hit ratio cao</b>, nhanh, rẻ, origin nhẹ. Chỉ thêm giá trị thật sự làm nội dung khác đi." },
+      { t: "cache", f: "Cache policy và origin request policy khác nhau thế nào?", b: "<b>Cache policy</b>: cache key + TTL + nén.<br><b>Origin request policy</b>: giá trị <b>gửi tới origin nhưng không vào cache key</b>." },
+      { t: "cache", f: "Giá trị TTL mặc định của CloudFront?", b: "Minimum <b>0</b> · Default <b>86.400 s</b> (1 ngày) · Maximum <b>31.536.000 s</b> (1 năm)." },
+      { t: "cache", f: "Origin gửi <code>max-age</code> và <code>s-maxage</code> – ai dùng cái nào?", b: "<b>CloudFront</b> dùng <code>s-maxage</code>, <b>trình duyệt</b> dùng <code>max-age</code>; đều bị kẹp trong [Min TTL, Max TTL]." },
+      { t: "cache", f: "Origin không gửi header cache thì CloudFront cache bao lâu?", b: "<b>Default TTL</b> (nếu Min TTL &gt; 0 ⇒ lấy giá trị lớn hơn giữa Min và Default)." },
+      { t: "cache", f: "<code>stale-if-error</code> giúp gì?", b: "Origin lỗi 5xx/không với tới ⇒ CloudFront <b>vẫn trả bản cũ</b> (giới hạn bởi Max TTL) ⇒ tăng availability." },
+      { t: "cache", f: "Invalidation tính phí thế nào?", b: "<b>1.000 path/tháng</b> miễn phí (cộng dồn mọi distribution); wildcard (<code>/images/*</code>) tính <b>1 path</b>.", x: "Không xóa được cache ở trình duyệt/proxy." },
+      { t: "cache", f: "Khi nào nên dùng versioned file name thay cho invalidation?", b: "Khi <b>cập nhật thường xuyên</b>: rẻ hơn, kiểm soát được cả cache trình duyệt, dễ roll back." },
+      { t: "cache", f: "Lỗi 4xx/5xx từ origin có bị cache không?", b: "<b>Có</b> – error caching TTL mặc định <b>10 giây</b>; cấu hình bằng custom error response." },
+
+      // ---- Signed URL/cookie & geo
+      { t: "priv", f: "Signed URL dùng khi nào?", b: "Hạn chế <b>từng file riêng lẻ</b> (file cài đặt, phim thuê), hoặc client <b>không hỗ trợ cookie</b>." },
+      { t: "priv", f: "Signed cookie dùng khi nào?", b: "Truy cập <b>nhiều file</b> cùng lúc (segment HLS, khu vực subscriber) và <b>không muốn đổi URL</b>." },
+      { t: "priv", f: "Request có cả signed URL và signed cookie – CloudFront xét cái nào?", b: "Chỉ xét <b>signed URL</b>." },
+      { t: "priv", f: "Canned policy vs custom policy?", b: "<b>Canned</b>: chỉ thời điểm hết hạn.<br><b>Custom</b>: thêm <b>thời điểm bắt đầu</b>, <b>giới hạn IP</b>, <b>wildcard</b> dùng lại cho nhiều file." },
+      { t: "priv", f: "Trusted key group hơn CloudFront key pair kiểu cũ ở điểm nào?", b: "<b>Không cần root user</b>, quản lý bằng API/IAM, tự động xoay vòng khóa. Key pair cũ chỉ root tạo được." },
+      { t: "priv", f: "CloudFront signed URL khác S3 presigned URL thế nào?", b: "<b>S3 presigned</b>: ký bằng credential IAM, truy cập thẳng S3, không qua cache.<br><b>CloudFront signed</b>: ký bằng trusted key group, qua edge cache, có thời điểm bắt đầu/IP/wildcard." },
+      { t: "priv", f: "Thêm query string vào URL sau khi ký thì sao?", b: "Bị <b>403</b> – query string phải nằm trong phần được ký." },
+      { t: "priv", f: "CloudFront geo restriction hoạt động thế nào?", b: "<b>Allow list</b> hoặc <b>block list</b> theo <b>quốc gia</b>, áp cho <b>toàn bộ distribution</b>; bị chặn ⇒ <b>HTTP 403</b>.", x: "Chi tiết hơn quốc gia hoặc một phần file ⇒ dịch vụ geolocation bên thứ ba + signed URL." },
+      { t: "priv", f: "CloudFront geo restriction khác Route 53 geolocation routing thế nào?", b: "<b>Geo restriction</b>: <b>chặn</b> (403).<br><b>Route 53 geolocation</b>: <b>định tuyến</b> tới endpoint khác theo vị trí." },
+
+      // ---- Functions
+      { t: "fn", f: "CloudFront Functions gắn được ở những sự kiện nào?", b: "Chỉ <b>viewer request</b> và <b>viewer response</b>." },
+      { t: "fn", f: "Lambda@Edge gắn được ở những sự kiện nào?", b: "Cả <b>4</b>: viewer request/response, <b>origin request/response</b>." },
+      { t: "fn", f: "Thông số CloudFront Functions?", b: "<b>JavaScript</b> · <b>&lt; 1 ms</b> · hàng triệu req/s · 2 MB bộ nhớ · code 10 KB · <b>không mạng</b>, không đọc body." },
+      { t: "fn", f: "Thông số Lambda@Edge?", b: "<b>Node.js, Python</b> · tới <b>30 giây</b> · 10.000 req/s mỗi Region · code 50 MB · <b>có mạng</b>, đọc body, dùng AWS SDK.", x: "Tạo trong Lambda ở us-east-1 rồi nhân bản ra các Region." },
+      { t: "fn", f: "Use case điển hình của CloudFront Functions?", b: "Chuẩn hóa cache key · thêm/sửa header (HSTS) · URL redirect/rewrite · kiểm tra token JWT." },
+      { t: "fn", f: "Use case điển hình của Lambda@Edge?", b: "Gọi dịch vụ ngoài (IdP, DB) · thư viện bên thứ ba · đọc request body · xử lý ở origin request/response (chọn origin động, resize ảnh)." },
+
+      // ---- Global Accelerator
+      { t: "ga", f: "AWS Global Accelerator là gì?", b: "Dịch vụ global cấp <b>2 static anycast IP</b>, đưa traffic <b>TCP/UDP</b> vào mạng AWS tại edge gần nhất rồi tới endpoint tối ưu. <b>Không cache</b>." },
+      { t: "ga", f: "Global Accelerator có bao nhiêu static IP? Khi nào IP mất?", b: "<b>2 IPv4</b> (dual-stack: 4 địa chỉ), mỗi IP từ một <b>network zone</b> riêng. Giữ nguyên kể cả khi disable; chỉ mất khi <b>xóa accelerator</b>.", x: "Có thể dùng BYOIP (chỉ IPv4)." },
+      { t: "ga", f: "Thành phần của Global Accelerator?", b: "Accelerator → <b>listener</b> (port, TCP/UDP) → <b>endpoint group</b> (một Region, traffic dial) → <b>endpoint</b> (ALB, NLB, EC2, Elastic IP; có weight)." },
+      { t: "ga", f: "Traffic dial và endpoint weight khác nhau thế nào?", b: "<b>Traffic dial</b> (0–100%): % traffic vào <b>một Region</b> (endpoint group).<br><b>Endpoint weight</b> (0–255, mặc định 128): chia traffic <b>giữa các endpoint trong Region</b>." },
+      { t: "ga", f: "Standard vs custom routing accelerator?", b: "<b>Standard</b>: tới endpoint tối ưu theo vị trí, sức khỏe, weight; có health check/failover.<br><b>Custom routing</b>: ánh xạ tất định tới <b>EC2 + port cụ thể</b> (VoIP, game); không health check." },
+      { t: "ga", f: "Global Accelerator failover có phụ thuộc DNS TTL không?", b: "<b>Không.</b> Endpoint không khỏe ⇒ kết nối mới chuyển sang endpoint/Region khác <b>ngay lập tức</b>, IP không đổi." },
+      { t: "ga", f: "Endpoint nào của Global Accelerator hỗ trợ client IP preservation?", b: "<b>ALB, EC2, NLB có security group</b>. Không: NLB không SG, Elastic IP. Custom routing luôn giữ client IP." },
+      { t: "ga", f: "Idle timeout của Global Accelerator?", b: "Cố định <b>340 giây</b> (TCP) và <b>30 giây</b> (UDP)." },
+      { t: "ga", f: "Global Accelerator có nhận S3 bucket làm endpoint không?", b: "<b>Không</b> – endpoint chỉ là <b>ALB, NLB, EC2, Elastic IP</b> (custom routing: VPC subnet)." },
+      { t: "ga", f: "Route 53 latency routing khác Global Accelerator thế nào?", b: "<b>Route 53</b>: traffic vẫn đi <b>internet công cộng</b>, failover phụ thuộc TTL.<br><b>Global Accelerator</b>: vào <b>backbone AWS</b> ngay từ edge, failover tức thì." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>users must not access S3 objects directly, only through CloudFront</i>” ⇒ ?", b: "<b>OAC</b> + bucket policy cho <code>cloudfront.amazonaws.com</code> + AWS:SourceArn." },
+      { t: "kw", f: "Đề có “<i>static IP addresses</i>”, “<i>IP allowlisting</i>” cho ứng dụng đa Region ⇒ ?", b: "<b>Global Accelerator</b>." },
+      { t: "kw", f: "Đề có “<i>UDP</i>”, “<i>gaming</i>”, “<i>VoIP</i>”, “<i>IoT</i>”, độ trễ thấp toàn cầu ⇒ ?", b: "<b>Global Accelerator</b> (CloudFront chỉ HTTP/HTTPS)." },
+      { t: "kw", f: "Đề có “<i>members-only area with many files / HLS video, don’t change URLs</i>” ⇒ ?", b: "<b>Signed cookies</b>." },
+      { t: "kw", f: "Đề có “<i>one downloadable file per customer, expires in 24 hours</i>” ⇒ ?", b: "<b>Signed URL</b> (canned policy đủ dùng)." },
+      { t: "kw", f: "Đề có “<i>prevent users in specific countries from accessing content</i>” qua CloudFront ⇒ ?", b: "<b>CloudFront geo restriction</b> (block/allow list)." },
+      { t: "kw", f: "Đề có “<i>lightweight header manipulation / URL rewrite at very high scale, lowest cost</i>” ⇒ ?", b: "<b>CloudFront Functions</b>." },
+      { t: "kw", f: "Đề có “<i>call an external service / inspect request body / modify origin request</i>” ⇒ ?", b: "<b>Lambda@Edge</b>." },
+      { t: "kw", f: "Đề có “<i>users still see the old version after updating files in S3</i>” ⇒ ?", b: "Tạo <b>invalidation</b> (nhanh, một lần) hoặc dùng <b>versioned file name</b> (lâu dài, rẻ)." },
+      { t: "kw", f: "Đề có “<i>low cache hit ratio</i>”, “<i>reduce load on origin</i>” ⇒ ?", b: "Thu gọn <b>cache key</b>, tăng TTL, dùng origin request policy, bật <b>Origin Shield</b>." },
+      { t: "kw", f: "Đề có “<i>route a specific user to a specific EC2 instance and port</i>” ⇒ ?", b: "<b>Custom routing accelerator</b>." }
+    ],
+
+    pairs: [
+      ["Amazon CloudFront", "CDN của AWS, cache nội dung tại edge"],
+      ["Edge location (POP)", "Nơi CloudFront cache nội dung gần người dùng"],
+      ["Regional edge cache", "Tầng cache lớn giữa POP và origin"],
+      ["Origin Shield", "Tầng cache tập trung trước origin, gộp request"],
+      ["Distribution", "Cấu hình CloudFront: origin, behavior, domain"],
+      ["Origin group", "Primary + secondary, failover theo mã lỗi HTTP"],
+      ["Alternate domain name", "Tên miền riêng, cần chứng chỉ ACM ở us-east-1"],
+      ["OAC", "CloudFront ký SigV4 gọi S3, bucket giữ private"],
+      ["OAI", "Cơ chế cũ, không SSE-KMS, PUT/DELETE, Region mới"],
+      ["VPC origin", "ALB/NLB/EC2 private subnet làm origin"],
+      ["Cache behavior", "Thiết lập theo path pattern, khớp đầu tiên thắng"],
+      ["Cache key", "Định danh object trong cache"],
+      ["Origin request policy", "Giá trị gửi tới origin, không vào cache key"],
+      ["Invalidation", "Xóa object khỏi edge; 1.000 path/tháng miễn phí"],
+      ["Versioned file name", "Đổi tên file khi cập nhật thay cho invalidation"],
+      ["Signed URL", "URL có chữ ký cho từng file riêng tư"],
+      ["Signed cookie", "Cookie có chữ ký cho nhiều file, giữ URL"],
+      ["Custom policy", "Thêm thời điểm bắt đầu, IP, wildcard"],
+      ["Trusted key group", "Chứa public key xác minh chữ ký, không cần root"],
+      ["Geo restriction", "Allow/block list quốc gia, trả 403"],
+      ["Price class", "Giới hạn edge location để giảm chi phí"],
+      ["CloudFront Functions", "JavaScript, viewer trigger, dưới 1 ms"],
+      ["Lambda@Edge", "Node.js/Python, 4 sự kiện, tới 30 s, có mạng"],
+      ["Global Accelerator", "2 static anycast IP, TCP/UDP qua backbone AWS"],
+      ["Anycast IP", "Một IP quảng bá từ nhiều vị trí"],
+      ["Traffic dial", "% traffic một endpoint group (Region) chấp nhận"],
+      ["Endpoint weight", "0–255, mặc định 128, chia traffic trong group"],
+      ["Network zone", "Vùng mạng cô lập phục vụ mỗi static IP"],
+      ["Custom routing accelerator", "Ánh xạ người dùng tới EC2 + port cụ thể"]
+    ],
+
+    sorts: [
+      {
+        title: "CloudFront hay Global Accelerator?",
+        desc: "Đặc điểm hoặc tình huống sau thuộc CloudFront hay Global Accelerator?",
+        buckets: ["Amazon CloudFront", "AWS Global Accelerator"],
+        items: [
+          ["Cache nội dung tại edge", 0, "GA không cache"],
+          ["Signed URL / signed cookie", 0, "bảo mật nội dung của CloudFront"],
+          ["Geo restriction theo quốc gia", 0, "trả 403"],
+          ["Chạy code tại biên (Functions, Lambda@Edge)", 0, "GA không có"],
+          ["Origin là S3 hoặc HTTP server on-prem", 0, "GA chỉ endpoint trong AWS"],
+          ["2 static anycast IP cố định", 1, "IP của CloudFront thay đổi"],
+          ["Hỗ trợ UDP cho game, VoIP", 1, "CloudFront chỉ HTTP/HTTPS"],
+          ["Failover giữa Region không phụ thuộc DNS TTL", 1, "health check, chuyển ngay"],
+          ["Traffic dial theo Region", 1, "endpoint group"],
+          ["Khách hàng whitelist IP một lần", 1, "thêm/bớt Region không đổi IP"]
+        ]
+      },
+      {
+        title: "CloudFront Functions hay Lambda@Edge?",
+        desc: "Yêu cầu sau nên dùng CloudFront Functions hay Lambda@Edge?",
+        buckets: ["CloudFront Functions", "Lambda@Edge"],
+        items: [
+          ["Thêm security header HSTS cho mọi response, rẻ nhất", 0, "header manipulation nhẹ"],
+          ["Redirect / rewrite URL (thêm index.html)", 0, "use case điển hình"],
+          ["Chuẩn hóa query string để tăng cache hit ratio", 0, "cache key normalization"],
+          ["Kiểm tra token JWT trong header", 0, "request authorization nhẹ"],
+          ["Hàng triệu request/giây, dưới 1 ms", 0, "quy mô của Functions"],
+          ["Gọi IdP bên ngoài để xác thực", 1, "cần truy cập mạng"],
+          ["Đọc request body", 1, "Functions không đọc body"],
+          ["Sửa origin request, chọn origin động", 1, "Functions chỉ viewer trigger"],
+          ["Dùng AWS SDK gọi DynamoDB", 1, "cần thư viện và mạng"],
+          ["Chạy vài giây, viết bằng Python", 1, "Lambda@Edge tới 30 s, Node.js/Python"]
+        ]
+      },
+      {
+        title: "Cách khóa origin / bảo vệ nội dung",
+        desc: "Chọn cơ chế phù hợp với tình huống.",
+        buckets: ["OAC", "Custom header + prefix list", "VPC origin", "Signed URL", "Signed cookie", "Geo restriction"],
+        items: [
+          ["Bucket S3 private, mã hóa SSE-KMS, chỉ CloudFront đọc", 0, "OAC hỗ trợ SSE-KMS"],
+          ["Upload qua CloudFront vào bucket private (PUT)", 0, "OAC hỗ trợ request động"],
+          ["ALB internet-facing chỉ nhận request từ CloudFront", 1, "header bí mật + SG prefix list"],
+          ["Server on-premises làm origin", 1, "custom origin dùng header + firewall"],
+          ["ALB internal trong private subnet, LEAST operational overhead", 2, "CloudFront là điểm vào duy nhất"],
+          ["Link tải một file hết hạn sau 24 giờ", 3, "từng file riêng lẻ"],
+          ["Client là HTTP client tự viết không hỗ trợ cookie", 3, "signed URL không cần cookie"],
+          ["Khu vực subscriber có hàng nghìn file, giữ URL", 4, "nhiều file, không đổi URL"],
+          ["Chỉ có bản quyền phân phối ở Liechtenstein", 5, "allow list quốc gia"]
+        ]
+      },
+      {
+        title: "Chọn giải pháp edge theo tình huống",
+        desc: "Đọc tình huống và chọn giải pháp phù hợp nhất (theo bảng của bài).",
+        buckets: ["Origin group", "Origin Shield", "Invalidation", "Versioned file name", "Price class thấp hơn", "Traffic dial", "Custom routing accelerator"],
+        items: [
+          ["Website tĩnh S3 phải sẵn sàng khi một Region lỗi", 0, "primary + secondary S3 (CRR)"],
+          ["Origin on-prem băng thông thấp bị nhiều request trùng", 1, "gộp request trước origin"],
+          ["Vừa sửa một file lỗi, cần người dùng thấy ngay một lần", 2, "xóa khỏi cache edge"],
+          ["Cập nhật JS/CSS hằng ngày, muốn kiểm soát cả cache trình duyệt", 3, "rẻ hơn invalidation, dễ roll back"],
+          ["Người dùng chủ yếu ở Mỹ và châu Âu, muốn giảm phí CloudFront", 4, "Price Class 100"],
+          ["Chuyển 20% traffic sang Region mới", 5, "traffic dial cho endpoint group"],
+          ["Ghép người chơi vào một game session trên EC2 + port cụ thể", 6, "ánh xạ tất định"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Request PUT/POST đi thẳng từ POP tới origin, bỏ qua regional edge cache.", true, "Cùng PATCH, OPTIONS, DELETE và request động."],
+      ["Data transfer từ S3 origin tới CloudFront bị tính phí như data transfer ra internet.", false, "Từ AWS origin tới CloudFront miễn phí."],
+      ["Chứng chỉ ACM cho alternate domain name của CloudFront phải ở us-east-1.", true, "Bắt buộc với viewer HTTPS."],
+      ["Origin Shield phù hợp nhất với nội dung động, không cache được.", false, "Không phù hợp nội dung động/ít cache được."],
+      ["Origin group failover cho cả request POST và PUT.", false, "Chỉ GET, HEAD, OPTIONS."],
+      ["Mặc định CloudFront thử kết nối primary 3 lần × 10 giây trước khi failover.", true, "Tổng 30 giây, giảm được."],
+      ["OAC dùng được với S3 static website endpoint.", false, "Website endpoint là custom origin, không dùng OAC/OAI."],
+      ["OAC hỗ trợ object mã hóa SSE-KMS.", true, "Thêm statement cho CloudFront vào KMS key policy."],
+      ["OAI hỗ trợ bucket ở các opt-in Region mới.", false, "OAI không hỗ trợ Region mới sau 01/2023."],
+      ["Bucket policy cho OAC dùng principal cloudfront.amazonaws.com với điều kiện AWS:SourceArn.", true, "Chỉ distribution cụ thể đọc được."],
+      ["VPC origins cho phép dùng ALB trong private subnet làm origin.", true, "CloudFront là điểm vào duy nhất."],
+      ["Cache behavior được chọn theo pattern cụ thể nhất, không phụ thuộc thứ tự.", false, "Theo thứ tự, khớp đầu tiên thắng."],
+      ["Default cache behavior có path pattern * và luôn được xét sau cùng.", true, "Không đổi được path pattern."],
+      ["Thêm cookie session ID vào cache key giúp tăng cache hit ratio.", false, "Mỗi người một bản ⇒ hit ratio thấp."],
+      ["Default TTL mặc định của CloudFront là 86.400 giây.", true, "1 ngày; Max TTL mặc định 1 năm."],
+      ["Khi origin gửi cả max-age và s-maxage, CloudFront dùng s-maxage.", true, "Trình duyệt dùng max-age."],
+      ["Viewer gửi Cache-Control: no-cache trong GET sẽ ép CloudFront quay về origin.", false, "CloudFront bỏ qua header này từ viewer."],
+      ["Invalidation path /images/* được tính là 1 path.", true, "Wildcard tính 1 path dù xóa nhiều file."],
+      ["Invalidation xóa luôn bản cache trong trình duyệt người dùng.", false, "Chỉ xóa ở edge; dùng versioned file name để kiểm soát trình duyệt."],
+      ["Signed cookie phù hợp khi cần truy cập nhiều file mà không đổi URL.", true, "Vd mọi segment video HLS."],
+      ["Canned policy cho phép giới hạn dải IP người dùng.", false, "Cần custom policy."],
+      ["Trusted key group cần root user để tạo.", false, "Key group không cần root; key pair kiểu cũ mới cần."],
+      ["S3 presigned URL đi qua edge cache của CloudFront.", false, "Truy cập thẳng S3, không qua CDN."],
+      ["CloudFront geo restriction trả HTTP 403 cho người dùng bị chặn.", true, "Có thể cấu hình trang lỗi tùy biến."],
+      ["Geo restriction của CloudFront có thể chặn theo thành phố.", false, "Chỉ mức quốc gia; chi tiết hơn cần dịch vụ bên thứ ba."],
+      ["CloudFront Functions có thể gọi API bên ngoài.", false, "Không có truy cập mạng."],
+      ["Lambda@Edge gắn được ở origin request và origin response.", true, "Gắn được cả 4 sự kiện."],
+      ["CloudFront Functions chạy dưới 1 mili giây.", true, "Quy mô hàng triệu request/giây."],
+      ["Global Accelerator cache nội dung tại edge giống CloudFront.", false, "Không cache; muốn cache dùng CloudFront."],
+      ["Global Accelerator hỗ trợ cả TCP và UDP.", true, "CloudFront chỉ HTTP/HTTPS."],
+      ["Static IP của Global Accelerator mất khi disable accelerator.", false, "Chỉ mất khi xóa accelerator."],
+      ["Endpoint weight của Global Accelerator mặc định là 128.", true, "Giá trị 0–255."],
+      ["Global Accelerator có thể dùng S3 bucket làm endpoint.", false, "Chỉ ALB, NLB, EC2, Elastic IP."],
+      ["Failover của Global Accelerator phụ thuộc DNS TTL.", false, "Chuyển ngay ở tầng mạng, IP không đổi."],
+      ["Custom routing accelerator có health check và failover tự động.", false, "Custom routing không health check, không failover."],
+      ["CloudFront cung cấp static IP để khách hàng whitelist.", false, "Cần IP cố định ⇒ Global Accelerator."]
+    ],
+
+    map: {
+      t: "Bài 25 · CloudFront & Global Accelerator",
+      c: [
+        { t: "CloudFront tổng quan", icon: "svc/Amazon-CloudFront.svg", c: [
+          { t: "Tầng cache", v: "POP → regional edge cache → Origin Shield → origin" },
+          { t: "Bỏ qua regional cache", v: "PUT/POST/PATCH/OPTIONS/DELETE, request động" },
+          { t: "Chi phí", v: "AWS origin → CloudFront $0 · price class" },
+          { t: "Origin Shield", v: "gộp request trùng, tăng hit ratio" }
+        ] },
+        { t: "Distribution & origin", icon: "res/Amazon-CloudFront_Download-Distribution.svg", c: [
+          { t: "Origin", v: "S3 REST, S3 website, ALB/NLB/EC2, on-prem, VPC origin" },
+          { t: "Chứng chỉ viewer", v: "ACM ở us-east-1" },
+          { t: "Origin group", v: "failover theo mã HTTP, chỉ GET/HEAD/OPTIONS" },
+          { t: "Thời gian thử primary", v: "3 × 10 s mặc định" }
+        ] },
+        { t: "Khóa origin", icon: "res/Amazon-Simple-Storage-Service_Bucket.svg", c: [
+          { t: "OAC", v: "SigV4, cloudfront.amazonaws.com + AWS:SourceArn" },
+          { t: "OAC hơn OAI", v: "SSE-KMS, PUT/DELETE, mọi Region" },
+          { t: "Custom origin", v: "header bí mật + managed prefix list" },
+          { t: "VPC origin", v: "private subnet, điểm vào duy nhất" }
+        ] },
+        { t: "Cache & TTL", icon: "res/Amazon-CloudFront_Edge-Location.svg", c: [
+          { t: "Behavior", v: "theo thứ tự, khớp đầu tiên thắng, * cuối" },
+          { t: "Cache key", v: "nhỏ ⇒ hit ratio cao" },
+          { t: "TTL mặc định", v: "Min 0 · Default 86.400 · Max 31.536.000 s" },
+          { t: "Header", v: "s-maxage cho CloudFront, max-age cho trình duyệt" },
+          { t: "Làm mới", c: [
+            { t: "Invalidation", v: "1.000 path/tháng free, wildcard = 1" },
+            { t: "Versioned name", v: "cập nhật thường xuyên, rẻ hơn" }
+          ] }
+        ] },
+        { t: "Nội dung riêng tư", icon: "svc/Amazon-CloudFront.svg", c: [
+          { t: "Signed URL", v: "một file, client không cookie" },
+          { t: "Signed cookie", v: "nhiều file, giữ URL" },
+          { t: "Custom policy", v: "bắt đầu + IP + wildcard" },
+          { t: "Signer", v: "trusted key group, không cần root" },
+          { t: "Geo restriction", v: "allow/block quốc gia, 403" }
+        ] },
+        { t: "Code tại biên", icon: "res/Amazon-CloudFront_Functions.svg", c: [
+          { t: "CloudFront Functions", v: "JS, viewer trigger, &lt; 1 ms, không mạng" },
+          { t: "Lambda@Edge", v: "Node.js/Python, 4 trigger, 30 s, có mạng/body" }
+        ] },
+        { t: "Global Accelerator", icon: "svc/AWS-Global-Accelerator.svg", c: [
+          { t: "Static IP", v: "2 anycast IPv4, 2 network zone" },
+          { t: "Cấu trúc", v: "listener TCP/UDP → endpoint group → endpoint" },
+          { t: "Điều phối", c: [
+            { t: "Traffic dial", v: "0–100% mỗi Region" },
+            { t: "Endpoint weight", v: "0–255, mặc định 128" }
+          ] },
+          { t: "Failover", v: "tức thì, không phụ thuộc DNS" },
+          { t: "Custom routing", v: "EC2 + port cụ thể, VoIP/game" },
+          { t: "Khác CloudFront", v: "không cache, TCP/UDP, IP cố định" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

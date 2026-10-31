@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 44 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Cost-Explorer.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="44" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-44-cost-optimization.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "pillar", name: "Trụ cột Cost Optimization" },
+      { id: "tag", name: "Tags & Cost Categories" },
+      { id: "ce", name: "Cost Explorer & CUR" },
+      { id: "bud", name: "Budgets & Anomaly Detection" },
+      { id: "opt", name: "Compute Optimizer · Hub · Trusted Advisor" },
+      { id: "dt", name: "Data transfer cost" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Trụ cột
+      { t: "pillar", f: "Workload cost-optimized là gì (theo whitepaper)?", b: "Sử dụng hết tài nguyên, đạt kết quả ở <b>mức giá thấp nhất có thể</b> mà vẫn đáp ứng yêu cầu chức năng." },
+      { t: "pillar", f: "Domain 4 – Cost-Optimized chiếm bao nhiêu % đề?", b: "<b>20%</b>." },
+      { t: "pillar", f: "5 design principles của Cost Optimization?", b: "1. Implement <b>cloud financial management</b><br>2. Adopt a <b>consumption model</b><br>3. <b>Measure overall efficiency</b><br>4. Stop spending money on <b>undifferentiated heavy lifting</b><br>5. <b>Analyze and attribute expenditure</b>" },
+      { t: "pillar", f: "Ví dụ consumption model: dev/test chỉ dùng 8 giờ/ngày, 5 ngày/tuần?", b: "Tắt ngoài giờ tiết kiệm khoảng <b>75%</b> (40 giờ so với 168 giờ)." },
+      { t: "pillar", f: "5 practice areas của Cost Optimization?", b: "Cloud Financial Management → <b>Expenditure and usage awareness</b> → <b>Cost-effective resources</b> → <b>Manage demand and supply</b> → <b>Optimize over time</b>." },
+      { t: "pillar", f: "COST08 “Plan for data transfer” thuộc practice area nào?", b: "<b>Cost-effective resources</b>." },
+      { t: "pillar", f: "Vòng quản lý chi phí 4 bước và công cụ?", b: "1. <b>Tổ chức &amp; gắn nhãn</b>: Organizations, tags, Cost Categories<br>2. <b>Nhìn thấy</b>: Cost Explorer, CUR<br>3. <b>Kiểm soát</b>: Budgets, Anomaly Detection<br>4. <b>Tối ưu</b>: Compute Optimizer, Hub, Trusted Advisor" },
+
+      // ---- Tags
+      { t: "tag", f: "Hai loại cost allocation tag?", b: "<b>User-defined</b> (tiền tố <code>user:</code>, vd CostCenter) và <b>AWS-generated</b> (tiền tố <code>aws:</code>, vd <code>aws:createdBy</code>)." },
+      { t: "tag", f: "Gắn tag rồi nhưng không thấy trong Cost Explorer ⇒ vì sao?", b: "Chưa <b>activate</b> trong Billing console (ở <b>management account</b>), hoặc chưa đủ <b>24 giờ</b>." },
+      { t: "tag", f: "Tag có áp ngược cho chi phí cũ không?", b: "<b>Không</b> – chỉ từ sau khi gắn/activate (trừ khi dùng backfill)." },
+      { t: "tag", f: "<code>aws:createdBy</code> ghi gì? Ai activate?", b: "Ai tạo resource (Root, IAMUser, AssumedRole, FederatedUser) dựa trên CloudTrail. Chỉ <b>management account</b> activate; áp cho mọi member account.", x: "Chỉ gắn cho resource tạo sau khi activate; không hiện trong Tag Editor." },
+      { t: "tag", f: "Các con số về tag cần nhớ?", b: "Tối đa <b>24 giờ</b> để hiện · <b>500</b> active tag key cho báo cáo · <b>50</b> tag user-defined mỗi resource." },
+      { t: "tag", f: "Member account có tự activate cost allocation tag được không?", b: "<b>Không</b> – làm ở management account.", x: "Account chuyển organization ⇒ tag mất trạng thái active, phải activate lại." },
+      { t: "tag", f: "Ép mọi resource phải có tag CostCenter?", b: "<b>Tag policy</b> (chuẩn hóa) + <b>SCP</b> với điều kiện <code>aws:RequestTag</code> (chặn tạo nếu thiếu)." },
+      { t: "tag", f: "AWS Cost Categories khác tag ở điểm nào?", b: "Cũng là key–value nhưng gắn vào <b>từng dòng chi phí</b> (cost line item) bằng <b>rule</b>, không gắn lên resource." },
+      { t: "tag", f: "Hai loại rule của Cost Categories?", b: "<b>Regular</b> (giá trị tĩnh, vd account 1–3 ⇒ Team1) và <b>Inherited value</b> (lấy giá trị động từ một tag key)." },
+      { t: "tag", f: "Split charges dùng để làm gì?", b: "Chia <b>chi phí dùng chung</b> (account mạng, Transit Gateway) cho các giá trị cost category." },
+      { t: "tag", f: "Sửa rule Cost Categories ngày 15/10 thì áp từ khi nào?", b: "Từ <b>đầu tháng hiện tại</b> (1/10); tới 24 giờ để chuyển Processing → Applied." },
+      { t: "tag", f: "Cách phân bổ chi phí đơn giản và chắc chắn nhất?", b: "<b>Tách account riêng</b> cho mỗi team/môi trường trong Organizations – chi phí theo linked account luôn có sẵn." },
+
+      // ---- Cost Explorer & CUR
+      { t: "ce", f: "Cost Explorer: dữ liệu lịch sử và dự báo bao lâu?", b: "<b>13 tháng</b> lịch sử (bật multi-year ⇒ <b>38 tháng</b>, theo tháng) · dự báo <b>18 tháng</b>." },
+      { t: "ce", f: "Dữ liệu hourly / resource-level của Cost Explorer giữ bao lâu?", b: "Chỉ <b>14 ngày</b> gần nhất, phải bật trong preferences (management account); thay đổi mất tới 48 giờ." },
+      { t: "ce", f: "Giá của Cost Explorer?", b: "Giao diện <b>miễn phí</b>; API <b>$0.01/request</b>.", x: "Đã bật thì không tắt được." },
+      { t: "ce", f: "Unblended khác amortized cost thế nào?", b: "<b>Unblended</b>: tính lúc phát sinh.<br><b>Amortized</b>: phân bổ đều phí upfront của RI/SP theo thời gian ⇒ xem “chi phí thật mỗi ngày”." },
+      { t: "ce", f: "Utilization và coverage (RI/SP) khác nhau thế nào?", b: "<b>Utilization</b>: đã dùng bao nhiêu phần cam kết.<br><b>Coverage</b>: bao nhiêu % usage được cam kết che phủ." },
+      { t: "ce", f: "CUR là gì, giao ở đâu?", b: "Bộ dữ liệu chi phí/usage <b>chi tiết nhất</b> (giờ, resource ID, tag), giao vào <b>S3 bucket của bạn</b>; truy vấn bằng <b>Athena</b>, Redshift, QuickSight." },
+      { t: "ce", f: "CUR cập nhật thế nào?", b: "Lần đầu tới 24 giờ; sau đó <b>≥ 1 lần/ngày</b> (tới 3 lần/ngày), <b>cộng dồn month-to-date</b>, finalize sau khi xuất hóa đơn." },
+      { t: "ce", f: "Cách khuyến nghị hiện nay để nhận dữ liệu chi phí chi tiết?", b: "<b>CUR 2.0</b> qua <b>AWS Data Exports</b> (chọn cột, lọc dòng bằng SQL cơ bản)." },
+      { t: "ce", f: "FOCUS là gì?", b: "<b>FinOps Open Cost and Usage Specification</b> – định dạng chuẩn mở, tiện gộp với dữ liệu cloud khác." },
+      { t: "ce", f: "Cost Explorer hay CUR khi cần chargeback, BI, SQL tùy biến?", b: "<b>CUR / Data Exports</b>. Cost Explorer hợp phân tích nhanh, không code." },
+
+      // ---- Budgets & Anomaly
+      { t: "bud", f: "6 loại budget?", b: "<b>Cost</b>, <b>Usage</b>, <b>RI utilization</b>, <b>RI coverage</b>, <b>Savings Plans utilization</b>, <b>Savings Plans coverage</b>." },
+      { t: "bud", f: "Actual alert khác forecasted alert thế nào?", b: "<b>Actual</b>: sau khi phát sinh, gửi 1 lần mỗi kỳ.<br><b>Forecasted</b>: trước khi phát sinh, có thể gửi nhiều lần; cần ~<b>5 tuần</b> dữ liệu." },
+      { t: "bud", f: "Mỗi alert của Budgets gửi tới bao nhiêu đích?", b: "Tối đa <b>10 email</b> và <b>1 SNS topic</b> (SNS → SMS, Slack/Chime qua Amazon Q Developer in chat applications)." },
+      { t: "bud", f: "Budgets cập nhật bao lâu một lần?", b: "Tới <b>3 lần/ngày</b> (thường cách 8–12 giờ) ⇒ không phải hàng rào chặn chi tiêu tức thời." },
+      { t: "bud", f: "Ba loại budget action?", b: "Áp <b>IAM policy</b> (user/group/role) · áp <b>SCP</b> (account/OU, từ management account) · <b>stop EC2/RDS</b> cụ thể (chỉ trong chính account đó).", x: "Chạy tự động hoặc sau khi duyệt tay; cần IAM role cho Budgets." },
+      { t: "bud", f: "Giá của Budgets?", b: "Theo dõi/thông báo miễn phí; <b>2 action-enabled budget</b> đầu tiên mỗi tháng miễn phí, sau đó <b>$0.10/ngày</b>; Budget Reports $0.01/báo cáo." },
+      { t: "bud", f: "Budget action stop EC2 thuộc Auto Scaling group thì sao?", b: "ASG sẽ khởi động lại/thay thế ⇒ kết hợp thêm action <b>gỡ quyền của role</b> mà ASG dùng." },
+      { t: "bud", f: "Billing alarm CloudWatch (EstimatedCharges) so với Budgets?", b: "Cách cũ, metric ở <b>us-east-1</b>, chỉ theo tổng chi phí ước tính; Budgets linh hoạt hơn (filter, forecast, action)." },
+      { t: "bud", f: "AWS Cost Anomaly Detection làm gì?", b: "Dùng <b>machine learning</b> phát hiện chi tiêu bất thường, tự học tính mùa vụ, <b>không cần đặt ngưỡng</b>; root cause theo <b>service, account, Region, usage type</b>." },
+      { t: "bud", f: "Cost Anomaly Detection chạy bao lâu một lần? Dịch vụ mới cần bao nhiêu dữ liệu?", b: "Khoảng <b>3 lần/ngày</b> (net unblended); có thể mất tới 24 giờ để phát hiện; dịch vụ mới cần <b>10 ngày</b> dữ liệu." },
+      { t: "bud", f: "Cost Anomaly Detection có theo dõi chi phí AWS Marketplace bên thứ ba không?", b: "<b>Không</b> (trừ foundation model bên thứ ba trên Bedrock) – dùng Budgets." },
+
+      // ---- Optimizer
+      { t: "opt", f: "Compute Optimizer phân tích bao nhiêu ngày metrics?", b: "Mặc định <b>14 ngày</b>; <b>93 ngày</b> với <b>enhanced infrastructure metrics</b> (trả phí)." },
+      { t: "opt", f: "Vì sao khuyến nghị Compute Optimizer không xét memory?", b: "EC2 không có metric memory mặc định ⇒ phải cài <b>unified CloudWatch agent</b>." },
+      { t: "opt", f: "Compute Optimizer hỗ trợ những tài nguyên nào (chính)?", b: "<b>EC2, ASG, EBS, Lambda, ECS on Fargate</b>, RDS/Aurora, NAT Gateway, DynamoDB, ElastiCache, license SQL Server trên EC2…" },
+      { t: "opt", f: "Ba finding của Compute Optimizer (EC2)?", b: "<b>Under-provisioned</b> (thiếu ⇒ tăng size) · <b>Over-provisioned</b> (thừa ⇒ giảm size) · <b>Optimized</b>." },
+      { t: "opt", f: "Điều kiện để Lambda có khuyến nghị Compute Optimizer?", b: "Memory cấu hình <b>≤ 1.792 MB</b> và <b>≥ 50 lần invoke</b> trong 14 ngày." },
+      { t: "opt", f: "Compute Optimizer cần tối thiểu bao nhiêu giờ metric cho EC2/ASG/RDS? Khuyến nghị sau bao lâu?", b: "<b>30 giờ</b> metric trong lookback · tới <b>24 giờ</b> sau khi opt in." },
+      { t: "opt", f: "Muốn khuyến nghị cho mọi account trong organization?", b: "Opt in ở <b>management account</b> với <i>All accounts within this organization</i> (hoặc delegated administrator)." },
+      { t: "opt", f: "Cost Optimization Hub làm gì?", b: "Gom và ưu tiên khuyến nghị (rightsizing, idle, SP, RI) đa account/Region; tính theo <b>giá thực tế</b> của bạn và <b>khử trùng lặp</b> tiết kiệm." },
+      { t: "opt", f: "Trusted Advisor: tiêu chí Low utilization EC2?", b: "CPU trung bình ngày <b>≤ 10%</b> và network I/O <b>≤ 5 MB</b> trong ít nhất <b>4/14 ngày</b>." },
+      { t: "opt", f: "Kể các check cost của Trusted Advisor về tài nguyên bỏ quên.", b: "EIP không gắn · EBS không gắn/&lt; 1 IOPS/ngày (7 ngày) · LB idle · RDS không kết nối 7 ngày · NAT/interface endpoint 0 byte 30 ngày · RI hết hạn trong 30 ngày." },
+      { t: "opt", f: "Trusted Advisor hay Compute Optimizer?", b: "<b>Compute Optimizer</b>: ML, khuyến nghị loại/kích cỡ cụ thể.<br><b>Trusted Advisor</b>: kiểm tra rộng theo best practice, tìm tài nguyên bỏ quên." },
+      { t: "opt", f: "Đầy đủ check Trusted Advisor cần Support plan nào?", b: "<b>Business Support+</b> trở lên." },
+
+      // ---- Data transfer
+      { t: "dt", f: "Những luồng data transfer miễn phí?", b: "<b>Inbound</b> từ Internet · <b>cùng AZ</b> · RDS Multi-AZ replication · <b>gateway endpoint</b> S3/DynamoDB · <b>origin → CloudFront</b> · Direct Connect inbound." },
+      { t: "dt", f: "Những luồng data transfer có phí?", b: "<b>Cross-AZ</b> (thường hai chiều) · <b>cross-Region</b> · <b>AWS → Internet</b> · <b>NAT gateway</b> (giờ + GB) · interface endpoint · Transit Gateway." },
+      { t: "dt", f: "Đi qua NAT gateway tới S3 cùng Region có tính phí xử lý không?", b: "<b>Có</b> – phí xử lý mỗi GB ⇒ dùng <b>S3 gateway endpoint</b> (miễn phí)." },
+      { t: "dt", f: "Cross-AZ charges giữa app tier và NAT gateway cao ⇒ ?", b: "<b>Một NAT gateway mỗi AZ</b> + route table theo AZ." },
+      { t: "dt", f: "VPC peering tính phí thế nào?", b: "Cùng AZ miễn phí; khác AZ/khác Region tính phí như thường; <b>không có phí giờ</b>." },
+      { t: "dt", f: "Batch jobs trao đổi nhiều dữ liệu giữa instance, minimize cost?", b: "Đặt <b>cùng AZ</b> (vd cluster placement group) – chấp nhận đánh đổi availability." },
+      { t: "dt", f: "CloudFront security savings bundle tiết kiệm bao nhiêu?", b: "Tới <b>30%</b> nếu cam kết mức dùng." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "“<i>Notify when monthly costs are forecasted to exceed $X</i>” ⇒ ?", b: "<b>AWS Budgets</b> cost budget + <b>forecasted</b> alert + SNS/email." },
+      { t: "kw", f: "“<i>Automatically prevent developers from launching resources when budget exceeded</i>” ⇒ ?", b: "<b>Budget action</b> áp IAM policy hoặc SCP." },
+      { t: "kw", f: "“<i>Detect unusual spending spikes without static thresholds</i>” ⇒ ?", b: "<b>AWS Cost Anomaly Detection</b>." },
+      { t: "kw", f: "“<i>Alert when Savings Plans utilization drops below 80%</i>” ⇒ ?", b: "<b>Savings Plans utilization budget</b>." },
+      { t: "kw", f: "“<i>Visualize cost trends, forecast, filter by tag</i>” ⇒ ?", b: "<b>Cost Explorer</b>." },
+      { t: "kw", f: "“<i>Most granular billing data, hourly, per resource, query with SQL</i>” ⇒ ?", b: "<b>CUR 2.0 (Data Exports) → S3 → Athena</b>." },
+      { t: "kw", f: "“<i>Right-size EC2 / Lambda memory / EBS using ML</i>” ⇒ ?", b: "<b>AWS Compute Optimizer</b>." },
+      { t: "kw", f: "“<i>Recommendations must consider 3 months of data</i>” ⇒ ?", b: "Bật <b>enhanced infrastructure metrics</b> (93 ngày)." },
+      { t: "kw", f: "“<i>Single place to prioritize savings across accounts with deduplicated savings</i>” ⇒ ?", b: "<b>Cost Optimization Hub</b>." },
+      { t: "kw", f: "“<i>Identify who created a resource for cost purposes</i>” ⇒ ?", b: "AWS-generated tag <b><code>aws:createdBy</code></b>." },
+      { t: "kw", f: "“<i>Group costs into business units, split shared costs</i>” ⇒ ?", b: "<b>AWS Cost Categories</b> + split charges." },
+      { t: "kw", f: "“<i>EC2 in private subnets download lots from S3, NAT charges high</i>” ⇒ ?", b: "<b>S3 gateway VPC endpoint</b>." },
+      { t: "kw", f: "“<i>Estimate cost of an architecture before deploying</i>” ⇒ ?", b: "<b>AWS Pricing Calculator</b>." }
+    ],
+
+    pairs: [
+      ["Consumption model", "Chỉ trả cho tài nguyên thực sự dùng"],
+      ["Cost allocation tag", "Tag đã activate để nhóm chi phí"],
+      ["aws:createdBy", "Tag AWS-generated ghi ai tạo resource"],
+      ["Tag activation", "Bật tag trong Billing console ở management account"],
+      ["Cost Categories", "Rule ánh xạ chi phí vào cơ cấu tổ chức"],
+      ["Split charges", "Chia chi phí dùng chung cho các category"],
+      ["Chargeback", "Tính lại chi phí cho bộ phận"],
+      ["Amortized cost", "Phân bổ đều phí trả trước RI/SP"],
+      ["Utilization (RI/SP)", "Mức sử dụng phần đã cam kết"],
+      ["Coverage (RI/SP)", "% usage được cam kết che phủ"],
+      ["Forecasted alert", "Cảnh báo trước khi chi phí phát sinh"],
+      ["Budget action", "Áp IAM/SCP hoặc stop EC2/RDS khi vượt"],
+      ["Cost Anomaly Detection", "ML phát hiện chi tiêu bất thường"],
+      ["CUR", "Dữ liệu billing chi tiết nhất giao vào S3"],
+      ["FOCUS", "Chuẩn mở dữ liệu chi phí FinOps"],
+      ["Compute Optimizer", "Khuyến nghị rightsizing bằng ML"],
+      ["Enhanced infrastructure metrics", "Kéo lookback lên 93 ngày (trả phí)"],
+      ["Over-provisioned", "Thừa tài nguyên ⇒ nên giảm size"],
+      ["Under-provisioned", "Thiếu tài nguyên ⇒ nên tăng size"],
+      ["Cost Optimization Hub", "Gom, khử trùng lặp khuyến nghị đa account"],
+      ["Idle resource", "Đang tính tiền nhưng gần như không dùng"],
+      ["NAT data processing charge", "Phí mỗi GB đi qua NAT gateway"],
+      ["AWS Pricing Calculator", "Ước tính giá trước khi triển khai"]
+    ],
+
+    sorts: [
+      {
+        title: "Nhu cầu ⇒ công cụ quản lý chi phí",
+        desc: "Chọn công cụ đúng cho từng nhu cầu trong đề.",
+        buckets: ["Cost Explorer", "AWS Budgets", "Cost Anomaly Detection", "CUR / Data Exports", "Compute Optimizer", "Trusted Advisor"],
+        items: [
+          ["Xem xu hướng chi phí, group by tag, dự báo 18 tháng", 0, "phân tích và dự báo"],
+          ["Khuyến nghị nên mua Savings Plans bao nhiêu $/giờ", 0, "purchase recommendations (Bài 9)"],
+          ["Cảnh báo khi dự báo vượt ngân sách tháng", 1, "forecasted alert"],
+          ["Tự động áp SCP chặn tạo tài nguyên khi vượt ngưỡng", 1, "budget action"],
+          ["Phát hiện chi tiêu tăng vọt bằng ML, không đặt ngưỡng", 2, "tự học mùa vụ, root cause"],
+          ["Dữ liệu theo giờ, resource ID để truy vấn bằng Athena", 3, "chi tiết nhất, giao vào S3"],
+          ["Chargeback cho 50 account qua dashboard BI", 3, "CUR + Athena + QuickSight"],
+          ["Đổi m5.2xlarge sang loại nhỏ hơn dựa trên metrics", 4, "rightsizing bằng ML"],
+          ["Giảm memory Lambda từ 1024 MB xuống 512 MB", 4, "Compute Optimizer hỗ trợ Lambda"],
+          ["Tìm Elastic IP không gắn và EBS volume không gắn", 5, "cost checks tài nguyên bỏ quên"],
+          ["RI sắp hết hạn trong 30 ngày tới", 5, "EC2 Reserved Instance lease expiration"]
+        ]
+      },
+      {
+        title: "Data transfer: miễn phí hay có phí?",
+        desc: "Luồng dữ liệu dưới đây có bị tính phí truyền không?",
+        buckets: ["Miễn phí", "Có phí"],
+        items: [
+          ["Internet → AWS (inbound)", 0, "inbound miễn phí mọi Region"],
+          ["EC2 ↔ EC2 trong cùng AZ", 0, "cùng AZ miễn phí"],
+          ["RDS Multi-AZ replication primary ↔ standby", 0, "miễn phí, nhưng client khác AZ vẫn tính"],
+          ["EC2 → S3 qua gateway VPC endpoint cùng Region", 0, "không phí giờ, không phí GB"],
+          ["Origin AWS → CloudFront", 0, "chỉ trả CloudFront → user"],
+          ["EC2 ↔ RDS ở khác AZ", 1, "cross-AZ, thường hai chiều"],
+          ["Sao chép S3 sang Region khác", 1, "inter-Region luôn tốn tiền"],
+          ["EC2 → S3 qua NAT gateway", 1, "phí xử lý mỗi GB của NAT"],
+          ["AWS → Internet (outbound)", 1, "thường là khoản lớn nhất"],
+          ["Traffic qua interface VPC endpoint", 1, "phí giờ + phí GB"]
+        ]
+      },
+      {
+        title: "Loại budget phù hợp",
+        desc: "Chọn loại budget cho từng yêu cầu theo dõi.",
+        buckets: ["Cost budget", "Usage budget", "Utilization budget (RI/SP)", "Coverage budget (RI/SP)"],
+        items: [
+          ["Giới hạn $1.000/tháng cho account dev", 0, "theo dõi chi phí"],
+          ["Cảnh báo khi dự báo chi phí quý vượt kế hoạch", 0, "cost + forecasted"],
+          ["Giữ số giờ/GB của một dịch vụ trong giới hạn", 1, "theo dõi usage"],
+          ["Phát hiện RI mua thừa, không dùng hết", 2, "RI đang bị lãng phí"],
+          ["Cảnh báo khi SP utilization dưới 80% trong một ngày", 2, "ví dụ trong tài liệu"],
+          ["Biết khi nào cần mua thêm RI", 3, "% giờ được RI che phủ giảm"],
+          ["Bao nhiêu usage chưa được Savings Plans che phủ", 3, "coverage"]
+        ]
+      },
+      {
+        title: "Tag, Cost Categories hay tách account?",
+        desc: "Đặc điểm/yêu cầu thuộc cách phân bổ chi phí nào?",
+        buckets: ["Cost allocation tags", "AWS Cost Categories", "Account riêng trong Organizations"],
+        items: [
+          ["Gắn trực tiếp lên resource, phải activate", 0, "tag gắn lên resource"],
+          ["Tiền tố user: trong báo cáo", 0, "user-defined tag"],
+          ["Ghi ai tạo resource bằng aws:createdBy", 0, "AWS-generated tag"],
+          ["Gắn vào từng dòng chi phí bằng rule", 1, "không gắn lên resource"],
+          ["Chia chi phí Transit Gateway dùng chung cho các team", 1, "split charges"],
+          ["Sửa rule thì phân loại lại từ đầu tháng", 1, "hiệu lực từ đầu tháng hiện tại"],
+          ["Không phụ thuộc tag, chi phí theo linked account luôn có sẵn", 2, "cách đơn giản và chắc chắn nhất"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Domain Cost-Optimized chiếm 20% đề SAA-C03.", true, "Domain 4."],
+      ["Tắt môi trường dev/test ngoài giờ (40/168 giờ) tiết kiệm khoảng 75%.", true, "Ví dụ consumption model trong whitepaper."],
+      ["Gắn tag lên resource là đủ để tag xuất hiện trong Cost Explorer.", false, "Phải activate ở management account và chờ tới 24 giờ."],
+      ["Member account tự activate được cost allocation tag.", false, "Chỉ management account (hoặc account đứng riêng)."],
+      ["Cost allocation tag áp ngược cho chi phí phát sinh trước khi activate.", false, "Không áp ngược (trừ backfill)."],
+      ["Tag aws:createdBy không tính vào quota 50 tag/resource.", true, "Chỉ hiện trong Billing console và báo cáo."],
+      ["Có thể tự tạo tag với tiền tố aws:.", false, "Tiền tố aws: dành riêng cho AWS."],
+      ["Cost Categories gắn lên resource giống tag.", false, "Gắn vào từng dòng chi phí bằng rule."],
+      ["Sửa rule Cost Categories giữa tháng sẽ phân loại lại chi phí từ đầu tháng.", true, "Hiệu lực từ đầu tháng hiện tại."],
+      ["Cost Explorer mặc định có 13 tháng dữ liệu lịch sử.", true, "Bật multi-year để lên 38 tháng."],
+      ["Cost Explorer dự báo chi phí tới 36 tháng.", false, "Dự báo 18 tháng."],
+      ["Dữ liệu resource-level theo giờ của Cost Explorer giữ được 13 tháng.", false, "Chỉ 14 ngày gần nhất."],
+      ["Có thể tắt Cost Explorer sau khi đã bật.", false, "Không tắt được."],
+      ["Muốn thấy chi phí thật mỗi ngày khi có RI trả trước, xem amortized cost.", true, "Amortized phân bổ đều phí upfront."],
+      ["CUR được giao vào S3 bucket của bạn.", true, "Truy vấn bằng Athena, Redshift, QuickSight."],
+      ["CUR 2.0 qua Data Exports là cách được khuyến nghị.", true, "Schema nhất quán, chỉ cột bạn chọn."],
+      ["AWS Budgets chặn chi tiêu ngay lập tức khi vượt ngưỡng.", false, "Dữ liệu billing có độ trễ; Budgets cập nhật tới 3 lần/ngày."],
+      ["Actual alert gửi một lần mỗi budget mỗi kỳ khi lần đầu chạm ngưỡng.", true, "Forecasted alert có thể gửi nhiều lần."],
+      ["Mỗi alert của Budgets gửi tới tối đa 10 email và 1 SNS topic.", true, "SNS chuyển tiếp SMS, Slack, Chime."],
+      ["Budget action có thể stop EC2 ở account khác từ management account.", false, "Chỉ target instance trong chính account đó."],
+      ["Budget action có thể áp SCP lên account/OU.", true, "Chạy từ management account."],
+      ["Mọi action-enabled budget đều tính $0.10/ngày.", false, "2 action-enabled budget đầu tiên mỗi tháng miễn phí."],
+      ["Cost Anomaly Detection yêu cầu bạn đặt ngưỡng tĩnh.", false, "Dùng ML, tự học tính mùa vụ."],
+      ["Cost Anomaly Detection chỉ ra root cause theo service, account, Region, usage type.", true, "Xếp hạng theo tác động $."],
+      ["Compute Optimizer phân tích memory EC2 mà không cần agent.", false, "Cần unified CloudWatch agent."],
+      ["Enhanced infrastructure metrics kéo lookback của Compute Optimizer lên 93 ngày.", true, "Trả phí, hợp workload chu kỳ tháng/quý."],
+      ["Compute Optimizer phải opt in mới dùng được.", true, "Opt in là bắt buộc."],
+      ["Over-provisioned nghĩa là có thông số không đáp ứng hiệu năng.", false, "Đó là under-provisioned; over-provisioned là thừa."],
+      ["Cost Optimization Hub khử trùng lặp tiết kiệm giữa các khuyến nghị liên quan.", true, "Tránh cộng hai lần rightsize và mua SP."],
+      ["Trusted Advisor coi EC2 là low utilization khi CPU ≤ 10% và network ≤ 5 MB trong 4/14 ngày.", true, "Tiêu chí theo tài liệu."],
+      ["Compute Optimizer là công cụ chính để tìm Elastic IP không gắn.", false, "Đó là check cost của Trusted Advisor."],
+      ["Data transfer giữa hai EC2 trong cùng AZ được miễn phí.", true, "Dùng private IP."],
+      ["Đi qua NAT gateway tới S3 cùng Region không tính phí xử lý.", false, "NAT tính phí mỗi GB; dùng gateway endpoint."],
+      ["Gateway VPC endpoint cho S3 có phí giờ.", false, "Gateway endpoint miễn phí; interface endpoint mới có phí."],
+      ["Data transfer từ origin AWS tới CloudFront được miễn phí.", true, "Chỉ trả CloudFront → user."],
+      ["Muốn ước tính chi phí kiến trúc trước khi triển khai, dùng Cost Explorer.", false, "Dùng AWS Pricing Calculator; Cost Explorer chỉ có dữ liệu đã phát sinh."]
+    ],
+
+    map: {
+      t: "Bài 44 · Cost Optimization",
+      c: [
+        { t: "Trụ cột", icon: "cat/AWS-Cost-Management.svg", c: [
+          { t: "Định nghĩa", v: "kết quả ở giá thấp nhất vẫn đủ yêu cầu" },
+          { t: "5 principles", v: "CFM · consumption · efficiency · no heavy lifting · attribute" },
+          { t: "Consumption", v: "dev/test tắt ngoài giờ ⇒ ~75%" },
+          { t: "Vòng công cụ", v: "gắn nhãn → nhìn thấy → kiểm soát → tối ưu" }
+        ] },
+        { t: "Phân bổ chi phí", icon: "res/AWS-Organizations_Account.svg", c: [
+          { t: "User-defined", v: "user: · tự gắn · phải activate" },
+          { t: "AWS-generated", v: "aws:createdBy · management account activate" },
+          { t: "Con số", v: "24 giờ hiện · 500 active key · 50 tag/resource" },
+          { t: "Không áp ngược", v: "chỉ chi phí sau khi activate" },
+          { t: "Cost Categories", v: "rule trên dòng chi phí · split charges · từ đầu tháng" },
+          { t: "Đơn giản nhất", v: "account riêng mỗi team" }
+        ] },
+        { t: "Nhìn thấy", icon: "svc/AWS-Cost-Explorer.svg", c: [
+          { t: "Cost Explorer", v: "13 tháng (38) · dự báo 18 tháng · API $0.01" },
+          { t: "Resource-level", v: "hourly chỉ 14 ngày" },
+          { t: "Amortized", v: "phân bổ phí upfront RI/SP" },
+          { t: "CUR / Data Exports", v: "chi tiết nhất → S3 → Athena/QuickSight" },
+          { t: "CUR 2.0 · FOCUS", v: "cách khuyến nghị · chuẩn mở FinOps" }
+        ] },
+        { t: "Kiểm soát", icon: "svc/AWS-Budgets.svg", c: [
+          { t: "6 loại budget", v: "cost, usage, RI/SP utilization & coverage" },
+          { t: "Alert", v: "actual 1 lần/kỳ · forecasted cần ~5 tuần dữ liệu" },
+          { t: "Đích", v: "10 email + 1 SNS · cập nhật tới 3 lần/ngày" },
+          { t: "Budget actions", v: "IAM policy · SCP · stop EC2/RDS" },
+          { t: "Anomaly Detection", v: "ML, không ngưỡng · root cause · ~3 lần/ngày" }
+        ] },
+        { t: "Tối ưu", icon: "svc/AWS-Compute-Optimizer.svg", c: [
+          { t: "Compute Optimizer", v: "14 ngày (93 với enhanced) · opt in" },
+          { t: "Memory", v: "cần unified CloudWatch agent" },
+          { t: "Finding", v: "Under · Over-provisioned · Optimized" },
+          { t: "Lambda", v: "≤ 1.792 MB & ≥ 50 invoke" },
+          { t: "Cost Optimization Hub", v: "gom + khử trùng lặp, giá thực tế" }
+        ] },
+        { t: "Trusted Advisor", icon: "svc/AWS-Trusted-Advisor.svg", c: [
+          { t: "Low util EC2", v: "CPU ≤ 10% & net ≤ 5 MB, 4/14 ngày" },
+          { t: "Bỏ quên", v: "EIP, EBS không gắn, LB/RDS idle" },
+          { t: "NAT/endpoint", v: "0 byte 30 ngày" },
+          { t: "So với Optimizer", v: "rộng nhưng nông vs ML loại/kích cỡ" }
+        ] },
+        { t: "Data transfer", icon: "res/Amazon-VPC_NAT-Gateway.svg", c: [
+          { t: "Miễn phí", v: "inbound · cùng AZ · gateway endpoint · origin→CloudFront" },
+          { t: "Có phí", v: "cross-AZ · cross-Region · Internet out · NAT/GB" },
+          { t: "Giảm NAT", v: "S3/DynamoDB gateway endpoint · NAT mỗi AZ" },
+          { t: "Giảm data out", v: "CloudFront · caching · nén" },
+          { t: "On-prem lớn", v: "Direct Connect (inbound $0)" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

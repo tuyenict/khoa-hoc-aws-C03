@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 8 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-EC2.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="8" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-08-ec2-basics.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "core", name: "Thành phần cốt lõi EC2" },
+      { id: "type", name: "Instance types & dòng T" },
+      { id: "ami", name: "AMI" },
+      { id: "ud", name: "User data" },
+      { id: "imds", name: "Instance metadata & IMDSv2" },
+      { id: "life", name: "Vòng đời & Hibernate" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Cốt lõi
+      { t: "core", f: "Các thành phần cốt lõi của Amazon EC2?", b: "<b>Instance</b>, <b>instance type</b>, <b>AMI</b>, <b>EBS volume</b>, <b>instance store</b>, <b>key pair</b>, <b>security group</b> (+ user data &amp; metadata)." },
+      { t: "core", f: "EC2 On-Demand (Linux) tính phí thế nào?", b: "Theo <b>giây</b>, tối thiểu <b>60 giây</b>, khi instance ở trạng thái <b>running</b>." },
+      { t: "core", f: "Key pair: AWS giữ gì, bạn giữ gì?", b: "AWS giữ <b>public key</b>; bạn giữ <b>private key</b> để SSH/RDP." },
+      { t: "core", f: "Trên host, tài nguyên nào dành riêng, tài nguyên nào chia sẻ giữa các instance?", b: "<b>Dành riêng</b>: CPU, memory, instance storage.<br><b>Chia sẻ</b>: network và disk subsystem." },
+      { t: "core", f: "Website đơn giản, giá thấp cố định hằng tháng, ít cấu hình ⇒ cân nhắc gì thay EC2?", b: "<b>Amazon Lightsail</b>." },
+      { t: "core", f: "Tự động tạo, patch, phân phối AMI ⇒ dịch vụ nào?", b: "<b>EC2 Image Builder</b>." },
+
+      // ---- Instance type
+      { t: "type", f: "Giải nghĩa tên <code>c7gn.xlarge</code>.", b: "<b>c</b> = series (compute optimized) · <b>7</b> = generation · <b>g</b> = Graviton · <b>n</b> = network &amp; EBS optimized · <b>xlarge</b> = size.", x: "Mỗi bước size thường gấp đôi vCPU và memory." },
+      { t: "type", f: "Ý nghĩa các chữ option <b>a, g, i, d, n</b> trong tên instance type?", b: "<b>a</b> AMD · <b>g</b> Graviton (Arm) · <b>i</b> Intel · <b>d</b> có instance store · <b>n</b> network &amp; EBS optimized." },
+      { t: "type", f: "Series M, T, C, R thuộc nhóm nào?", b: "<b>M</b> general purpose · <b>T</b> burstable · <b>C</b> compute optimized · <b>R</b> memory optimized." },
+      { t: "type", f: "Series I, D, P, G, Inf, Trn thuộc nhóm nào?", b: "<b>I, D</b>: storage optimized.<br><b>P, G</b>: GPU.<br><b>Inf</b>: Inferentia (inference) · <b>Trn</b>: Trainium (training)." },
+      { t: "type", f: "Compute optimized (C) hợp workload nào?", b: "Batch processing, media transcoding, web server hiệu năng cao, HPC, scientific modeling, máy chủ game, ML inference trên CPU." },
+      { t: "type", f: "Memory optimized (R, X, U) hợp workload nào?", b: "In-memory database/cache, DB quan hệ lớn, <b>SAP HANA</b>, phân tích big data thời gian thực." },
+      { t: "type", f: "Storage optimized (I, D) hợp workload nào?", b: "<b>NoSQL</b> (Cassandra, MongoDB), OLTP cần IOPS cực cao, data warehouse, OpenSearch tự quản, HDFS – nhờ instance store NVMe dung lượng lớn." },
+      { t: "type", f: "AWS Graviton là gì và lưu ý gì?", b: "Chip <b>Arm</b> do AWS thiết kế, <b>best price performance</b>.", x: "Cần AMI/phần mềm arm64 – AMI x86 không chạy được." },
+      { t: "type", f: "Trainium và Inferentia khác nhau?", b: "<b>Trainium (Trn)</b>: training deep learning.<br><b>Inferentia (Inf)</b>: inference ML độ trễ thấp, chi phí thấp (AWS Neuron SDK)." },
+      { t: "type", f: "Hypervisor Nitro và Xen?", b: "<b>Nitro</b>: hầu hết thế hệ hiện tại (M5+, C5+, T3…).<br><b>Xen</b>: thế hệ cũ (M4, C4, T2…). Một số tính năng mới chỉ có trên Nitro (vd IMDS qua IPv6)." },
+      { t: "type", f: "Virtualization HVM hay PV?", b: "Do <b>AMI</b> quyết định. Current generation <b>chỉ hỗ trợ HVM</b>; HVM bắt buộc cho enhanced networking và GPU." },
+      { t: "type", f: "Đổi instance type của instance EBS-backed thế nào?", b: "<b>Stop</b> instance rồi đổi type." },
+      { t: "type", f: "1 CPU credit bằng bao nhiêu?", b: "<b>1 vCPU × 100% × 1 phút</b> (hoặc 1 vCPU × 50% × 2 phút…)." },
+      { t: "type", f: "t3.nano kiếm bao nhiêu credit/giờ, tích lũy tối đa bao nhiêu?", b: "2 vCPU × 5% × 60 = <b>6 credit/giờ</b>; tối đa = credit kiếm trong <b>24 giờ</b> = <b>144</b>." },
+      { t: "type", f: "Standard mode vs Unlimited mode của dòng T?", b: "<b>Standard</b>: hết credit ⇒ tụt về baseline (mặc định T2).<br><b>Unlimited</b>: burst tiếp bằng surplus credits, trả phí nếu trung bình 24 giờ &gt; baseline (mặc định T3/T3a/T4g/T8i)." },
+      { t: "type", f: "Khi stop, CPU credit của T2 và T3 ra sao?", b: "<b>T2</b> mất hết credit. <b>T3/T3a/T4g/T8i</b> giữ credit <b>7 ngày</b>." },
+      { t: "type", f: "T instance tiết kiệm tới bao nhiêu so với M?", b: "Tới <b>15%</b>; nhỏ nhất 2 vCPU, 0,5 GiB memory." },
+
+      // ---- AMI
+      { t: "ami", f: "AMI chứa gì?", b: "Phần mềm để boot instance (OS + ứng dụng) kèm <b>block device mapping</b> chỉ định các volume gắn vào." },
+      { t: "ami", f: "5 đặc tính AMI gắn chặt?", b: "<b>Region</b>, <b>OS</b>, <b>architecture</b> (x86_64, arm64), <b>root volume</b> (EBS / instance store), <b>virtualization</b> (HVM/PV)." },
+      { t: "ami", f: "Ba loại launch permission của AMI?", b: "<b>public</b>: mọi account · <b>explicit</b>: account/organization/OU cụ thể · <b>implicit</b>: owner luôn có quyền." },
+      { t: "ami", f: "EBS-backed vs S3-backed AMI: boot và stop?", b: "<b>EBS-backed</b>: boot &lt; 1 phút, stop được.<br><b>S3-backed</b>: boot &lt; 5 phút, <b>không stop được</b>, chỉ Linux, end of life." },
+      { t: "ami", f: "Create image mặc định làm gì với instance?", b: "<b>Tắt và reboot</b> để snapshot nhất quán.", x: "<code>--no-reboot</code>: không gián đoạn nhưng không đảm bảo file system integrity." },
+      { t: "ami", f: "Copy AMI: tốn phí gì, không copy gì?", b: "Copy <b>miễn phí</b> (trả storage snapshot mới + data transfer). <b>Không</b> copy launch permissions, S3 bucket permissions, system tags (aws:)." },
+      { t: "ami", f: "Deprecate, disable, deregister AMI khác nhau?", b: "<b>Deprecate</b>: ẩn khỏi danh sách, ai biết ID vẫn launch được.<br><b>Disable</b>: chặn launch, re-enable được.<br><b>Deregister</b>: xóa AMI (snapshot <b>không</b> tự xóa)." },
+      { t: "ami", f: "Deregister AMI có ảnh hưởng instance đang chạy không?", b: "<b>Không.</b> Có thể khôi phục nếu khớp retention rule của <b>Recycle Bin</b>." },
+      { t: "ami", f: "Người nhận AMI được share có quyền gì?", b: "Chỉ <b>launch</b> – không xóa, không share lại, không sửa. Người launch trả tiền instance." },
+      { t: "ami", f: "Share AMI mã hóa cần điều kiện gì?", b: "Phải <b>share KMS key</b> (không cần share snapshot). Snapshot mã hóa bằng <b>aws/ebs</b> không share được ⇒ copy + re-encrypt bằng <b>customer managed key</b>." },
+      { t: "ami", f: "Block public access for AMIs là gì?", b: "Cài cấp <b>account, từng Region</b>; bật mặc định với account mới; chặn mọi thao tác public AMI mới (AMI đã public vẫn public).", x: "Áp diện rộng bằng declarative policy của Organizations." },
+      { t: "ami", f: "Launch từ AMI được share có snapshot mã hóa (không truyền tham số) ⇒ volume mã hóa bằng key nào?", b: "<b>Default KMS key của account bạn</b>." },
+      { t: "ami", f: "Mã hóa một AMI chưa mã hóa?", b: "<b>Copy AMI</b> với tùy chọn encrypt – không có “encrypt in place”." },
+
+      // ---- User data
+      { t: "ud", f: "Giới hạn kích thước user data?", b: "<b>16 KB</b> dạng thô, trước khi base64." },
+      { t: "ud", f: "User data chạy khi nào và bằng quyền gì (Linux)?", b: "Mặc định <b>chỉ lần boot đầu tiên</b>, chạy bằng <b>root</b> (không cần sudo)." },
+      { t: "ud", f: "Hai loại user data trên Linux?", b: "<b>Shell script</b> (bắt đầu <code>#!</code>) và <b>cloud-init directives</b> (dòng đầu <code>#cloud-config</code>); kết hợp bằng MIME multi-part." },
+      { t: "ud", f: "Sửa user data được khi nào?", b: "Chỉ khi instance <b>stopped</b> (root EBS). Start lại thì user data mới không tự chạy trên Linux." },
+      { t: "ud", f: "User data có nằm trong AMI tạo từ instance không?", b: "<b>Không</b> – user data là thuộc tính của instance." },
+      { t: "ud", f: "Có nên lưu mật khẩu trong user data?", b: "<b>Không.</b> User data/metadata không có xác thực hay mã hóa. Dùng <b>Secrets Manager / Parameter Store</b>." },
+      { t: "ud", f: "Log user data trên Linux ở đâu?", b: "<code>/var/log/cloud-init-output.log</code>.", x: "Script được copy vào /var/lib/cloud/instances/… ⇒ xóa trước khi tạo AMI." },
+      { t: "ud", f: "Windows user data bọc trong thẻ nào?", b: "<code>&lt;script&gt;</code> (batch) hoặc <code>&lt;powershell&gt;</code>; batch luôn chạy trước. <code>&lt;persist&gt;true&lt;/persist&gt;</code> để chạy mỗi lần khởi động." },
+      { t: "ud", f: "Golden AMI vs user data?", b: "<b>Golden AMI</b>: cài sẵn, boot nhanh (hợp Auto Scaling), phải build lại khi đổi.<br><b>User data</b>: linh hoạt, boot chậm nếu cài nhiều.<br>Tốt nhất: <b>golden AMI + user data ngắn</b>." },
+
+      // ---- IMDS
+      { t: "imds", f: "Địa chỉ IMDS?", b: "IPv4 <code>169.254.169.254</code> (link-local) · IPv6 <code>[fd00:ec2::254]</code> (chỉ Nitro, phải bật)." },
+      { t: "imds", f: "Ba phần của instance metadata?", b: "<b>Metadata properties</b> (/meta-data/) · <b>dynamic data</b> (instance identity document) · <b>user data</b>." },
+      { t: "imds", f: "IMDSv2 hoạt động thế nào?", b: "① <b>PUT</b> /latest/api/token (TTL 1 giây – <b>6 giờ</b>) ② mọi GET kèm header <code>X-aws-ec2-metadata-token</code>." },
+      { t: "imds", f: "IMDSv2 chống SSRF bằng những cơ chế nào?", b: "Session token, <b>từ chối PUT có X-Forwarded-For</b>, <b>hop limit mặc định 1</b> để token không ra khỏi instance." },
+      { t: "imds", f: "Bắt buộc IMDSv2 bằng option nào?", b: "<code>HttpTokens = required</code>. Áp diện rộng: account default theo Region, AMI <code>imds-support = v2.0</code>, IAM/SCP condition key <code>ec2:MetadataHttpTokens</code>." },
+      { t: "imds", f: "Container trên EC2 không lấy được token IMDSv2 ⇒ sửa gì?", b: "Tăng <b>hop limit lên 2</b> (vào container tính thêm một hop)." },
+      { t: "imds", f: "Category <code>ami-launch-index</code> dùng để làm gì?", b: "Thứ tự launch trong một lệnh RunInstances (từ 0) – instance tự “bầu” node chính.", x: "Auto Scaling/EC2 Fleet luôn trả 0." },
+      { t: "imds", f: "Bên thứ ba cần xác minh request đến từ đúng một EC2 instance?", b: "<b>Instance identity document</b> + chữ ký (pkcs7)." },
+      { t: "imds", f: "Giới hạn packet cho dịch vụ link-local?", b: "<b>1024 packets/giây</b> mỗi instance (IMDS, DNS Resolver, NTP…) ⇒ cache credentials, retry exponential backoff." },
+
+      // ---- Lifecycle & hibernate
+      { t: "life", f: "Stop/start ảnh hưởng gì tới IP và instance store?", b: "Giữ private IPv4, IPv6, Elastic IP; <b>public IPv4 đổi mới</b>; <b>instance store bị xóa</b>; thường chuyển host mới." },
+      { t: "life", f: "Reboot giữ lại những gì?", b: "Giữ <b>host</b>, IP, <b>instance store</b>, root EBS; chỉ RAM bị xóa; không mở chu kỳ tính phí mới." },
+      { t: "life", f: "Terminate ảnh hưởng gì?", b: "Mất IP, <b>gỡ Elastic IP</b>, xóa instance store, <b>root EBS mặc định bị xóa</b>." },
+      { t: "life", f: "Termination protection là gì?", b: "<code>DisableApiTermination</code>: không terminate được qua console/CLI/API – chống xóa nhầm." },
+      { t: "life", f: "InstanceInitiatedShutdownBehavior?", b: "Lệnh shutdown trong OS ⇒ <b>stop</b> (mặc định) hoặc <b>terminate</b>. Root instance store thì luôn terminate." },
+      { t: "life", f: "Giữ root volume sau khi terminate?", b: "Đặt <code>DeleteOnTermination = false</code> cho root volume." },
+      { t: "life", f: "Hibernate làm gì?", b: "<b>Suspend-to-disk</b>: lưu RAM xuống <b>root EBS</b>; start lại nạp RAM, tiến trình chạy tiếp, giữ instance ID." },
+      { t: "life", f: "Điều kiện RAM để hibernate?", b: "Linux <b>&lt; 150 GiB</b> · Windows <b>≤ 16 GiB</b>." },
+      { t: "life", f: "Các điều kiện tiên quyết khác của hibernate?", b: "Bật <b>lúc launch</b>; root <b>EBS mã hóa</b>, đủ chứa RAM (gp2/gp3/io1/io2); <b>On-Demand hoặc Spot</b> (persistent); không bare metal." },
+      { t: "life", f: "Hibernate tính phí thế nào?", b: "Tính phí instance trong <b>stopping</b>, ngừng khi <b>stopped</b>; vẫn tính phí lưu trữ EBS (kể cả phần chứa RAM)." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>in-memory database, SAP HANA, real-time big data analytics</i>” ⇒ ?", b: "<b>Memory optimized</b> (R, X, U)." },
+      { t: "kw", f: "Đề có “<i>batch processing, video encoding, gaming servers, scientific modeling</i>” ⇒ ?", b: "<b>Compute optimized</b> (C)." },
+      { t: "kw", f: "Đề có “<i>NoSQL like Cassandra, millions of IOPS to local storage</i>” ⇒ ?", b: "<b>Storage optimized</b> (I, D)." },
+      { t: "kw", f: "Đề có “<i>low average CPU with occasional spikes, dev/test, most cost-effective</i>” ⇒ ?", b: "<b>T3/T4g</b> (burstable)." },
+      { t: "kw", f: "Đề có “<i>lowest cost ML inference</i>” ⇒ ?", b: "<b>Inferentia</b> (Inf)." },
+      { t: "kw", f: "Đề có “<i>instances take 15 minutes to install software at boot</i>” ⇒ ?", b: "<b>Golden AMI</b> cài sẵn + user data ngắn cho cấu hình động." },
+      { t: "kw", f: "Đề có “<i>run commands on a fleet of running instances</i>” ⇒ ?", b: "<b>Systems Manager Run Command</b>, không phải user data." },
+      { t: "kw", f: "Đề có “<i>protect against SSRF stealing IAM role credentials</i>” ⇒ ?", b: "<b>IMDSv2 required</b> (HttpTokens=required), hop limit 1." },
+      { t: "kw", f: "Đề có “<i>launch identical instances in another Region for DR</i>” ⇒ ?", b: "<b>Copy AMI</b> sang Region đó (AMI ID mới)." },
+      { t: "kw", f: "Đề có “<i>preserve in-memory state, resume quickly in the morning</i>” ⇒ ?", b: "<b>EC2 hibernation</b>." },
+      { t: "kw", f: "Đề có “<i>public IP changes every time the instance is stopped</i>” ⇒ ?", b: "Gắn <b>Elastic IP</b>." }
+    ],
+
+    pairs: [
+      ["Instance", "Máy chủ ảo trên AWS Cloud"],
+      ["AMI", "Template phần mềm để boot instance"],
+      ["Block device mapping", "Danh sách volume gắn vào khi launch"],
+      ["Golden AMI", "AMI chuẩn đã cài sẵn phần mềm, patch"],
+      ["Burstable instance", "Dòng T, dùng CPU credit"],
+      ["CPU credit", "1 vCPU × 100% × 1 phút"],
+      ["Surplus credits", "Credit vượt mức ở unlimited mode, tính phí"],
+      ["Graviton", "Chip Arm do AWS thiết kế"],
+      ["Trainium", "Chip huấn luyện ML"],
+      ["Inferentia", "Chip suy luận ML"],
+      ["Nitro", "Hypervisor thế hệ mới của EC2"],
+      ["HVM", "Kiểu ảo hóa duy nhất của current generation"],
+      ["Bare metal", "Máy vật lý không qua hypervisor (size metal)"],
+      ["Recycle Bin", "Khôi phục AMI/snapshot đã xóa"],
+      ["Verified provider", "AMI công khai của Amazon/đối tác đã xác minh"],
+      ["User data", "Script/cấu hình truyền vào lúc launch"],
+      ["cloud-init", "Gói Linux xử lý user data"],
+      ["IMDS", "Dịch vụ metadata chạy cục bộ trên instance"],
+      ["Hop limit", "Số bước mạng của phản hồi PUT, mặc định 1"],
+      ["SSRF", "Giả mạo request phía server – IMDSv2 giảm thiểu"],
+      ["Instance identity document", "Tài liệu có chữ ký xác minh instance"],
+      ["Termination protection", "Chống terminate nhầm"],
+      ["DeleteOnTermination", "Xóa volume khi terminate (root mặc định true)"],
+      ["Hibernate", "Lưu RAM xuống root EBS"],
+      ["Pre-warm", "Đưa về trạng thái sẵn sàng rồi hibernate"]
+    ],
+
+    sorts: [
+      {
+        title: "Workload ⇒ instance family",
+        desc: "Chọn nhóm instance phù hợp nhất với workload trong đề.",
+        buckets: ["General purpose / T", "Compute optimized", "Memory optimized", "Storage optimized", "Accelerated computing"],
+        items: [
+          ["Web server dev/test, CPU thấp có đỉnh ngắn", 0, "T3/T4g burstable"],
+          ["Microservice, app server cân bằng", 0, "M – cân bằng compute/memory"],
+          ["Media transcoding, batch processing", 1, "tỉ lệ vCPU cao"],
+          ["Máy chủ game, scientific modeling", 1, "CPU hiệu năng cao"],
+          ["SAP HANA, in-memory cache lớn", 2, "nhiều RAM trên mỗi vCPU"],
+          ["Phân tích big data thời gian thực trong bộ nhớ", 2, "R, X, U"],
+          ["Cassandra cần IOPS cực cao trên đĩa local", 3, "instance store NVMe"],
+          ["Data warehouse, HDFS/MapReduce", 3, "I, D"],
+          ["Training deep learning", 4, "P, Trn"],
+          ["Inference ML chi phí thấp nhất", 4, "Inferentia"]
+        ]
+      },
+      {
+        title: "Reboot · Stop · Hibernate · Terminate",
+        desc: "Hành vi nào chỉ đúng với thao tác này (theo bảng so sánh trong bài)?",
+        buckets: ["Reboot", "Stop/start", "Hibernate", "Terminate"],
+        items: [
+          ["Giữ nguyên host vật lý và dữ liệu instance store", 0, "chỉ reboot giữ instance store"],
+          ["Không mở chu kỳ tính phí mới", 0, "reboot không đổi chu kỳ"],
+          ["Đổi public IPv4, mất instance store, mất RAM", 1, "stop: RAM bị xóa"],
+          ["Ngừng tính phí instance ngay từ trạng thái stopping", 1, "hibernate vẫn tính trong stopping"],
+          ["Lưu RAM xuống root EBS, tiến trình chạy tiếp", 2, "suspend-to-disk"],
+          ["Vẫn tính phí instance trong lúc stopping", 2, "đang ghi RAM xuống đĩa"],
+          ["Gỡ Elastic IP, root EBS mặc định bị xóa", 3, "DeleteOnTermination=true"],
+          ["Mất cả private IPv4", 3, "chỉ terminate mất private IP"]
+        ]
+      },
+      {
+        title: "Quản lý AMI: dùng thao tác nào?",
+        desc: "Chọn thao tác AMI đúng cho từng yêu cầu.",
+        buckets: ["Copy AMI", "Share (launch permission)", "Deprecate", "Disable", "Deregister"],
+        items: [
+          ["Dùng AMI ở Region khác cho DR", 0, "AMI là tài nguyên Region"],
+          ["Mã hóa AMI đang không mã hóa", 0, "copy với tùy chọn encrypt"],
+          ["Đổi từ aws/ebs sang customer managed key để chia sẻ", 0, "re-encrypt khi copy"],
+          ["Cho account khác/OU launch AMI", 1, "explicit launch permission"],
+          ["Ẩn AMI cũ khỏi danh sách nhưng ai biết ID vẫn launch được", 2, "deprecate"],
+          ["Tạm chặn launch AMI lỗi thời, có thể bật lại", 3, "disable, re-enable được"],
+          ["Xóa AMI (snapshot vẫn phải xóa riêng)", 4, "deregister"]
+        ]
+      },
+      {
+        title: "Standard hay Unlimited mode?",
+        desc: "Đặc điểm thuộc chế độ credit nào của dòng T?",
+        buckets: ["Standard mode", "Unlimited mode"],
+        items: [
+          ["Hết credit thì CPU tụt về baseline", 0, "không burst được tới khi tích lũy lại"],
+          ["Mặc định của T2", 0, "T2 mặc định standard"],
+          ["Có launch credits (chỉ T2)", 0, "chỉ T2 standard"],
+          ["T3 chạy trên Dedicated Host", 0, "chỉ chạy được standard"],
+          ["Burst bằng surplus credits khi hết credit tích lũy", 1, "duy trì CPU cao bao lâu cũng được"],
+          ["Trả thêm phí nếu trung bình CPU 24 giờ vượt baseline", 1, "phí theo vCPU-giờ"],
+          ["Mặc định của T3, T3a, T4g, T8i", 1, "mặc định unlimited"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["EC2 On-Demand Linux tính phí theo giây, tối thiểu 60 giây.", true, "Chỉ khi instance running."],
+      ["Network và disk subsystem được dành riêng cho từng instance trên host.", false, "CPU, memory, instance storage dành riêng; network và disk subsystem được chia sẻ."],
+      ["Trong tên c7gn.xlarge, chữ g nghĩa là có GPU.", false, "g = Graviton (Arm); GPU là series P, G."],
+      ["Chữ d trong tên instance type nghĩa là có instance store volumes.", true, "Vd m5d, c5d."],
+      ["AMI x86 chạy được trên instance Graviton.", false, "Graviton cần AMI arm64."],
+      ["Mọi instance type current generation chỉ hỗ trợ HVM.", true, "PV chỉ có ở thế hệ cũ."],
+      ["Instance T3 ở unlimited mode có thể tốn phí surplus khi CPU trung bình vượt baseline.", true, "Tính trung bình trong 24 giờ cuộn."],
+      ["T2 giữ credit 7 ngày sau khi stop.", false, "T2 mất hết credit khi stop; T3+ giữ 7 ngày."],
+      ["Stop rồi start t2.micro sẽ nạp lại đầy CPU credit.", false, "T2 mất credit khi stop, không được nạp lại."],
+      ["Credit tích lũy tối đa của instance T bằng credit kiếm được trong 24 giờ.", true, "Vd t3.nano tối đa 144."],
+      ["AMI ID dùng được ở mọi Region.", false, "AMI là tài nguyên Region; copy sang Region khác có AMI ID mới."],
+      ["Copy AMI giữ nguyên launch permissions của AMI gốc.", false, "Launch permissions không được copy."],
+      ["AMI có snapshot mã hóa bằng aws/ebs không thể chia sẻ trực tiếp cho account khác.", true, "Phải copy và re-encrypt bằng customer managed key."],
+      ["Deregister AMI sẽ tự xóa các EBS snapshot của nó.", false, "Snapshot không tự xóa, vẫn tính phí."],
+      ["Deregister AMI không ảnh hưởng instance đã launch.", true, "Instance vẫn chạy bình thường."],
+      ["Deprecate AMI chặn hoàn toàn việc launch từ AMI đó.", false, "Deprecate chỉ ẩn; disable mới chặn launch."],
+      ["Instance từ S3-backed AMI có thể stop.", false, "Chỉ running hoặc terminated."],
+      ["Create image mặc định reboot instance để đảm bảo nhất quán.", true, "--no-reboot không đảm bảo file system integrity."],
+      ["User data giới hạn 16 KB trước khi base64.", true, "Dạng thô."],
+      ["Theo mặc định user data chạy mỗi lần reboot.", false, "Chỉ chạy ở lần boot đầu tiên."],
+      ["User data được mã hóa nên an toàn để lưu mật khẩu.", false, "Không có xác thực/mã hóa; dùng Secrets Manager/Parameter Store."],
+      ["User data tự đi theo AMI tạo từ instance.", false, "User data là thuộc tính của instance."],
+      ["Script user data trên Linux chạy bằng root.", true, "Không cần sudo."],
+      ["Session token IMDSv2 có TTL tối đa 6 giờ.", true, "21.600 giây."],
+      ["IMDSv2 từ chối PUT có header X-Forwarded-For.", true, "Chặn đi qua proxy."],
+      ["Hop limit mặc định của IMDSv2 là 2.", false, "Mặc định 1; container nên đặt 2."],
+      ["Security group có thể chặn truy cập tới 169.254.169.254.", false, "IMDS là link-local, không đi qua security group; SG cũng không có rule deny."],
+      ["Gọi IMDS không tốn phí.", true, "Nhưng bị throttle theo instance."],
+      ["Reboot giữ dữ liệu trên instance store.", true, "Stop, hibernate, terminate mới xóa instance store."],
+      ["Stop/start giữ nguyên public IPv4 tự cấp.", false, "Nhận public IP mới; cần Elastic IP để cố định."],
+      ["Elastic IP vẫn gắn với instance sau khi stop.", true, "Chỉ bị gỡ khi terminate."],
+      ["Có thể bật hibernation cho instance đang chạy.", false, "Chỉ bật được lúc launch."],
+      ["Root EBS volume phải được mã hóa để hibernate.", true, "Và đủ lớn để chứa RAM."],
+      ["Instance Linux 256 GiB RAM hibernate được.", false, "Linux phải dưới 150 GiB RAM."],
+      ["Hibernation hỗ trợ cả On-Demand và Spot.", true, "Spot request phải persistent."]
+    ],
+
+    map: {
+      t: "Bài 8 · EC2 cơ bản",
+      c: [
+        { t: "Thành phần EC2", icon: "svc/Amazon-EC2.svg", c: [
+          { t: "Cốt lõi", v: "instance, type, AMI, EBS, instance store, key pair, SG" },
+          { t: "Tính phí", v: "theo giây, tối thiểu 60 giây, khi running" },
+          { t: "Host", v: "CPU/RAM riêng · network/disk chia sẻ" },
+          { t: "Đi kèm", v: "Auto Scaling, ELB, Backup, CloudWatch, Image Builder" },
+          { t: "Thay thế đơn giản", v: "Lightsail – giá cố định hằng tháng" }
+        ] },
+        { t: "Instance types", icon: "res/Amazon-EC2_Instances.svg", c: [
+          { t: "Tên", v: "series + generation + options . size (c7gn.xlarge)" },
+          { t: "Nhóm", c: [
+            { t: "M/T", v: "general purpose" },
+            { t: "C", v: "compute optimized" },
+            { t: "R/X/U", v: "memory optimized" },
+            { t: "I/D", v: "storage optimized" },
+            { t: "P/G/Inf/Trn", v: "accelerated" }
+          ] },
+          { t: "Option", v: "g Graviton · a AMD · d instance store · n network" },
+          { t: "Dòng T", v: "1 credit = 1 vCPU×100%×1 phút, tối đa 24 giờ" },
+          { t: "Chế độ", v: "standard (T2) · unlimited (T3+, phí surplus)" }
+        ] },
+        { t: "AMI", icon: "res/Amazon-EC2_AMI.svg", c: [
+          { t: "Gắn với", v: "Region, OS, architecture, root volume, virtualization" },
+          { t: "Launch permission", v: "public · explicit · implicit" },
+          { t: "EBS vs S3-backed", v: "&lt; 1 phút, stop được · &lt; 5 phút, không stop" },
+          { t: "Copy", v: "miễn phí, mã hóa/đổi key, không copy permissions" },
+          { t: "Share mã hóa", v: "aws/ebs ⇒ copy + customer managed key" },
+          { t: "Lỗi thời", v: "deprecate (ẩn) · disable (chặn) · deregister (xóa)" }
+        ] },
+        { t: "User data", icon: "res/AWS-Systems-Manager_Run-Command.svg", c: [
+          { t: "Giới hạn", v: "16 KB thô, base64" },
+          { t: "Chạy", v: "root, chỉ lần boot đầu" },
+          { t: "Sửa", v: "chỉ khi stopped" },
+          { t: "Bảo mật", v: "không mã hóa ⇒ không chứa bí mật" },
+          { t: "Golden AMI", v: "boot nhanh cho Auto Scaling" }
+        ] },
+        { t: "IMDS", icon: "res/Amazon-EC2_Instance-with-CloudWatch.svg", c: [
+          { t: "Địa chỉ", v: "169.254.169.254 · [fd00:ec2::254]" },
+          { t: "IMDSv2", v: "PUT token (≤ 6 giờ) rồi GET kèm token" },
+          { t: "Chống SSRF", v: "HttpTokens=required, hop limit 1, chặn X-Forwarded-For" },
+          { t: "Container", v: "hop limit 2" },
+          { t: "Ép diện rộng", v: "account default, AMI imds-support v2.0, SCP" }
+        ] },
+        { t: "Vòng đời & Hibernate", icon: "res/Amazon-Elastic-Block-Store_Volume-gp3.svg", c: [
+          { t: "Reboot", v: "giữ host, IP, instance store" },
+          { t: "Stop", v: "public IP mới, mất instance store và RAM" },
+          { t: "Terminate", v: "gỡ EIP, xóa root EBS mặc định" },
+          { t: "Bảo vệ", v: "termination protection, DeleteOnTermination=false" },
+          { t: "Hibernate", v: "RAM ⇒ root EBS mã hóa, bật lúc launch" },
+          { t: "Giới hạn RAM", v: "Linux &lt; 150 GiB · Windows ≤ 16 GiB" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

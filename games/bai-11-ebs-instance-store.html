@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 11 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Elastic-Block-Store.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="11" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-11-ebs-instance-store.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "core", name: "EBS volume cốt lõi" },
+      { id: "type", name: "Volume types" },
+      { id: "ev", name: "Elastic Volumes" },
+      { id: "snap", name: "EBS Snapshots" },
+      { id: "ma", name: "Multi-Attach" },
+      { id: "enc", name: "EBS encryption" },
+      { id: "is", name: "Instance store" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Core
+      { t: "core", f: "EBS volume là gì?", b: "Thiết bị <b>block storage bền vững</b> gắn vào instance <b>qua mạng</b>, tồn tại độc lập với vòng đời instance." },
+      { t: "core", f: "EBS volume có phạm vi gì?", b: "<b>Zonal</b>: chỉ gắn vào instance <b>cùng AZ</b>; nhân bản trên nhiều server <b>trong AZ</b>, không sang AZ khác." },
+      { t: "core", f: "EBS tính tiền theo gì?", b: "Theo cái đã <b>provision</b> (GiB, IOPS, throughput) – kể cả khi volume trống hay instance stopped." },
+      { t: "core", f: "AWS có tự backup EBS volume không?", b: "<b>Không.</b> Tự chụp snapshot hoặc dùng DLM / AWS Backup (shared responsibility)." },
+      { t: "core", f: "Hiệu năng thực tế của EBS volume bị giới hạn bởi gì?", b: "<b>min</b>(giới hạn volume, <b>EBS bandwidth của instance</b>) ⇒ dùng <b>EBS-optimized instance</b>." },
+      { t: "core", f: "IOPS và throughput khác nhau thế nào?", b: "<b>IOPS</b>: số thao tác/giây – I/O nhỏ, ngẫu nhiên (OLTP).<br><b>Throughput</b>: MiB/s – I/O lớn, tuần tự (big data, log).<br>Throughput = IOPS × I/O size ÷ 1.024." },
+      { t: "core", f: "RAID nào nên dùng trên EBS để cộng dồn hiệu năng?", b: "<b>RAID 0</b> (striping) – mất một volume là mất cả mảng.", x: "RAID 5/6 không khuyến nghị (parity tốn IOPS)." },
+
+      // ---- Volume types
+      { t: "type", f: "Hai nhóm volume type của EBS?", b: "<b>SSD</b> (gp3, gp2, io2, io1): workload giao dịch, thước đo <b>IOPS</b>.<br><b>HDD</b> (st1, sc1): streaming lớn, thước đo <b>throughput</b>." },
+      { t: "type", f: "gp3 có baseline hiệu năng bao nhiêu?", b: "<b>3.000 IOPS + 125 MiB/s</b> bất kể kích thước, đã tính trong giá." },
+      { t: "type", f: "Giới hạn tối đa của gp3?", b: "<b>80.000 IOPS</b>, <b>2.000 MiB/s</b>, <b>64 TiB</b>; tỉ lệ tối đa 500 IOPS/GiB." },
+      { t: "type", f: "Điểm mấu chốt của gp3 so với gp2?", b: "Tăng hiệu năng <b>không cần tăng dung lượng</b>; rẻ hơn gp2 khoảng <b>20%/GiB</b>; không dùng burst." },
+      { t: "type", f: "gp2 tính IOPS thế nào?", b: "<b>3 IOPS/GiB</b>, tối thiểu 100, tối đa <b>16.000</b> (ở 5.334 GiB); volume &lt; 1 TiB burst tới <b>3.000</b> bằng I/O credits." },
+      { t: "type", f: "Metric nào cho biết gp2 hết burst?", b: "<b>BurstBalance</b> (CloudWatch) về 0." },
+      { t: "type", f: "Giới hạn của io2 Block Express?", b: "<b>256.000 IOPS</b>, <b>4.000 MiB/s</b>, <b>64 TiB</b>, độ trễ &lt; <b>500 µs</b>, độ bền <b>99,999%</b>, tỉ lệ 1.000 IOPS : 1 GiB." },
+      { t: "type", f: "Đạt 256.000 IOPS của io2 cần instance gì?", b: "<b>Nitro instance</b>. Instance khác chỉ đạt tới 32.000 IOPS." },
+      { t: "type", f: "Giới hạn của io1?", b: "4 GiB – 16 TiB, tới <b>64.000 IOPS</b>, tỉ lệ <b>50:1</b>, 1.000 MiB/s.", x: "Tài liệu khuyên dùng io2 – tốt hơn, rẻ hơn." },
+      { t: "type", f: "Durability của gp3/gp2/io1 so với io2 Block Express?", b: "gp3/gp2/io1: <b>99,8–99,9%</b>. io2 Block Express: <b>99,999%</b>." },
+      { t: "type", f: "st1 có đặc điểm gì?", b: "Throughput Optimized HDD: tới <b>500 MiB/s</b>, 125 GiB – 16 TiB; dữ liệu <b>truy cập thường xuyên, tuần tự</b> (big data, EMR, ETL, log)." },
+      { t: "type", f: "sc1 có đặc điểm gì?", b: "Cold HDD: tới <b>250 MiB/s</b>, <b>rẻ nhất</b> trong các EBS volume, dữ liệu <b>ít truy cập</b>." },
+      { t: "type", f: "st1/sc1 làm boot volume được không?", b: "<b>Không.</b> Và kém hiệu quả với I/O nhỏ ngẫu nhiên (mỗi I/O ≤ 1 MiB vẫn tính 1 MiB)." },
+      { t: "type", f: "Volume type nào hỗ trợ Multi-Attach?", b: "Chỉ <b>io1 và io2</b>." },
+
+      // ---- Elastic Volumes
+      { t: "ev", f: "Elastic Volumes cho phép gì?", b: "Tăng dung lượng, đổi volume type, đổi IOPS/throughput <b>không downtime</b>, không detach." },
+      { t: "ev", f: "Sau khi tăng size bằng Elastic Volumes cần làm gì?", b: "<b>Mở rộng file system</b> trong OS (growpart + resize2fs / xfs_growfs) – EBS không tự làm." },
+      { t: "ev", f: "Có giảm dung lượng EBS volume được không?", b: "<b>Không.</b> Tạo volume nhỏ hơn rồi chép dữ liệu (rsync, robocopy)." },
+      { t: "ev", f: "Giới hạn số lần modify volume?", b: "Tối đa <b>4 lần / 24 giờ</b>; lần sau chỉ khi lần trước completed." },
+      { t: "ev", f: "Trạng thái của volume khi modify?", b: "<b>modifying ⇒ optimizing ⇒ completed</b>; dung lượng mới có hiệu lực từ optimizing." },
+      { t: "ev", f: "Chuyển gp2 sang gp3 có gián đoạn instance không?", b: "<b>Không</b> – dùng Elastic Volumes; mặc định gp3 nhận hiệu năng = max(gp2 cũ, baseline gp3)." },
+
+      // ---- Snapshots
+      { t: "snap", f: "EBS snapshot là gì?", b: "Bản sao <b>point-in-time</b>, <b>incremental</b> (chỉ lưu block thay đổi), lưu trong <b>S3</b> mà bạn không truy cập trực tiếp." },
+      { t: "snap", f: "Snapshot có phạm vi gì?", b: "<b>Regional</b>: nhân bản qua mọi AZ trong Region ⇒ restore volume ở AZ bất kỳ." },
+      { t: "snap", f: "Chuyển EBS volume sang AZ khác thế nào?", b: "<b>Snapshot ⇒ create volume ở AZ đích</b>." },
+      { t: "snap", f: "Chuyển EBS volume sang Region khác thế nào?", b: "<b>Snapshot ⇒ copy snapshot sang Region ⇒ create volume</b>." },
+      { t: "snap", f: "Xóa snapshot cũ có làm hỏng snapshot mới hơn không?", b: "<b>Không</b> – block còn được tham chiếu vẫn được giữ; chỉ block riêng của snapshot bị xóa mới mất." },
+      { t: "snap", f: "Copy snapshot khi nào là full copy?", b: "Lần đầu sang <b>Region mới</b> hoặc mã hóa bằng <b>KMS key mới</b>. Cùng Region, cùng key ⇒ incremental." },
+      { t: "snap", f: "Volume initialization là gì?", b: "Volume tạo từ snapshot phải <b>tải block từ S3</b> ⇒ lúc đầu độ trễ cao, hiệu năng thấp." },
+      { t: "snap", f: "Fast Snapshot Restore (FSR) làm gì?", b: "Volume tạo ra được <b>khởi tạo đầy đủ ngay</b>, full hiệu năng tức thì. Bật theo cặp <b>snapshot + AZ</b>, tính phí theo giờ.", x: "Tối đa 5 snapshot bật FSR / Region." },
+      { t: "snap", f: "Provisioned Rate for Volume Initialization?", b: "Chỉ định tốc độ <b>100–300 MiB/s</b> khi tạo volume từ snapshot ⇒ thời gian khởi tạo dự đoán được." },
+      { t: "snap", f: "EBS Snapshots Archive?", b: "Rẻ hơn tới <b>75%</b> cho snapshot giữ <b>≥ 90 ngày</b>, hiếm truy cập; restore mất <b>24–72 giờ</b>; lưu dạng full snapshot." },
+      { t: "snap", f: "Tự động tạo/giữ/copy/xóa EBS snapshot với ít overhead nhất?", b: "<b>Amazon Data Lifecycle Manager</b> (policy theo tag). Nhiều dịch vụ/cross-account ⇒ AWS Backup." },
+      { t: "snap", f: "Khôi phục snapshot bị xóa nhầm / khóa không cho xóa?", b: "<b>Recycle Bin</b> (khôi phục) · <b>Snapshot lock</b> (WORM, chống xóa)." },
+      { t: "snap", f: "Share snapshot mã hóa bằng aws/ebs được không?", b: "<b>Không</b> ⇒ copy re-encrypt bằng <b>customer managed key</b>, cấp quyền key rồi share.", x: "Snapshot mã hóa không public được." },
+
+      // ---- Multi-Attach
+      { t: "ma", f: "Multi-Attach là gì?", b: "Gắn một volume <b>io1/io2</b> vào <b>tới 16 Nitro instance cùng AZ</b>, mỗi instance đọc/ghi đầy đủ." },
+      { t: "ma", f: "Multi-Attach yêu cầu file system gì?", b: "<b>Clustered file system</b> + I/O fencing (NVMe reservations). XFS, EXT4 không phù hợp." },
+      { t: "ma", f: "Giới hạn khác của Multi-Attach?", b: "Không làm <b>boot volume</b>; không bật lúc launch; bật/tắt chỉ khi volume không gắn instance nào; Windows chỉ io2." },
+      { t: "ma", f: "Chia sẻ file giữa nhiều AZ thì dùng gì thay Multi-Attach?", b: "<b>Amazon EFS</b>." },
+
+      // ---- Encryption
+      { t: "enc", f: "Volume EBS mã hóa bảo vệ những gì?", b: "Data <b>at rest</b>, data <b>in transit</b> giữa instance–volume, mọi <b>snapshot</b> và volume tạo từ snapshot đó." },
+      { t: "enc", f: "EBS encryption ảnh hưởng hiệu năng thế nào?", b: "<b>Không đáng kể</b> – AES-256 xử lý trên phần cứng Nitro; mọi instance type hỗ trợ." },
+      { t: "enc", f: "Mã hóa một volume đang không mã hóa thế nào?", b: "<b>Snapshot ⇒ copy/restore với encryption ⇒ volume mới ⇒ swap</b>. Không mã hóa trực tiếp được." },
+      { t: "enc", f: "Có gỡ mã hóa khỏi volume/snapshot đã mã hóa không?", b: "<b>Không.</b> Volume từ snapshot mã hóa luôn mã hóa." },
+      { t: "enc", f: "Đổi KMS key của volume đã có?", b: "Không đổi trực tiếp ⇒ <b>copy snapshot với key mới</b> (full copy)." },
+      { t: "enc", f: "EBS encryption by default là gì?", b: "Thiết lập <b>cấp account, theo từng Region</b>: mọi volume mới và snapshot copy đều mã hóa; không ảnh hưởng volume cũ." },
+      { t: "enc", f: "KMS key mặc định cho EBS?", b: "AWS managed key <b>aws/ebs</b>; đổi được sang <b>customer managed key</b> để share cross-account, kiểm soát key policy." },
+
+      // ---- Instance store
+      { t: "is", f: "Instance store là gì?", b: "Block storage <b>tạm thời</b> trên đĩa <b>gắn vật lý</b> vào host; <b>miễn phí</b> (gồm trong giá instance); IOPS rất cao." },
+      { t: "is", f: "Dữ liệu instance store còn hay mất khi reboot / stop / hibernate / terminate?", b: "Reboot: <b>còn</b>. Stop, hibernate, terminate: <b>mất</b> (cryptographically erased)." },
+      { t: "is", f: "Thêm instance store sau khi launch được không?", b: "<b>Không</b> – chỉ lúc launch; không tháo sang instance khác." },
+      { t: "is", f: "Đổi instance type thì dữ liệu instance store ra sao?", b: "<b>Mất</b> (type mới có instance store thì nhận volume trống)." },
+      { t: "is", f: "AMI EBS-backed tạo từ instance có chứa dữ liệu instance store không?", b: "<b>Không.</b> Muốn giữ phải chép sang EBS, S3 hoặc EFS." },
+      { t: "is", f: "Instance store hợp workload nào?", b: "<b>Cache, buffer, scratch, temp</b>; dữ liệu đã nhân bản qua nhiều node (Cassandra, HDFS, Kafka)." },
+      { t: "is", f: "Termination/stop protection có giữ dữ liệu instance store khi shutdown trong OS không?", b: "<b>Không</b> – shutdown từ OS vẫn làm mất dữ liệu." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>boot volume, general workload, most cost-effective SSD</i>” ⇒ ?", b: "<b>gp3</b>." },
+      { t: "kw", f: "Đề có “<i>10,000 IOPS on a 100 GiB volume without paying for extra storage</i>” ⇒ ?", b: "<b>gp3</b> (provision IOPS độc lập size)." },
+      { t: "kw", f: "Đề có “<i>more than 80,000 IOPS, sub-millisecond, 99.999% durability</i>” ⇒ ?", b: "<b>io2 Block Express</b> trên Nitro." },
+      { t: "kw", f: "Đề có “<i>sequential, throughput-intensive, frequently accessed, log processing</i>” ⇒ ?", b: "<b>st1</b>." },
+      { t: "kw", f: "Đề có “<i>infrequently accessed data, lowest cost block storage</i>” ⇒ ?", b: "<b>sc1</b>." },
+      { t: "kw", f: "Đề có “<i>volumes restored from snapshots must deliver full performance immediately</i>” ⇒ ?", b: "<b>Fast Snapshot Restore</b>." },
+      { t: "kw", f: "Đề có “<i>retain snapshots for years for compliance at lowest cost</i>” ⇒ ?", b: "<b>EBS Snapshots Archive</b>." },
+      { t: "kw", f: "Đề có “<i>ensure all new EBS volumes are encrypted automatically</i>” ⇒ ?", b: "<b>EBS encryption by default</b> ở mỗi Region." },
+      { t: "kw", f: "Đề có “<i>clustered application needs shared block storage with concurrent writes, same AZ</i>” ⇒ ?", b: "<b>io2 + Multi-Attach</b>." },
+      { t: "kw", f: "Đề có “<i>highest I/O, lowest latency for temporary data, cache, scratch</i>” ⇒ ?", b: "<b>Instance store</b> (storage optimized I-family)." },
+      { t: "kw", f: "Đề có “<i>increase volume size / change gp2 to gp3 with no downtime</i>” ⇒ ?", b: "<b>Elastic Volumes</b> rồi extend file system." }
+    ],
+
+    pairs: [
+      ["EBS volume", "Ổ khối bền vững, zonal, gắn qua mạng"],
+      ["IOPS", "Số thao tác I/O mỗi giây"],
+      ["gp3", "SSD rẻ nhất, baseline 3.000 IOPS + 125 MiB/s"],
+      ["gp2", "3 IOPS/GiB, burst tới 3.000"],
+      ["io2 Block Express", "256.000 IOPS, 99,999%, &lt; 500 µs"],
+      ["io1", "Tới 64.000 IOPS, tỉ lệ 50:1"],
+      ["st1", "HDD tuần tự truy cập thường xuyên, 500 MiB/s"],
+      ["sc1", "HDD dữ liệu lạnh, rẻ nhất"],
+      ["BurstBalance", "Metric số dư burst của gp2/st1/sc1"],
+      ["EBS-optimized instance", "Băng thông riêng cho EBS"],
+      ["Elastic Volumes", "Sửa size/type/IOPS khi đang chạy"],
+      ["EBS snapshot", "Bản chụp incremental lưu trên S3"],
+      ["Volume initialization", "Tải block từ S3 khi tạo từ snapshot"],
+      ["Fast Snapshot Restore", "Volume khởi tạo đầy đủ ngay khi tạo"],
+      ["Snapshots Archive", "Rẻ hơn 75% cho snapshot ≥ 90 ngày"],
+      ["Data Lifecycle Manager", "Tự động tạo/giữ/copy/xóa snapshot theo tag"],
+      ["Snapshot lock", "Khóa snapshot chống xóa"],
+      ["Multi-Attach", "io1/io2 gắn ≤ 16 Nitro instance cùng AZ"],
+      ["Clustered file system", "Cho phép nhiều server ghi cùng lúc"],
+      ["Encryption by default", "Mọi volume mới mã hóa, theo Region"],
+      ["aws/ebs", "AWS managed key mặc định của EBS"],
+      ["Instance store", "Ổ tạm gắn vật lý trên host, miễn phí"],
+      ["Cryptographically erased", "Instance store bị xóa khi stop/terminate"],
+      ["RAID 0", "Striping cộng dồn hiệu năng, không dư thừa"]
+    ],
+
+    sorts: [
+      {
+        title: "Workload ⇒ volume type",
+        desc: "Chọn volume type phù hợp và tiết kiệm nhất.",
+        buckets: ["gp3", "io2 Block Express", "st1", "sc1", "Instance store"],
+        items: [
+          ["Boot volume, dev/test, ứng dụng tương tác", 0, "SSD mặc định, rẻ nhất"],
+          ["MySQL 200 GiB cần duy trì 9.000 IOPS, dữ liệu không tăng", 0, "provision IOPS độc lập size"],
+          ["Oracle cần 150.000 IOPS, độ trễ &lt; 1 ms", 1, "tới 256.000 IOPS"],
+          ["Database critical cần độ bền 99,999%", 1, "độ bền cao nhất"],
+          ["Log processing, big data, ETL truy cập thường xuyên", 2, "throughput tuần tự 500 MiB/s"],
+          ["Data warehouse quét tuần tự lớn", 2, "HDD tối ưu throughput"],
+          ["Dữ liệu ít truy cập, cần block storage rẻ nhất", 3, "Cold HDD"],
+          ["Cache, scratch, buffer tạm, IOPS cực cao", 4, "NVMe cục bộ, miễn phí"],
+          ["Cassandra nhiều node tự nhân bản dữ liệu", 4, "dữ liệu đã được replicate"]
+        ]
+      },
+      {
+        title: "EBS volume hay instance store?",
+        desc: "Đặc điểm thuộc loại lưu trữ nào?",
+        buckets: ["EBS volume", "Instance store"],
+        items: [
+          ["Dữ liệu còn sau stop/start", 0, "persistent"],
+          ["Snapshot incremental lên S3", 0, "backup bằng snapshot"],
+          ["Tháo ra gắn sang instance khác cùng AZ", 0, "detach/attach được"],
+          ["Đổi size/type bằng Elastic Volumes", 0, "co giãn"],
+          ["Trả tiền theo GiB/IOPS provision", 0, "tính phí riêng"],
+          ["Đã gồm trong giá instance", 1, "miễn phí"],
+          ["Chỉ gắn được lúc launch", 1, "không thêm sau"],
+          ["Mất dữ liệu khi stop, hibernate, terminate", 1, "ephemeral"],
+          ["Độ trễ thấp nhất vì không đi qua mạng", 1, "đĩa gắn vật lý"]
+        ]
+      },
+      {
+        title: "Tình huống snapshot/encryption ⇒ giải pháp",
+        desc: "Chọn tính năng đúng cho yêu cầu.",
+        buckets: ["Fast Snapshot Restore", "Snapshots Archive", "Data Lifecycle Manager", "Recycle Bin", "Copy snapshot", "Encryption by default"],
+        items: [
+          ["Volume restore từ snapshot phải full hiệu năng ngay", 0, "khởi tạo đầy đủ lúc tạo"],
+          ["Giữ snapshot hằng năm cho compliance, hiếm restore", 1, "rẻ hơn 75%"],
+          ["Tự động chụp và xóa snapshot theo tag, ít overhead", 2, "policy vòng đời"],
+          ["Khôi phục snapshot bị xóa nhầm", 3, "retention rule"],
+          ["DR: đưa volume sang Region khác", 4, "snapshot là regional"],
+          ["Mã hóa lại bằng customer managed key để share", 4, "re-encrypt khi copy"],
+          ["Mọi volume mới trong Region phải được mã hóa", 5, "cấp account/Region"]
+        ]
+      },
+      {
+        title: "SSD hay HDD?",
+        desc: "Xếp đặc điểm vào nhóm SSD-backed hoặc HDD-backed.",
+        buckets: ["SSD (gp3/gp2/io1/io2)", "HDD (st1/sc1)"],
+        items: [
+          ["Thước đo chính là IOPS", 0, "workload giao dịch"],
+          ["Làm boot volume được", 0, "HDD không boot"],
+          ["I/O nhỏ, ngẫu nhiên (OLTP)", 0, "SSD tối ưu IOPS"],
+          ["Có loại hỗ trợ Multi-Attach", 0, "io1/io2"],
+          ["Thước đo chính là throughput", 1, "MiB/s"],
+          ["Mỗi I/O ≤ 1 MiB vẫn tính 1 MiB credit", 1, "kém với I/O nhỏ"],
+          ["Kích thước tối thiểu 125 GiB", 1, "st1/sc1"],
+          ["Hiệu năng có thể giảm về baseline khi đang chụp snapshot", 1, "st1/sc1"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["EBS volume gắn được vào instance ở AZ khác.", false, "EBS là zonal; chỉ gắn instance cùng AZ."],
+      ["Dữ liệu EBS volume được nhân bản tự động sang AZ khác.", false, "Chỉ nhân bản trong AZ; muốn sang AZ khác dùng snapshot."],
+      ["AWS tự động sao lưu EBS volume.", false, "Bạn phải tự snapshot hoặc dùng DLM/AWS Backup."],
+      ["EBS tính tiền theo dung lượng đã provision, kể cả khi volume trống.", true, "Không theo dung lượng đã dùng."],
+      ["gp3 có baseline 3.000 IOPS và 125 MiB/s bất kể kích thước.", true, "Đã tính trong giá lưu trữ."],
+      ["Với gp3, muốn thêm IOPS phải tăng dung lượng volume.", false, "gp3 provision IOPS độc lập với size; đó là đặc điểm của gp2."],
+      ["gp3 rẻ hơn gp2 khoảng 20% mỗi GiB.", true, "Và là SSD rẻ nhất của EBS."],
+      ["gp2 tối đa 16.000 IOPS.", true, "3 IOPS/GiB, đạt max ở 5.334 GiB."],
+      ["io2 Block Express hỗ trợ tới 256.000 IOPS mỗi volume.", true, "Trên Nitro instance."],
+      ["io2 Block Express có độ bền 99,999%.", true, "Các loại khác 99,8–99,9%."],
+      ["gp3 hỗ trợ Multi-Attach.", false, "Chỉ io1/io2."],
+      ["st1 có thể làm boot volume.", false, "st1/sc1 không boot được."],
+      ["sc1 là EBS volume có chi phí thấp nhất.", true, "Cho dữ liệu ít truy cập."],
+      ["st1 phù hợp database OLTP nhiều I/O nhỏ ngẫu nhiên.", false, "st1 tối ưu I/O tuần tự lớn; OLTP dùng SSD."],
+      ["Elastic Volumes cho phép giảm dung lượng volume.", false, "Chỉ tăng, không giảm."],
+      ["Sau khi tăng size, phải tự mở rộng file system trong OS.", true, "EBS không tự làm."],
+      ["Mỗi volume chỉ modify được tối đa 4 lần trong 24 giờ.", true, "Rolling 24 giờ."],
+      ["EBS snapshot lưu trong bucket S3 mà bạn truy cập được qua S3 console.", false, "Quản lý qua EC2 console/API, không qua S3."],
+      ["Snapshot được nhân bản qua mọi AZ trong Region.", true, "Nên restore được ở AZ bất kỳ."],
+      ["Xóa snapshot cũ làm hỏng các snapshot incremental mới hơn.", false, "Block còn được tham chiếu vẫn được giữ."],
+      ["Copy snapshot sang Region mới lần đầu là full copy.", true, "Các lần sau incremental nếu đủ điều kiện."],
+      ["Volume vừa restore từ snapshot luôn đạt full hiệu năng ngay lập tức.", false, "Phải qua initialization, trừ khi bật Fast Snapshot Restore."],
+      ["Snapshots Archive phù hợp snapshot cần restore nhanh trong vài phút.", false, "Restore mất 24–72 giờ."],
+      ["Snapshot mã hóa bằng aws/ebs có thể share trực tiếp cho account khác.", false, "Phải re-encrypt bằng customer managed key."],
+      ["Multi-Attach hỗ trợ tối đa 16 Nitro instance cùng AZ.", true, "Cần clustered file system."],
+      ["Volume Multi-Attach có thể làm boot volume.", false, "Không hỗ trợ boot volume."],
+      ["Có thể bấm “encrypt” để mã hóa trực tiếp volume đang không mã hóa.", false, "Phải snapshot ⇒ copy/restore mã hóa ⇒ volume mới."],
+      ["Volume tạo từ snapshot mã hóa luôn được mã hóa.", true, "Không gỡ được mã hóa."],
+      ["EBS encryption by default được đặt theo từng Region.", true, "Cấp account, từng Region."],
+      ["Bật encryption by default sẽ mã hóa luôn các volume đã tồn tại.", false, "Chỉ áp cho volume mới và snapshot copy."],
+      ["Dữ liệu instance store còn nguyên sau khi reboot.", true, "Stop/hibernate/terminate mới mất."],
+      ["Dữ liệu instance store còn sau khi stop rồi start.", false, "Bị xóa khi stop."],
+      ["Có thể gắn thêm instance store volume sau khi launch.", false, "Chỉ gắn lúc launch."],
+      ["Instance store không tính thêm phí ngoài giá instance.", true, "Đã gồm trong giá instance."],
+      ["RAID 5 được khuyến nghị để tăng hiệu năng EBS.", false, "Parity tốn IOPS; dùng RAID 0 khi cần."]
+    ],
+
+    map: {
+      t: "Bài 11 · EBS & Instance store",
+      c: [
+        { t: "EBS volume", icon: "res/Amazon-Elastic-Block-Store_Volume.svg", c: [
+          { t: "Bản chất", v: "block storage bền vững qua mạng" },
+          { t: "Phạm vi", v: "zonal, nhân bản trong AZ" },
+          { t: "Tính phí", v: "theo provision, kể cả trống" },
+          { t: "Backup", v: "AWS không tự làm ⇒ snapshot/DLM" },
+          { t: "Elastic Volumes", v: "tăng size, đổi type/IOPS không downtime; không giảm; ≤ 4 lần/24 giờ" }
+        ] },
+        { t: "Volume types", icon: "res/Amazon-Elastic-Block-Store_Volume-gp3.svg", c: [
+          { t: "gp3", v: "3.000 IOPS + 125 MiB/s baseline; tới 80.000 / 2.000 MiB/s" },
+          { t: "gp2", v: "3 IOPS/GiB, burst 3.000, max 16.000" },
+          { t: "io2 Block Express", v: "256.000 IOPS, 4.000 MiB/s, 99,999%, &lt; 500 µs" },
+          { t: "io1", v: "64.000 IOPS, 50:1" },
+          { t: "st1", v: "HDD 500 MiB/s, dữ liệu nóng tuần tự" },
+          { t: "sc1", v: "HDD 250 MiB/s, rẻ nhất, dữ liệu lạnh" }
+        ] },
+        { t: "Snapshots", icon: "res/Amazon-Elastic-Block-Store_Snapshot.svg", c: [
+          { t: "Bản chất", v: "incremental, lưu S3, regional" },
+          { t: "Đổi AZ / Region", v: "snapshot ⇒ (copy) ⇒ create volume" },
+          { t: "FSR", v: "full hiệu năng ngay, theo snapshot + AZ, ≤ 5/Region" },
+          { t: "Archive", v: "rẻ hơn 75%, ≥ 90 ngày, restore 24–72 giờ" },
+          { t: "Tự động hóa", v: "Data Lifecycle Manager, AWS Backup" },
+          { t: "Bảo vệ", v: "Recycle Bin, Snapshot lock" }
+        ] },
+        { t: "Multi-Attach", icon: "res/Amazon-Elastic-Block-Store_Multiple-Volumes.svg", c: [
+          { t: "Loại", v: "chỉ io1/io2" },
+          { t: "Giới hạn", v: "≤ 16 Nitro instance, cùng AZ" },
+          { t: "File system", v: "clustered + I/O fencing" },
+          { t: "Không", v: "boot volume; đa AZ ⇒ dùng EFS" }
+        ] },
+        { t: "Encryption", icon: "svc/AWS-Key-Management-Service.svg", c: [
+          { t: "Bảo vệ", v: "at rest, in transit, snapshot" },
+          { t: "Key", v: "aws/ebs mặc định, hoặc customer managed key" },
+          { t: "By default", v: "theo Region, chỉ volume mới" },
+          { t: "Mã hóa volume cũ", v: "snapshot ⇒ copy/restore mã hóa ⇒ swap" },
+          { t: "Bất biến", v: "không gỡ mã hóa, không đổi key trực tiếp" }
+        ] },
+        { t: "Instance store", icon: "res/Amazon-EC2_I3-Instance.svg", c: [
+          { t: "Bản chất", v: "đĩa vật lý trên host, miễn phí, NVMe" },
+          { t: "Dữ liệu", v: "reboot còn · stop/hibernate/terminate mất" },
+          { t: "Gắn", v: "chỉ lúc launch, không tháo" },
+          { t: "Use case", v: "cache, buffer, scratch, dữ liệu đã nhân bản" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

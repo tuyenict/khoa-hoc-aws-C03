@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 42 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/CloudEndure-Disaster-Recovery.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="42" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-42-disaster-recovery.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "basic", name: "DR & BCP" },
+      { id: "rpo", name: "RPO · RTO" },
+      { id: "strat", name: "4 chiến lược DR" },
+      { id: "data", name: "Sao chép & backup dữ liệu" },
+      { id: "fail", name: "Failover · data plane" },
+      { id: "drs", name: "AWS Elastic Disaster Recovery" },
+      { id: "test", name: "Kiểm thử & drift" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- DR & BCP
+      { t: "basic", f: "Disaster recovery (DR) khác high availability (HA) thế nào?", b: "<b>HA</b>: chịu hỏng hóc thường ngày của một thành phần (một instance, một AZ).<br><b>DR</b>: kế hoạch khi <b>cả một phạm vi lớn bị mất</b> – thường là cả Region hoặc toàn bộ dữ liệu bị hỏng.", x: "Multi-AZ là HA, không phải DR cấp Region." },
+      { t: "basic", f: "Kế hoạch DR liên quan thế nào tới BCP?", b: "DR là <b>tập con</b> của <b>business continuity plan (BCP)</b>, không phải tài liệu đứng riêng.", x: "Ví dụ: động đất làm không vận chuyển được hàng – website vẫn chạy nhưng BCP phải tính khâu vận chuyển." },
+      { t: "basic", f: "Business impact analysis (BIA) dùng để làm gì?", b: "Định lượng tác động khi workload gián đoạn ⇒ workload phải sẵn sàng lại <b>nhanh đến mức nào</b> và <b>chấp nhận mất bao nhiêu dữ liệu</b>.", x: "Tác động có thể phụ thuộc thời điểm (hệ thống trả lương sập ngay trước ngày trả lương)." },
+      { t: "basic", f: "Chi phí khôi phục cao hơn chi phí của sự cố thì sao?", b: "<b>Không nên triển khai</b> – trừ khi có lý do phụ như <b>yêu cầu pháp lý</b>.", x: "Với workload ít quan trọng, không có DR cũng là quyết định hợp lệ nếu được cân nhắc có hiểu biết." },
+      { t: "basic", f: "DR trên AWS khác DR truyền thống ở điểm nào về chi phí?", b: "Đổi <b>chi phí vốn cố định</b> của data center dự phòng thành <b>chi phí vận hành biến đổi</b> của môi trường vừa đủ dùng; test đơn giản, lặp lại được, thường xuyên hơn." },
+      { t: "basic", f: "Workload Multi-AZ được thiết kế tốt, thảm họa “mất một data center” cần chiến lược gì?", b: "Theo tài liệu, có thể <b>chỉ cần Backup &amp; Restore</b> (thêm continuous backup trong Region để chống lỗi con người)." },
+      { t: "basic", f: "Data residency mà quốc gia chỉ có một Region thì làm DR thế nào?", b: "Dùng <b>các AZ như những “địa điểm” tách biệt</b>; các chiến lược DR làm được giữa các AZ thay vì giữa Region." },
+
+      // ---- RPO / RTO
+      { t: "rpo", f: "RPO là gì?", b: "<b>Recovery Point Objective</b>: khoảng thời gian tối đa chấp nhận được kể từ <b>điểm khôi phục dữ liệu gần nhất</b> ⇒ “<b>được phép mất bao nhiêu dữ liệu?</b>”", x: "Nhìn về quá khứ tính từ lúc sự cố." },
+      { t: "rpo", f: "RTO là gì?", b: "<b>Recovery Time Objective</b>: độ trễ tối đa chấp nhận được <b>từ lúc gián đoạn tới lúc khôi phục dịch vụ</b> ⇒ “<b>được phép ngừng bao lâu?</b>”", x: "Nhìn về tương lai tính từ lúc sự cố." },
+      { t: "rpo", f: "Yếu tố nào quyết định RPO?", b: "<b>Tần suất backup</b> hoặc <b>độ trễ sao chép</b>: backup mỗi 24 giờ ⇒ RPO ~24 giờ; sao chép liên tục ⇒ RPO giây." },
+      { t: "rpo", f: "Yếu tố nào quyết định RTO?", b: "Lượng hạ tầng <b>đã chạy sẵn</b> ở nơi khôi phục, mức <b>tự động hóa</b>, thời gian restore dữ liệu, thời gian chuyển DNS/traffic." },
+      { t: "rpo", f: "Ai đặt RPO/RTO?", b: "<b>Tổ chức tự định nghĩa</b> (từ BIA + risk assessment), không phải thông số AWS áp đặt." },
+      { t: "rpo", f: "“<i>Can tolerate losing at most 15 minutes of data</i>” là RPO hay RTO?", b: "<b>RPO</b> = 15 phút.", x: "“Must be back online within 15 minutes” mới là RTO." },
+      { t: "rpo", f: "Thứ tự đọc đề DR?", b: "<b>(1) RPO → (2) RTO → (3) cost-effective / least operational overhead</b>. Chọn chiến lược <b>rẻ nhất vẫn đạt</b>, không phải mạnh nhất." },
+
+      // ---- 4 chiến lược
+      { t: "strat", f: "Ba chiến lược DR nào là active/passive?", b: "<b>Backup &amp; Restore, Pilot Light, Warm Standby</b>: site thụ động không phục vụ traffic cho đến khi failover." },
+      { t: "strat", f: "Backup &amp; Restore: Region DR có gì, RPO/RTO cỡ nào?", b: "Chỉ có <b>bản backup</b> (snapshot, AMI, S3) + <b>template IaC</b>. RPO/RTO tính bằng <b>giờ</b>; chi phí thấp nhất." },
+      { t: "strat", f: "Ba thứ phải sao lưu trong Backup &amp; Restore?", b: "<b>Dữ liệu</b> (point-in-time) · <b>hạ tầng</b> (IaC: CloudFormation/CDK) · <b>code và cấu hình</b> (gồm AMI; CodePipeline để deploy lại).", x: "Không có IaC, khôi phục ở Region mới có thể vượt RTO." },
+      { t: "strat", f: "Pilot Light: cái gì luôn bật, cái gì “tắt”?", b: "<b>Luôn bật</b>: data store nhận dữ liệu sao chép (DB, object storage), hạ tầng lõi.<br><b>“Tắt”</b>: application server (tốt nhất là <b>chưa deploy</b>, vd ASG desired = 0)." },
+      { t: "strat", f: "Pilot Light khác Warm Standby ở điểm cốt lõi nào?", b: "<b>Pilot Light</b>: không xử lý được request nếu chưa bật server rồi scale.<br><b>Warm Standby</b>: <b>xử lý traffic ngay</b> ở capacity giảm, chỉ cần scale up.", x: "Tài liệu khuyên dùng nhu cầu RTO/RPO để chọn giữa hai cách." },
+      { t: "strat", f: "Warm Standby là gì?", b: "Bản sao <b>thu nhỏ nhưng đầy đủ chức năng</b> của production <b>luôn chạy</b> ở Region khác; dễ test liên tục." },
+      { t: "strat", f: "Hot standby là gì?", b: "Region DR chạy <b>đủ capacity production</b> ngay từ đầu (<b>statically stable</b>) nhưng <b>không nhận traffic</b>; không phụ thuộc Auto Scaling khi failover." },
+      { t: "strat", f: "Hot standby khác active/active ở điểm nào?", b: "Chi phí tương đương; khác ở chỗ Region thứ hai <b>có phục vụ người dùng hay không</b> (active/active: có; hot standby: chỉ để DR)." },
+      { t: "strat", f: "Multi-site active/active: RTO, chi phí, failover?", b: "RTO <b>gần 0</b>, chi phí <b>cao nhất</b>; mọi Region phục vụ người dùng ⇒ <b>không có khái niệm failover</b>.", x: "Thảm họa dữ liệu (corruption) vẫn phải dựa vào backup ⇒ recovery point ≠ 0." },
+      { t: "strat", f: "Vì sao Auto Scaling ở Region DR làm giảm độ bền của chiến lược?", b: "Auto Scaling (tăng desired capacity) là thao tác <b>control plane</b>.", x: "Kiểu lai: deploy đủ cho traffic ban đầu, sau đó để Auto Scaling tăng dần." },
+      { t: "strat", f: "Trong Pilot Light, CloudFormation deploy bản thu nhỏ ở Region DR bằng cách nào?", b: "Dùng <b>pseudo parameter</b> (<code>AWS::Region</code>, <code>AWS::AccountId</code>) + <b>Conditions</b> để chỉ deploy bản thu nhỏ/tắt khi template chạy ở Region DR." },
+      { t: "strat", f: "Golden AMI cho DR tạo bằng gì?", b: "Pipeline <b>EC2 Image Builder</b>, copy sang cả Region chính lẫn Region DR." },
+      { t: "strat", f: "Active/active: ba chiến lược ghi dữ liệu?", b: "<b>Write global</b>: mọi ghi về một Region (Aurora Global Database).<br><b>Write local</b>: ghi vào Region gần nhất (DynamoDB global tables).<br><b>Write partitioned</b>: ghi theo partition key (S3 replication hai chiều)." },
+      { t: "strat", f: "DynamoDB global tables giải quyết xung đột ghi đồng thời thế nào?", b: "<b>Last writer wins</b> – bản ghi sau cùng thắng." },
+
+      // ---- Dữ liệu
+      { t: "data", f: "Vì sao sao chép liên tục không thay được backup?", b: "Replication <b>sao chép luôn dữ liệu bị hỏng / bị xóa / bị ransomware mã hóa</b> ⇒ vẫn cần <b>point-in-time backup</b>.", x: "Khi đó RPO luôn &gt; 0, điểm khôi phục là trước lúc phát hiện." },
+      { t: "data", f: "Cross-account backup chống được loại thảm họa nào?", b: "<b>Insider threat</b> hoặc <b>account bị chiếm quyền</b>: kẻ tấn công không với tới backup ở account khác." },
+      { t: "data", f: "Metadata EC2 mà AWS Backup lưu (instance type, SG, IAM role…) dùng được ở đâu?", b: "<b>Chỉ khi restore trong cùng Region</b>." },
+      { t: "data", f: "S3 replication: xóa object ở bucket nguồn thì bucket DR sao?", b: "Mặc định xóa ở nguồn <b>chỉ thêm delete marker ở bucket nguồn</b> ⇒ dữ liệu ở Region DR được bảo vệ." },
+      { t: "data", f: "AWS Backup có restore theo lịch/tự động không?", b: "Theo whitepaper <b>chưa hỗ trợ</b>. Tự làm: <b>AWS Backup → SNS → Lambda</b> gọi API restore rồi kiểm tra dữ liệu." },
+      { t: "data", f: "Vì sao nên restore định kỳ trước, không đợi thảm họa?", b: "<b>Restore là thao tác control plane</b> – có thể không khả dụng đúng lúc thảm họa; restore sẵn ⇒ có data store chạy được từ backup gần đây." },
+      { t: "data", f: "Aurora Global Database cho DR: độ trễ và thời gian promote?", b: "Lag sang Region phụ thường <b>dưới 1 giây</b>; promote Region phụ nhận đọc/ghi trong <b>dưới 1 phút</b>." },
+      { t: "data", f: "RDS cross-Region read replica khi failover?", b: "<b>Promote</b> replica thành primary; với engine không phải Aurora mất <b>vài phút</b> và có <b>reboot</b>." },
+      { t: "data", f: "Kể các dịch vụ sao chép liên tục cross-Region trong bài.", b: "S3 Replication (+ RTC), RDS cross-Region read replica, <b>Aurora Global Database</b>, <b>DynamoDB global tables</b>, DocumentDB global clusters, ElastiCache Global Datastore." },
+      { t: "data", f: "Dữ liệu backup chỉ cần lấy về trong vài giờ ⇒ lưu ở đâu cho rẻ?", b: "<b>S3 Glacier / Glacier Deep Archive</b>." },
+
+      // ---- Failover
+      { t: "fail", f: "Data plane và control plane khác nhau thế nào? Failover nên dựa vào đâu?", b: "<b>Data plane</b>: phục vụ thời gian thực (trả lời DNS, health check).<br><b>Control plane</b>: cấu hình (sửa record, tạo instance, đổi desired capacity, restore).<br>Failover nên <b>chỉ dùng data plane</b> vì sẵn sàng cao hơn." },
+      { t: "fail", f: "Amazon Application Recovery Controller (ARC) routing control là gì?", b: "Route 53 health check <b>không thật sự kiểm tra sức khỏe</b> mà là <b>công tắc bật/tắt</b> bạn điều khiển qua <b>data plane API</b> ⇒ cách tốt nhất cho <b>failover thủ công</b>." },
+      { t: "fail", f: "Đổi weight Route 53 hay chỉnh traffic dial Global Accelerator thuộc plane nào?", b: "<b>Control plane</b> – kém bền vững hơn ARC routing control." },
+      { t: "fail", f: "Vì sao failover tự động theo alarm cần thận trọng?", b: "RTO/RPO luôn &gt; 0; failover do <b>báo động giả</b> gây mất mát vô ích ⇒ thường <b>khởi động thủ công</b>, nhưng các bước bên trong phải tự động hóa." },
+      { t: "fail", f: "Ưu điểm của Global Accelerator so với DNS failover?", b: "<b>Độ trễ thấp hơn</b> (vào backbone AWS tại edge) và <b>không bị ảnh hưởng bởi DNS cache</b> (client giữ IP cũ tới hết TTL)." },
+      { t: "fail", f: "CloudFront origin failover hoạt động theo đơn vị nào?", b: "<b>Theo từng request</b>: origin chính lỗi thì gửi request đó tới origin phụ; request sau vẫn tới origin chính trước." },
+      { t: "fail", f: "Route 53 failover routing policy tương ứng mô hình nào?", b: "<b>Active-passive</b> (Primary/Secondary). Các policy khác (weighted, latency…) kèm health check = active-active." },
+
+      // ---- DRS
+      { t: "drs", f: "AWS Elastic Disaster Recovery (DRS) làm gì?", b: "Sao chép <b>block-level liên tục</b> máy chủ (on-prem, cloud khác, EC2) vào <b>staging area</b> giá rẻ; launch recovery instance trong vài phút.", x: "Kế thừa CloudEndure Disaster Recovery." },
+      { t: "drs", f: "DRS dùng được cho workload nào trên AWS?", b: "Chỉ khi gồm ứng dụng và database <b>chạy trên EC2</b> – <b>không cho RDS/Aurora</b>." },
+      { t: "drs", f: "DRS áp dụng chiến lược DR nào theo whitepaper?", b: "<b>Pilot Light</b>: dữ liệu + tài nguyên “tắt” ở staging area; failover thì tạo bản full capacity ở VPC đích." },
+      { t: "drs", f: "DRS dùng port nào cho dữ liệu và điều khiển?", b: "<b>TCP 1500</b>: dữ liệu block từ source → staging (TLS 1.2, nén, mã hóa).<br><b>TCP 443</b>: tới dịch vụ DRS, S3, EC2 endpoint." },
+      { t: "drs", f: "RPO và RTO điển hình của DRS?", b: "RPO <b>giây</b> (crash-consistent, thường &lt; 1 giây) · RTO <b>5–20 phút</b> (phụ thuộc thời gian boot OS: Linux ~5, Windows ~20 phút)." },
+      { t: "drs", f: "Lịch PIT snapshot của DRS?", b: "1 / <b>10 phút</b> cho 1 giờ gần nhất · 1 / <b>giờ</b> cho 24 giờ · 1 / <b>ngày</b> cho 7 ngày (mặc định, chỉnh 1–365 ngày).", x: "Chỉ chỉnh được số ngày, không đổi được tần suất." },
+      { t: "drs", f: "Ví dụ băng thông DRS: 10 server, mỗi server ghi 10 MB/s?", b: "Cần ít nhất <b>100 MB/s</b>: băng thông trung bình phải lớn hơn tốc độ ghi để giữ RPO giây." },
+      { t: "drs", f: "Crash-consistent nghĩa là gì?", b: "Có mọi dữ liệu <b>đã ghi xuống đĩa</b>; dữ liệu chỉ nằm trong RAM thì không được sao chép." },
+      { t: "drs", f: "DRS failback thế nào?", b: "Sao chép ngược dữ liệu về site gốc bằng <b>Failback Client</b> (chỉ x86_64); với workload AWS có <b>reverse replication</b> về EC2 gốc." },
+      { t: "drs", f: "DRS drill là gì?", b: "Launch thử <b>không gián đoạn</b> production để xác nhận sẵn sàng; DRS tự convert máy để boot native trên AWS." },
+
+      // ---- Test
+      { t: "test", f: "Vì sao phải test DR thường xuyên?", b: "“Cách khôi phục duy nhất hoạt động được là con đường bạn <b>kiểm thử thường xuyên</b>” ⇒ ít đường khôi phục, test đều đặn." },
+      { t: "test", f: "Lỗi kinh điển khi scale lên ở Region DR?", b: "<b>Service quotas</b> ở Region DR không đủ ⇒ ASG không launch đủ instance." },
+      { t: "test", f: "Chống configuration drift ở Region DR bằng gì?", b: "Cùng <b>template IaC / StackSets</b> cho cả hai Region + <b>AWS Config</b> (phát hiện drift, gọi SSM Automation) + CloudFormation drift detection." },
+      { t: "test", f: "Dịch vụ theo dõi workload có đạt RTO/RPO không?", b: "<b>AWS Resilience Hub</b>." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "“<i>RPO/RTO of hours… lowest cost</i>” ⇒ ?", b: "<b>Backup &amp; Restore</b>: AWS Backup copy cross-Region + AMI copy + CloudFormation template." },
+      { t: "kw", f: "“<i>Database replicated to DR Region, app servers launched only during a disaster</i>” ⇒ ?", b: "<b>Pilot Light</b>." },
+      { t: "kw", f: "“<i>Scaled-down but fully functional copy always running… handle traffic immediately</i>” ⇒ ?", b: "<b>Warm Standby</b>." },
+      { t: "kw", f: "“<i>Cross-Region relational DR, RPO seconds, RTO under a minute</i>” ⇒ ?", b: "<b>Aurora Global Database</b> (không phải RDS cross-Region read replica)." },
+      { t: "kw", f: "“<i>Users in every Region can write with low latency</i>” ⇒ ?", b: "<b>DynamoDB global tables</b> (write local)." },
+      { t: "kw", f: "“<i>Highly reliable manual failover controlled by operators</i>” ⇒ ?", b: "<b>Route 53 ARC routing control</b>." },
+      { t: "kw", f: "“<i>Static IP addresses, fast regional failover not affected by DNS caching</i>” ⇒ ?", b: "<b>AWS Global Accelerator</b>." },
+      { t: "kw", f: "“<i>On-premises VMware servers… AWS as DR site… RPO seconds, RTO minutes</i>” ⇒ ?", b: "<b>AWS Elastic Disaster Recovery</b>.", x: "Migrate hẳn (rehost) ⇒ AWS MGN, không phải DRS." },
+      { t: "kw", f: "“<i>Recover servers to a point in time before a ransomware attack</i>” ⇒ ?", b: "<b>DRS point-in-time snapshot</b> (hoặc AWS Backup cho dịch vụ được hỗ trợ)." },
+      { t: "kw", f: "“<i>Protect backups from a compromised account</i>” ⇒ ?", b: "<b>Copy backup sang account khác</b> (cross-account) + Vault Lock." },
+      { t: "kw", f: "“<i>Continuously validate whether workloads meet RTO and RPO</i>” ⇒ ?", b: "<b>AWS Resilience Hub</b>." },
+      { t: "kw", f: "“<i>Recover quickly in another Region without manual configuration errors</i>” ⇒ ?", b: "<b>IaC (CloudFormation/CDK)</b>, không phải runbook làm tay." }
+    ],
+
+    pairs: [
+      ["RPO", "Lượng dữ liệu tối đa được phép mất"],
+      ["RTO", "Thời gian ngừng dịch vụ tối đa chấp nhận được"],
+      ["BCP", "Kế hoạch kinh doanh liên tục, chứa kế hoạch DR"],
+      ["BIA", "Định lượng tác động gián đoạn để đặt RTO/RPO"],
+      ["Risk assessment", "Loại thảm họa, phạm vi địa lý, xác suất"],
+      ["Backup & Restore", "Chỉ lưu backup, dựng lại mọi thứ khi thảm họa"],
+      ["Pilot Light", "Dữ liệu live + hạ tầng lõi, app server “tắt”"],
+      ["Warm Standby", "Bản thu nhỏ đầy đủ chức năng luôn chạy"],
+      ["Hot standby", "Region DR đủ capacity nhưng không nhận traffic"],
+      ["Multi-site active/active", "Mọi Region đều phục vụ người dùng"],
+      ["Statically stable", "Chịu tải khi sự cố không cần thao tác control plane"],
+      ["Read local", "Đọc từ Region gần người dùng nhất"],
+      ["Write global", "Mọi lệnh ghi về một Region"],
+      ["Write partitioned", "Ghi vào Region theo partition key"],
+      ["Last writer wins", "Cách DynamoDB global tables giải xung đột ghi"],
+      ["ARC routing control", "Công tắc bật/tắt failover trên data plane"],
+      ["Traffic dial", "% traffic tới mỗi endpoint group (Global Accelerator)"],
+      ["AWS Resilience Hub", "Theo dõi workload có đạt RTO/RPO không"],
+      ["Staging area subnet", "Nơi replication server + EBS giá rẻ nhận dữ liệu"],
+      ["Recovery instance", "EC2 launch từ dữ liệu sao chép khi drill/recovery"],
+      ["Drill", "Diễn tập khôi phục không gián đoạn production"],
+      ["Crash-consistent", "Có dữ liệu đã ghi xuống đĩa, không có dữ liệu RAM"],
+      ["Failback Client", "Công cụ DRS sao chép ngược về site gốc"],
+      ["Configuration drift", "Region DR khác dần cấu hình production"]
+    ],
+
+    sorts: [
+      {
+        title: "Tình huống đề ⇒ chiến lược DR",
+        desc: "Chọn chiến lược rẻ nhất vẫn đạt RPO/RTO của đề.",
+        buckets: ["Backup & Restore", "Pilot Light", "Warm Standby", "Multi-site active/active"],
+        items: [
+          ["RPO 24 giờ, RTO 12 giờ, MOST cost-effective", 0, "yêu cầu lỏng ⇒ backup hằng ngày + IaC là đủ"],
+          ["Chỉ copy backup + template CloudFormation sang Region khác", 0, "Region DR không có hạ tầng chạy"],
+          ["Aurora Global Database luôn chạy, tầng app chỉ deploy khi thảm họa", 1, "data live, app “tắt”"],
+          ["RPO phút, RTO vài giờ, minimize cost", 1, "dữ liệu sao chép liên tục, hạ tầng dựng sau"],
+          ["ASG desired = 0 ở Region DR, DB replica chạy sẵn", 1, "app server ở trạng thái “tắt”"],
+          ["Bản thu nhỏ đầy đủ chức năng phục vụ request ngay khi Region chính lỗi", 2, "chỉ cần scale up"],
+          ["Region DR chạy 2 instance, failover thì scale lên 10", 2, "đang chạy ở capacity giảm"],
+          ["Người dùng ở 3 Region đọc/ghi độ trễ thấp, downtime gần 0", 3, "mọi Region phục vụ người dùng"],
+          ["Không có khái niệm failover, chỉ định tuyến traffic khỏi Region lỗi", 3, "đặc điểm của active/active"]
+        ]
+      },
+      {
+        title: "Data plane hay control plane?",
+        desc: "Thao tác dưới đây thuộc data plane (nên dựa vào khi failover) hay control plane?",
+        buckets: ["Data plane", "Control plane"],
+        items: [
+          ["Route 53 trả lời truy vấn DNS", 0, "phục vụ thời gian thực"],
+          ["Route 53 health check chuyển sang endpoint khỏe", 0, "data plane – rất tin cậy"],
+          ["Bật công tắc ARC routing control", 0, "data plane API có tính sẵn sàng cao"],
+          ["Health check tự động của Global Accelerator", 0, "data plane"],
+          ["Đổi weight của Route 53 weighted record", 1, "sửa record là control plane"],
+          ["Chỉnh traffic dial của Global Accelerator", 1, "theo tài liệu là control plane"],
+          ["Tăng desired capacity của Auto Scaling group", 1, "Auto Scaling là control plane"],
+          ["Restore database từ backup", 1, "restore là control plane ⇒ nên restore định kỳ trước"]
+        ]
+      },
+      {
+        title: "RPO hay RTO?",
+        desc: "Yêu cầu/yếu tố dưới đây nói về RPO (mất dữ liệu) hay RTO (thời gian ngừng)?",
+        buckets: ["RPO", "RTO"],
+        items: [
+          ["Mất tối đa 15 phút dữ liệu", 0, "lượng dữ liệu được phép mất"],
+          ["Tần suất backup", 0, "backup 24 giờ ⇒ RPO ~24 giờ"],
+          ["Độ trễ sao chép cross-Region", 0, "sao chép liên tục ⇒ RPO giây"],
+          ["Nhìn ngược về quá khứ từ lúc sự cố", 0, "từ điểm khôi phục cuối tới sự cố"],
+          ["Ứng dụng phải chạy lại trong 15 phút", 1, "thời gian ngừng dịch vụ"],
+          ["Lượng hạ tầng đã chạy sẵn ở Region DR", 1, "càng nhiều sẵn ⇒ RTO càng ngắn"],
+          ["Thời gian chuyển DNS/traffic", 1, "cộng vào thời gian ngừng"],
+          ["Thời gian boot OS của recovery instance (DRS)", 1, "RTO DRS 5–20 phút phụ thuộc boot"]
+        ]
+      },
+      {
+        title: "Chiến lược ghi trong active/active",
+        desc: "Dịch vụ/cách làm ứng với chiến lược ghi nào?",
+        buckets: ["Write global", "Write local", "Write partitioned"],
+        items: [
+          ["Aurora Global Database, promote Region phụ khi lỗi", 0, "mọi ghi về một Region"],
+          ["Aurora write forwarding từ cluster phụ", 0, "câu lệnh ghi chuyển về cluster chính"],
+          ["RDS cross-Region read replica", 0, "chỉ một Region nhận ghi"],
+          ["DynamoDB global tables", 1, "đọc/ghi ở mọi Region"],
+          ["Last writer wins khi ghi đồng thời", 1, "cách giải xung đột của write local"],
+          ["Gán ghi theo user ID vào một Region cụ thể", 2, "tránh xung đột bằng partition key"],
+          ["S3 replication hai chiều giữa hai Region", 2, "ví dụ write partitioned trong whitepaper"]
+        ]
+      },
+      {
+        title: "DRS, AWS Backup hay AWS MGN?",
+        desc: "Chọn dịch vụ đúng cho tình huống.",
+        buckets: ["AWS Elastic Disaster Recovery", "AWS Backup", "AWS MGN"],
+        items: [
+          ["150 VM VMware on-prem, AWS làm site DR, RPO giây", 0, "sao chép block-level liên tục"],
+          ["Test DR máy chủ không ảnh hưởng production", 0, "DRS drill không gián đoạn"],
+          ["DR cross-Region cho ứng dụng + DB tự quản trên EC2", 0, "DRS hỗ trợ EC2"],
+          ["Chính sách backup tập trung, lưu giữ dài hạn, tuân thủ", 1, "RPO = chu kỳ backup"],
+          ["DR cho database chạy trên Amazon RDS", 1, "DRS không áp dụng cho RDS"],
+          ["Copy backup sang account khác chống account bị chiếm", 1, "cross-account copy"],
+          ["Di chuyển hẳn server lên EC2 rồi đóng data center", 2, "migrate/rehost ⇒ MGN (Bài 43)"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Multi-AZ bảo vệ workload khỏi sự cố toàn Region.", false, "Multi-AZ là HA; Region-wide outage cần Region thứ hai."],
+      ["RPO trả lời câu hỏi “được phép mất bao nhiêu dữ liệu”.", true, "RPO đo từ điểm khôi phục cuối tới lúc sự cố."],
+      ["RTO được quyết định chủ yếu bởi tần suất backup.", false, "Tần suất backup quyết định RPO; RTO phụ thuộc hạ tầng chạy sẵn, tự động hóa."],
+      ["RPO và RTO do AWS quy định cho từng dịch vụ.", false, "Tổ chức tự đặt từ BIA và risk assessment."],
+      ["Nếu chi phí DR cao hơn tổn thất của sự cố và không có yêu cầu pháp lý, không nên triển khai.", true, "Đúng theo whitepaper DR."],
+      ["Kế hoạch DR là tập con của BCP.", true, "DR không phải tài liệu đứng riêng."],
+      ["Backup & Restore là chiến lược DR rẻ nhất.", true, "Chỉ trả tiền lưu trữ backup."],
+      ["Trong Pilot Light, môi trường DR xử lý được request ngay khi failover.", false, "Phải bật/deploy app server rồi scale mới xử lý được."],
+      ["Warm Standby nhận traffic ngay ở capacity giảm.", true, "Chỉ cần scale up khi failover."],
+      ["Hot standby chạy đủ capacity production ở Region DR.", true, "Cấu hình statically stable."],
+      ["Hot standby rẻ hơn nhiều so với active/active.", false, "Chi phí tương đương; khác ở việc có phục vụ người dùng không."],
+      ["Active/active không cần point-in-time backup.", false, "Corruption/ransomware được sao chép sang mọi Region ⇒ vẫn cần backup."],
+      ["Sao chép liên tục bảo vệ được trước ransomware mã hóa dữ liệu.", false, "Dữ liệu bị mã hóa cũng được sao chép."],
+      ["Bật S3 Replication Time Control giúp chống ransomware.", false, "RTC chỉ làm sao chép nhanh hơn, kể cả dữ liệu hỏng."],
+      ["Mặc định, xóa object ở bucket nguồn chỉ thêm delete marker ở bucket nguồn.", true, "Bucket DR được bảo vệ khỏi việc xóa ở nguồn."],
+      ["Metadata EC2 trong AWS Backup dùng được khi restore ở Region khác.", false, "Chỉ dùng khi restore trong cùng Region."],
+      ["Restore từ backup là thao tác control plane.", true, "Vì vậy nên restore định kỳ từ trước."],
+      ["Aurora Global Database promote Region phụ trong dưới 1 phút.", true, "Lag thường dưới 1 giây."],
+      ["Promote RDS cross-Region read replica (không phải Aurora) không cần reboot.", false, "Mất vài phút và có reboot."],
+      ["Đổi weight Route 53 là cách failover thủ công bền vững nhất.", false, "Đó là control plane; ARC routing control (data plane) tốt hơn."],
+      ["ARC routing control dùng Route 53 health check như công tắc bật/tắt.", true, "Điều khiển qua data plane API."],
+      ["Traffic dial của Global Accelerator là thao tác data plane.", false, "Theo tài liệu, traffic dial là control plane."],
+      ["Global Accelerator tránh được vấn đề DNS cache khi failover.", true, "Dùng IP anycast tĩnh."],
+      ["CloudFront origin failover chuyển toàn bộ request sau đó sang origin phụ.", false, "Failover theo từng request; request sau vẫn tới origin chính trước."],
+      ["Route 53 failover routing policy là mô hình active-passive.", true, "Primary/Secondary."],
+      ["DynamoDB global tables giải quyết xung đột bằng last writer wins.", true, "Write local."],
+      ["RDS cross-Region read replica cho phép mọi Region ghi với độ trễ thấp.", false, "Read replica chỉ đọc – write global."],
+      ["AWS DRS truyền dữ liệu sao chép qua TCP 1500.", true, "TCP 443 dùng cho điều khiển."],
+      ["AWS DRS dùng được để DR cho Amazon RDS.", false, "Chỉ cho ứng dụng/DB chạy trên máy chủ (on-prem, EC2)."],
+      ["RTO điển hình của DRS là 5–20 phút.", true, "Phụ thuộc thời gian boot OS."],
+      ["Có thể đổi tần suất PIT snapshot của DRS thành 1 phút/lần.", false, "Chỉ chỉnh được số ngày lưu giữ (1–365)."],
+      ["Mặc định DRS giữ PIT snapshot theo ngày trong 7 ngày.", true, "Chỉnh được 1–365 ngày."],
+      ["Migrate hẳn server lên AWS nên dùng DRS.", false, "Migrate/rehost ⇒ AWS MGN."],
+      ["Failover tự động theo alarm luôn là lựa chọn tốt nhất.", false, "Cần thận trọng vì báo động giả; thường khởi động thủ công, các bước bên trong tự động."],
+      ["Service quotas ở Region DR phải đủ cao để scale lên production.", true, "Lỗi kinh điển khi failover."],
+      ["AWS Resilience Hub theo dõi khả năng đạt RTO/RPO của workload.", true, "Được tài liệu DR khuyến nghị."]
+    ],
+
+    map: {
+      t: "Bài 42 · Disaster Recovery",
+      c: [
+        { t: "Nền tảng DR", icon: "svc/CloudEndure-Disaster-Recovery.svg", c: [
+          { t: "DR vs HA", v: "HA: hỏng một thành phần/AZ · DR: mất cả Region/dữ liệu" },
+          { t: "BCP", v: "DR là tập con của BCP" },
+          { t: "Quy trình", v: "BIA → risk assessment → chi phí → RTO/RPO từng workload" },
+          { t: "Chi phí", v: "DR đắt hơn tổn thất ⇒ không làm (trừ pháp lý)" },
+          { t: "Cloud", v: "CapEx data center dự phòng → OpEx biến đổi" }
+        ] },
+        { t: "RPO · RTO", icon: "res/AWS-Backup_Recovery-Point-Objective.svg", c: [
+          { t: "RPO", v: "mất bao nhiêu dữ liệu · nhìn về quá khứ" },
+          { t: "RTO", v: "ngừng bao lâu · nhìn về tương lai" },
+          { t: "Giảm RPO", v: "backup dày hơn / sao chép liên tục" },
+          { t: "Giảm RTO", v: "hạ tầng chạy sẵn + tự động hóa" },
+          { t: "Đọc đề", v: "RPO → RTO → cost / overhead" }
+        ] },
+        { t: "4 chiến lược", icon: "res/AWS-Backup_Recovery-Time-Objective.svg", c: [
+          { t: "Backup & Restore", v: "giờ · rẻ nhất · backup + IaC + AMI" },
+          { t: "Pilot Light", v: "data live, app “tắt” (ASG = 0) · chục phút" },
+          { t: "Warm Standby", v: "bản thu nhỏ luôn chạy · nhận traffic ngay" },
+          { t: "Hot standby", v: "đủ capacity, statically stable, không nhận traffic" },
+          { t: "Active/active", v: "RTO ~0 · đắt nhất · không có failover" },
+          { t: "Ghi dữ liệu", c: [
+            { t: "Write global", v: "Aurora Global Database" },
+            { t: "Write local", v: "DynamoDB global tables · last writer wins" },
+            { t: "Write partitioned", v: "S3 replication hai chiều" }
+          ] }
+        ] },
+        { t: "Dữ liệu & backup", icon: "svc/AWS-Backup.svg", c: [
+          { t: "Replication ≠ backup", v: "sao chép cả corruption/ransomware ⇒ cần PIT backup" },
+          { t: "Cross-account", v: "chống insider / account bị chiếm" },
+          { t: "Aurora Global DB", v: "lag &lt; 1 s · promote &lt; 1 phút" },
+          { t: "RDS read replica", v: "promote vài phút, có reboot" },
+          { t: "S3 CRR", v: "versioning · delete marker không sang bucket DR" },
+          { t: "Restore", v: "control plane ⇒ restore định kỳ trước" }
+        ] },
+        { t: "Failover", icon: "svc/AWS-Global-Accelerator.svg", c: [
+          { t: "Nguyên tắc", v: "chỉ dựa vào data plane" },
+          { t: "Data plane", v: "Route 53 health check, ARC routing control, GA health check" },
+          { t: "Control plane", v: "đổi weight, traffic dial, Auto Scaling, restore" },
+          { t: "Thủ công", v: "ARC routing control · tránh báo động giả" },
+          { t: "Global Accelerator", v: "IP tĩnh, không bị DNS cache" },
+          { t: "CloudFront", v: "origin failover theo từng request" }
+        ] },
+        { t: "AWS DRS", icon: "svc/CloudEndure-Disaster-Recovery.svg", c: [
+          { t: "Cơ chế", v: "agent → staging area · block-level liên tục" },
+          { t: "Port", v: "1500 dữ liệu · 443 điều khiển" },
+          { t: "RPO / RTO", v: "giây / 5–20 phút" },
+          { t: "PIT snapshot", v: "10 phút·1 giờ · giờ·24 giờ · ngày·7 (1–365)" },
+          { t: "Phạm vi", v: "on-prem, cloud khác, EC2 · không cho RDS" },
+          { t: "Failback", v: "Failback Client (x86_64)" }
+        ] },
+        { t: "Kiểm thử & drift", icon: "svc/AWS-Fault-Injection-Simulator.svg", c: [
+          { t: "Test", v: "chỉ đường được test thường xuyên mới chạy được" },
+          { t: "Quotas", v: "service quotas đủ ở Region DR" },
+          { t: "Drift", v: "cùng IaC/StackSets + AWS Config" },
+          { t: "Theo dõi", v: "AWS Resilience Hub" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

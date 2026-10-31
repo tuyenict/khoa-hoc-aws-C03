@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 6 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Organizations.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="6" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-06-organizations-scp.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "org", name: "Multi-account & Organizations" },
+      { id: "struct", name: "Cấu trúc & quota" },
+      { id: "bill", name: "Consolidated billing" },
+      { id: "scp", name: "Service control policy (SCP)" },
+      { id: "pol", name: "Policy khác & dịch vụ tích hợp" },
+      { id: "ct", name: "AWS Control Tower" },
+      { id: "idc", name: "IAM Identity Center" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Multi-account & Organizations
+      { t: "org", f: "Vì sao AWS khuyến nghị multi-account environment?", b: "AWS account là <b>ranh giới tự nhiên</b> cho quyền, bảo mật, chi phí, workload:<br>• <b>billing boundary</b> rõ ràng<br>• <b>cô lập tài nguyên</b>, giảm <i>blast radius</i><br>• linh hoạt cho đội nhóm" },
+      { t: "org", f: "AWS account khác IAM user thế nào?", b: "<b>Account</b> = container chứa tài nguyên, có quản trị truy cập + billing.<br><b>User</b> = định danh tạo bằng IAM (IAM user hoặc IAM role). Một account chứa nhiều user/role." },
+      { t: "org", f: "AWS Organizations là dịch vụ global hay regional?", b: "<b>Global</b>, vật lý đặt tại <b>us-east-1</b> (N. Virginia)." },
+      { t: "org", f: "Một member account có thể thuộc mấy organization cùng lúc?", b: "<b>Một</b> organization tại một thời điểm." },
+      { t: "org", f: "Tạo account bằng lập trình và cấp sẵn tài nguyên cho account mới bằng gì?", b: "Tạo bằng <b>CLI/SDK/API</b> (CreateAccount); cấp tài nguyên, quyền khuyến nghị bằng <b>CloudFormation StackSets</b>." },
+      { t: "org", f: "Tách dev/test/prod để giới hạn blast radius: nhiều VPC trong một account hay nhiều account?", b: "<b>Nhiều AWS account</b> trong cùng organization.", x: "Nhiều VPC hay nhiều IAM group trong một account không phải đáp án." },
+
+      // ---- Cấu trúc
+      { t: "struct", f: "Một organization gồm những thành phần nào?", b: "<b>1 management account</b>, 0+ member account, 0+ OU, 0+ policy; xếp theo cây <b>root → OU → account</b>." },
+      { t: "struct", f: "Root (Organizations) là gì? Có bao nhiêu root?", b: "Container cao nhất của cây, nằm trong management account. <b>Đúng 1 root</b>, tạo tự động.", x: "Không nhầm với root user của account." },
+      { t: "struct", f: "OU lồng tối đa mấy cấp? Tối đa bao nhiêu OU?", b: "<b>5 cấp</b> dưới root · <b>2.000 OU</b>/organization." },
+      { t: "struct", f: "Management account có vai trò gì?", b: "Tạo organization, là <b>payer account</b>, “chủ sở hữu cuối cùng”; <b>chỉ nó</b> tạo account mới và mời account khác.", x: "Không đổi được account nào là management account." },
+      { t: "struct", f: "Delegated administrator là gì? Có mấy loại?", b: "<b>Member account</b> được management account ủy quyền.<br>2 loại: cho <b>Organizations</b> (quản lý/gắn policy) và cho <b>một AWS service</b> (GuardDuty, Security Hub, IAM Access Analyzer…)." },
+      { t: "struct", f: "Vì sao không nên đặt workload trong management account?", b: "Vì <b>SCP không giới hạn</b> bất kỳ user/role nào trong management account.", x: "Chuyển workload ra member account, dùng delegated administrator cho dịch vụ bảo mật." },
+      { t: "struct", f: "Hai feature set của Organizations?", b: "<b>Consolidated billing</b>: chỉ thanh toán chung, không có SCP/RCP.<br><b>All features</b> (mặc định, khuyến nghị): billing + policy + tích hợp dịch vụ." },
+      { t: "struct", f: "Nâng cấp từ Consolidated billing lên All features cần gì?", b: "Mọi <b>invited member account phải chấp nhận</b> (handshake ENABLE_ALL_FEATURES, hết hạn sau <b>90 ngày</b>)." },
+      { t: "struct", f: "Account tạo mới từ Organizations có sẵn role nào?", b: "<b>OrganizationAccountAccessRole</b>: role quản trị tin cậy management account, admin truy cập bằng AssumeRole.", x: "Account được MỜI vào thì không tự có role này." },
+      { t: "struct", f: "Lời mời (INVITE) hết hạn sau bao lâu?", b: "<b>15 ngày</b>. Tối đa <b>20 lời mời</b>/24 giờ (hoặc bằng max account nếu lớn hơn)." },
+      { t: "struct", f: "Quota mặc định số account trong organization?", b: "<b>10</b>, adjustable qua Service Quotas (chỉ management account yêu cầu).", x: "Lời mời đang chờ cũng tính vào quota." },
+      { t: "struct", f: "Account tạo trong organization phải tồn tại bao lâu mới gỡ ra được?", b: "Tối thiểu <b>4 ngày</b>. Tạo đồng thời tối đa <b>5 account</b>." },
+      { t: "struct", f: "Nên thiết kế OU theo tiêu chí nào?", b: "Theo <b>chức năng / mức kiểm soát</b> (Security, Infrastructure, Workloads-Prod, Workloads-NonProd, Sandbox, Suspended…), <b>không</b> theo sơ đồ nhân sự.", x: "Policy gắn theo OU ⇒ account cần cùng bộ control thì để cùng OU." },
+
+      // ---- Billing
+      { t: "bill", f: "4 lợi ích của consolidated billing?", b: "<b>One bill</b> · <b>Easy tracking</b> · <b>Combined usage</b> (volume discount, RI, Savings Plans) · <b>No extra fee</b>." },
+      { t: "bill", f: "Combined usage giúp giảm chi phí thế nào?", b: "Coi cả organization như <b>một account</b> khi tính bậc giá theo khối lượng; discount <b>RI/Savings Plans</b> của account này áp được cho account khác." },
+      { t: "bill", f: "Khi nào consolidated billing ra nhiều hóa đơn?", b: "Khi các account thuộc nhiều <b>seller of record (SOR)</b>: mỗi SOR một hóa đơn." },
+      { t: "bill", f: "Một business unit không được chia sẻ RI discount với đơn vị khác ⇒ làm gì?", b: "Management account <b>tắt RI/Savings Plans discount sharing</b> cho account đó trong Billing preferences." },
+      { t: "bill", f: "Member account rời organization thì dữ liệu Cost Explorer thời gian trong tổ chức ra sao?", b: "Member <b>không còn xem được</b>; dữ liệu <b>không bị xóa</b>, management account vẫn xem được." },
+
+      // ---- SCP
+      { t: "scp", f: "SCP là gì?", b: "Organization policy đặt <b>trần quyền tối đa</b> (permission guardrail) cho IAM user/role trong organization.", x: "SCP <b>không cấp quyền</b>." },
+      { t: "scp", f: "Điều kiện để dùng SCP?", b: "Organization bật <b>All features</b> và <b>enable policy type SCP</b>." },
+      { t: "scp", f: "SCP ảnh hưởng tới ai?", b: "Mọi IAM user/role của <b>member account</b>, <b>root user</b> của member account, member làm delegated admin, kể cả user có <b>AdministratorAccess</b>." },
+      { t: "scp", f: "SCP KHÔNG ảnh hưởng tới ai?", b: "• <b>Management account</b><br>• <b>Service-linked role</b><br>• Principal <b>ngoài organization</b> (kể cả qua resource-based policy ⇒ dùng RCP)<br>• vài tác vụ đặc biệt của root (Enterprise Support…)" },
+      { t: "scp", f: "Effective permissions khi có SCP?", b: "<b>Giao</b> giữa những gì SCP + RCP cho phép và những gì identity-based/resource-based policy cho phép." },
+      { t: "scp", f: "Quy tắc kế thừa Allow của SCP qua cây?", b: "Allow phải có <b>ở MỌI cấp</b> trên đường đi root → OU → account (deny-by-default)." },
+      { t: "scp", f: "Quy tắc kế thừa Deny của SCP qua cây?", b: "Chỉ cần <b>MỘT cấp</b> Deny là chặn mọi OU/account bên dưới, bất kể cấp dưới Allow gì." },
+      { t: "scp", f: "FullAWSAccess là gì?", b: "SCP AWS managed <b>Allow mọi dịch vụ, mọi action</b>, tự gắn vào mọi root/OU/account khi bật SCP." },
+      { t: "scp", f: "Gỡ FullAWSAccess mà không thay bằng SCP có Allow thì sao?", b: "<b>Mọi action</b> từ member account bên dưới đều <b>thất bại</b>." },
+      { t: "scp", f: "Giới hạn kích thước và số lượng SCP?", b: "<b>10.240 ký tự</b>/SCP · tối thiểu 1, tối đa <b>10 SCP gắn trực tiếp</b> mỗi root/OU/account · <b>10.000 SCP</b>/organization.", x: "Policy kế thừa không tính vào giới hạn 10; không gỡ được SCP cuối cùng." },
+      { t: "scp", f: "SCP gắn được vào đâu?", b: "Chỉ <b>root, OU, account</b>.", x: "Không gắn được vào IAM user/group/role." },
+      { t: "scp", f: "Deny list strategy khác allow list strategy thế nào?", b: "<b>Deny list</b>: giữ FullAWSAccess + thêm Deny; dịch vụ mới tự được phép, ít bảo trì.<br><b>Allow list</b>: thay FullAWSAccess bằng Allow tập dịch vụ duyệt; dịch vụ mới bị chặn, chặt hơn." },
+      { t: "scp", f: "Mẫu SCP chặn Region ngoài danh sách duyệt?", b: "<b>Deny</b> + <code>NotAction</code> các dịch vụ global (iam, organizations, route53, cloudfront, sts…) + <code>StringNotEquals aws:RequestedRegion</code>." },
+      { t: "scp", f: "Tắt policy type SCP ở root rồi bật lại thì sao?", b: "Tắt ⇒ mọi SCP tự <b>detach</b>. Bật lại ⇒ chỉ còn <b>FullAWSAccess</b>, attachment cũ <b>không tự khôi phục</b>." },
+      { t: "scp", f: "Cách an toàn để triển khai SCP mới?", b: "Tạo <b>OU thử nghiệm</b>, chuyển dần account vào; dùng <b>service last accessed data</b> hoặc CloudTrail để biết dịch vụ đang dùng." },
+      { t: "scp", f: "Root: FullAWSAccess + Deny S3; OU Test chỉ “Allow S3”. Account trong OU Test có quyền gì?", b: "<b>Không có quyền gì</b>: S3 bị root Deny, dịch vụ khác không được OU Test Allow (Scenario 6)." },
+      { t: "scp", f: "Root chỉ có SCP Deny, không có FullAWSAccess ⇒ kết quả?", b: "Mọi member account <b>không truy cập được dịch vụ nào</b> (Scenario 3)." },
+
+      // ---- Policy khác
+      { t: "pol", f: "Hai nhóm organization policy?", b: "<b>Authorization</b>: SCP, RCP (bảo mật).<br><b>Declarative</b>: tag, backup, AI opt-out, EC2 declarative, chat applications… (cấu hình dịch vụ)." },
+      { t: "pol", f: "RCP khác SCP thế nào?", b: "<b>SCP</b>: trần quyền <i>principal-centric</i>.<br><b>RCP</b>: trần quyền <i>resource-centric</i>, vd chỉ identity trong tổ chức truy cập tài nguyên.", x: "Bật RCP ⇒ RCPFullAWSAccess tự gắn, không gỡ được. RCP tối đa 5.120 ký tự, 5 RCP/entity." },
+      { t: "pol", f: "Declarative policy kế thừa có giống SCP không?", b: "<b>Không.</b> Có cơ chế kế thừa riêng; và gắn ở root thì <b>áp cả management account</b>." },
+      { t: "pol", f: "Organization trail của CloudTrail có đặc điểm gì?", b: "Ghi log hoạt động <b>mọi account</b>; member account <b>không tắt hay sửa được</b>." },
+      { t: "pol", f: "AWS RAM dùng để làm gì trong organization?", b: "<b>Chia sẻ tài nguyên</b> giữa các account, vd tạo VPC subnet một lần rồi share cho cả tổ chức." },
+      { t: "pol", f: "Trusted access là gì?", b: "Cho phép dịch vụ AWS (CloudTrail, Config, Backup, RAM, GuardDuty…) <b>làm việc trên mọi account</b> của tổ chức." },
+
+      // ---- Control Tower
+      { t: "ct", f: "AWS Control Tower là gì?", b: "Cách đơn giản để <b>dựng và quản trị môi trường multi-account</b> theo best practice prescriptive; điều phối <b>Organizations, Service Catalog, IAM Identity Center</b>.", x: "Dựng landing zone trong chưa tới một giờ." },
+      { t: "ct", f: "4 thành phần chính của Control Tower?", b: "<b>Landing zone</b> · <b>Controls (guardrails)</b> · <b>Account Factory</b> · <b>Dashboard</b>." },
+      { t: "ct", f: "Account Factory là gì?", b: "“<b>Vending machine</b>” cấp account theo mẫu cấu hình đã duyệt, xây trên <b>AWS Service Catalog</b>." },
+      { t: "ct", f: "Khi dựng landing zone, Control Tower tạo gì?", b: "<b>Security OU</b> (Log Archive + Audit account ở v3.3 trở về trước), Sandbox OU (tùy chọn), directory trong <b>IAM Identity Center</b>, áp mọi <b>mandatory</b> preventive & detective controls." },
+      { t: "ct", f: "3 loại control và cơ chế bên dưới?", b: "<b>Preventive</b> ⇒ SCP/RCP<br><b>Detective</b> ⇒ AWS Config rules<br><b>Proactive</b> ⇒ CloudFormation hooks" },
+      { t: "ct", f: "3 mức hướng dẫn của control?", b: "<b>Mandatory</b> (luôn bật, không tắt được) · <b>Strongly recommended</b> · <b>Elective</b> (tùy chọn, bật/tắt được)." },
+      { t: "ct", f: "Control Tower triển khai tài nguyên vào account bằng gì?", b: "<b>CloudFormation StackSets</b>: một stack instance cho mỗi account và Region." },
+      { t: "ct", f: "Preventive control có áp cho management account không?", b: "<b>Không.</b> Ngoài management account, control áp cho toàn tổ chức." },
+
+      // ---- Identity Center
+      { t: "idc", f: "AWS IAM Identity Center là gì? Tên cũ?", b: "Kết nối <b>workforce users</b> với AWS account và AWS managed application. Tên cũ <b>AWS Single Sign-On</b> (đổi 26/7/2022).", x: "CLI vẫn giữ namespace <code>sso</code>, <code>aws configure sso</code>." },
+      { t: "idc", f: "Organization instance khác account instance thế nào?", b: "<b>Organization instance</b>: ở management account, <b>duy nhất</b> quản lý được truy cập AWS accounts.<br><b>Account instance</b>: chỉ cho một số AWS managed application, không quản lý multi-account." },
+      { t: "idc", f: "3 lựa chọn identity source?", b: "<b>Identity Center directory</b> (mặc định) · <b>Active Directory</b> (AWS Managed Microsoft AD / AD Connector) · <b>External IdP</b> (Okta, Entra ID; SAML 2.0 + SCIM).", x: "Mỗi organization chỉ 1 identity source; Simple AD không được hỗ trợ." },
+      { t: "idc", f: "Permission set là gì?", b: "<b>Template</b> tập IAM policy; gán cho user/group trên account ⇒ Identity Center <b>tạo IAM role</b> trong mỗi account đó." },
+      { t: "idc", f: "Account assignment gồm những gì?", b: "<b>(User hoặc group) + permission set + AWS account</b>." },
+      { t: "idc", f: "Session duration của permission set?", b: "Mặc định <b>1 giờ</b>, tối đa <b>12 giờ</b>. Phiên access portal mặc định <b>8 giờ</b> (tối đa 90 ngày)." },
+      { t: "idc", f: "Role do Identity Center tạo có bị SCP giới hạn không?", b: "<b>Có.</b> Permission set không “miễn” SCP." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>centrally manage multiple AWS accounts</i>”, “<i>single bill</i>” ⇒ ?", b: "<b>AWS Organizations</b> (consolidated billing)." },
+      { t: "kw", f: "Đề có “<i>share a VPC subnet / Transit Gateway with other accounts</i>” ⇒ ?", b: "<b>AWS Resource Access Manager (RAM)</b>." },
+      { t: "kw", f: "Đề có “<i>prevent ANY user, including the root user, in member accounts</i>” ⇒ ?", b: "<b>SCP Deny</b> gắn ở OU/root." },
+      { t: "kw", f: "Đề có “<i>restrict all accounts to specific AWS Regions</i>” ⇒ ?", b: "<b>SCP Deny + aws:RequestedRegion</b> (NotAction dịch vụ global)." },
+      { t: "kw", f: "Đề có “<i>developers have AdministratorAccess but cannot do X in production</i>” ⇒ ?", b: "<b>SCP Deny ở OU Production</b>: SCP đè lên cả AdministratorAccess." },
+      { t: "kw", f: "Đề có “<i>administrator needs access to a newly created member account</i>” ⇒ ?", b: "Assume <b>OrganizationAccountAccessRole</b> từ management account." },
+      { t: "kw", f: "Đề có “<i>company acquired another company, wants one bill</i>” ⇒ ?", b: "<b>Mời</b> các account vào organization (invitation); tài nguyên giữ nguyên." },
+      { t: "kw", f: "Đề có “<i>centralize CloudTrail logs, member accounts must not disable</i>” ⇒ ?", b: "<b>Organization trail</b> ghi về S3 ở account Log Archive." },
+      { t: "kw", f: "Đề có “<i>only identities in our organization can access our S3 buckets, across all accounts</i>” ⇒ ?", b: "<b>RCP</b> (hoặc bucket policy với <code>aws:PrincipalOrgID</code> từng bucket)." },
+      { t: "kw", f: "Đề có “<i>security team manages GuardDuty for all accounts without the management account</i>” ⇒ ?", b: "<b>Delegated administrator</b>." },
+      { t: "kw", f: "Đề có “<i>multi-account setup following best practices QUICKLY, LEAST operational overhead</i>” ⇒ ?", b: "<b>AWS Control Tower</b> (landing zone)." },
+      { t: "kw", f: "Đề có “<i>self-service account vending with pre-approved configurations</i>” ⇒ ?", b: "<b>Account Factory</b> (Control Tower)." },
+      { t: "kw", f: "Đề có “<i>detect</i>” / “<i>prevent</i>” / “<i>block before CloudFormation creates</i>” ⇒ ?", b: "<b>Detective</b> (Config) / <b>Preventive</b> (SCP) / <b>Proactive</b> (CloudFormation hooks)." },
+      { t: "kw", f: "Đề có “<i>employees sign in once with corporate credentials, access multiple AWS accounts</i>” ⇒ ?", b: "<b>IAM Identity Center</b> + identity source AD/IdP + permission sets." },
+      { t: "kw", f: "Đề có “<i>users of a mobile/web application (customers) sign in</i>” ⇒ ?", b: "<b>Amazon Cognito</b> (Bài 7), không phải Identity Center.", x: "Identity Center dành cho workforce." },
+      { t: "kw", f: "Đề có “<i>enforce consistent tags</i>” / “<i>enforce backup plans</i>” across accounts ⇒ ?", b: "<b>Tag policies</b> / <b>Backup policies</b>." }
+    ],
+
+    pairs: [
+      ["AWS Organizations", "Quản lý tập trung account, policy, billing"],
+      ["Root (Organizations)", "Container cao nhất của cây, mỗi org đúng một"],
+      ["Organizational unit (OU)", "Nhóm account/OU con, tối đa 5 cấp dưới root"],
+      ["Management account", "Tạo org, payer, không bị SCP giới hạn"],
+      ["Member account", "Mọi account khác trong organization"],
+      ["Delegated administrator", "Member account được ủy quyền quản lý dịch vụ/policy"],
+      ["Consolidated billing", "Một hóa đơn, gộp usage, chia sẻ discount"],
+      ["All features", "Feature set đầy đủ: billing + policy + tích hợp"],
+      ["Handshake", "Cơ chế trao đổi an toàn giữa hai account"],
+      ["OrganizationAccountAccessRole", "Role quản trị trong account tạo mới"],
+      ["Service control policy (SCP)", "Trần quyền cho principal của member account"],
+      ["Resource control policy (RCP)", "Trần quyền resource-centric cho tài nguyên"],
+      ["FullAWSAccess", "SCP managed cho phép tất cả, tự gắn khi bật SCP"],
+      ["Permission guardrail", "Giới hạn quyền tối đa, không cấp quyền"],
+      ["Service last accessed data", "Dữ liệu dịch vụ dùng gần nhất để tinh chỉnh SCP"],
+      ["Tag policy", "Chuẩn hóa tag trên tài nguyên các account"],
+      ["Backup policy", "Áp backup plan của AWS Backup toàn tổ chức"],
+      ["Organization trail", "CloudTrail ghi mọi account, member không tắt được"],
+      ["Trusted access", "Cho dịch vụ AWS làm việc trên mọi account"],
+      ["Landing zone", "Môi trường multi-account well-architected"],
+      ["Account Factory", "“Vending machine” cấp account trên Service Catalog"],
+      ["Drift", "Trôi lệch khỏi cấu hình best practice"],
+      ["Home Region", "Region nơi dựng landing zone Control Tower"],
+      ["Workforce user", "Nhân sự nội bộ, khác khách hàng của ứng dụng"],
+      ["Identity source", "Identity Center directory, AD hoặc external IdP"],
+      ["Permission set", "Template policy, tạo IAM role trong từng account"],
+      ["Account assignment", "User/group + permission set + account"],
+      ["AWS access portal", "Cổng web liệt kê account và ứng dụng được gán"],
+      ["SCIM", "Giao thức đồng bộ user/group tự động từ IdP"],
+      ["AWS RAM", "Chia sẻ tài nguyên (vd VPC subnet) giữa account"]
+    ],
+
+    sorts: [
+      {
+        title: "SCP có giới hạn không?",
+        desc: "Principal/hành động nào bị SCP giới hạn, cái nào không?",
+        buckets: ["Bị SCP giới hạn", "KHÔNG bị SCP giới hạn"],
+        items: [
+          ["IAM user trong member account", 0, "SCP áp mọi user/role của member account"],
+          ["Root user của member account", 0, "SCP giới hạn cả root user của member"],
+          ["Role có AdministratorAccess trong member account", 0, "SCP đè lên cả AdministratorAccess"],
+          ["Member account làm delegated administrator", 0, "vẫn là member account"],
+          ["IAM role do Identity Center tạo trong member account", 0, "permission set không miễn SCP"],
+          ["Root user của management account", 1, "SCP không ảnh hưởng management account"],
+          ["IAM role trong management account", 1, "mọi user/role của management account đều miễn"],
+          ["Service-linked role", 1, "action dùng quyền service-linked role không bị SCP"],
+          ["User của account ngoài organization truy cập qua bucket policy", 1, "SCP không tác động principal ngoài org ⇒ dùng RCP"]
+        ]
+      },
+      {
+        title: "Chọn đúng công cụ quản trị",
+        desc: "Đọc yêu cầu đề và chọn cơ chế phù hợp nhất.",
+        buckets: ["SCP", "RCP", "Tag/Backup policy", "Control Tower", "IAM Identity Center", "AWS RAM", "Consolidated billing"],
+        items: [
+          ["Cấm mọi member account dùng Region ngoài EU, kể cả root user", 0, "SCP Deny + aws:RequestedRegion"],
+          ["Không cho member account rời organization", 0, "SCP Deny organizations:LeaveOrganization"],
+          ["Chỉ identity trong tổ chức được truy cập S3 bucket trên mọi account", 1, "RCP: trần quyền resource-centric"],
+          ["Chuẩn hóa tag CostCenter trên tài nguyên mọi account", 2, "tag policy"],
+          ["Cưỡng chế lịch sao lưu cho tài nguyên mọi account", 2, "backup policy"],
+          ["Dựng nhanh môi trường multi-account theo best practice", 3, "landing zone, least overhead"],
+          ["Tự phục vụ cấp account mới với cấu hình đã duyệt", 3, "Account Factory"],
+          ["Nhân viên đăng nhập một lần bằng Okta vào nhiều account", 4, "external IdP + permission set"],
+          ["Chia sẻ VPC subnet cho các account khác", 5, "RAM chia sẻ tài nguyên"],
+          ["Công ty mua lại muốn một hóa đơn và volume discount", 6, "gộp usage, chia sẻ RI/Savings Plans"]
+        ]
+      },
+      {
+        title: "Loại control của Control Tower",
+        desc: "Yêu cầu nào ứng với preventive, detective hay proactive control?",
+        buckets: ["Preventive (SCP/RCP)", "Detective (Config rules)", "Proactive (CloudFormation hooks)"],
+        items: [
+          ["Không cho sửa bucket policy của S3 bucket Log Archive", 0, "chặn action ngay từ đầu"],
+          ["Mọi lần thử vi phạm bị Deny và log vào CloudTrail", 0, "đặc trưng của preventive control"],
+          ["Ngăn member account tắt CloudTrail", 0, "chặn action bằng SCP"],
+          ["Báo khi EBS volume gắn vào EC2 chưa mã hóa, không chặn workload", 1, "ví dụ detective trong tài liệu"],
+          ["Liệt kê tài nguyên noncompliant trên dashboard sau khi đã tạo", 1, "phát hiện sau khi xảy ra"],
+          ["Kiểm tra template trước khi CloudFormation tạo tài nguyên", 2, "kiểm tra trước khi cấp phát"],
+          ["Tài nguyên không tuân thủ thì không được CloudFormation tạo ra", 2, "proactive chặn ở bước provisioning"]
+        ]
+      },
+      {
+        title: "Kết quả đánh giá SCP",
+        desc: "Mặc định FullAWSAccess ở mọi cấp. Với cấu hình dưới đây, account đích dùng được gì?",
+        buckets: ["Mọi dịch vụ", "Mọi thứ trừ dịch vụ bị Deny", "Chỉ dịch vụ được Allow", "Không gì cả"],
+        items: [
+          ["Account thuộc OU Production chỉ có FullAWSAccess ở mọi cấp", 0, "Allow ở mọi cấp, không Deny"],
+          ["Test OU: FullAWSAccess + Deny EC2", 1, "Deny một cấp là đủ chặn EC2"],
+          ["Root: FullAWSAccess + Deny S3; account thuộc OU giữ FullAWSAccess", 1, "Deny ở root áp mọi thứ bên dưới"],
+          ["Test OU thay FullAWSAccess bằng “Allow EC2”", 2, "Allow phải có ở mọi cấp ⇒ chỉ EC2"],
+          ["Root: 2 SCP allow list (IAM+EC2, S3+CloudWatch); OU giữ FullAWSAccess", 2, "policy hẹp ở root thắng do tính giao"],
+          ["Root chỉ có SCP Deny, không có FullAWSAccess", 3, "không cấp nào ở root Allow"],
+          ["Root: FullAWSAccess + Deny S3; Test OU chỉ “Allow S3”", 3, "S3 bị Deny, dịch vụ khác không được Allow"]
+        ]
+      },
+      {
+        title: "Organizations hay Identity Center/Control Tower?",
+        desc: "Đặc điểm sau thuộc dịch vụ nào?",
+        buckets: ["AWS Organizations", "AWS Control Tower", "IAM Identity Center"],
+        items: [
+          ["Cây root → OU → account, tối đa 5 cấp OU", 0, "cấu trúc của Organizations"],
+          ["Feature set Consolidated billing / All features", 0, "hai chế độ của Organizations"],
+          ["Handshake INVITE hết hạn sau 15 ngày", 0, "cơ chế mời account"],
+          ["Landing zone dựng trong chưa tới một giờ", 1, "Control Tower điều phối nhiều dịch vụ"],
+          ["Dashboard tài nguyên noncompliant theo account và OU", 1, "giám sát landing zone"],
+          ["Account Factory trên Service Catalog", 1, "vending machine của Control Tower"],
+          ["Permission set, session tối đa 12 giờ", 2, "Identity Center tạo role trong từng account"],
+          ["AWS access portal cho workforce", 2, "cổng truy cập của Identity Center"],
+          ["Identity source: directory, AD hoặc external IdP", 2, "mỗi organization một identity source"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["SCP tự nó không cấp quyền nào.", true, "SCP chỉ đặt trần; quyền phải đến từ identity-based/resource-based policy."],
+      ["Gắn SCP Allow S3 cho account là đủ để user không có IAM policy dùng được S3.", false, "SCP không bao giờ cấp quyền."],
+      ["SCP giới hạn được root user của member account.", true, "SCP áp mọi user/role của member, kể cả root."],
+      ["SCP gắn ở root giới hạn được user trong management account.", false, "SCP không ảnh hưởng management account."],
+      ["SCP không ảnh hưởng action dùng quyền service-linked role.", true, "Service-linked role được miễn."],
+      ["Trong member account, AdministratorAccess ghi đè được Deny của SCP.", false, "Ngược lại: SCP chặn cả AdministratorAccess."],
+      ["SCP có thể gắn trực tiếp vào IAM group.", false, "Chỉ gắn vào root, OU, account."],
+      ["SCP có sẵn khi organization chỉ bật Consolidated billing.", false, "Phải bật All features."],
+      ["Để một quyền được phép, Allow phải có ở mọi cấp từ root đến account.", true, "Mô hình deny-by-default."],
+      ["Một SCP Deny ở OU cha chặn quyền cho mọi account bên dưới dù cấp dưới Allow.", true, "Deny ở một cấp là đủ."],
+      ["Gỡ FullAWSAccess khỏi root mà không thay thế giúp tăng bảo mật mà không ảnh hưởng gì.", false, "Mọi action của member account bên dưới sẽ thất bại."],
+      ["Mỗi root/OU/account được gắn trực tiếp tối đa 10 SCP.", true, "Policy kế thừa không tính vào giới hạn này."],
+      ["Một SCP tối đa 10.240 ký tự.", true, "RCP tối đa 5.120 ký tự."],
+      ["Với deny list strategy, dịch vụ mới AWS ra mắt tự động được phép.", true, "Vì FullAWSAccess vẫn còn."],
+      ["Với allow list strategy, dịch vụ mới tự động được phép.", false, "Dịch vụ mới bị chặn cho tới khi cập nhật SCP."],
+      ["Tắt rồi bật lại policy type SCP sẽ khôi phục các attachment cũ.", false, "Chỉ còn FullAWSAccess; attachment cũ mất."],
+      ["OU có thể lồng tối đa 5 cấp dưới root.", true, "Tối đa 2.000 OU mỗi organization."],
+      ["Có thể đổi management account sang account khác.", false, "Không đổi được management account."],
+      ["Delegated administrator có thể tạo account mới trong organization.", false, "Chỉ management account tạo và mời account."],
+      ["Một member account có thể thuộc hai organization cùng lúc.", false, "Chỉ một organization tại một thời điểm."],
+      ["Account được mời vào organization tự có OrganizationAccountAccessRole.", false, "Chỉ account tạo mới mới có; account được mời phải tự tạo role."],
+      ["Lời mời tham gia organization hết hạn sau 15 ngày.", true, "Handshake ENABLE_ALL_FEATURES hết hạn sau 90 ngày."],
+      ["Consolidated billing tính thêm phí.", false, "Không phát sinh chi phí thêm."],
+      ["Consolidated billing cho phép chia sẻ discount RI và Savings Plans giữa các account.", true, "Nhờ combined usage."],
+      ["Declarative policy gắn ở root áp dụng cả management account.", true, "Khác SCP."],
+      ["Tag policy và backup policy dùng logic “Allow mọi cấp, Deny một cấp” như SCP.", false, "Có cơ chế kế thừa riêng."],
+      ["Log của organization trail không bị member account tắt hay sửa.", true, "Đây là điểm mạnh của organization trail."],
+      ["Detective control của Control Tower dựa trên AWS Config rules.", true, "Preventive = SCP/RCP, proactive = CloudFormation hooks."],
+      ["Proactive control phát hiện các EBS volume đã tồn tại chưa mã hóa.", false, "Proactive kiểm tra trước khi tạo; phát hiện sau là detective."],
+      ["Mandatory control có thể tắt khi cần.", false, "Mandatory luôn bật, không tắt/đổi được."],
+      ["Preventive control của Control Tower không áp cho management account.", true, "Ngoài management account, control áp toàn tổ chức."],
+      ["Account Factory được xây trên AWS Service Catalog.", true, "Provisioned products của Service Catalog."],
+      ["Account instance của IAM Identity Center quản lý được truy cập vào nhiều AWS account.", false, "Chỉ organization instance làm được."],
+      ["Simple AD có thể làm identity source cho IAM Identity Center.", false, "Chỉ AWS Managed Microsoft AD hoặc AD Connector."],
+      ["Session duration mặc định của permission set là 1 giờ, tối đa 12 giờ.", true, "Theo tài liệu IAM Identity Center."],
+      ["Amazon Cognito là đáp án cho nhân viên đăng nhập một lần vào nhiều AWS account.", false, "Workforce ⇒ IAM Identity Center; Cognito cho người dùng ứng dụng."]
+    ],
+
+    map: {
+      t: "Bài 6 · Organizations, SCP, Control Tower, Identity Center",
+      c: [
+        { t: "Multi-account", icon: "svc/AWS-Organizations.svg", c: [
+          { t: "Vì sao", v: "account = ranh giới quyền, bảo mật, chi phí" },
+          { t: "Lợi ích", v: "billing boundary · giảm blast radius · linh hoạt" },
+          { t: "Organizations", v: "dịch vụ global, đặt tại us-east-1" },
+          { t: "Account ≠ user", v: "account chứa tài nguyên; user/role là định danh IAM" },
+          { t: "Chia sẻ tài nguyên", v: "AWS RAM (VPC subnet, Transit Gateway)" }
+        ] },
+        { t: "Cấu trúc & quota", icon: "res/AWS-Organizations_Organizational-Unit.svg", c: [
+          { t: "Cây", v: "1 root → OU (≤ 5 cấp, ≤ 2.000) → account" },
+          { t: "Management account", v: "payer, tạo/mời account, không đổi được, miễn SCP" },
+          { t: "Delegated admin", v: "member được ủy quyền policy hoặc dịch vụ" },
+          { t: "Feature set", c: [
+            { t: "Consolidated billing", v: "chỉ thanh toán, không SCP" },
+            { t: "All features", v: "mặc định, cần cho SCP/RCP/tích hợp" }
+          ] },
+          { t: "Thêm account", v: "tạo mới (có OrganizationAccountAccessRole) hoặc mời (15 ngày)" },
+          { t: "Quota account", v: "mặc định 10, adjustable" }
+        ] },
+        { t: "Consolidated billing", icon: "svc/AWS-Cost-Explorer.svg", c: [
+          { t: "Lợi ích", v: "one bill · easy tracking · combined usage · miễn phí" },
+          { t: "Combined usage", v: "volume discount, chia sẻ RI & Savings Plans" },
+          { t: "Tắt sharing", v: "Billing preferences cho từng account" },
+          { t: "Theo dõi", v: "Cost Explorer, cost allocation tags" }
+        ] },
+        { t: "SCP", icon: "res/AWS-Identity-Access-Management_Permissions.svg", c: [
+          { t: "Bản chất", v: "trần quyền, không cấp quyền" },
+          { t: "Giới hạn", v: "user/role + root user của member account" },
+          { t: "Miễn", v: "management account, service-linked role, ngoài org" },
+          { t: "Kế thừa", c: [
+            { t: "Allow", v: "phải có ở MỌI cấp (FullAWSAccess)" },
+            { t: "Deny", v: "MỘT cấp là đủ" }
+          ] },
+          { t: "Chiến lược", c: [
+            { t: "Deny list", v: "giữ FullAWSAccess + Deny, ít bảo trì" },
+            { t: "Allow list", v: "thay FullAWSAccess, chặn dịch vụ mới" }
+          ] },
+          { t: "Giới hạn kỹ thuật", v: "10.240 ký tự · ≤ 10 SCP/entity · gắn vào root/OU/account" }
+        ] },
+        { t: "Policy khác & tích hợp", icon: "svc/AWS-CloudTrail.svg", c: [
+          { t: "Authorization", v: "SCP (principal) · RCP (resource)" },
+          { t: "Declarative", v: "tag, backup, AI opt-out, EC2, chat apps" },
+          { t: "Kế thừa declarative", v: "cơ chế riêng; gắn root áp cả management" },
+          { t: "Organization trail", v: "log mọi account, member không tắt được" },
+          { t: "Bảo mật tập trung", v: "GuardDuty/Security Hub qua delegated admin" }
+        ] },
+        { t: "Control Tower", icon: "svc/AWS-Control-Tower.svg", c: [
+          { t: "Thành phần", v: "landing zone · controls · Account Factory · dashboard" },
+          { t: "Điều phối", v: "Organizations, Service Catalog, Identity Center" },
+          { t: "Loại control", c: [
+            { t: "Preventive", v: "SCP/RCP, chặn trước" },
+            { t: "Detective", v: "Config rules, phát hiện sau" },
+            { t: "Proactive", v: "CloudFormation hooks, kiểm tra trước khi tạo" }
+          ] },
+          { t: "Mức hướng dẫn", v: "mandatory · strongly recommended · elective" },
+          { t: "Security OU", v: "Log Archive + Audit account" }
+        ] },
+        { t: "IAM Identity Center", icon: "svc/AWS-Single-Sign-On.svg", c: [
+          { t: "Tên cũ", v: "AWS Single Sign-On" },
+          { t: "Instance", v: "organization instance mới quản lý multi-account" },
+          { t: "Identity source", v: "1 nguồn: directory / AD / external IdP (không Simple AD)" },
+          { t: "Permission set", v: "template policy ⇒ IAM role trong từng account" },
+          { t: "Assignment", v: "user/group + permission set + account" },
+          { t: "Session", v: "mặc định 1 giờ, tối đa 12 giờ" },
+          { t: "Workforce vs khách hàng", v: "Identity Center vs Cognito" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

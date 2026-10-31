@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 9 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Savings-Plans.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="9" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-09-ec2-purchasing.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "od", name: "Tổng quan & On-Demand" },
+      { id: "ri", name: "Reserved Instances" },
+      { id: "sp", name: "Savings Plans" },
+      { id: "spot", name: "Spot Instances" },
+      { id: "ded", name: "Dedicated Hosts & Instances" },
+      { id: "cr", name: "Capacity Reservations & Blocks" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Tổng quan & On-Demand
+      { t: "od", f: "7 phương thức mua EC2 theo tài liệu AWS?", b: "<b>On-Demand</b>, <b>Savings Plans</b>, <b>Reserved Instances</b>, <b>Spot</b>, <b>Dedicated Hosts</b>, <b>Dedicated Instances</b>, <b>Capacity Reservations</b>." },
+      { t: "od", f: "Spot, On-Demand và instance được RI che phủ có khác nhau về phần cứng không?", b: "<b>Không.</b> Giống hệt về phần cứng và hiệu năng – khác ở giá, cam kết, đảm bảo capacity và quyền dừng máy." },
+      { t: "od", f: "Mức giảm tối đa so với On-Demand của từng lựa chọn?", b: "EC2 Instance SP &amp; Standard RI <b>72%</b> · Compute SP &amp; Convertible RI <b>66%</b> · Spot <b>90%</b> · Dedicated Host Reservation <b>70%</b>." },
+      { t: "od", f: "AWS khuyến nghị On-Demand cho workload nào?", b: "<b>Ngắn hạn, không đều (irregular), không được gián đoạn</b>." },
+      { t: "od", f: "On-Demand có đảm bảo luôn có capacity không?", b: "<b>Không.</b> AZ hết capacity ⇒ lỗi <b>insufficient capacity error (ICE)</b>. Muốn chắc chắn ⇒ Capacity Reservation." },
+      { t: "od", f: "On-Demand quota được tính theo gì?", b: "Theo <b>số vCPU</b> đang chạy (không theo số instance), mỗi account, mỗi Region, theo nhóm family." },
+      { t: "od", f: "Quota mặc định Running On-Demand Standard (A, C, D, H, I, M, R, T, Z)?", b: "<b>5 vCPU</b>. Nhóm P/G/Inf/Trn/F và X/High Memory mặc định <b>0</b> – phải xin tăng.", x: "Pending, stopped, hibernated không tính; Capacity Reservation chưa dùng VẪN tính." },
+      { t: "od", f: "Lỗi <code>VcpuLimitExceeded</code> khi launch ⇒ làm gì?", b: "<b>Xin tăng Service Quota</b> (vCPU-based) – không phải đổi Region hay mua RI." },
+
+      // ---- RI
+      { t: "ri", f: "Reserved Instance thực chất là gì?", b: "<b>Billing discount</b> tự áp vào On-Demand instance khớp thuộc tính – <b>không phải instance vật lý</b>." },
+      { t: "ri", f: "4 thuộc tính instance quyết định RI?", b: "<b>Instance type</b>, <b>Region</b>, <b>Tenancy</b>, <b>Platform</b> (OS)." },
+      { t: "ri", f: "Ba payment option của RI?", b: "<b>All Upfront</b> (không phí giờ) · <b>Partial Upfront</b> · <b>No Upfront</b>. Trả trước càng nhiều càng rẻ." },
+      { t: "ri", f: "Hết kỳ RI thì instance thế nào?", b: "RI <b>không tự gia hạn</b>; instance vẫn chạy nhưng tính giá <b>On-Demand</b>." },
+      { t: "ri", f: "Có hủy được RI không?", b: "<b>Không.</b> Chỉ modify, exchange (Convertible) hoặc bán (Standard) trên RI Marketplace." },
+      { t: "ri", f: "Standard RI vs Convertible RI?", b: "<b>Standard</b>: tới 72%, modify được, <b>bán được</b> trên Marketplace, không exchange.<br><b>Convertible</b>: tới 66%, <b>exchange</b> được (family, type, platform, scope, tenancy), không bán được." },
+      { t: "ri", f: "Regional RI vs zonal RI?", b: "<b>Regional</b>: không giữ capacity, áp mọi AZ, có size flexibility, queue purchase được.<br><b>Zonal</b>: <b>giữ capacity</b> trong AZ, chỉ đúng family+size." },
+      { t: "ri", f: "Hạn mức mặc định số RI?", b: "<b>20 RI / Region</b> (regional) · <b>20 RI / AZ</b> (zonal) – tăng được." },
+      { t: "ri", f: "Normalization factor của small, large, xlarge, 2xlarge?", b: "small <b>1</b> · medium 2 · large <b>4</b> · xlarge <b>8</b> · 2xlarge <b>16</b> (nano 0.25, micro 0.5)." },
+      { t: "ri", f: "Instance size flexibility áp với RI nào?", b: "<b>Regional RI, Linux/Unix, default tenancy</b>; khớp family, tenancy, platform; áp từ size nhỏ tới lớn.", x: "Không áp cho zonal, Windows, RHEL, SUSE, dedicated tenancy, một số family GPU." },
+      { t: "ri", f: "RI được áp thế nào trong AWS Organizations?", b: "Áp trước cho account mua, sau đó các account khác. Ngoại lệ: zonal RI chưa dùng của account khác áp trước regional RI của chính account.", x: "Capacity của zonal RI chỉ dành cho account sở hữu." },
+      { t: "ri", f: "Điều kiện bán RI trên Marketplace?", b: "Chỉ <b>Standard RI</b> của EC2; còn ≥ <b>1 tháng</b>; active ≥ <b>30 ngày</b>; root user đăng ký, tài khoản ngân hàng Mỹ." },
+      { t: "ri", f: "Phí và giới hạn khi bán RI?", b: "AWS thu <b>12%</b> giá upfront; trọn đời account tối đa <b>50.000 USD</b> và <b>5.000 RI</b>." },
+      { t: "ri", f: "AWS hiện khuyến nghị gì giữa RI và Savings Plans?", b: "“<i>We recommend Savings Plans over Reserved Instances</i>” – linh hoạt hơn, mức giảm tương đương." },
+
+      // ---- Savings Plans
+      { t: "sp", f: "Savings Plans cam kết gì?", b: "Cam kết chi tiêu <b>USD/giờ</b> trong <b>1 hoặc 3 năm</b> – cam kết tiền, không cam kết cấu hình." },
+      { t: "sp", f: "Usage vượt mức cam kết Savings Plans tính thế nào?", b: "Phần vượt trả <b>giá On-Demand</b>; dùng ít hơn vẫn trả đủ cam kết." },
+      { t: "sp", f: "Compute Savings Plans áp cho gì?", b: "EC2 bất kể <b>family, size, Region, OS, tenancy</b> + <b>Fargate</b> + <b>Lambda</b>. Giảm tới <b>66%</b>." },
+      { t: "sp", f: "EC2 Instance Savings Plans áp cho gì?", b: "Một <b>instance family trong một Region</b>, bất kể size, OS, tenancy. Giảm tới <b>72%</b>." },
+      { t: "sp", f: "Database Savings Plans và SageMaker AI Savings Plans giảm tới bao nhiêu?", b: "<b>Database SP</b>: tới <b>35%</b> (Aurora, RDS, DynamoDB, ElastiCache…).<br><b>SageMaker AI SP</b>: tới <b>64%</b>." },
+      { t: "sp", f: "Savings Plans có giữ capacity không?", b: "<b>Không.</b> Cần capacity ⇒ tạo ODCR; Savings Plans vẫn áp giá giảm lên đó." },
+      { t: "sp", f: "Savings Plans có áp cho Spot không?", b: "<b>Không</b>; cũng không áp cho usage đã được RI che phủ; chi tiêu Spot không tính vào cam kết." },
+      { t: "sp", f: "Có hủy được Savings Plans không?", b: "<b>Không</b> hủy, không đổi điều khoản; nhu cầu tăng thì mua thêm plan mới." },
+      { t: "sp", f: "Xác định mức cam kết Savings Plans tối ưu bằng công cụ nào?", b: "<b>Savings Plans recommendations</b> trong <b>AWS Cost Explorer</b>." },
+      { t: "sp", f: "Phí nào Savings Plans không giảm?", b: "Phí <b>2 USD/giờ</b> mỗi Region có Dedicated Instance; phí riêng của Amazon EKS." },
+
+      // ---- Spot
+      { t: "spot", f: "Spot Instance khác On-Demand ở điểm duy nhất nào?", b: "EC2 có thể <b>interrupt</b> với <b>2 phút báo trước</b> khi cần lấy lại capacity. Giảm tới <b>90%</b>." },
+      { t: "spot", f: "Spot capacity pool là gì?", b: "Tập instance chưa dùng cùng <b>instance type</b> và cùng <b>AZ</b> – mỗi cặp (type, AZ) là một pool." },
+      { t: "spot", f: "Đặt maximum price thấp có lợi không?", b: "<b>Không</b> – bị interrupt <b>thường xuyên hơn</b>. Bạn luôn trả Spot price; mặc định trần là giá On-Demand." },
+      { t: "spot", f: "Ba lý do Spot bị interrupt?", b: "<b>Capacity</b> (chính) · <b>Price</b> (vượt maximum price) · <b>Constraints</b> (launch group, AZ group)." },
+      { t: "spot", f: "Ba interruption behavior của Spot?", b: "<b>Terminate</b> (mặc định) · <b>Stop</b> · <b>Hibernate</b>.", x: "Stop/hibernate cần request persistent, không launch group." },
+      { t: "spot", f: "Hibernate khi Spot bị interrupt có 2 phút báo trước không?", b: "<b>Không</b> – hibernation bắt đầu ngay (vẫn có notice)." },
+      { t: "spot", f: "Nhận interruption notice qua đâu?", b: "Sự kiện <b>EventBridge</b> “EC2 Spot Instance Interruption Warning” và metadata <code>spot/instance-action</code> (404 nếu chưa có). Poll mỗi <b>5 giây</b>." },
+      { t: "spot", f: "Rebalance recommendation là gì?", b: "Tín hiệu Spot có <b>rủi ro interrupt cao</b> – thường đến <b>sớm hơn</b> notice 2 phút." },
+      { t: "spot", f: "Capacity Rebalancing làm gì?", b: "ASG/EC2 Fleet <b>chủ động thay</b> Spot rủi ro cao bằng instance mới ở pool ít rủi ro hơn." },
+      { t: "spot", f: "Spot bị EC2 interrupt trong giờ đầu tính phí thế nào?", b: "<b>Miễn phí</b> (Windows, Linux). Bạn tự stop/terminate ⇒ tính theo giây." },
+      { t: "spot", f: "Spot phù hợp và không phù hợp với gì?", b: "<b>Hợp</b>: stateless, fault-tolerant, flexible (batch, CI/CD, big data, rendering).<br><b>Không</b>: stateful, fault-intolerant, tightly coupled, database." },
+      { t: "spot", f: "Quy tắc ngón tay cái về linh hoạt instance type cho Spot?", b: "Linh hoạt <b>ít nhất 10 instance type</b> mỗi workload và bật <b>mọi AZ</b>." },
+      { t: "spot", f: "Allocation strategy khuyến nghị cho Spot?", b: "<b>price-capacity-optimized</b>: chọn pool nhiều capacity nhất rồi lấy pool rẻ nhất trong số đó." },
+      { t: "spot", f: "capacity-optimized, diversified, lowest-price khác nhau?", b: "<b>capacity-optimized</b>: chỉ ưu tiên capacity (chi phí interrupt cao).<br><b>diversified</b>: rải đều mọi pool.<br><b>lowest-price</b>: rẻ nhất, rủi ro interrupt cao nhất – không khuyến nghị." },
+      { t: "spot", f: "API nào nên dùng để xin Spot?", b: "<b>CreateAutoScalingGroup</b> hoặc <b>CreateFleet</b> (EC2 Fleet).", x: "RequestSpotFleet / RequestSpotInstances là legacy – DO NOT USE." },
+      { t: "spot", f: "Dừng hẳn persistent Spot request thế nào?", b: "<b>Cancel request trước</b>, rồi mới terminate instance – nếu không EC2 launch lại." },
+      { t: "spot", f: "Spot placement score là gì?", b: "Điểm <b>1–10</b> cho Region/AZ về khả năng đáp ứng capacity; chỉ là gợi ý, không đảm bảo." },
+
+      // ---- Dedicated
+      { t: "ded", f: "Dedicated Host là gì?", b: "Một <b>server vật lý dành trọn</b> cho bạn: thấy <b>socket, core, host ID</b>, host affinity, BYOL đầy đủ, tính tiền <b>theo host</b>." },
+      { t: "ded", f: "Dedicated Instance là gì?", b: "Instance trên phần cứng <b>dành riêng cho một account</b>; không thấy/không kiểm soát host; tính <b>theo instance</b> + <b>2 USD/giờ/Region</b>." },
+      { t: "ded", f: "Dedicated Host và Dedicated Instance khác nhau về hiệu năng/bảo mật?", b: "<b>Không khác</b> – khác ở khả năng kiểm soát, license và cách tính tiền." },
+      { t: "ded", f: "Host affinity là gì?", b: "Instance luôn quay về <b>đúng host</b> sau stop/start (chỉ Dedicated Host)." },
+      { t: "ded", f: "Giới hạn của Dedicated Host?", b: "Không placement group, <b>không RDS</b>, không Free Tier, <b>không Capacity Reservations</b>; RHEL/SUSE phải BYOL AMI." },
+      { t: "ded", f: "Làm mọi instance trong VPC là single-tenant?", b: "Tạo VPC với <b>instance tenancy = dedicated</b>." },
+      { t: "ded", f: "RI default tenancy có áp cho instance dedicated không?", b: "<b>Không</b> (và ngược lại). Tenancy của RI không modify được; chỉ Convertible RI exchange được." },
+
+      // ---- Capacity
+      { t: "cr", f: "On-Demand Capacity Reservation (ODCR) là gì?", b: "Giữ capacity EC2 trong <b>một AZ cụ thể</b>, bao lâu tùy bạn, <b>không cam kết</b> (immediate-use), hủy là ngừng tính phí." },
+      { t: "cr", f: "ODCR tính phí thế nào, có giảm giá không?", b: "Tính <b>giá On-Demand</b> dù có chạy instance hay không; <b>không giảm giá</b> – kết hợp <b>Savings Plans / regional RI</b>.", x: "Zonal RI discount không áp cho Capacity Reservation." },
+      { t: "cr", f: "Open vs targeted Capacity Reservation?", b: "<b>Open</b> (mặc định): tự nhận mọi instance khớp.<br><b>Targeted</b>: chỉ instance chỉ định reservation." },
+      { t: "cr", f: "Future-dated Capacity Reservation có đặc điểm gì?", b: "Chỉ định ngày bắt đầu và thời gian cam kết; tối thiểu <b>32 vCPU</b>; hủy có thể mất phí." },
+      { t: "cr", f: "ODCR có chia sẻ cho account khác được không?", b: "<b>Có</b> (shared). Capacity của zonal RI thì không chia sẻ được." },
+      { t: "cr", f: "Capacity Blocks for ML là gì?", b: "Đặt trước <b>GPU/accelerator</b> (P5, Trn…) cho khoảng thời gian xác định ở ngày tương lai, trong EC2 UltraClusters." },
+      { t: "cr", f: "Giới hạn của Capacity Blocks for ML?", b: "Đặt trước tối đa <b>8 tuần</b>; ≤ <b>64 instance/block</b>; ≤ 256 instance tổng; kết thúc 11:30 UTC; <b>không hủy được</b>, không tính vào On-Demand quota." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>steady-state, predictable usage, 1 or 3 years, MOST cost-effective</i>” ⇒ ?", b: "<b>Savings Plans</b> (hoặc RI nếu đáp án không có SP)." },
+      { t: "kw", f: "Đề có “<i>can be interrupted, fault-tolerant, stateless, flexible start/end time</i>” ⇒ ?", b: "<b>Spot Instances</b>." },
+      { t: "kw", f: "Đề có “<i>short-term, spiky, unpredictable, cannot be interrupted, new application</i>” ⇒ ?", b: "<b>On-Demand</b>." },
+      { t: "kw", f: "Đề có “<i>server-bound licenses, per-socket / per-core, BYOL</i>” ⇒ ?", b: "<b>Dedicated Hosts</b>." },
+      { t: "kw", f: "Đề có “<i>not shared with other customers, no license requirement</i>” ⇒ ?", b: "<b>Dedicated Instances</b> (rẻ hơn Dedicated Host)." },
+      { t: "kw", f: "Đề có “<i>guarantee capacity in a specific AZ, no long-term commitment</i>” ⇒ ?", b: "<b>On-Demand Capacity Reservation</b>." },
+      { t: "kw", f: "Đề có “<i>EC2, Fargate AND Lambda; may change Regions / families</i>” ⇒ ?", b: "<b>Compute Savings Plans</b>." },
+      { t: "kw", f: "Đề có “<i>same family in one Region, LARGEST discount, flexibility on size/OS</i>” ⇒ ?", b: "<b>EC2 Instance Savings Plans</b>." },
+      { t: "kw", f: "Đề có “<i>no longer need the reservation, recover cost</i>” ⇒ ?", b: "Bán <b>Standard RI</b> trên <b>Reserved Instance Marketplace</b>." },
+      { t: "kw", f: "Đề có “<i>reserve a cluster of GPUs for weeks starting next month</i>” ⇒ ?", b: "<b>Capacity Blocks for ML</b>." },
+      { t: "kw", f: "Đề có “<i>minimize Spot interruptions while keeping cost low</i>” ⇒ ?", b: "Đa dạng instance type/AZ + <b>price-capacity-optimized</b>." }
+    ],
+
+    pairs: [
+      ["On-Demand", "Trả theo giây, không cam kết, giá cố định"],
+      ["ICE", "Lỗi AZ hết capacity cho instance type"],
+      ["Reserved Instance", "Chiết khấu hóa đơn cho cấu hình cụ thể 1/3 năm"],
+      ["Standard RI", "Giảm tới 72%, bán được trên Marketplace"],
+      ["Convertible RI", "Giảm tới 66%, exchange được"],
+      ["Zonal RI", "RI cấp AZ, giữ capacity"],
+      ["Regional RI", "Linh hoạt AZ và size, không giữ capacity"],
+      ["Normalization factor", "Hệ số size: small = 1, large = 4, xlarge = 8"],
+      ["RI Marketplace", "Chợ bán lại Standard RI, phí 12%"],
+      ["Compute Savings Plans", "Mọi family/Region + Fargate + Lambda, tới 66%"],
+      ["EC2 Instance Savings Plans", "Một family trong một Region, tới 72%"],
+      ["Hourly commitment", "Mức cam kết USD/giờ của Savings Plans"],
+      ["Spot capacity pool", "Cùng instance type + cùng AZ"],
+      ["Persistent Spot request", "Tự gửi lại sau khi bị interrupt"],
+      ["Rebalance recommendation", "Tín hiệu rủi ro interrupt cao, đến sớm"],
+      ["Capacity Rebalancing", "ASG/Fleet chủ động thay Spot rủi ro cao"],
+      ["price-capacity-optimized", "Pool nhiều capacity rồi chọn rẻ nhất"],
+      ["Spot placement score", "Điểm 1–10 khả năng có Spot"],
+      ["Dedicated Host", "Server vật lý riêng, thấy socket/core"],
+      ["Dedicated Instance", "Phần cứng riêng cho một account"],
+      ["Host affinity", "Instance luôn quay về cùng server"],
+      ["BYOL", "Mang license sẵn có lên AWS"],
+      ["ODCR", "Giữ capacity trong một AZ, không cam kết"],
+      ["Capacity Blocks for ML", "Đặt trước GPU tới 8 tuần"],
+      ["Consolidated billing", "Chia sẻ RI/SP giữa các account"]
+    ],
+
+    sorts: [
+      {
+        title: "Tình huống ⇒ phương thức mua",
+        desc: "Chọn phương thức mua MOST cost-effective đáp ứng đủ yêu cầu.",
+        buckets: ["On-Demand", "Savings Plans / RI", "Spot", "Dedicated Host", "Dedicated Instance", "Capacity Reservation", "Capacity Blocks for ML"],
+        items: [
+          ["Ứng dụng mới, chưa biết tải, chạy thử 2 tháng", 0, "đo usage rồi mới cam kết"],
+          ["Tải đột biến ngắn, không được gián đoạn", 0, "ngắn hạn, irregular"],
+          ["Database production trên EC2 chạy liên tục 3 năm", 1, "steady-state, không dùng Spot"],
+          ["Phần nền 4 instance chạy 24/7 của web app", 1, "cam kết bằng phần nền"],
+          ["Batch xử lý ảnh hằng đêm lấy job từ SQS, chạy lại được", 2, "fault-tolerant, flexible"],
+          ["CI/CD, rendering stateless", 2, "chịu được gián đoạn"],
+          ["SQL Server license per-core, phải báo cáo số core", 3, "thấy socket/core, BYOL"],
+          ["Compliance: phần cứng không chung với khách khác, không có license", 4, "rẻ hơn Dedicated Host"],
+          ["Chắc chắn có 50 instance ở us-east-1a cho đợt sale 1 tuần", 5, "immediate-use, hủy sau sự kiện"],
+          ["Giữ capacity cho môi trường DR, không cam kết 1–3 năm", 5, "ODCR không cam kết"],
+          ["32 GPU p5 cho job training 10 ngày bắt đầu sau 3 tuần", 6, "đặt trước GPU cho ngày tương lai"]
+        ]
+      },
+      {
+        title: "Standard RI hay Convertible RI?",
+        desc: "Đặc điểm thuộc offering class nào?",
+        buckets: ["Standard RI", "Convertible RI"],
+        items: [
+          ["Giảm tới 72%", 0, "giảm nhiều nhất"],
+          ["Bán được trên RI Marketplace", 0, "chỉ Standard bán được"],
+          ["Mua được trên RI Marketplace", 0, "người bán chỉ bán Standard"],
+          ["Không exchange được", 0, "chỉ modify"],
+          ["Giảm tới 66%", 1, "đổi lấy tính linh hoạt"],
+          ["Exchange sang family, platform, tenancy khác", 1, "exchange trong kỳ"],
+          ["Không bán được trên Marketplace", 1, "chỉ Standard được bán"]
+        ]
+      },
+      {
+        title: "Đặc điểm này của lựa chọn nào?",
+        desc: "Theo bảng so sánh Savings Plans, RI và Capacity Reservation trong bài.",
+        buckets: ["Compute SP", "EC2 Instance SP", "Zonal RI", "Regional RI", "Capacity Reservation"],
+        items: [
+          ["Áp cho Lambda và Fargate", 0, "chỉ Compute SP"],
+          ["Áp xuyên Region", 0, "chỉ Compute SP"],
+          ["Một family trong một Region, giảm tới 72%", 1, "bất kể size/OS/tenancy"],
+          ["Giảm giá và giữ capacity trong một AZ, cam kết 1/3 năm", 2, "zonal giữ capacity"],
+          ["Mặc định 20 RI mỗi AZ, chỉ đúng family+size", 2, "không có size flexibility"],
+          ["Discount áp mọi AZ, có size flexibility, queue purchase", 3, "regional linh hoạt"],
+          ["Giữ capacity, không giảm giá, không cam kết", 4, "kết hợp SP để giảm"],
+          ["Tính vào On-Demand vCPU quota kể cả khi chưa dùng", 4, "ODCR tính vào quota"]
+        ]
+      },
+      {
+        title: "Spot allocation strategy",
+        desc: "Chọn allocation strategy phù hợp với mô tả.",
+        buckets: ["price-capacity-optimized", "capacity-optimized", "diversified", "lowest-price"],
+        items: [
+          ["Khuyến nghị cho đa số workload: container stateless, web, batch", 0, "cân bằng giá và capacity"],
+          ["Chọn pool nhiều capacity nhất rồi lấy pool rẻ nhất trong số đó", 0, "định nghĩa"],
+          ["Chi phí interrupt cao: CI dài, render, deep learning, HPC", 1, "chỉ ưu tiên capacity"],
+          ["Có biến thể tôn trọng thứ tự ưu tiên instance type", 1, "capacity-optimized-prioritized"],
+          ["Rải đều qua mọi pool, một pool bị thu hồi chỉ ảnh hưởng 10%", 2, "fleet lớn, chạy lâu"],
+          ["Pool rẻ nhất, rủi ro interrupt cao nhất", 3, "không xét capacity"],
+          ["Mặc định khi dùng CLI, không khuyến nghị", 3, "lowest-price"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["On-Demand tính phí theo giây với tối thiểu 60 giây.", true, "Khi instance ở trạng thái running."],
+      ["On-Demand luôn đảm bảo có capacity khi launch.", false, "Có thể gặp insufficient capacity error (ICE)."],
+      ["On-Demand quota được tính theo số instance đang chạy.", false, "Tính theo số vCPU."],
+      ["Capacity Reservation chưa dùng vẫn tính vào On-Demand vCPU quota.", true, "Kể cả đang active mà chưa dùng."],
+      ["Reserved Instance là một instance vật lý được giữ sẵn cho bạn.", false, "RI là billing discount áp vào instance khớp thuộc tính."],
+      ["RI có thể hủy và được hoàn tiền theo tỉ lệ.", false, "RI không hủy được."],
+      ["Hết kỳ hạn, RI không tự gia hạn và instance tính giá On-Demand.", true, "Instance vẫn chạy bình thường."],
+      ["Convertible RI bán được trên Reserved Instance Marketplace.", false, "Chỉ Standard RI bán được."],
+      ["Regional RI giữ capacity trong mọi AZ của Region.", false, "Regional RI không giữ capacity; zonal RI mới giữ."],
+      ["Zonal RI có instance size flexibility.", false, "Chỉ regional RI Linux default tenancy có."],
+      ["Một regional RI m5.2xlarge che phủ trọn 2 × m5.large và 1 × m5.xlarge.", true, "16 = 4 + 4 + 8."],
+      ["RI cho Windows có instance size flexibility.", false, "Windows, RHEL, SUSE không hỗ trợ."],
+      ["AWS thu 12% giá upfront khi bạn bán RI trên Marketplace.", true, "Phí người bán."],
+      ["RI phải active ít nhất 30 ngày mới được bán.", true, "Và còn ít nhất 1 tháng trong kỳ."],
+      ["Capacity của zonal RI chia sẻ được cho account khác trong organization.", false, "Chỉ discount được chia sẻ; capacity dành cho account sở hữu. Dùng ODCR shared."],
+      ["Compute Savings Plans áp cho cả AWS Lambda và Fargate.", true, "Và EC2 bất kể family, Region."],
+      ["EC2 Instance Savings Plans áp xuyên Region.", false, "Chỉ một family trong một Region."],
+      ["Savings Plans giữ capacity trong một AZ.", false, "Không giữ capacity; cần ODCR."],
+      ["Savings Plans giảm thêm trên giá Spot.", false, "Không áp cho Spot."],
+      ["Usage vượt cam kết Savings Plans tính giá On-Demand.", true, "Mỗi giờ, phần vượt trả On-Demand."],
+      ["Database Savings Plans giảm tới 35%.", true, "Cho Aurora, RDS, DynamoDB…"],
+      ["Spot Instance được báo trước 2 phút trước khi bị interrupt.", true, "Qua EventBridge và metadata spot/instance-action."],
+      ["Đặt maximum price thấp giúp Spot ít bị interrupt hơn.", false, "Ngược lại, bị interrupt thường xuyên hơn."],
+      ["Hành vi mặc định khi Spot bị interrupt là terminate.", true, "Có thể chọn stop/hibernate."],
+      ["Spot bị EC2 interrupt trong giờ đầu tiên thì miễn phí (Linux, Windows).", true, "Bạn tự dừng thì tính theo giây."],
+      ["Rebalance recommendation luôn đến sau interruption notice.", false, "Thường đến sớm hơn notice 2 phút."],
+      ["lowest-price là allocation strategy khuyến nghị cho Spot.", false, "Khuyến nghị price-capacity-optimized."],
+      ["RequestSpotFleet là API khuyến nghị cho thiết kế mới.", false, "Legacy; dùng Auto Scaling group hoặc EC2 Fleet."],
+      ["Spot phù hợp cho database stateful không được gián đoạn.", false, "Spot chỉ hợp workload stateless, fault-tolerant."],
+      ["Dedicated Host cho thấy số socket và physical core.", true, "Hỗ trợ BYOL per-socket/per-core."],
+      ["Dedicated Instance có hiệu năng cao hơn instance trên Dedicated Host.", false, "Không khác biệt về hiệu năng/bảo mật."],
+      ["Dedicated Host hỗ trợ Capacity Reservations.", false, "ODCR không dùng với Dedicated Hosts; dùng được với Dedicated Instances."],
+      ["ODCR immediate-use có thể hủy bất cứ lúc nào.", true, "Hủy là ngừng tính phí."],
+      ["ODCR tự giảm giá so với On-Demand.", false, "Không giảm; kết hợp Savings Plans/regional RI."],
+      ["Capacity Blocks for ML hủy được bất cứ lúc nào.", false, "Không hủy được."],
+      ["Capacity Blocks for ML đặt trước được tối đa 8 tuần.", true, "≤ 64 instance mỗi block."]
+    ],
+
+    map: {
+      t: "Bài 9 · Phương thức mua EC2",
+      c: [
+        { t: "On-Demand", icon: "res/Amazon-EC2_Instance.svg", c: [
+          { t: "Tính phí", v: "theo giây, tối thiểu 60 giây, giá cố định" },
+          { t: "Dùng khi", v: "ngắn hạn, không đều, không được gián đoạn" },
+          { t: "Capacity", v: "không đảm bảo – có thể ICE" },
+          { t: "Quota", v: "theo vCPU; Standard mặc định 5 vCPU" }
+        ] },
+        { t: "Reserved Instances", icon: "svc/Reserved-Instance-Reporting.svg", c: [
+          { t: "Bản chất", v: "billing discount, 1/3 năm, không hủy" },
+          { t: "Offering class", c: [
+            { t: "Standard", v: "tới 72%, bán được" },
+            { t: "Convertible", v: "tới 66%, exchange được" }
+          ] },
+          { t: "Scope", c: [
+            { t: "Zonal", v: "giữ capacity, 20/AZ" },
+            { t: "Regional", v: "mọi AZ, size flexibility, 20/Region" }
+          ] },
+          { t: "Normalization", v: "small 1 · large 4 · xlarge 8 · 2xlarge 16" },
+          { t: "Marketplace", v: "chỉ Standard, phí 12%, active ≥ 30 ngày" }
+        ] },
+        { t: "Savings Plans", icon: "svc/Savings-Plans.svg", c: [
+          { t: "Cam kết", v: "USD/giờ, 1/3 năm, không hủy" },
+          { t: "Compute SP", v: "tới 66%, mọi family/Region + Fargate + Lambda" },
+          { t: "EC2 Instance SP", v: "tới 72%, 1 family / 1 Region" },
+          { t: "Database · SageMaker AI", v: "tới 35% · tới 64%" },
+          { t: "Không", v: "giữ capacity, áp Spot" },
+          { t: "Công cụ", v: "Cost Explorer recommendations" }
+        ] },
+        { t: "Spot Instances", icon: "res/Amazon-EC2_Spot-Instance.svg", c: [
+          { t: "Giá", v: "giảm tới 90%" },
+          { t: "Interrupt", v: "báo trước 2 phút; mặc định terminate" },
+          { t: "Cảnh báo", v: "EventBridge, spot/instance-action, rebalance recommendation" },
+          { t: "Best practice", v: "≥ 10 instance type, mọi AZ, price-capacity-optimized" },
+          { t: "API", v: "Auto Scaling group / EC2 Fleet" },
+          { t: "Không dùng", v: "stateful, tightly coupled, database" }
+        ] },
+        { t: "Dedicated", icon: "res/Traditional-server.svg", c: [
+          { t: "Dedicated Host", v: "cả server, socket/core, host affinity, BYOL" },
+          { t: "Dedicated Instance", v: "phần cứng riêng account, + 2 USD/giờ/Region" },
+          { t: "Host Reservation", v: "giảm tới 70%" },
+          { t: "VPC dedicated", v: "mọi instance là Dedicated Instance" }
+        ] },
+        { t: "Capacity", icon: "svc/Amazon-EC2.svg", c: [
+          { t: "ODCR", v: "giữ capacity 1 AZ, không cam kết, giá On-Demand" },
+          { t: "Giảm giá ODCR", v: "kết hợp Savings Plans / regional RI" },
+          { t: "Open / Targeted", v: "tự khớp / chỉ định" },
+          { t: "Capacity Blocks for ML", v: "GPU, đặt trước ≤ 8 tuần, ≤ 64 instance" }
+        ] },
+        { t: "Chiến lược kết hợp", icon: "svc/AWS-Cost-Explorer.svg", c: [
+          { t: "Phần nền", v: "Savings Plans / RI" },
+          { t: "Phần co giãn chịu lỗi", v: "Spot" },
+          { t: "Phần đột biến", v: "On-Demand" },
+          { t: "Nhiều account", v: "consolidated billing chia sẻ discount" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

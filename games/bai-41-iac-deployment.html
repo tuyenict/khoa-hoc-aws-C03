@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 41 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-CloudFormation.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="41" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-41-iac-deployment.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "big", name: "Bức tranh tổng thể" },
+      { id: "cfn", name: "CloudFormation: template & stack" },
+      { id: "cs", name: "Change sets" },
+      { id: "ss", name: "StackSets" },
+      { id: "eb", name: "Elastic Beanstalk" },
+      { id: "ssm", name: "Systems Manager & Session Manager" },
+      { id: "patch", name: "Run Command & Patch Manager" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Tổng thể
+      { t: "big", f: "CloudFormation, Elastic Beanstalk, Systems Manager khác nhau thế nào?", b: "<b>CloudFormation</b>: mô tả <b>toàn bộ hạ tầng</b> trong template.<br><b>Beanstalk</b>: chỉ <b>upload code</b>, Beanstalk lo hạ tầng.<br><b>Systems Manager</b>: <b>vận hành bên trong</b> node đang chạy." },
+      { t: "big", f: "Infrastructure as Code (IaC) mang lại gì?", b: "Hạ tầng mô tả bằng file văn bản: <b>lặp lại được, nhất quán, quản lý phiên bản</b>, review, tái sử dụng ở nhiều Region." },
+      { t: "big", f: "Beanstalk chạy tài nguyên ở account nào?", b: "Trong <b>chính account của bạn</b> (EC2, ASG, ELB…) – bạn vẫn xem/sửa được; thực chất qua một CloudFormation stack." },
+      { t: "big", f: "“<i>Install a package on 500 running instances</i>” ⇒ update stack hay gì?", b: "<b>Run Command</b> – CloudFormation tạo tài nguyên, Systems Manager vận hành bên trong." },
+      { t: "big", f: "Beanstalk có tính phí riêng không?", b: "<b>Không</b> – chỉ trả cho tài nguyên bên dưới." },
+
+      // ---- CloudFormation
+      { t: "cfn", f: "Section nào duy nhất bắt buộc trong template CloudFormation?", b: "<b>Resources</b>." },
+      { t: "cfn", f: "Parameters vs Mappings vs Conditions?", b: "<b>Parameters</b>: giá trị nhập lúc tạo/cập nhật stack.<br><b>Mappings</b>: bảng tra cứu (Fn::FindInMap, vd AMI theo Region).<br><b>Conditions</b>: có tạo resource/property hay không." },
+      { t: "cfn", f: "Section Transform dùng cho gì?", b: "Áp dụng macro: <b>AWS::Serverless</b> (AWS SAM), <b>AWS::Include</b>." },
+      { t: "cfn", f: "Outputs dùng để làm gì?", b: "Giá trị trả về khi xem stack (URL, ID) – vận hành hoặc <b>chia sẻ sang stack khác</b> (Export)." },
+      { t: "cfn", f: "Logical ID vs physical ID?", b: "<b>Logical ID</b>: tên duy nhất trong template.<br><b>Physical ID</b>: ID tài nguyên thật (vd <code>i-0abc…</code>)." },
+      { t: "cfn", f: "Các intrinsic function hay gặp?", b: "<code>!Ref</code>, <code>!GetAtt</code>, <code>!Sub</code>, <code>!FindInMap</code>, <code>!If</code>, <code>!ImportValue</code>." },
+      { t: "cfn", f: "Template tạo IAM resource cần xác nhận gì?", b: "Capability <b>CAPABILITY_IAM</b> / <b>CAPABILITY_NAMED_IAM</b>." },
+      { t: "cfn", f: "Tạo stack lỗi / cập nhật lỗi thì mặc định sao?", b: "Tạo lỗi ⇒ <b>rollback, xóa resource đã tạo</b>.<br>Update lỗi ⇒ quay về trạng thái ổn định cuối (<b>UPDATE_ROLLBACK_COMPLETE</b>)." },
+      { t: "cfn", f: "Muốn giữ resource đã tạo thành công khi stack lỗi ⇒ ?", b: "Stack failure option <b>Preserve successfully provisioned resources</b> (<code>--disable-rollback</code>), sửa rồi Retry." },
+      { t: "cfn", f: "Quota chính của CloudFormation?", b: "<b>500</b> resource/template · <b>200</b> parameter/output/mapping · template body <b>51.200 byte</b> (1 MB qua S3) · <b>2.000</b> stack/account." },
+      { t: "cfn", f: "Các giá trị DeletionPolicy?", b: "<b>Delete</b> (mặc định) · <b>Retain</b> · <b>RetainExceptOnCreate</b> · <b>Snapshot</b> (EBS, RDS, ElastiCache, Redshift, Neptune, DocumentDB)." },
+      { t: "cfn", f: "DeletionPolicy mặc định của AWS::RDS::DBCluster là gì?", b: "<b>Snapshot</b> (cả DB instance không thuộc cluster) – ngoại lệ so với mặc định Delete." },
+      { t: "cfn", f: "DeletionPolicy có áp dụng khi resource bị replace lúc update không?", b: "<b>Không</b> – dùng <b>UpdateReplacePolicy</b>." },
+      { t: "cfn", f: "Stack policy là gì?", b: "Policy JSON (1/stack) chặn <b>update/replace/delete ngoài ý muốn khi update stack</b>. Đặt rồi ⇒ mọi resource được bảo vệ mặc định; Deny thắng Allow.", x: "Chỉ áp dụng khi update, không thay IAM; không xóa được policy." },
+      { t: "cfn", f: "Chống xóa nhầm cả stack ⇒ ?", b: "<b>Termination protection</b>." },
+      { t: "cfn", f: "Drift detection là gì?", b: "So sánh property thực tế với template ⇒ phát hiện <b>sửa tay ngoài CloudFormation</b>. Stack: DRIFTED / IN_SYNC / NOT_CHECKED.", x: "Chỉ phát hiện, không tự sửa; không tự kiểm tra nested stack." },
+      { t: "cfn", f: "Nested stack vs cross-stack reference?", b: "<b>Nested</b>: AWS::CloudFormation::Stack, <b>chung vòng đời</b>, tái sử dụng template, vượt 500 resource.<br><b>Cross-stack</b>: Export + <code>!ImportValue</code>, stack <b>độc lập vòng đời</b>." },
+      { t: "cfn", f: "Có xóa được stack đang có export bị stack khác import không?", b: "<b>Không.</b> Export name duy nhất trong account/Region." },
+      { t: "cfn", f: "AWS SAM và AWS CDK là gì?", b: "<b>SAM</b>: cú pháp đơn giản cho serverless (Transform AWS::Serverless).<br><b>CDK</b>: viết hạ tầng bằng ngôn ngữ lập trình, sinh CloudFormation template." },
+
+      // ---- Change sets
+      { t: "cs", f: "Change set là gì?", b: "Bản tóm tắt <b>thay đổi đề xuất</b> khi update stack; CloudFormation <b>chỉ đổi stack khi bạn execute</b>." },
+      { t: "cs", f: "Ba kiểu update behavior?", b: "<b>No Interruption</b> · <b>Some Interruption</b> (giữ physical ID) · <b>Replacement</b> (physical ID mới, xóa resource cũ)." },
+      { t: "cs", f: "Ví dụ thay đổi gây Replacement?", b: "Đổi <b>AvailabilityZone</b> của EC2; đổi <b>Port hoặc tên</b> của RDS DBInstance ⇒ DB mới, mất dữ liệu nếu chưa backup." },
+      { t: "cs", f: "Đổi instance type của EC2 thuộc update behavior nào?", b: "<b>Some Interruption</b> (phải stop/start, giữ physical ID)." },
+      { t: "cs", f: "Sau khi execute một change set, các change set khác thế nào?", b: "CloudFormation <b>xóa mọi change set khác</b> của stack (không còn hợp lệ)." },
+      { t: "cs", f: "Change set có bảo đảm update thành công không?", b: "<b>Không</b> – lỗi điều kiện lúc chạy (custom resource, ràng buộc dịch vụ) vẫn có thể xảy ra." },
+      { t: "cs", f: "Change set khác drift detection và stack policy thế nào?", b: "<b>Change set</b>: template mới ↔ stack (chỉ xem).<br><b>Drift</b>: stack ↔ thực tế.<br><b>Stack policy</b>: <b>chặn</b> update." },
+
+      // ---- StackSets
+      { t: "ss", f: "StackSets làm gì?", b: "Tạo/cập nhật/xóa stack trên <b>nhiều account và nhiều Region</b> bằng một thao tác từ <b>administrator account</b>." },
+      { t: "ss", f: "Stack instance là gì?", b: "Tham chiếu tới một stack ở <b>một target account, một Region</b>; có thể tồn tại mà không có stack (lưu lý do lỗi)." },
+      { t: "ss", f: "StackSet là tài nguyên global hay regional?", b: "<b>Regional</b> – chỉ thấy ở Region đã tạo nó." },
+      { t: "ss", f: "Self-managed vs service-managed permissions?", b: "<b>Self-managed</b>: tự tạo IAM role, account <b>bất kỳ</b> (cả ngoài Organization), <b>không</b> auto deployment.<br><b>Service-managed</b>: qua <b>Organizations</b>, target theo OU, <b>automatic deployment</b>." },
+      { t: "ss", f: "Automatic deployment của StackSets hoạt động thế nào?", b: "Account mới thêm vào OU <b>tự nhận stack</b>; chuyển OU ⇒ gỡ ở OU cũ, tạo theo OU mới. Chỉ có với service-managed." },
+      { t: "ss", f: "Hạn chế của service-managed permissions về template?", b: "<b>Không hỗ trợ</b> template có macro/transform." },
+      { t: "ss", f: "Maximum concurrent accounts và failure tolerance?", b: "<b>Max concurrent</b>: số/% account chạy đồng thời mỗi Region.<br><b>Failure tolerance</b>: số/% stack được lỗi mỗi Region trước khi dừng." },
+      { t: "ss", f: "Region concurrency có những chế độ nào?", b: "<b>Sequential</b> (mặc định) hoặc <b>Parallel</b>." },
+      { t: "ss", f: "Bỏ stack khỏi StackSet nhưng giữ tài nguyên ⇒ ?", b: "Delete stack instances với <b>Retain stacks</b>." },
+      { t: "ss", f: "Quota StackSets?", b: "<b>1.000</b> StackSet/admin account · <b>100.000</b> stack instance/StackSet." },
+
+      // ---- Beanstalk
+      { t: "eb", f: "Application, application version, environment trong Beanstalk?", b: "<b>Application</b>: nhóm logic.<br><b>Version</b>: code có nhãn, trỏ tới source bundle trên <b>S3</b>.<br><b>Environment</b>: tài nguyên chạy một version." },
+      { t: "eb", f: "Web server tier vs worker tier?", b: "<b>Web</b>: phục vụ HTTP qua ALB.<br><b>Worker</b>: daemon <b>sqsd</b> kéo message <b>SQS</b>, POST tới localhost:80.", x: "Không đổi tier sau khi tạo." },
+      { t: "eb", f: "Tác vụ định kỳ trong worker tier khai báo ở đâu?", b: "<b>cron.yaml</b>; leader election qua bảng DynamoDB." },
+      { t: "eb", f: "Queue autogenerated của worker tier là loại nào?", b: "<b>Standard queue</b>, <b>dead-letter queue bật mặc định</b>." },
+      { t: "eb", f: "Beanstalk cần những role nào?", b: "<b>Service role</b> (giám sát, nâng cấp platform) và <b>EC2 instance profile</b>." },
+      { t: "eb", f: "Thuộc tính chỉ đặt được lúc tạo environment?", b: "Tên, domain, platform version, processor, <b>loại load balancer</b>, <b>tier</b>." },
+      { t: "eb", f: "All at once deployment?", b: "Deploy lên <b>tất cả cùng lúc</b>: nhanh nhất nhưng <b>downtime</b>." },
+      { t: "eb", f: "Rolling vs Rolling with additional batch?", b: "<b>Rolling</b>: từng batch, zero downtime nhưng <b>giảm capacity</b>.<br><b>+ additional batch</b>: thêm batch trước ⇒ <b>giữ nguyên capacity</b>." },
+      { t: "eb", f: "Immutable deployment?", b: "Tạo <b>Auto Scaling group thứ hai</b> với instance mới; lỗi ⇒ terminate instance mới – <b>rollback nhanh, an toàn</b>." },
+      { t: "eb", f: "Traffic splitting deployment?", b: "<b>Canary</b>: chuyển % traffic sang version mới trong thời gian đánh giá; <b>cần ALB</b>." },
+      { t: "eb", f: "Blue/green trong Beanstalk làm thế nào?", b: "Environment riêng cho version mới, rồi <b>Swap environment URLs</b> (CNAME); rollback = swap lại.", x: "DB phải tạo NGOÀI environment (hoặc Retain)." },
+      { t: "eb", f: "Single-instance environment hỗ trợ deployment policy nào?", b: "Chỉ <b>All at once</b> và <b>Immutable</b>." },
+      { t: "eb", f: "RDS tạo bên trong Beanstalk environment có vấn đề gì?", b: "Gắn <b>vòng đời với environment</b> (bị xóa khi terminate nếu không Retain), cản trở blue/green ⇒ tạo RDS riêng." },
+
+      // ---- Systems Manager
+      { t: "ssm", f: "Ba điều kiện để máy thành managed node?", b: "<b>SSM Agent</b> · <b>quyền IAM</b> (AmazonSSMManagedInstanceCore hoặc DHMC) · <b>đường ra HTTPS 443</b> (hoặc VPC endpoint)." },
+      { t: "ssm", f: "SSM Agent có cần inbound rule trên security group không?", b: "<b>Không</b> – agent chủ động mở kết nối <b>outbound 443</b>." },
+      { t: "ssm", f: "EC2 trong private subnet không internet/NAT cần VPC endpoint nào?", b: "Interface endpoint <b>ssm</b>, <b>ssmmessages</b>, <b>ec2messages</b> (+ S3 gateway endpoint; tùy chọn kms, logs)." },
+      { t: "ssm", f: "Default Host Management Configuration (DHMC) là gì?", b: "Cấp quyền SSM ở cấp account/Region cho mọi EC2 dùng <b>IMDSv2</b>, không cần instance profile; bật <b>từng Region</b>." },
+      { t: "ssm", f: "Đăng ký server on-premises vào Systems Manager thế nào?", b: "<b>Hybrid Activation</b> (activation code + ID)." },
+      { t: "ssm", f: "Instance không hiện trong managed node ⇒ nguyên nhân thường gặp?", b: "Thiếu <b>quyền IAM</b>, SSM Agent không chạy, hoặc không có <b>đường ra endpoint</b> – không phải do thiếu port 22." },
+      { t: "ssm", f: "Session Manager có lợi ích gì so với bastion + SSH?", b: "<b>Không inbound port, không bastion, không SSH key</b>, không cần public IP; quyền bằng <b>IAM</b>; log phiên vào S3/CloudWatch Logs, API vào CloudTrail." },
+      { t: "ssm", f: "Khi nào Session Manager không ghi log được nội dung phiên?", b: "Khi dùng <b>port forwarding</b> hoặc <b>SSH qua Session Manager</b> (chỉ là đường hầm)." },
+      { t: "ssm", f: "Kênh Session Manager được mã hóa thế nào?", b: "<b>TLS 1.2</b>, request ký <b>SigV4</b>; mã hóa thêm dữ liệu phiên bằng <b>KMS key</b>." },
+      { t: "ssm", f: "State Manager khác Run Command thế nào?", b: "<b>State Manager</b>: giữ node ở trạng thái mong muốn <b>liên tục</b> (association).<br><b>Run Command</b>: thay đổi <b>một lần</b>." },
+      { t: "ssm", f: "Tìm instance có cài một phiên bản phần mềm cụ thể ⇒ ?", b: "<b>Inventory</b>." },
+
+      // ---- Run Command & Patch
+      { t: "patch", f: "Run Command chọn target bằng gì?", b: "<b>Tag</b>, resource group, hoặc danh sách instance ID (tối đa 5 key × 5 value)." },
+      { t: "patch", f: "Rate control của Run Command: giá trị mặc định?", b: "<b>max-concurrency</b> mặc định <b>50</b>; <b>max-errors</b> mặc định <b>0</b> (dừng sau lỗi đầu tiên)." },
+      { t: "patch", f: "max-errors = 3 thì Run Command dừng khi nào?", b: "Dừng gửi khi nhận <b>lỗi thứ 4</b>; lệnh đang chạy vẫn chạy xong." },
+      { t: "patch", f: "Run Command có tính phí trên EC2 không?", b: "<b>Miễn phí</b> khi dùng trên EC2." },
+      { t: "patch", f: "Patch baseline định nghĩa gì?", b: "Quy tắc <b>auto-approve</b> sau N ngày, danh sách approved/rejected, lọc <b>classification</b> và <b>severity</b>; mỗi baseline cho một loại OS." },
+      { t: "patch", f: "Patch Manager có nâng major version OS không?", b: "<b>Không</b> (vd RHEL 7 → 8). Chỉ Service Pack Windows, minor version Linux." },
+      { t: "patch", f: "Hai thao tác của Patch Manager?", b: "<b>Scan</b> (chỉ báo cáo) và <b>Scan and install</b>." },
+      { t: "patch", f: "Vá theo lịch trong một account–Region dùng gì?", b: "<b>Maintenance window</b> + task Run Command <code>AWS-RunPatchBaseline</code>, target theo tag/patch group." },
+      { t: "patch", f: "Vá cho mọi account, mọi Region trong Organization ⇒ ?", b: "<b>Patch policy</b> trong <b>Quick Setup</b>." },
+      { t: "patch", f: "Vá khẩn cấp lỗ hổng zero-day ngay lập tức ⇒ ?", b: "<b>Patch now</b>." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>repeatable, consistent, version-controlled infrastructure</i>” ⇒ ?", b: "<b>CloudFormation</b> template (Parameters/Mappings cho từng môi trường)." },
+      { t: "kw", f: "Đề có “<i>keep the database / S3 data when the stack is deleted</i>” ⇒ ?", b: "<b>DeletionPolicy: Retain</b> hoặc <b>Snapshot</b>." },
+      { t: "kw", f: "Đề có “<i>prevent accidental updates to production DB during stack updates</i>” ⇒ ?", b: "<b>Stack policy</b> Deny Update:* cho logical ID đó." },
+      { t: "kw", f: "Đề có “<i>detect resources changed manually outside CloudFormation</i>” ⇒ ?", b: "<b>Drift detection</b>." },
+      { t: "kw", f: "Đề có “<i>preview impact, will the update replace the RDS instance</i>” ⇒ ?", b: "<b>Change set</b>." },
+      { t: "kw", f: "Đề có “<i>deploy to all accounts in the organization, including future accounts</i>” ⇒ ?", b: "<b>StackSets service-managed</b> + target OU + <b>automatic deployment</b>." },
+      { t: "kw", f: "Đề có “<i>developers just upload code, least operational overhead</i>” ⇒ ?", b: "<b>Elastic Beanstalk</b>." },
+      { t: "kw", f: "Đề có “<i>long-running background jobs</i>” trong Beanstalk ⇒ ?", b: "<b>Worker environment + SQS</b>; định kỳ ⇒ cron.yaml." },
+      { t: "kw", f: "Đề có “<i>must maintain full capacity during deployment</i>” ⇒ ?", b: "<b>Rolling with additional batch</b> hoặc <b>Immutable</b>." },
+      { t: "kw", f: "Đề có “<i>canary – test with 10% of traffic</i>” ⇒ ?", b: "<b>Traffic splitting</b>." },
+      { t: "kw", f: "Đề có “<i>access private EC2 without inbound ports, bastion, SSH keys; audit sessions</i>” ⇒ ?", b: "<b>Session Manager</b> + log S3/CloudWatch Logs." },
+      { t: "kw", f: "Đề có “<i>run a script on hundreds of instances without SSH</i>” ⇒ ?", b: "<b>Run Command</b> (tag + rate control)." },
+      { t: "kw", f: "Đề có “<i>patch EC2 and on-premises weekly, report compliance</i>” ⇒ ?", b: "<b>Patch Manager</b> + patch baseline + Maintenance Windows." }
+    ],
+
+    pairs: [
+      ["Template", "File YAML/JSON mô tả hạ tầng"],
+      ["Stack", "Nhóm tài nguyên tạo từ template, quản lý một khối"],
+      ["Resources", "Section duy nhất bắt buộc của template"],
+      ["Mappings", "Bảng tra cứu key–value, dùng FindInMap"],
+      ["Conditions", "Quyết định có tạo resource theo điều kiện"],
+      ["!ImportValue", "Lấy giá trị export từ stack khác"],
+      ["DeletionPolicy: Snapshot", "Chụp snapshot trước khi xóa resource"],
+      ["Stack policy", "Chặn update/replace/delete khi cập nhật stack"],
+      ["Termination protection", "Chống xóa nhầm cả stack"],
+      ["Drift detection", "Phát hiện sửa tay ngoài CloudFormation"],
+      ["Nested stack", "Stack lồng qua AWS::CloudFormation::Stack"],
+      ["Change set", "Xem trước thay đổi trước khi update"],
+      ["Replacement", "Tạo resource mới, physical ID mới"],
+      ["Stack instance", "Một stack ở một account–Region của StackSet"],
+      ["Service-managed permissions", "StackSets qua Organizations, auto deployment"],
+      ["Failure tolerance", "Số stack được lỗi mỗi Region trước khi dừng"],
+      ["Application version", "Code có nhãn, source bundle trên S3"],
+      ["Worker tier", "Xử lý nền, kéo việc từ SQS"],
+      ["sqsd", "Daemon kéo message SQS, POST tới localhost"],
+      ["cron.yaml", "Khai báo tác vụ định kỳ của worker"],
+      ["Immutable", "Deploy lên ASG mới, rollback an toàn"],
+      ["Swap environment URLs", "Hoán đổi CNAME cho blue/green"],
+      ["SSM Agent", "Tác nhân Systems Manager cài trên node"],
+      ["DHMC", "Cấp quyền SSM cho mọi EC2 trong Region (IMDSv2)"],
+      ["Hybrid Activation", "Đăng ký máy ngoài AWS thành managed node"],
+      ["Session Manager", "Shell vào node không inbound port, không SSH key"],
+      ["Rate control", "max-concurrency và max-errors của Run Command"],
+      ["Patch baseline", "Quy tắc duyệt patch theo classification, severity"],
+      ["Maintenance Windows", "Lịch chạy tác vụ quản trị định kỳ"],
+      ["State Manager", "Giữ node ở cấu hình mong muốn liên tục"]
+    ],
+
+    sorts: [
+      {
+        title: "CloudFormation, Beanstalk hay Systems Manager?",
+        desc: "Tình huống đề ⇒ dịch vụ phù hợp nhất.",
+        buckets: ["CloudFormation / StackSets", "Elastic Beanstalk", "Systems Manager"],
+        items: [
+          ["Dựng lại y hệt môi trường ở Region khác", 0, "template lặp lại được"],
+          ["Rải IAM role chuẩn cho mọi account kể cả account mới", 0, "StackSets automatic deployment"],
+          ["Hạ tầng trong version control, review như code", 0, "IaC"],
+          ["Developer chỉ muốn upload code Java", 1, "Beanstalk lo EC2/ALB/ASG"],
+          ["Web app cần canary 10% traffic khi deploy", 1, "Traffic splitting"],
+          ["Xử lý tác vụ nền dài qua SQS, ít vận hành", 1, "worker environment"],
+          ["Cài package trên 500 instance đang chạy", 2, "Run Command"],
+          ["Shell vào EC2 private không bastion", 2, "Session Manager"],
+          ["Vá OS hằng tuần cho EC2 và server on-prem", 2, "Patch Manager"]
+        ]
+      },
+      {
+        title: "Bảo vệ tài nguyên trong CloudFormation",
+        desc: "Yêu cầu nào dùng cơ chế nào?",
+        buckets: ["DeletionPolicy", "Stack policy", "Termination protection", "Change set", "Drift detection"],
+        items: [
+          ["Giữ S3 bucket khi xóa stack", 0, "Retain"],
+          ["Chụp snapshot RDS trước khi xóa stack", 0, "Snapshot"],
+          ["Chặn replace database production khi update stack", 1, "Deny Update:Replace"],
+          ["Mọi resource được bảo vệ mặc định khi update, phải Allow rõ", 1, "hành vi của stack policy"],
+          ["Từ chối lệnh xóa cả stack", 2, "bật trên stack"],
+          ["Xem update có làm RDS bị Replacement không", 3, "xem trước, chưa đổi gì"],
+          ["So sánh nhiều phương án update trước khi chọn", 3, "tạo nhiều change set"],
+          ["Ai đó đổi security group trên console EC2", 4, "resource MODIFIED"],
+          ["Resource trong stack bị xóa tay", 4, "resource DELETED"]
+        ]
+      },
+      {
+        title: "Chọn deployment policy của Beanstalk",
+        desc: "Yêu cầu triển khai ⇒ policy/kỹ thuật phù hợp nhất.",
+        buckets: ["All at once", "Rolling", "Rolling with additional batch", "Immutable", "Traffic splitting", "Blue/green"],
+        items: [
+          ["Môi trường dev, nhanh nhất, chấp nhận downtime", 0, "deploy tất cả cùng lúc"],
+          ["Zero downtime, chấp nhận giảm capacity, không thêm instance", 1, "rút từng batch khỏi phục vụ"],
+          ["Giữ nguyên capacity, deploy lên instance hiện có + batch mới", 2, "khởi chạy thêm batch trước"],
+          ["Lỗi không được ảnh hưởng instance cũ, rollback nhanh", 3, "ASG thứ hai với instance mới"],
+          ["Single-instance environment nhưng muốn an toàn", 3, "single-instance chỉ có All at once và Immutable"],
+          ["Thử version mới với 10% traffic thật", 4, "canary, cần ALB"],
+          ["Đổi môi trường tức thì bằng hoán đổi CNAME", 5, "Swap environment URLs"],
+          ["Nâng cấp lên platform version không tương thích", 5, "blue/green là cách bắt buộc"]
+        ]
+      },
+      {
+        title: "StackSets: self-managed hay service-managed?",
+        desc: "Đặc điểm nào thuộc mô hình quyền nào?",
+        buckets: ["Self-managed", "Service-managed"],
+        items: [
+          ["Tự tạo IAM role ở admin và từng target account", 0, "thiết lập trust thủ công"],
+          ["Triển khai tới account của đối tác ngoài Organization", 0, "account bất kỳ có quyền tạo role"],
+          ["Không có automatic deployment", 0, "phải tự thêm account mới"],
+          ["Target theo OU trong AWS Organizations", 1, "cần trusted access"],
+          ["Account mới vào OU tự nhận stack", 1, "automatic deployment"],
+          ["Quản trị từ delegated administrator", 1, "member account được ủy quyền"],
+          ["Không hỗ trợ template có macro/transform", 1, "hạn chế của service-managed"]
+        ]
+      },
+      {
+        title: "Tool nào của Systems Manager?",
+        desc: "Yêu cầu vận hành ⇒ tool Systems Manager phù hợp.",
+        buckets: ["Session Manager", "Run Command", "Patch Manager", "State Manager", "Inventory", "Automation"],
+        items: [
+          ["Shell tương tác, log từng lệnh vào S3", 0, "không inbound port"],
+          ["Port forwarding tới DB nội bộ", 0, "Session-type document"],
+          ["Chạy script một lần trên 200 instance theo tag", 1, "one-time, rate control"],
+          ["Join instance vào Windows domain ngay bây giờ", 1, "ứng dụng tiêu biểu của Run Command"],
+          ["Patch baseline auto-approve 7 ngày", 2, "quy tắc duyệt patch"],
+          ["Báo cáo compliance patch dạng CSV vào S3", 2, "Patch Manager compliance"],
+          ["Bảo đảm CloudWatch agent luôn được cài", 3, "association liên tục"],
+          ["Liệt kê instance có phần mềm phiên bản X", 4, "thu metadata phần mềm"],
+          ["Runbook remediation cho Config rule", 5, "SSM Automation document"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Resources là section duy nhất bắt buộc trong template CloudFormation.", true, "Các section khác là tùy chọn."],
+      ["Template CloudFormation phải có section Parameters.", false, "Parameters là tùy chọn."],
+      ["Tạo stack lỗi mặc định sẽ rollback, xóa resource đã tạo.", true, "Có thể chọn Preserve successfully provisioned resources."],
+      ["Một template tối đa 500 resource.", true, "Nested stack giúp vượt giới hạn này."],
+      ["DeletionPolicy mặc định của hầu hết resource là Retain.", false, "Mặc định là Delete."],
+      ["DeletionPolicy mặc định của AWS::RDS::DBCluster là Snapshot.", true, "Ngoại lệ được nêu trong tài liệu."],
+      ["S3 bucket không rỗng vẫn bị CloudFormation xóa khi xóa stack.", false, "S3 bucket chỉ xóa được khi đã rỗng."],
+      ["Stack policy thay thế được IAM policy.", false, "Stack policy chỉ áp dụng khi update stack."],
+      ["Khi đã đặt stack policy, mọi resource được bảo vệ mặc định.", true, "Phải Allow rõ ràng."],
+      ["Drift detection tự sửa resource về đúng template.", false, "Chỉ phát hiện."],
+      ["Drift detection tự kiểm tra cả nested stack.", false, "Phải chạy riêng cho nested stack."],
+      ["Tạo change set chưa thay đổi gì trên stack.", true, "Chỉ khi execute mới đổi."],
+      ["Change set bảo đảm update sẽ thành công.", false, "Lỗi lúc chạy vẫn có thể xảy ra."],
+      ["Replacement tạo resource mới với physical ID mới.", true, "Rồi xóa resource cũ."],
+      ["Đổi AvailabilityZone của EC2 trong template gây Replacement.", true, "Ví dụ trong tài liệu."],
+      ["StackSet là tài nguyên global, thấy ở mọi Region.", false, "StackSet là tài nguyên theo Region."],
+      ["Self-managed permissions hỗ trợ automatic deployment.", false, "Chỉ service-managed mới có."],
+      ["Service-managed permissions triển khai được tới account ngoài Organization.", false, "Account ngoài Organization ⇒ self-managed."],
+      ["Region concurrency mặc định của StackSets là Sequential.", true, "Có thể chọn Parallel."],
+      ["Elastic Beanstalk tính phí dịch vụ riêng ngoài tài nguyên.", false, "Không phí thêm."],
+      ["Có thể đổi environment tier từ web server sang worker sau khi tạo.", false, "Không đổi tier sau khi tạo."],
+      ["Queue autogenerated của worker tier có dead-letter queue bật mặc định.", true, "Là standard queue."],
+      ["Rolling deployment giữ nguyên capacity.", false, "Rolling giảm capacity; giữ capacity ⇒ additional batch."],
+      ["Immutable deployment tạo Auto Scaling group thứ hai.", true, "Rollback bằng terminate instance mới."],
+      ["Traffic splitting dùng được với Network Load Balancer.", false, "Chỉ với Application Load Balancer."],
+      ["Blue/green trong Beanstalk dùng Swap environment URLs.", true, "Hoán đổi CNAME."],
+      ["Single-instance environment hỗ trợ Rolling deployment.", false, "Chỉ All at once và Immutable."],
+      ["SSM Agent cần security group mở inbound port 443.", false, "Agent dùng kết nối outbound 443."],
+      ["EC2 private không internet cần endpoint ssm, ssmmessages, ec2messages.", true, "Interface VPC endpoints."],
+      ["Instance không hiện managed node thường do thiếu port 22.", false, "Thường do thiếu IAM, agent hoặc đường ra endpoint."],
+      ["Session Manager không cần SSH key và bastion host.", true, "Quyền bằng IAM."],
+      ["Session Manager ghi log được nội dung phiên khi dùng port forwarding.", false, "Port forwarding/SSH chỉ là đường hầm."],
+      ["Run Command miễn phí khi dùng trên EC2.", true, "Node hybrid có thể tính phí."],
+      ["max-errors mặc định của Run Command là 0.", true, "Dừng sau lỗi đầu tiên."],
+      ["Patch Manager nâng được Windows Server 2016 lên 2019.", false, "Không nâng major version OS."],
+      ["Patch policy trong Quick Setup vá được nhiều account và Region.", true, "Cả Organization hoặc một số OU."]
+    ],
+
+    map: {
+      t: "Bài 41 · IaC & triển khai",
+      c: [
+        { t: "Bức tranh tổng thể", icon: "cat/Management-Governance.svg", c: [
+          { t: "CloudFormation", v: "mô tả toàn bộ hạ tầng bằng template" },
+          { t: "Beanstalk", v: "upload code, Beanstalk lo hạ tầng" },
+          { t: "Systems Manager", v: "vận hành bên trong node" },
+          { t: "Phân biệt", v: "tạo tài nguyên ⇒ CFN · cài lên node đang chạy ⇒ Run Command" }
+        ] },
+        { t: "CloudFormation", icon: "svc/AWS-CloudFormation.svg", c: [
+          { t: "Template", v: "YAML/JSON, chỉ Resources bắt buộc" },
+          { t: "Rollback", v: "tạo lỗi xóa hết · update lỗi về trạng thái ổn định" },
+          { t: "Quota", v: "500 resource/template, 2.000 stack/account" },
+          { t: "Bảo vệ", c: [
+            { t: "DeletionPolicy", v: "Delete · Retain · RetainExceptOnCreate · Snapshot" },
+            { t: "Stack policy", v: "chặn update/replace/delete khi update" },
+            { t: "Termination protection", v: "chống xóa stack" }
+          ] },
+          { t: "Drift detection", v: "phát hiện sửa tay, không tự sửa" },
+          { t: "Tái sử dụng", v: "nested stack · Export/ImportValue" }
+        ] },
+        { t: "Change sets", icon: "res/AWS-CloudFormation_Change-Set.svg", c: [
+          { t: "Vai trò", v: "xem trước Add/Modify/Remove trước khi execute" },
+          { t: "Update behavior", v: "No Interruption · Some Interruption · Replacement" },
+          { t: "Replacement", v: "physical ID mới – DB mất dữ liệu" },
+          { t: "Lưu ý", v: "không bảo đảm thành công; execute xóa change set khác" }
+        ] },
+        { t: "StackSets", icon: "res/AWS-CloudFormation_Template.svg", c: [
+          { t: "Vai trò", v: "một thao tác ⇒ stack ở nhiều account × Region" },
+          { t: "Self-managed", v: "tự tạo role, account bất kỳ" },
+          { t: "Service-managed", v: "Organizations, OU, automatic deployment" },
+          { t: "Tùy chọn", v: "max concurrent accounts, failure tolerance, sequential/parallel" },
+          { t: "Retain stacks", v: "gỡ khỏi StackSet nhưng giữ tài nguyên" }
+        ] },
+        { t: "Elastic Beanstalk", icon: "svc/AWS-Elastic-Beanstalk.svg", c: [
+          { t: "Khái niệm", v: "application → version (S3) → environment" },
+          { t: "Tier", v: "web server · worker (SQS + sqsd, cron.yaml)" },
+          { t: "Deployment", c: [
+            { t: "All at once", v: "nhanh, downtime" },
+            { t: "Rolling", v: "giảm capacity" },
+            { t: "+ additional batch", v: "giữ capacity" },
+            { t: "Immutable", v: "ASG mới, rollback an toàn" },
+            { t: "Traffic splitting", v: "canary, cần ALB" },
+            { t: "Blue/green", v: "Swap environment URLs" }
+          ] },
+          { t: "Database", v: "tạo RDS ngoài environment" }
+        ] },
+        { t: "Systems Manager", icon: "svc/AWS-Systems-Manager.svg", c: [
+          { t: "Managed node", v: "SSM Agent + IAM + outbound 443" },
+          { t: "Private subnet", v: "endpoint ssm, ssmmessages, ec2messages" },
+          { t: "DHMC", v: "quyền mặc định cho EC2 IMDSv2, từng Region" },
+          { t: "Session Manager", v: "không inbound port, bastion, SSH key; log S3/CW Logs" },
+          { t: "State Manager / Inventory", v: "giữ cấu hình liên tục / kiểm kê phần mềm" }
+        ] },
+        { t: "Run Command & Patch", icon: "res/AWS-Systems-Manager_Patch-Manager.svg", c: [
+          { t: "Run Command", v: "lệnh one-time theo tag, miễn phí trên EC2" },
+          { t: "Rate control", v: "max-concurrency 50 · max-errors 0 (mặc định)" },
+          { t: "Patch baseline", v: "auto-approve N ngày, classification, severity" },
+          { t: "Cách vá", v: "maintenance window + AWS-RunPatchBaseline · Patch now" },
+          { t: "Quy mô Organization", v: "patch policy (Quick Setup)" },
+          { t: "Giới hạn", v: "không nâng major version OS" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

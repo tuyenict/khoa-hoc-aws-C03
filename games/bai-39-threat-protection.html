@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 39 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-WAF.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="39" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-39-threat-protection.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "big", name: "Bức tranh tổng thể" },
+      { id: "waf", name: "AWS WAF" },
+      { id: "shield", name: "AWS Shield" },
+      { id: "fms", name: "Firewall Manager" },
+      { id: "gd", name: "GuardDuty" },
+      { id: "insp", name: "Inspector & Macie" },
+      { id: "hub", name: "Security Hub & Detective" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Tổng thể
+      { t: "big", f: "Nhóm dịch vụ <b>chặn / ngăn chặn</b> tấn công gồm những gì?", b: "<b>AWS WAF</b> (L7 HTTP) · <b>AWS Shield</b> (DDoS) · <b>Firewall Manager</b> (áp chính sách tập trung)." },
+      { t: "big", f: "Nhóm dịch vụ <b>phát hiện / đánh giá / điều tra</b> gồm những gì?", b: "<b>GuardDuty</b> (mối đe dọa) · <b>Inspector</b> (CVE) · <b>Macie</b> (PII trong S3) · <b>Security Hub CSPM</b> (tổng hợp, chuẩn) · <b>Detective</b> (root cause)." },
+      { t: "big", f: "GuardDuty, Inspector, Macie có chặn traffic không?", b: "<b>Không.</b> Chúng đọc log/cấu hình, sinh finding; không nằm trên đường đi của request.", x: "Đề hỏi “block/prevent” ⇒ WAF/Shield; “detect/identify” ⇒ nhóm phát hiện." },
+      { t: "big", f: "Phân biệt Inspector, GuardDuty và Trusted Advisor.", b: "<b>Inspector</b>: lỗ hổng phần mềm trên tài nguyên.<br><b>GuardDuty</b>: hành vi đáng ngờ đang diễn ra.<br><b>Trusted Advisor</b>: khuyến nghị best practice chung." },
+      { t: "big", f: "PII trong DynamoDB/RDS hay trong văn bản có dùng Macie không?", b: "<b>Không</b> – Macie chỉ cho <b>S3</b>. PII trong văn bản ⇒ <b>Comprehend</b>." },
+      { t: "big", f: "<i>Defense in depth</i> là gì?", b: "Phòng thủ <b>nhiều lớp độc lập</b>: Shield/WAF ở vành đai, SG/NACL bên trong, nhóm phát hiện đọc log." },
+
+      // ---- WAF
+      { t: "waf", f: "AWS WAF hoạt động ở tầng nào?", b: "<b>Layer 7</b> – hiểu HTTP(S), khác Security Group/NACL (L3/L4)." },
+      { t: "waf", f: "WAF gắn được vào những tài nguyên nào?", b: "<b>CloudFront, ALB, API Gateway REST API, AppSync, Cognito user pool</b>, App Runner, Verified Access, Amplify." },
+      { t: "waf", f: "WAF KHÔNG gắn trực tiếp được vào đâu?", b: "<b>NLB, CLB, EC2 instance</b>, API Gateway HTTP API.", x: "App sau NLB cần WAF ⇒ đổi sang ALB hoặc đặt CloudFront + WAF phía trước." },
+      { t: "waf", f: "Web ACL là gì?", b: "Tài nguyên WAF bảo vệ một tập tài nguyên: chứa các <b>rule</b> và một <b>default action</b> (Allow/Block). Console mới gọi là <i>protection pack</i>." },
+      { t: "waf", f: "WAF đánh giá rule theo thứ tự nào?", b: "Theo <b>priority</b> từ nhỏ đến lớn; rule <b>terminating</b> (Allow/Block) khớp đầu tiên sẽ dừng đánh giá; không rule nào quyết định ⇒ <b>default action</b>." },
+      { t: "waf", f: "Action <b>Count</b> dùng để làm gì?", b: "<b>Non-terminating</b>: chỉ đếm, gắn label rồi đánh giá tiếp ⇒ <b>thử rule mới</b> trên traffic production trước khi bật Block." },
+      { t: "waf", f: "CAPTCHA khác Challenge thế nào?", b: "<b>CAPTCHA</b>: người dùng giải câu đố (chỉ HTTPS).<br><b>Challenge</b>: thử thách ngầm bằng JavaScript, người dùng không thao tác. Cả hai có phí thêm." },
+      { t: "waf", f: "Request bị Block mặc định nhận phản hồi gì?", b: "<b>HTTP 403 Forbidden</b> (tùy biến được bằng custom response)." },
+      { t: "waf", f: "Giới hạn WCU của web ACL?", b: "Tối đa <b>5.000 WCU</b>; giá cơ bản gồm <b>1.500 WCU</b>, vượt mức tính phí thêm.", x: "Rule group cũng tối đa 5.000 WCU, capacity cố định khi tạo." },
+      { t: "waf", f: "Geo match rule tốn bao nhiêu WCU?", b: "<b>1 WCU</b>; dùng mã ISO 3166 alpha-2 (dữ liệu MaxMind), luôn gắn label quốc gia." },
+      { t: "waf", f: "Giới hạn kiểm tra body mặc định của WAF (CloudFront, API Gateway, Cognito)?", b: "<b>16 KB</b>; tăng lên có thể tốn thêm phí." },
+      { t: "waf", f: "Web ACL cho CloudFront phải tạo ở đâu?", b: "Phạm vi <b>Global</b>, Region cố định <b>us-east-1</b>. Tài nguyên Regional ⇒ web ACL cùng Region." },
+      { t: "waf", f: "Ba nguồn rule group của WAF?", b: "<b>AWS Managed Rules</b> · <b>AWS Marketplace</b> · rule group <b>tự viết</b>." },
+      { t: "waf", f: "Các rule group baseline của AWS Managed Rules?", b: "<b>Core rule set (CRS)</b> (kiểu OWASP) · <b>Admin protection</b> · <b>Known bad inputs</b>." },
+      { t: "waf", f: "IP reputation rule group gồm gì?", b: "<b>Amazon IP reputation list</b> (IP xấu theo threat intel) và <b>Anonymous IP list</b> (VPN, proxy, Tor, hosting)." },
+      { t: "waf", f: "Intelligent threat mitigation (có phí) gồm gì?", b: "<b>Bot Control</b>, <b>Fraud Control ATP</b> (chống chiếm tài khoản), <b>ACFP</b> (chống tạo tài khoản giả), <b>Anti-DDoS</b> L7." },
+      { t: "waf", f: "Log đầy đủ request WAF gửi tới đâu?", b: "<b>CloudWatch Logs</b>, <b>Amazon S3</b> hoặc <b>Data Firehose</b> (tên đích bắt đầu <code>aws-waf-logs-</code>)." },
+      { t: "waf", f: "Evaluation window của rate-based rule?", b: "<b>60 / 120 / 300 / 600 giây</b>, mặc định <b>300 giây</b>; rate limit nhỏ nhất <b>10</b>." },
+      { t: "waf", f: "Rate-based rule gom request theo những khóa nào?", b: "<b>IP nguồn</b>, <b>IP trong header</b> (X-Forwarded-For), <b>custom keys</b>, hoặc <b>Count all</b> (bắt buộc có scope-down)." },
+      { t: "waf", f: "Scope-down statement dùng làm gì trong rate-based rule?", b: "Chỉ đếm request khớp điều kiện, vd chỉ request tới <code>/login</code>." },
+      { t: "waf", f: "Chặn quốc gia X nhưng cho dải IP đối tác ⇒ rule thế nào?", b: "<code>AND(geo match, NOT(IP set))</code>.", x: "CloudFront geo restriction không kết hợp được tiêu chí khác như vậy." },
+
+      // ---- Shield
+      { t: "shield", f: "Shield Standard bảo vệ gì? Giá?", b: "<b>Miễn phí, tự động</b> cho mọi khách hàng; chống DDoS phổ biến <b>L3/L4</b> (SYN flood, UDP reflection)." },
+      { t: "shield", f: "Shield Advanced có tự bảo vệ mọi tài nguyên không?", b: "<b>Không</b> – chỉ tài nguyên bạn <b>chỉ định rõ</b> (hoặc qua chính sách Firewall Manager)." },
+      { t: "shield", f: "Tài nguyên Shield Advanced bảo vệ được?", b: "<b>CloudFront, Route 53 hosted zone, Global Accelerator, Elastic IP</b> (⇒ EC2, NLB), <b>ALB, CLB</b>." },
+      { t: "shield", f: "Bảo vệ EC2 hoặc NLB bằng Shield Advanced thế nào?", b: "Qua <b>Elastic IP</b> gắn với chúng." },
+      { t: "shield", f: "Dùng Shield Response Team (SRT) cần điều kiện gì?", b: "Gói <b>Business Support</b> hoặc <b>Enterprise Support</b>." },
+      { t: "shield", f: "Proactive engagement là gì?", b: "SRT <b>chủ động liên hệ</b> khi Route 53 health check của tài nguyên unhealthy trong sự kiện DDoS; cần bật <b>health-based detection</b>." },
+      { t: "shield", f: "Cost protection của Shield Advanced?", b: "Bồi hoàn dưới dạng <b>service credit</b> phần hóa đơn tăng vọt do DDoS (vd data transfer out); phải gửi yêu cầu sau tấn công." },
+      { t: "shield", f: "Automatic application layer DDoS mitigation hoạt động thế nào?", b: "Shield Advanced tự thêm/quản lý rule WAF khi phát hiện tấn công L7 (Count hoặc Block); thêm rule group <b>150 WCU</b>; cần web ACL gắn với tài nguyên." },
+      { t: "shield", f: "Shield Advanced bao gồm phí WAF nào?", b: "Phí WAF <b>chuẩn</b> cho tài nguyên được bảo vệ (tới 1.500 WCU, body mặc định), tới <b>50 tỷ request/tháng</b>.", x: "Không gồm Bot Control, CAPTCHA, web ACL &gt; 1.500 WCU." },
+      { t: "shield", f: "Thanh toán Shield Advanced trong Organizations?", b: "Tính vào <b>payer account</b>; cả consolidated billing family chỉ trả <b>một phí subscription</b>." },
+      { t: "shield", f: "Best practice kiến trúc chịu DDoS?", b: "Đưa vành đai ra <b>edge</b> (CloudFront, Route 53, Global Accelerator) · backend <b>private subnet</b> · WAF lọc L7 · <b>ALB + Auto Scaling</b> hấp thụ tải · giám sát CloudWatch." },
+
+      // ---- Firewall Manager
+      { t: "fms", f: "AWS Firewall Manager làm gì?", b: "Đặt chính sách <b>một lần</b>, tự áp cho mọi account & tài nguyên trong Organizations – <b>kể cả account/tài nguyên mới</b>." },
+      { t: "fms", f: "Điều kiện tiên quyết của Firewall Manager?", b: "<b>AWS Organizations</b> + <b>Firewall Manager administrator account</b> + <b>AWS Config</b> (thêm RAM cho Network Firewall/DNS Firewall)." },
+      { t: "fms", f: "Các loại chính sách Firewall Manager?", b: "<b>WAF, Shield Advanced, Security group, NACL, Network Firewall, Route 53 Resolver DNS Firewall</b>, third-party firewall." },
+      { t: "fms", f: "Phạm vi chính sách Firewall Manager có thể là?", b: "Theo <b>account</b>, mọi tài nguyên <b>một loại</b>, hoặc tài nguyên có <b>tag</b> cụ thể." },
+      { t: "fms", f: "Chính sách Shield Advanced của Firewall Manager có tốn phí không?", b: "<b>Miễn phí</b> với khách hàng Shield Advanced; các loại khác trả phí dịch vụ bên dưới (WAF, AWS Config)." },
+
+      // ---- GuardDuty
+      { t: "gd", f: "Ba nguồn dữ liệu nền tảng của GuardDuty?", b: "<b>CloudTrail management events</b> · <b>VPC Flow Logs</b> (EC2) · <b>Route 53 Resolver DNS query logs</b>." },
+      { t: "gd", f: "Có phải bật VPC Flow Logs / CloudTrail trước khi dùng GuardDuty?", b: "<b>Không</b> – GuardDuty lấy qua <b>luồng độc lập, nhân bản</b>, không ảnh hưởng cấu hình của bạn." },
+      { t: "gd", f: "Khi nào GuardDuty không đọc được DNS logs?", b: "Khi EC2 dùng <b>DNS resolver khác</b> AWS (OpenDNS, Google DNS, resolver tự dựng)." },
+      { t: "gd", f: "Nên bật GuardDuty ở những Region nào?", b: "<b>Mọi Region</b>, kể cả Region không dùng – kẻ tấn công có thể tạo tài nguyên ở Region bạn ít để ý." },
+      { t: "gd", f: "Protection plan nào không tự bật khi kích hoạt GuardDuty lần đầu?", b: "<b>Runtime Monitoring</b> (cần GuardDuty security agent trên EKS/EC2/ECS)." },
+      { t: "gd", f: "Quét malware file mới upload lên S3 ⇒ ?", b: "<b>GuardDuty Malware Protection for S3</b> – dùng được độc lập không cần bật GuardDuty." },
+      { t: "gd", f: "Phát hiện đăng nhập bất thường vào RDS/Aurora ⇒ ?", b: "<b>GuardDuty RDS Protection</b>." },
+      { t: "gd", f: "Các mức severity của GuardDuty?", b: "<b>Low</b> 1,0–3,9 · <b>Medium</b> 4,0–6,9 · <b>High</b> 7,0–8,9 · <b>Critical</b> 9,0–10,0." },
+      { t: "gd", f: "Extended Threat Detection là gì?", b: "Tự bật, miễn phí: nối nhiều sự kiện rời rạc thành <b>attack sequence</b> (tấn công nhiều giai đoạn)." },
+      { t: "gd", f: "Tự động phản ứng với finding GuardDuty thế nào?", b: "<b>EventBridge rule</b> lọc type/severity ⇒ <b>SNS</b> (cảnh báo) / <b>Lambda</b> (cách ly EC2, vô hiệu access key)." },
+      { t: "gd", f: "Free trial của GuardDuty?", b: "<b>30 ngày</b> khi bật lần đầu ở một Region (trừ Runtime Monitoring)." },
+
+      // ---- Inspector & Macie
+      { t: "insp", f: "Amazon Inspector quét những gì?", b: "<b>CVE</b> và <b>unintended network exposure</b> trên <b>EC2, image ECR, Lambda</b> (thêm AMI, code)." },
+      { t: "insp", f: "Inspector quét EC2 bằng cách nào?", b: "<b>Agent-based</b> qua SSM Agent hoặc <b>agentless</b> qua EBS snapshot; mặc định <b>hybrid</b>." },
+      { t: "insp", f: "Inspector có cần lên lịch quét không?", b: "<b>Không</b> – tự quét lại khi cài gói mới, cài patch, hoặc khi <b>CVE mới</b> được công bố." },
+      { t: "insp", f: "Inspector risk score là gì?", b: "Điều chỉnh điểm <b>CVSS</b> gốc theo môi trường thực tế (vd hạ điểm nếu instance không có đường mạng ra Internet)." },
+      { t: "insp", f: "Inspector có tự vá lỗ hổng không?", b: "<b>Không</b> – chỉ tìm. Vá hàng loạt ⇒ <b>Systems Manager Patch Manager</b>." },
+      { t: "insp", f: "ECR basic scanning vs enhanced scanning?", b: "<b>Basic</b>: của chính ECR.<br><b>Enhanced</b>: do Inspector, quét liên tục, gồm cả gói ngôn ngữ (re-scan mặc định 7 ngày cho account mới)." },
+      { t: "insp", f: "Macie đánh giá bảo mật bucket như thế nào?", b: "Tự tạo <b>inventory</b> bucket, đánh giá liên tục public/chia sẻ/mã hóa ⇒ <b>policy finding</b>." },
+      { t: "insp", f: "Automated sensitive data discovery vs discovery job (Macie)?", b: "<b>Automated</b>: liên tục, <b>lấy mẫu</b>, tầm nhìn rộng, chi phí thấp.<br><b>Job</b>: phân tích <b>sâu, có mục tiêu</b>, chạy một lần hoặc định kỳ." },
+      { t: "insp", f: "Phát hiện định dạng dữ liệu riêng (mã nhân viên) bằng Macie?", b: "<b>Custom data identifier</b> (regex, tùy chọn keyword + proximity)." },
+      { t: "insp", f: "Allow list của Macie dùng để làm gì?", b: "Văn bản/pattern Macie <b>bỏ qua</b> – vd số điện thoại công khai, dữ liệu mẫu test." },
+
+      // ---- Security Hub & Detective
+      { t: "hub", f: "Security Hub CSPM hỗ trợ những security standard nào?", b: "<b>FSBP</b> (AWS Foundational Security Best Practices), <b>CIS AWS Foundations Benchmark</b>, <b>PCI DSS</b>, <b>NIST</b>." },
+      { t: "hub", f: "Security Hub CSPM cần dịch vụ nào bật trước?", b: "<b>AWS Config</b> (ghi lại tài nguyên) – phần lớn control dùng service-linked Config rules." },
+      { t: "hub", f: "ASFF là gì?", b: "<b>AWS Security Finding Format</b> – định dạng chuẩn hóa finding từ GuardDuty, Inspector, Macie, partner…" },
+      { t: "hub", f: "Xem finding của mọi Region ở một chỗ ⇒ ?", b: "Security Hub <b>cross-Region aggregation</b>: home Region + linked Region, đồng bộ 2 chiều, <b>không tốn thêm phí</b>." },
+      { t: "hub", f: "Security Hub có tổng hợp finding sinh ra trước khi bật không?", b: "<b>Không</b> (không hồi tố); và chỉ xử lý finding trong Region đã bật." },
+      { t: "hub", f: "Amazon Detective dùng để làm gì?", b: "<b>Điều tra root cause</b>: dựng <b>behavior graph</b> từ CloudTrail, VPC Flow Logs, finding GuardDuty bằng ML + thống kê + đồ thị." },
+      { t: "hub", f: "Detective giữ bao nhiêu dữ liệu lịch sử?", b: "Tới <b>1 năm</b> dữ liệu sự kiện." },
+      { t: "hub", f: "Finding group trong Detective là gì?", b: "Gom nhiều finding/hoạt động liên quan đến <b>cùng một sự kiện bảo mật</b>." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>SQL injection</i>”, “<i>cross-site scripting</i>” trên ALB/CloudFront ⇒ ?", b: "<b>AWS WAF + AWS Managed Rules</b> (CRS, SQL database)." },
+      { t: "kw", f: "Đề có “<i>HTTP flood</i>”, “<i>brute-force login</i>”, “<i>single IP sends thousands of requests</i>” ⇒ ?", b: "<b>WAF rate-based rule</b> (scope-down vào /login)." },
+      { t: "kw", f: "Đề có “<i>test new rules without impacting users</i>” ⇒ ?", b: "Đặt rule ở <b>Count</b>, xem metric/log." },
+      { t: "kw", f: "Đề có “<i>protect against DDoS at no additional cost</i>” ⇒ ?", b: "<b>Shield Standard</b> (đã bật sẵn) + CloudFront/Route 53." },
+      { t: "kw", f: "Đề có “<i>24/7 DDoS experts</i>”, “<i>reimburse scaling charges</i>” ⇒ ?", b: "<b>Shield Advanced</b> (SRT, cost protection)." },
+      { t: "kw", f: "Đề có “<i>enforce WAF rules across all accounts, including future accounts</i>” ⇒ ?", b: "<b>AWS Firewall Manager</b>." },
+      { t: "kw", f: "Đề có “<i>EC2 communicating with malicious IPs</i>”, “<i>cryptocurrency mining</i>”, “<i>unusual API activity</i>” ⇒ ?", b: "<b>Amazon GuardDuty</b>." },
+      { t: "kw", f: "Đề có “<i>continuously scan EC2 and container images for CVEs</i>” ⇒ ?", b: "<b>Amazon Inspector</b>." },
+      { t: "kw", f: "Đề có “<i>PII / credit card numbers in S3</i>” ⇒ ?", b: "<b>Amazon Macie</b>." },
+      { t: "kw", f: "Đề có “<i>single dashboard for findings</i>”, “<i>CIS / PCI DSS compliance checks</i>” ⇒ ?", b: "<b>Security Hub CSPM</b> (bật AWS Config trước)." },
+      { t: "kw", f: "Đề có “<i>investigate root cause</i>”, “<i>visualize related entities over time</i>” ⇒ ?", b: "<b>Amazon Detective</b>." }
+    ],
+
+    pairs: [
+      ["Web ACL", "Tập rule + default action bảo vệ tài nguyên web"],
+      ["Default action", "Allow/Block khi không rule nào quyết định"],
+      ["Count", "Action không kết thúc, chỉ đếm để thử rule"],
+      ["WCU", "Đơn vị dung lượng web ACL, tối đa 5.000"],
+      ["Rate-based rule", "Giới hạn số request theo nhóm trong cửa sổ"],
+      ["Scope-down statement", "Thu hẹp request được kiểm tra/đếm"],
+      ["Geo match", "Khớp quốc gia nguồn, 1 WCU"],
+      ["Core rule set (CRS)", "Managed rule chống lỗ hổng web kiểu OWASP"],
+      ["Anonymous IP list", "IP của VPN, proxy, Tor, hosting"],
+      ["Fraud Control ATP", "Chống chiếm tài khoản qua trang login"],
+      ["Challenge", "Thử thách JavaScript ngầm chống bot"],
+      ["Shield Standard", "Chống DDoS L3/L4 miễn phí, tự động"],
+      ["SRT", "Đội phản ứng DDoS của AWS (Shield Advanced)"],
+      ["Cost protection", "Service credit cho phí tăng do DDoS"],
+      ["Protection group", "Nhóm tài nguyên được Shield Advanced bảo vệ"],
+      ["Application perimeter", "Điểm traffic bên ngoài vào AWS lần đầu"],
+      ["Attack sequence", "Chuỗi tấn công nhiều giai đoạn (GuardDuty)"],
+      ["Protection plan", "Gói mở rộng GuardDuty: S3, EKS, RDS, Malware…"],
+      ["CVE", "Mã lỗ hổng phần mềm công khai"],
+      ["Inspector risk score", "Điểm CVSS điều chỉnh theo ngữ cảnh"],
+      ["Managed data identifier", "Tiêu chí dựng sẵn của Macie tìm PII"],
+      ["Policy finding", "Finding Macie về cấu hình bucket"],
+      ["ASFF", "Định dạng finding bảo mật chuẩn của AWS"],
+      ["FSBP", "Chuẩn AWS Foundational Security Best Practices"],
+      ["Home Region", "Region nhận finding tổng hợp từ linked Region"],
+      ["Behavior graph", "Đồ thị hành vi để điều tra trong Detective"],
+      ["IOC", "Dấu hiệu xâm nhập"],
+      ["Delegated administrator", "Account quản trị dịch vụ bảo mật cho Organization"]
+    ],
+
+    sorts: [
+      {
+        title: "Chặn hay phát hiện?",
+        desc: "Dịch vụ/tính năng nằm trên đường đi của traffic để chặn, hay chỉ phát hiện/đánh giá/điều tra?",
+        buckets: ["Chặn / ngăn chặn", "Phát hiện / đánh giá / điều tra"],
+        items: [
+          ["AWS WAF", 0, "lọc request HTTP ở Layer 7"],
+          ["AWS Shield", 0, "giảm thiểu DDoS ở vành đai"],
+          ["Firewall Manager", 0, "áp chính sách WAF/Shield/SG tập trung"],
+          ["WAF rate-based rule", 0, "Block IP vượt ngưỡng"],
+          ["Amazon GuardDuty", 1, "sinh finding, không chặn"],
+          ["Amazon Inspector", 1, "chỉ tìm CVE, không vá"],
+          ["Amazon Macie", 1, "phát hiện PII trong S3"],
+          ["Security Hub CSPM", 1, "tổng hợp finding, chấm điểm tuân thủ"],
+          ["Amazon Detective", 1, "điều tra root cause"]
+        ]
+      },
+      {
+        title: "Tình huống đề ⇒ dịch vụ",
+        desc: "Chọn dịch vụ bảo mật phù hợp nhất cho mỗi tình huống.",
+        buckets: ["AWS WAF", "AWS Shield", "Firewall Manager", "GuardDuty", "Inspector", "Macie", "Security Hub CSPM", "Detective"],
+        items: [
+          ["Chặn SQL injection trên ALB", 0, "WAF + Managed Rules"],
+          ["Chặn request từ một số quốc gia", 0, "WAF geo match"],
+          ["Cần đội chuyên gia DDoS 24/7 và bồi hoàn chi phí", 1, "Shield Advanced: SRT, cost protection"],
+          ["Áp security group chuẩn cho mọi account, kể cả account mới", 2, "Firewall Manager security group policy"],
+          ["EC2 đang đào tiền mã hóa", 3, "GuardDuty phát hiện cryptomining"],
+          ["Credential AWS bị đánh cắp, gọi API bất thường", 3, "GuardDuty phân tích CloudTrail"],
+          ["Quét CVE trong dependency của Lambda", 4, "Inspector Lambda scanning"],
+          ["EC2 có port mở ra Internet ngoài ý muốn", 4, "Inspector network reachability"],
+          ["Tìm số thẻ tín dụng trong object S3", 5, "Macie managed data identifiers"],
+          ["Kiểm tra liên tục theo CIS Benchmark", 6, "Security Hub security standards"],
+          ["Xem finding GuardDuty, Inspector, Macie ở một dashboard", 6, "single pane of glass"],
+          ["Tìm nguyên nhân gốc của một finding GuardDuty", 7, "behavior graph"]
+        ]
+      },
+      {
+        title: "Shield Standard hay Shield Advanced?",
+        desc: "Đặc điểm nào thuộc gói Shield nào?",
+        buckets: ["Shield Standard", "Shield Advanced"],
+        items: [
+          ["Miễn phí cho mọi khách hàng", 0, "không cần bật"],
+          ["Tự động bảo vệ, không cần chỉ định tài nguyên", 0, "Advanced phải chỉ định rõ"],
+          ["Chỉ chống DDoS phổ biến L3/L4", 0, "SYN flood, UDP reflection"],
+          ["Shield Response Team (SRT)", 1, "cần Business/Enterprise Support"],
+          ["Cost protection bằng service credit", 1, "bồi hoàn phí tăng do DDoS"],
+          ["Automatic application layer DDoS mitigation", 1, "tự quản lý rule WAF, 150 WCU"],
+          ["Bao gồm phí WAF chuẩn cho tài nguyên được bảo vệ", 1, "tới 50 tỷ request/tháng"],
+          ["Proactive engagement khi health check unhealthy", 1, "cần health-based detection"],
+          ["Protection groups", 1, "gom tài nguyên thành nhóm logic"]
+        ]
+      },
+      {
+        title: "WAF gắn trực tiếp được không?",
+        desc: "Tài nguyên nào gắn web ACL của AWS WAF trực tiếp được?",
+        buckets: ["Gắn được", "Không gắn trực tiếp"],
+        items: [
+          ["CloudFront distribution", 0, "phạm vi Global, us-east-1"],
+          ["Application Load Balancer", 0, "web ACL Regional"],
+          ["API Gateway REST API", 0, "chỉ REST API"],
+          ["AppSync GraphQL API", 0, "có trong danh sách"],
+          ["Cognito user pool", 0, "có trong danh sách"],
+          ["App Runner service", 0, "có trong danh sách"],
+          ["Network Load Balancer", 1, "đổi sang ALB hoặc CloudFront + WAF"],
+          ["EC2 instance", 1, "đặt sau ALB/CloudFront"],
+          ["Classic Load Balancer", 1, "không có trong danh sách"],
+          ["API Gateway HTTP API", 1, "chỉ REST API được hỗ trợ"]
+        ]
+      },
+      {
+        title: "Severity của GuardDuty",
+        desc: "Điểm/mô tả finding thuộc mức severity nào?",
+        buckets: ["Low (1,0–3,9)", "Medium (4,0–6,9)", "High (7,0–8,9)", "Critical (9,0–10,0)"],
+        items: [
+          ["Port scan chưa thành công", 0, "cố gắng đáng ngờ chưa thành công"],
+          ["Điểm 2,5", 0, "trong khoảng 1,0–3,9"],
+          ["Hoạt động lệch khỏi hành vi bình thường", 1, "đáng ngờ nhưng chưa xâm phạm"],
+          ["Điểm 5,0", 1, "trong khoảng 4,0–6,9"],
+          ["Tài nguyên đã bị xâm phạm, đang bị dùng trái phép", 2, "High"],
+          ["Điểm 8,0", 2, "trong khoảng 7,0–8,9"],
+          ["Attack sequence có thể đang diễn ra (có thể ransomware)", 3, "ưu tiên xử lý ngay"],
+          ["Điểm 9,5", 3, "trong khoảng 9,0–10,0"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["GuardDuty có thể chặn request HTTP độc hại tới ALB.", false, "GuardDuty chỉ phát hiện; chặn ⇒ WAF."],
+      ["AWS WAF hoạt động ở Layer 7.", true, "WAF hiểu nội dung HTTP(S)."],
+      ["AWS WAF gắn trực tiếp được vào Network Load Balancer.", false, "NLB không hỗ trợ WAF; dùng ALB hoặc CloudFront."],
+      ["Web ACL cho CloudFront phải tạo ở us-east-1 (Global).", true, "Tài nguyên Regional thì web ACL cùng Region."],
+      ["Action Count dừng việc đánh giá các rule phía sau.", false, "Count là non-terminating, đánh giá tiếp."],
+      ["Request bị WAF Block mặc định nhận HTTP 403.", true, "Có thể tùy biến custom response."],
+      ["Một web ACL có dung lượng tối đa 5.000 WCU.", true, "Giá cơ bản gồm 1.500 WCU."],
+      ["Evaluation window mặc định của rate-based rule là 60 giây.", false, "Mặc định 300 giây (5 phút)."],
+      ["Rate-based rule có thể dùng action Allow.", false, "Mọi action trừ Allow."],
+      ["Rate limit nhỏ nhất của rate-based rule là 10.", true, "Số request trong evaluation window."],
+      ["CloudFront geo restriction chuyển request bị chặn tới WAF để xử lý tiếp.", false, "Không chuyển; cần kết hợp tiêu chí ⇒ dùng WAF geo match."],
+      ["Shield Standard miễn phí và tự động cho mọi khách hàng.", true, "Chống DDoS L3/L4 phổ biến."],
+      ["Shield Advanced tự động bảo vệ mọi tài nguyên trong account.", false, "Chỉ tài nguyên được chỉ định rõ."],
+      ["Shield Advanced bảo vệ EC2 thông qua Elastic IP.", true, "Cả NLB cũng qua Elastic IP."],
+      ["Dùng SRT không cần gói Support nào.", false, "Cần Business hoặc Enterprise Support."],
+      ["Cost protection hoàn tiền dưới dạng service credit.", true, "Phải gửi yêu cầu sau tấn công."],
+      ["Shield Advanced bao gồm cả phí Bot Control và CAPTCHA.", false, "Chỉ bao phí WAF chuẩn."],
+      ["Firewall Manager yêu cầu AWS Organizations và AWS Config.", true, "Cùng một administrator account."],
+      ["Firewall Manager tự áp chính sách cho account mới thêm vào Organization.", true, "Đó là giá trị chính của dịch vụ."],
+      ["Phải bật VPC Flow Logs trong account thì GuardDuty mới phân tích được flow log.", false, "GuardDuty dùng luồng độc lập."],
+      ["GuardDuty đọc được DNS logs khi EC2 dùng Google DNS.", false, "Chỉ khi dùng AWS DNS resolver."],
+      ["AWS khuyến nghị bật GuardDuty ở mọi Region, kể cả Region không dùng.", true, "Kẻ tấn công có thể dùng Region bạn ít để ý."],
+      ["Runtime Monitoring tự bật khi kích hoạt GuardDuty lần đầu.", false, "Đây là plan duy nhất không tự bật."],
+      ["Finding GuardDuty điểm 8,0 có severity High.", true, "High là 7,0–8,9."],
+      ["Amazon Inspector tự vá lỗ hổng tìm được.", false, "Vá bằng Systems Manager Patch Manager."],
+      ["Inspector có thể quét EC2 không có SSM Agent qua EBS snapshot.", true, "Agentless scanning, mặc định hybrid."],
+      ["Inspector chỉ quét theo lịch hằng tuần.", false, "Quét liên tục khi có thay đổi hoặc CVE mới."],
+      ["Macie phát hiện PII trong bảng DynamoDB.", false, "Macie chỉ cho S3."],
+      ["Macie dùng custom data identifier dạng regex cho định dạng riêng.", true, "Kèm keyword và proximity tùy chọn."],
+      ["Security Hub CSPM cần AWS Config cho phần lớn control.", true, "Control dùng service-linked Config rules."],
+      ["Security Hub cross-Region aggregation tính thêm phí.", false, "Không tốn thêm phí."],
+      ["Security Hub tổng hợp cả finding sinh ra trước khi bật.", false, "Không hồi tố."],
+      ["Amazon Detective dùng để kiểm tra tuân thủ CIS.", false, "Detective điều tra root cause; tuân thủ ⇒ Security Hub."],
+      ["Detective truy cập tới 1 năm dữ liệu sự kiện lịch sử.", true, "Dựng behavior graph."]
+    ],
+
+    map: {
+      t: "Bài 39 · Bảo vệ & phát hiện mối đe dọa",
+      c: [
+        { t: "Bức tranh tổng thể", icon: "cat/Security-Identity-Compliance.svg", c: [
+          { t: "Chặn", v: "WAF (L7) · Shield (DDoS) · Firewall Manager" },
+          { t: "Phát hiện", v: "GuardDuty · Inspector · Macie" },
+          { t: "Tổng hợp", v: "Security Hub CSPM" },
+          { t: "Điều tra", v: "Detective" },
+          { t: "Phản ứng", v: "finding ⇒ EventBridge ⇒ SNS / Lambda" }
+        ] },
+        { t: "AWS WAF", icon: "svc/AWS-WAF.svg", c: [
+          { t: "Gắn được", v: "CloudFront, ALB, API GW REST, AppSync, Cognito" },
+          { t: "Không gắn", v: "NLB, CLB, EC2" },
+          { t: "Đánh giá", v: "theo priority; Allow/Block dừng; Count đi tiếp" },
+          { t: "WCU", v: "tối đa 5.000, giá cơ bản 1.500" },
+          { t: "Rate-based", v: "window 60/120/300/600 s, limit ≥ 10" },
+          { t: "Phạm vi", v: "CloudFront ⇒ Global us-east-1" }
+        ] },
+        { t: "AWS Shield", icon: "svc/AWS-Shield.svg", c: [
+          { t: "Standard", v: "miễn phí, tự động, L3/L4" },
+          { t: "Advanced", v: "trả phí, chỉ tài nguyên chỉ định, L3–L7" },
+          { t: "Tài nguyên", v: "CloudFront, Route 53, GA, EIP, ALB, CLB" },
+          { t: "Năng lực", v: "SRT, proactive engagement, cost protection" },
+          { t: "Auto L7 mitigation", v: "rule group 150 WCU" }
+        ] },
+        { t: "Firewall Manager", icon: "svc/AWS-Firewall-Manager.svg", c: [
+          { t: "Vai trò", v: "đặt chính sách một lần, áp cả account mới" },
+          { t: "Điều kiện", v: "Organizations + admin account + AWS Config" },
+          { t: "Chính sách", v: "WAF, Shield Adv, SG, NACL, Network/DNS Firewall" }
+        ] },
+        { t: "GuardDuty", icon: "svc/Amazon-GuardDuty.svg", c: [
+          { t: "Nguồn nền tảng", v: "CloudTrail mgmt, VPC Flow Logs, DNS logs" },
+          { t: "Không cần bật log", v: "luồng độc lập" },
+          { t: "Protection plans", v: "S3, EKS, Runtime, Malware, RDS, Lambda, AI" },
+          { t: "Severity", v: "Low 1–3,9 · Medium 4–6,9 · High 7–8,9 · Critical 9–10" },
+          { t: "Bật ở đâu", v: "mọi Region" }
+        ] },
+        { t: "Inspector & Macie", icon: "svc/Amazon-Inspector.svg", c: [
+          { t: "Inspector", v: "CVE + network exposure trên EC2, ECR, Lambda" },
+          { t: "Cách quét EC2", v: "SSM Agent hoặc agentless snapshot" },
+          { t: "Risk score", v: "CVSS điều chỉnh theo ngữ cảnh" },
+          { t: "Macie", v: "chỉ S3: policy finding + sensitive data finding" },
+          { t: "Data identifier", v: "managed (PII, tài chính) · custom (regex)" }
+        ] },
+        { t: "Security Hub & Detective", icon: "svc/AWS-Security-Hub.svg", c: [
+          { t: "Chuẩn", v: "FSBP, CIS, PCI DSS, NIST" },
+          { t: "Định dạng", v: "ASFF" },
+          { t: "Điều kiện", v: "bật AWS Config" },
+          { t: "Aggregation", v: "home Region + linked Region, miễn phí" },
+          { t: "Detective", v: "behavior graph, tới 1 năm dữ liệu, root cause" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

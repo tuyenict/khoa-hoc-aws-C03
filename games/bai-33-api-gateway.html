@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 33 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-API-Gateway.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="33" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-33-api-gateway.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "core", name: "Khái niệm & kiến trúc serverless" },
+      { id: "type", name: "REST · HTTP · WebSocket API" },
+      { id: "endp", name: "Endpoint type & custom domain" },
+      { id: "integ", name: "Integration · Stage · Canary" },
+      { id: "thr", name: "Throttling & usage plan" },
+      { id: "cache", name: "API caching" },
+      { id: "auth", name: "Authorizer & bảo mật" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Khái niệm & kiến trúc
+      { t: "core", f: "Vai trò của Amazon API Gateway trong kiến trúc serverless?", b: "<b>Front door</b> cho REST, HTTP, WebSocket API: quản lý lưu lượng, ủy quyền, giám sát, quản lý phiên bản. Cùng Lambda tạo phần <b>app-facing</b> của serverless." },
+      { t: "core", f: "Resource, method, integration trong API Gateway là gì?", b: "<b>Resource</b>: đường dẫn (/pets/{id}).<br><b>Method</b>: động từ HTTP (GET, POST…).<br><b>Integration</b>: back end xử lý (Lambda, HTTP, dịch vụ AWS, VPC link, mock)." },
+      { t: "core", f: "Deployment và stage khác nhau thế nào?", b: "<b>Deployment</b>: snapshot của API tại một thời điểm.<br><b>Stage</b>: tên tham chiếu tới một deployment (dev, prod) – nơi đặt cache, throttling, WAF, log." },
+      { t: "core", f: "Resource <code>{proxy+}</code> dùng để làm gì?", b: "Bắt <b>mọi đường dẫn con</b> – giảm số resource (quota 300 resource/API)." },
+      { t: "core", f: "Phân biệt CloudTrail, CloudWatch access log, X-Ray với API Gateway.", b: "<b>CloudTrail</b>: ai thay đổi cấu hình API.<br><b>Access log</b>: từng request của client.<br><b>X-Ray</b>: truy vết độ trễ end-to-end." },
+      { t: "core", f: "Kiến trúc web serverless “least operational overhead” điển hình?", b: "<b>S3 + CloudFront</b> (front end) → <b>API Gateway</b> → <b>Lambda</b> → <b>DynamoDB</b>, đăng nhập bằng <b>Cognito</b>." },
+      { t: "core", f: "API nhận đột biến, không được mất request, xử lý được bất đồng bộ ⇒ mẫu nào?", b: "<b>API Gateway → SQS → Lambda</b> (AWS service integration ghi thẳng vào SQS, Lambda đọc theo batch)." },
+      { t: "core", f: "Upload file lớn qua API serverless thế nào?", b: "API → Lambda sinh <b>S3 presigned URL</b> → client upload thẳng lên S3 → S3 event kích hoạt Lambda.", x: "Tránh giới hạn 10 MB của API Gateway và 6 MB của Lambda." },
+      { t: "core", f: "Khi nào chọn Lambda function URL thay vì API Gateway?", b: "Webhook, công cụ nội bộ đơn giản, <b>chi phí thấp nhất</b>; không cần throttling theo client, caching, API key. Xác thực chỉ IAM hoặc NONE." },
+
+      // ---- Loại API
+      { t: "type", f: "Câu chốt của tài liệu về REST API vs HTTP API?", b: "REST API <b>nhiều tính năng hơn</b>; HTTP API <b>tối giản, giá rẻ hơn</b>. Chọn REST nếu cần <b>API key, per-client throttling, request validation, WAF, private endpoint</b>." },
+      { t: "type", f: "Những tính năng CHỈ REST API có?", b: "API key, usage plan, <b>caching</b>, request validation, <b>AWS WAF</b>, <b>resource policy</b>, <b>private</b> & <b>edge-optimized</b> endpoint, canary, X-Ray, mapping template." },
+      { t: "type", f: "Những tính năng HTTP API có mà REST API không có?", b: "<b>JWT authorizer native</b>, <b>automatic deployment</b>, private integration với <b>AWS Cloud Map</b>." },
+      { t: "type", f: "HTTP API hỗ trợ endpoint type nào?", b: "Chỉ <b>Regional</b>." },
+      { t: "type", f: "WebSocket API phù hợp với ứng dụng nào?", b: "Giao tiếp <b>hai chiều, stateful</b>: chat, dashboard thời gian thực, game, thông báo trực tiếp – back end chủ động đẩy message." },
+      { t: "type", f: "3 route định sẵn của WebSocket API?", b: "<b>$connect</b> (mở kết nối, lưu connection ID) · <b>$disconnect</b> · <b>$default</b> (không khớp route nào)." },
+      { t: "type", f: "Back end gửi message tới client WebSocket bằng cách nào?", b: "Route response, hoặc <b>POST tới <code>@connections</code> API</b> kèm connection ID." },
+      { t: "type", f: "Giới hạn thời gian kết nối WebSocket API?", b: "Sống tối đa <b>2 giờ</b>, idle <b>10 phút</b> (mã đóng 1001)." },
+      { t: "type", f: "Integration timeout của REST, HTTP, WebSocket API?", b: "REST: <b>50 ms – 29 giây</b> (Regional/private xin tăng được).<br>HTTP API: tối đa <b>30 giây</b>.<br>WebSocket: <b>29 giây</b>." },
+      { t: "type", f: "Payload tối đa của REST/HTTP API và WebSocket?", b: "REST &amp; HTTP: <b>10 MB</b>. WebSocket: message <b>128 KB</b>, frame 32 KB." },
+
+      // ---- Endpoint
+      { t: "endp", f: "Edge-optimized endpoint hoạt động thế nào?", b: "Request vào <b>CloudFront POP gần client nhất</b> rồi đi về Region của API. <b>Mặc định của REST API</b>, chỉ REST.", x: "Distribution do API Gateway quản lý, bạn không cấu hình được." },
+      { t: "endp", f: "Khi nào chọn Regional endpoint?", b: "Client <b>cùng Region</b>, hoặc muốn <b>tự đặt CloudFront</b> phía trước, hoặc API <b>multi-Region</b> với Route 53." },
+      { t: "endp", f: "Private API gọi được từ đâu?", b: "Chỉ từ <b>trong VPC</b> qua <b>interface VPC endpoint</b> (execute-api, PrivateLink); on-premises qua Direct Connect/VPN vào VPC.", x: "Chỉ REST API, cần resource policy." },
+      { t: "endp", f: "Private API cần resource policy với điều kiện gì?", b: "<b><code>aws:SourceVpc</code></b> / <b><code>aws:SourceVpce</code></b>." },
+      { t: "endp", f: "Có gateway VPC endpoint cho API Gateway không?", b: "<b>Không.</b> Gateway endpoint chỉ có cho S3 và DynamoDB; API Gateway dùng <b>interface endpoint</b>." },
+      { t: "endp", f: "Certificate ACM cho custom domain edge-optimized phải ở Region nào?", b: "<b>us-east-1</b> (giống CloudFront)." },
+      { t: "endp", f: "API multi-Region active-active cùng domain ⇒ thiết kế gì?", b: "<b>Regional API</b> ở mỗi Region + <b>custom domain</b> + <b>Route 53 latency / failover routing</b>." },
+      { t: "endp", f: "Tắt endpoint mặc định execute-api có tác dụng gì?", b: "Buộc client đi qua <b>custom domain</b>; gọi endpoint mặc định nhận <b>403</b>." },
+      { t: "endp", f: "Base path mapping là gì?", b: "Ánh xạ đường dẫn của custom domain tới API + stage, vd api.example.com/orders → API orders stage prod." },
+
+      // ---- Integration
+      { t: "integ", f: "Lambda proxy integration (<code>AWS_PROXY</code>) là gì?", b: "Chuyển <b>nguyên request</b> cho Lambda; Lambda trả về theo định dạng chuẩn (statusCode, headers, body). <b>Cách khuyến nghị</b> để gọi Lambda." },
+      { t: "integ", f: "AWS service integration (type <code>AWS</code>) dùng khi nào?", b: "Gọi <b>trực tiếp action dịch vụ AWS</b> (SQS SendMessage, DynamoDB PutItem, Kinesis PutRecord, StartExecution) bằng IAM role + mapping template ⇒ <b>bỏ Lambda trung gian</b>." },
+      { t: "integ", f: "HTTP_PROXY integration dùng khi nào?", b: "Đặt API Gateway trước một <b>back end HTTP có sẵn</b> (EC2, on-premises, SaaS), chuyển nguyên request/response." },
+      { t: "integ", f: "Mock integration dùng để làm gì?", b: "API Gateway <b>tự trả response</b>, không gọi back end: test, phát triển song song, trả header CORS cho OPTIONS." },
+      { t: "integ", f: "VPC link dùng để làm gì?", b: "Private integration tới tài nguyên private sau <b>NLB / ALB</b> (HTTP API thêm <b>Cloud Map</b>)." },
+      { t: "integ", f: "Quyền để API Gateway gọi Lambda nằm ở đâu?", b: "<b>Resource-based policy của function</b> (lambda:InvokeFunction cho apigateway.amazonaws.com). Gọi dịch vụ khác ⇒ IAM role." },
+      { t: "integ", f: "Stage variables là gì?", b: "Cặp key/value theo stage (≤ 100), như biến môi trường – vd stage dev trỏ Lambda alias DEV, prod trỏ PROD." },
+      { t: "integ", f: "Canary release deployment hoạt động thế nào?", b: "Trên <b>cùng một stage</b>, chia % traffic giữa production release và canary release; tốt thì <b>promote</b>, xấu thì tắt (rollback). Chỉ REST API." },
+      { t: "integ", f: "HTTP API có automatic deployment, còn REST API thì sao?", b: "REST API: sửa xong phải <b>deploy</b> thì client mới thấy thay đổi." },
+
+      // ---- Throttling
+      { t: "thr", f: "API Gateway throttle bằng thuật toán gì?", b: "<b>Token bucket</b>: <b>rate</b> = tốc độ nạp token mỗi giây, <b>burst</b> = sức chứa bucket. Mỗi request tiêu một token." },
+      { t: "thr", f: "Throttle mặc định mỗi account mỗi Region?", b: "<b>10.000 RPS</b>, burst <b>5.000</b> (gộp REST, HTTP, WebSocket). RPS tăng được; burst do AWS quyết định." },
+      { t: "thr", f: "Thứ tự 4 tầng throttling?", b: "<b>Usage plan</b> (per-client) → <b>stage/method</b> → <b>account per Region</b> → <b>AWS Regional</b>." },
+      { t: "thr", f: "Client nhận 429 và 504 nghĩa là gì?", b: "<b>429</b> Too Many Requests: bị throttle.<br><b>504</b> Gateway Timeout: back end vượt integration timeout 29 giây." },
+      { t: "thr", f: "Usage plan dùng để làm gì?", b: "Cho từng <b>API key</b>: <b>throttling</b> (rate, burst) + <b>quota</b> (request/ngày/tuần/tháng) trên stage/method – bán API theo gói. Chỉ REST API." },
+      { t: "thr", f: "Có nên dùng API key để xác thực không?", b: "<b>Không.</b> API key chỉ nhận diện client cho usage plan; xác thực bằng IAM, Lambda authorizer, Cognito.", x: "API key hay bị log trong header." },
+      { t: "thr", f: "Có nên dựa vào usage plan để kiểm soát chi phí / chặn truy cập không?", b: "<b>Không</b> – throttle và quota là <b>best-effort</b>. Chi phí ⇒ AWS Budgets; chặn request độc hại ⇒ AWS WAF rate-based rule." },
+      { t: "thr", f: "Bảo vệ database hạ nguồn khỏi đột biến qua API ⇒ ?", b: "<b>Stage/method throttling</b> phù hợp sức chịu back end (+ đệm SQS nếu xử lý được bất đồng bộ)." },
+
+      // ---- Caching
+      { t: "cache", f: "API caching có ở loại API nào?", b: "<b>Chỉ REST API</b>, bật theo stage." },
+      { t: "cache", f: "TTL của API cache?", b: "Mặc định <b>300 giây</b>, tối đa <b>3.600 giây</b>; TTL = 0 là tắt cache." },
+      { t: "cache", f: "Khi bật cache, method nào được cache mặc định?", b: "<b>Chỉ GET</b>. Method khác phải override theo method." },
+      { t: "cache", f: "Kích thước response tối đa được cache?", b: "<b>1 MB</b> (1.048.576 byte)." },
+      { t: "cache", f: "Client muốn lấy dữ liệu mới, bỏ qua cache ⇒ ?", b: "Gửi header <b><code>Cache-Control: max-age=0</code></b>; nên yêu cầu quyền <b><code>execute-api:InvalidateCache</code></b>." },
+      { t: "cache", f: "Cache key cấu hình sai gây vấn đề gì?", b: "Thiếu tham số ⇒ client nhận <b>dữ liệu sai</b> của request khác. Quá nhiều tham số ⇒ <b>hit rate thấp</b>." },
+      { t: "cache", f: "Đổi cache capacity thì dữ liệu cache ra sao?", b: "Cache cũ bị xóa, tạo cache mới ⇒ <b>mất toàn bộ dữ liệu cache</b>. Tạo/xóa cache mất ~4 phút." },
+      { t: "cache", f: "API caching tính phí thế nào?", b: "<b>Theo giờ</b> theo kích thước cache, không thuộc Free Tier. Theo dõi bằng CacheHitCount / CacheMissCount." },
+
+      // ---- Authorizer
+      { t: "auth", f: "IAM authorization (AWS_IAM) phù hợp khi nào?", b: "Caller <b>có AWS credentials</b>, ký <b>SigV4</b>: service-to-service, EC2/Lambda có IAM role, <b>cross-account</b> (kèm resource policy), user có credentials từ identity pool." },
+      { t: "auth", f: "Cognito user pool authorizer hoạt động thế nào?", b: "Client đăng nhập user pool lấy <b>JWT</b> (ID/access token), gửi trong header Authorization; API Gateway <b>tự xác minh, không cần code</b>." },
+      { t: "auth", f: "Lambda authorizer trả về gì?", b: "<b>IAM policy</b> (Allow/Deny execute-api:Invoke) + <b>principal ID</b> (+ context tùy chọn)." },
+      { t: "auth", f: "TOKEN và REQUEST authorizer khác nhau thế nào?", b: "<b>TOKEN</b>: danh tính trong bearer token ở một header.<br><b>REQUEST</b>: tổ hợp header, query string, stage variables, $context – tài liệu khuyến nghị." },
+      { t: "auth", f: "Lambda authorizer trả Deny hoặc token sai thì client nhận gì?", b: "Deny ⇒ <b>403</b>; token thiếu/không hợp lệ ⇒ <b>401 Unauthorized</b>." },
+      { t: "auth", f: "Authorization caching của Lambda authorizer giúp gì?", b: "Cache policy trả về để không gọi lại Lambda cho cùng danh tính ⇒ <b>giảm độ trễ và chi phí</b>." },
+      { t: "auth", f: "Resource policy của API Gateway giới hạn được theo gì?", b: "<b>Account khác</b> (cross-account), <b>IP/CIDR</b> (aws:SourceIp), <b>VPC / VPC endpoint</b> (aws:SourceVpc, aws:SourceVpce). Chỉ REST API." },
+      { t: "auth", f: "Cognito user pool khác identity pool khi dùng với API Gateway?", b: "<b>User pool</b> cấp <b>JWT</b> ⇒ authorizer COGNITO_USER_POOLS / JWT.<br><b>Identity pool</b> cấp <b>AWS credentials</b> ⇒ AWS_IAM." },
+      { t: "auth", f: "Chống SQL injection, XSS, HTTP flood cho REST API ⇒ ?", b: "Gắn <b>AWS WAF web ACL</b> vào stage (rate-based rule chống flood)." },
+      { t: "auth", f: "Client certificate do API Gateway sinh dùng để làm gì?", b: "Để <b>back end xác minh</b> request thực sự đến từ API Gateway." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>expose Lambda functions as a RESTful API</i>”, “<i>serverless back end for a mobile app</i>” ⇒ ?", b: "<b>API Gateway + Lambda (+ DynamoDB)</b>." },
+      { t: "kw", f: "Đề có “<i>lowest cost</i>”, “<i>simple proxy to Lambda</i>”, JWT/OIDC sẵn có ⇒ ?", b: "<b>HTTP API</b>." },
+      { t: "kw", f: "Đề có “<i>server must push updates to connected clients</i>”, chat, live dashboard ⇒ ?", b: "<b>WebSocket API</b> (GraphQL thì AppSync subscriptions)." },
+      { t: "kw", f: "Đề có “<i>different request limits per customer / tiered plans</i>” ⇒ ?", b: "<b>Usage plan + API key</b> (REST API)." },
+      { t: "kw", f: "Đề có “<i>API accessible only from within the VPC / over Direct Connect</i>” ⇒ ?", b: "<b>Private REST API</b> + interface endpoint execute-api + resource policy." },
+      { t: "kw", f: "Đề có “<i>many identical read requests, data changes infrequently</i>” ⇒ ?", b: "<b>API Gateway caching</b> trên stage với TTL phù hợp." },
+      { t: "kw", f: "Đề có “<i>third-party OAuth / SAML identity provider</i>”, “<i>custom authorization logic</i>” ⇒ ?", b: "<b>Lambda authorizer</b> (bật caching)." },
+      { t: "kw", f: "Đề có “<i>send API requests directly to SQS / Kinesis without managing compute</i>” ⇒ ?", b: "<b>AWS service integration</b> (type AWS)." },
+      { t: "kw", f: "Đề có “<i>long-running request times out after 29 seconds</i>” ⇒ ?", b: "Chuyển <b>bất đồng bộ</b>: SQS / Step Functions, trả job ID, client poll hoặc nhận qua WebSocket.", x: "Không phải tăng timeout Lambda." },
+      { t: "kw", f: "Đề có “<i>roll out a new API version to 10% of users</i>” ⇒ ?", b: "<b>Canary release deployment</b> trên stage (REST API)." },
+      { t: "kw", f: "Đề có “<i>users around the world, reduce latency, REST API</i>” ⇒ ?", b: "<b>Edge-optimized endpoint</b>; cần tự kiểm soát CloudFront ⇒ Regional + CloudFront riêng." }
+    ],
+
+    pairs: [
+      ["Front door", "Điểm vào duy nhất của client tới back end"],
+      ["Stage", "Tên tham chiếu tới deployment (dev, prod)"],
+      ["Deployment", "Snapshot cấu hình API"],
+      ["Stage variables", "Key/value theo stage, như biến môi trường"],
+      ["AWS_PROXY", "Lambda proxy: chuyển nguyên request cho Lambda"],
+      ["AWS integration", "Gọi thẳng action SQS/DynamoDB/Kinesis"],
+      ["Mock integration", "API Gateway tự trả response"],
+      ["Mapping template", "VTL biến đổi request/response (REST)"],
+      ["VPC link", "Private integration tới NLB/ALB"],
+      ["Canary release", "Chia % traffic của stage sang bản mới"],
+      ["Edge-optimized endpoint", "Qua CloudFront POP; mặc định REST API"],
+      ["Regional endpoint", "Client cùng Region hoặc tự đặt CloudFront"],
+      ["Private API", "Chỉ gọi từ VPC qua endpoint execute-api"],
+      ["Base path mapping", "Đường dẫn custom domain → API + stage"],
+      ["Token bucket", "Rate = tốc độ nạp, burst = sức chứa"],
+      ["Usage plan", "Throttling + quota theo API key"],
+      ["API key", "Nhận diện client, không dùng để xác thực"],
+      ["Cache invalidation", "Cache-Control: max-age=0"],
+      ["AWS_IAM", "Request ký SigV4, policy execute-api:Invoke"],
+      ["Lambda authorizer", "Lambda trả IAM policy từ token/tham số"],
+      ["JWT authorizer", "Native trên HTTP API, Cognito/OIDC"],
+      ["Resource policy", "Giới hạn theo account, IP, VPC endpoint"],
+      ["@connections API", "Gửi message tới client WebSocket"],
+      ["$connect", "Route khi client mở kết nối WebSocket"],
+      ["429 / 504", "Bị throttle / vượt integration timeout"]
+    ],
+
+    sorts: [
+      {
+        title: "REST API hay HTTP API?",
+        desc: "Tính năng/đặc điểm sau chỉ có ở REST API, chỉ có ở HTTP API, hay cả hai đều có?",
+        buckets: ["Chỉ REST API", "Chỉ HTTP API", "Cả hai"],
+        items: [
+          ["API key và usage plan", 0, "per-client throttling"],
+          ["API caching", 0, "HTTP API không có cache"],
+          ["AWS WAF", 0, "gắn web ACL vào stage REST"],
+          ["Private endpoint", 0, "interface endpoint execute-api"],
+          ["Edge-optimized endpoint", 0, "HTTP API chỉ Regional"],
+          ["Canary release deployment", 0, "chia traffic trên stage"],
+          ["Resource policy", 0, "HTTP API không có"],
+          ["JWT authorizer native", 1, "REST dùng Lambda authorizer để validate JWT"],
+          ["Automatic deployment", 1, "REST phải deploy thủ công"],
+          ["Private integration với AWS Cloud Map", 1, "REST chỉ NLB/ALB"],
+          ["Regional endpoint", 2, "cả hai đều hỗ trợ"],
+          ["Lambda authorizer", 2, "cả hai đều có"],
+          ["Mutual TLS", 2, "cả hai đều có"],
+          ["CORS", 2, "cả hai đều có"]
+        ]
+      },
+      {
+        title: "Chọn endpoint type",
+        desc: "Tình huống sau nên dùng endpoint type nào?",
+        buckets: ["Edge-optimized", "Regional", "Private"],
+        items: [
+          ["Người dùng phân tán toàn cầu, REST API, cần giảm độ trễ", 0, "qua CloudFront POP gần nhất"],
+          ["Mặc định khi tạo REST API", 0, "edge-optimized là mặc định"],
+          ["Client là EC2 trong cùng Region", 1, "giảm overhead kết nối"],
+          ["Muốn tự cấu hình CloudFront, Lambda@Edge phía trước", 1, "Regional + CloudFront của bạn"],
+          ["API multi-Region active-active cùng domain", 1, "Route 53 latency/failover"],
+          ["Dùng HTTP API", 1, "HTTP API chỉ có Regional"],
+          ["Chỉ ứng dụng trong VPC được gọi API", 2, "interface endpoint execute-api"],
+          ["Server on-premises gọi qua Direct Connect, không lộ Internet", 2, "lưu lượng không rời mạng Amazon"]
+        ]
+      },
+      {
+        title: "Chọn cơ chế kiểm soát truy cập",
+        desc: "Yêu cầu sau nên dùng cơ chế nào?",
+        buckets: ["IAM (SigV4)", "Cognito user pool authorizer", "Lambda authorizer", "Resource policy", "AWS WAF"],
+        items: [
+          ["EC2 với IAM role gọi API nội bộ", 0, "caller có AWS credentials"],
+          ["Account đối tác gọi API bằng AWS credentials", 0, "IAM + resource policy cross-account"],
+          ["User đăng ký/đăng nhập app mobile, không viết code", 1, "API Gateway tự verify JWT"],
+          ["Khách hàng dùng OAuth token từ IdP bên thứ ba", 2, "code tự xác thực, trả IAM policy"],
+          ["Logic ủy quyền theo header, IP, thời gian", 2, "REQUEST authorizer"],
+          ["Chỉ cho phép dải IP công ty", 3, "aws:SourceIp"],
+          ["Chỉ cho phép một VPC endpoint cụ thể", 3, "aws:SourceVpce"],
+          ["Chống SQL injection và XSS", 4, "web ACL trên stage"],
+          ["Chặn HTTP flood theo IP", 4, "rate-based rule"]
+        ]
+      },
+      {
+        title: "Chọn kiểu integration",
+        desc: "Tình huống sau nên dùng kiểu integration nào?",
+        buckets: ["AWS_PROXY (Lambda proxy)", "AWS (service integration)", "HTTP_PROXY", "MOCK", "VPC link"],
+        items: [
+          ["Gọi Lambda đơn giản, back end đổi không phải dựng lại API", 0, "cách khuyến nghị"],
+          ["Ghi request thẳng vào SQS, bỏ Lambda chuyển tiếp", 1, "SendMessage + IAM role"],
+          ["API gọi Step Functions StartExecution", 1, "gọi trực tiếp action dịch vụ"],
+          ["Đặt API Gateway trước API legacy trên EC2 public", 2, "chuyển nguyên request/response"],
+          ["Team front end cần API giả lập để phát triển song song", 3, "tự trả response"],
+          ["Trả header CORS cho method OPTIONS", 3, "mock integration"],
+          ["Service private sau NLB trong VPC", 4, "private integration"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Stage là tên tham chiếu tới một deployment của API.", true, "Vd dev, test, prod."],
+      ["REST API tự động deploy mỗi khi sửa cấu hình.", false, "REST phải deploy; HTTP API mới có automatic deployment."],
+      ["HTTP API hỗ trợ API caching.", false, "Caching chỉ có ở REST API."],
+      ["HTTP API có JWT authorizer native.", true, "Dùng Cognito hoặc OIDC provider bất kỳ."],
+      ["AWS WAF gắn được vào HTTP API.", false, "WAF chỉ tích hợp với REST API."],
+      ["Edge-optimized là endpoint mặc định của REST API.", true, "Đi qua CloudFront POP."],
+      ["HTTP API hỗ trợ edge-optimized endpoint.", false, "HTTP API chỉ có Regional."],
+      ["Private API chỉ gọi được qua interface VPC endpoint execute-api.", true, "Chạy bằng AWS PrivateLink."],
+      ["Có thể tạo gateway VPC endpoint cho API Gateway.", false, "Gateway endpoint chỉ có cho S3 và DynamoDB."],
+      ["WebSocket API cho phép back end chủ động đẩy message tới client.", true, "Qua @connections API."],
+      ["Kết nối WebSocket API có thể sống tối đa 24 giờ.", false, "Tối đa 2 giờ, idle 10 phút."],
+      ["Integration timeout mặc định tối đa của REST API là 29 giây.", true, "Vượt ⇒ 504 Gateway Timeout."],
+      ["Lambda chạy được 15 phút nên request đồng bộ qua API Gateway cũng chờ được 15 phút.", false, "API Gateway cắt ở 29 giây ⇒ chuyển bất đồng bộ."],
+      ["Payload tối đa của REST API là 10 MB.", true, "Lớn hơn ⇒ S3 presigned URL."],
+      ["Throttle mặc định là 10.000 RPS với burst 5.000 mỗi account mỗi Region.", true, "Gộp chung mọi loại API."],
+      ["Throttle 10.000 RPS áp dụng riêng cho từng API.", false, "Áp dụng cho tất cả API của account trong một Region."],
+      ["Client nhận lỗi 429 nghĩa là back end vượt timeout.", false, "429 là bị throttle; 504 mới là timeout."],
+      ["Usage plan và API key chỉ có ở REST API.", true, "HTTP API không hỗ trợ."],
+      ["API key là cơ chế xác thực an toàn cho API.", false, "API key chỉ nhận diện client cho usage plan."],
+      ["Throttling và quota của usage plan là best-effort.", true, "Không dùng để kiểm soát chi phí tuyệt đối."],
+      ["TTL mặc định của API cache là 300 giây, tối đa 3.600 giây.", true, "TTL = 0 là tắt cache."],
+      ["Khi bật cache cho stage, mọi method kể cả POST đều được cache mặc định.", false, "Mặc định chỉ cache GET."],
+      ["Client gửi Cache-Control: max-age=0 để lấy dữ liệu mới từ back end.", true, "Nên yêu cầu quyền execute-api:InvalidateCache."],
+      ["Đổi cache capacity vẫn giữ nguyên dữ liệu đã cache.", false, "Cache cũ bị xóa, tạo cache mới."],
+      ["Response tối đa được cache là 1 MB.", true, "1.048.576 byte."],
+      ["Lambda authorizer trả về IAM policy và principal ID.", true, "Allow/Deny execute-api:Invoke."],
+      ["Tài liệu khuyến nghị dùng TOKEN authorizer thay vì REQUEST authorizer.", false, "Tài liệu khuyến nghị REQUEST authorizer."],
+      ["Cognito identity pool cấp JWT để dùng với COGNITO_USER_POOLS authorizer.", false, "User pool cấp JWT; identity pool cấp AWS credentials cho AWS_IAM."],
+      ["Resource policy của API Gateway có thể giới hạn truy cập theo dải IP.", true, "Điều kiện aws:SourceIp."],
+      ["Cognito user pool authorizer cần viết code Lambda để xác minh token.", false, "API Gateway tự xác minh token, không cần code."],
+      ["AWS service integration cho phép API Gateway ghi thẳng vào SQS mà không cần Lambda.", true, "Dùng IAM role + mapping template."],
+      ["Canary release deployment yêu cầu tạo stage mới cho bản thử nghiệm.", false, "Canary chia traffic trên cùng một stage."],
+      ["VPC link cho phép API Gateway gọi service private sau NLB hoặc ALB.", true, "Back end không cần public IP."],
+      ["Mock integration ghi dữ liệu vào back end.", false, "Mock không gọi back end nào."]
+    ],
+
+    map: {
+      t: "Bài 33 · Amazon API Gateway",
+      c: [
+        { t: "Khái niệm & kiến trúc", icon: "svc/Amazon-API-Gateway.svg", c: [
+          { t: "Vai trò", v: "front door · cùng Lambda = app-facing serverless" },
+          { t: "Cấu trúc", v: "resource → method → integration" },
+          { t: "Deployment / stage", v: "snapshot / tên tham chiếu (dev, prod)" },
+          { t: "Mẫu web", v: "S3 + CloudFront → API GW → Lambda → DynamoDB + Cognito" },
+          { t: "Mẫu đệm", v: "API GW → SQS → Lambda, không mất request" },
+          { t: "File lớn", v: "presigned URL, upload thẳng S3" }
+        ] },
+        { t: "Loại API", icon: "res/Amazon-API-Gateway_Endpoint.svg", c: [
+          { t: "REST API", v: "đủ tính năng: API key, cache, WAF, private, canary" },
+          { t: "HTTP API", v: "rẻ, JWT authorizer, auto deploy, chỉ Regional" },
+          { t: "WebSocket API", v: "hai chiều · $connect/$disconnect/$default · @connections" },
+          { t: "Timeout", v: "REST/WebSocket 29 s · HTTP 30 s" },
+          { t: "Payload", v: "10 MB · WebSocket message 128 KB" }
+        ] },
+        { t: "Endpoint type", icon: "svc/Amazon-CloudFront.svg", c: [
+          { t: "Edge-optimized", v: "qua CloudFront POP, mặc định REST, client toàn cầu" },
+          { t: "Regional", v: "cùng Region · CloudFront riêng · multi-Region + Route 53" },
+          { t: "Private", v: "chỉ từ VPC qua interface endpoint execute-api + resource policy" },
+          { t: "Custom domain", v: "ACM cert · base path mapping · Route 53 alias" }
+        ] },
+        { t: "Integration & stage", icon: "res/AWS-Lambda_Lambda-Function.svg", c: [
+          { t: "AWS_PROXY", v: "Lambda proxy, khuyến nghị" },
+          { t: "AWS", v: "gọi thẳng SQS/DynamoDB/Kinesis/Step Functions" },
+          { t: "HTTP_PROXY / MOCK", v: "back end HTTP có sẵn / tự trả response" },
+          { t: "VPC link", v: "private NLB/ALB" },
+          { t: "Stage variables", v: "≤ 100, trỏ Lambda alias theo stage" },
+          { t: "Canary", v: "chia % traffic trên cùng stage" }
+        ] },
+        { t: "Throttling & usage plan", icon: "svc/Amazon-CloudWatch.svg", c: [
+          { t: "Token bucket", v: "rate = nạp, burst = sức chứa" },
+          { t: "Mặc định", v: "10.000 RPS + burst 5.000 / account / Region" },
+          { t: "Thứ tự", v: "usage plan → stage/method → account → AWS" },
+          { t: "Usage plan", v: "throttle + quota theo API key (REST)" },
+          { t: "Lưu ý", v: "API key ≠ xác thực · best-effort" }
+        ] },
+        { t: "API caching", icon: "res/Amazon-DynamoDB_Amazon-DynamoDB-Accelerator.svg", c: [
+          { t: "Phạm vi", v: "chỉ REST API, theo stage" },
+          { t: "TTL", v: "300 s mặc định · tối đa 3.600 s" },
+          { t: "Mặc định", v: "chỉ GET · response ≤ 1 MB" },
+          { t: "Invalidate", v: "Cache-Control: max-age=0 + InvalidateCache" },
+          { t: "Giá", v: "theo giờ theo kích thước cache" }
+        ] },
+        { t: "Authorizer & bảo mật", icon: "svc/Amazon-Cognito.svg", c: [
+          { t: "IAM (SigV4)", v: "service-to-service, cross-account" },
+          { t: "Cognito user pool", v: "user app, API GW tự verify JWT" },
+          { t: "Lambda authorizer", v: "TOKEN/REQUEST, IdP bên thứ ba, có cache" },
+          { t: "Resource policy", v: "account, IP, VPC endpoint (REST)" },
+          { t: "AWS WAF", v: "SQL injection, XSS, rate-based rule" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

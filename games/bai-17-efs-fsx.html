@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 17 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Elastic-File-System.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="17" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-17-efs-fsx.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "efs", name: "EFS: kiến trúc & mount target" },
+      { id: "perf", name: "EFS: performance & throughput" },
+      { id: "cost", name: "EFS: storage class & lifecycle" },
+      { id: "sec", name: "EFS: bảo mật, access point, DR" },
+      { id: "win", name: "FSx for Windows File Server" },
+      { id: "lustre", name: "FSx for Lustre" },
+      { id: "zfs", name: "FSx for ONTAP & OpenZFS" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- EFS kiến trúc
+      { t: "efs", f: "Amazon EFS là gì?", b: "File storage <b>serverless, đàn hồi</b>: không provision dung lượng, tự lớn/thu nhỏ tới <b>petabyte</b>, giao thức <b>NFSv4.0/4.1</b>." },
+      { t: "efs", f: "EFS hỗ trợ những phiên bản NFS nào?", b: "<b>NFSv4.0 và NFSv4.1</b>. Không hỗ trợ NFSv2/v3.", x: "Cần NFSv3 ⇒ FSx for OpenZFS." },
+      { t: "efs", f: "EC2 Windows có mount được EFS không?", b: "<b>Không.</b> AWS ghi rõ dùng EFS với Windows instance là “not supported”.", x: "Windows cần FSx for Windows File Server (hoặc FSx for ONTAP)." },
+      { t: "efs", f: "Những compute nào mount được EFS?", b: "<b>EC2, ECS, EKS, Lambda, Fargate</b> và server Linux on-premises (qua Direct Connect/VPN)." },
+      { t: "efs", f: "Mount target là gì?", b: "“Cửa vào” EFS trong VPC: một <b>ENI có IP</b> trong subnet, cung cấp endpoint NFSv4. Mount bằng DNS name, DNS trả về IP mount target <b>cùng AZ</b>." },
+      { t: "efs", f: "Mỗi AZ có tối đa bao nhiêu mount target cho một file system?", b: "<b>1 mount target mỗi AZ</b>. AZ có nhiều subnet thì chọn một; mọi instance trong AZ dùng chung." },
+      { t: "efs", f: "Security group của mount target phải mở cổng nào?", b: "Inbound <b>TCP 2049 (NFS)</b> từ SG của client (hoặc CIDR on-premises).", x: "Mount bị “timed out” ⇒ thường do SG chưa mở 2049 hoặc AZ chưa có mount target." },
+      { t: "efs", f: "Các giới hạn của mount target cần nhớ?", b: "Mount target chỉ ở <b>1 VPC</b> tại một thời điểm · tối đa <b>1.400</b> mount target/VPC · mỗi mount target tối đa <b>5 security group</b>." },
+      { t: "efs", f: "Server on-premises mount EFS thế nào?", b: "Linux (kernel ≥ 4.0) qua <b>Direct Connect hoặc Site-to-Site VPN</b>, nên mount bằng <b>IP của mount target</b> thay vì DNS name.", x: "Không phí thêm cho truy cập on-premises, chỉ trả phí DX/VPN." },
+      { t: "efs", f: "EFS Regional khác One Zone thế nào?", b: "<b>Regional</b>: dữ liệu trên ≥ 3 AZ, SLA 99,99%, 1 mount target mỗi AZ.<br><b>One Zone</b>: 1 AZ, SLA 99,9%, rẻ hơn, tự backup bằng AWS Backup.", x: "Cả hai đều có độ bền thiết kế 11 số 9, nhưng One Zone có thể mất dữ liệu nếu AZ bị phá hủy." },
+      { t: "efs", f: "Kích thước tối đa một file và số kết nối tối đa của EFS?", b: "<b>47,9 TiB</b> mỗi file · <b>25.000</b> kết nối mỗi file system." },
+      { t: "efs", f: "EFS có mô hình consistency và locking ra sao?", b: "<b>Close-to-open consistency</b> như NFS; file locking NFSv4 (kể cả byte-range) nhưng chỉ là <b>advisory</b>, tối đa <b>512 lock/file</b>; quyền POSIX (UID/GID), tối đa 16 group ID/user." },
+      { t: "efs", f: "Block, file, object storage khác nhau thế nào về truy cập đồng thời?", b: "<b>EBS</b>: 1 instance (Multi-Attach tối đa 16, cùng AZ, io1/io2).<br><b>EFS/FSx</b>: hàng nghìn client, nhiều AZ, on-premises.<br><b>S3</b>: không giới hạn, qua HTTP API." },
+
+      // ---- Hiệu năng
+      { t: "perf", f: "Cấu hình hiệu năng EFS AWS khuyến nghị mặc định?", b: "<b>General Purpose</b> performance mode + <b>Elastic</b> throughput mode." },
+      { t: "perf", f: "General Purpose performance mode có đặc điểm gì?", b: "Độ trễ thấp nhất; tới <b>250.000 thao tác file/giây</b>; One Zone luôn dùng General Purpose; theo dõi metric <b>PercentIOLimit</b>." },
+      { t: "perf", f: "Max I/O performance mode có hạn chế gì?", b: "Thế hệ trước, <b>độ trễ cao hơn</b>; không hỗ trợ <b>One Zone</b> và không dùng với <b>Elastic throughput</b>.", x: "Đề cũ hay chọn Max I/O cho “thousands of instances”, tài liệu hiện nay khuyên General Purpose + Elastic." },
+      { t: "perf", f: "Elastic throughput mode dùng khi nào và tính phí ra sao?", b: "Workload <b>spiky / khó dự đoán</b> (trung bình/đỉnh ≤ 5%). Tự co giãn, trả theo <b>lượng dữ liệu đọc/ghi</b>." },
+      { t: "perf", f: "Provisioned throughput mode dùng khi nào?", b: "Biết rõ nhu cầu, ổn định (trung bình/đỉnh ≥ 5%); cần throughput cao nhưng <b>dữ liệu nhỏ</b>. Throughput <b>độc lập dung lượng</b>." },
+      { t: "perf", f: "Bursting throughput: baseline và burst bao nhiêu?", b: "Baseline <b>50 KiBps/GiB</b> (50 MiBps/TiB) ở lớp Standard; burst <b>100 MiBps/TiB</b> (tối thiểu 100 MiBps) khi còn credit. Chỉ trả phí lưu trữ." },
+      { t: "perf", f: "Vì sao file system EFS nhỏ dùng Bursting hay bị “nghẹt”?", b: "Baseline tỷ lệ dung lượng: 100 GiB ⇒ chỉ <b>5 MiBps</b>; hết credit thì rơi về baseline.", x: "Đáp án đúng: chuyển Elastic (spiky) hoặc Provisioned (ổn định). Đừng chọn “chép file rác cho to”." },
+      { t: "perf", f: "EFS tính IOPS thế nào?", b: "IOPS <b>không tính phí riêng</b>: mỗi request NFS tính là <b>4 KB</b> hoặc kích thước thực (lấy lớn hơn). Đọc được tính bằng <b>1/3</b> so với ghi." },
+      { t: "perf", f: "Hạn chế khi đổi sang Provisioned throughput?", b: "Trong <b>24 giờ</b> sau khi chuyển sang/đổi mức Provisioned: không được về Elastic/Bursting, không được giảm mức.", x: "Có lifecycle sang Archive thì không đổi được sang Bursting/Provisioned." },
+      { t: "perf", f: "3 metric CloudWatch quan trọng của EFS?", b: "<b>PercentIOLimit</b> (General Purpose gần trần IOPS) · <b>BurstCreditBalance</b> (Bursting) · <b>MeteredIOBytes</b> (Elastic, đặt cảnh báo chi phí)." },
+      { t: "perf", f: "Throughput mỗi client tối đa với Regional + Elastic?", b: "<b>1.500 MiBps</b> (efs-utils ≥ 2.0); các mode khác 500 MiBps." },
+
+      // ---- Storage class
+      { t: "cost", f: "3 storage class của EFS?", b: "<b>Standard</b> (SSD, sub-ms) · <b>Infrequent Access</b> (vài lần/quý, hàng chục ms) · <b>Archive</b> (vài lần/năm, hàng chục ms)." },
+      { t: "cost", f: "Dữ liệu mới ghi vào EFS nằm ở lớp nào?", b: "Luôn ghi vào <b>EFS Standard</b>. Ghi vào file đang ở IA/Archive cũng ghi vào Standard trước." },
+      { t: "cost", f: "Mặc định lifecycle chuyển xuống IA và Archive sau bao lâu?", b: "<b>IA: 30 ngày</b> không truy cập · <b>Archive: 90 ngày</b> không truy cập." },
+      { t: "cost", f: "Phí tối thiểu mỗi file và thời gian lưu tối thiểu của IA/Archive?", b: "IA và Archive tính tối thiểu <b>128 KiB/file</b>. Archive lưu tối thiểu <b>90 ngày</b>; IA không có." },
+      { t: "cost", f: "Policy “Transition into Standard” làm gì?", b: "Đưa file về Standard <b>On first access</b> khi được đọc lại. Mặc định: <b>không</b> (file ở lại IA/Archive).", x: "Dùng cho ứng dụng nhạy độ trễ, file cũ được đọc lại nhiều lần." },
+      { t: "cost", f: "Điều kiện để dùng lớp EFS Archive?", b: "Chỉ có ở <b>Regional</b> và yêu cầu <b>Elastic throughput</b>." },
+      { t: "cost", f: "EFS lifecycle khác S3 Lifecycle thế nào?", b: "EFS dựa trên <b>lần truy cập cuối</b> (timer nội bộ, không phải atime), áp dụng cho <b>toàn file system</b>, <b>không có expiration</b> xóa file.<br>S3 dựa trên tuổi object, lọc theo prefix." },
+      { t: "cost", f: "Metadata của file EFS nằm ở lớp nào?", b: "Luôn ở <b>Standard</b>; liệt kê thư mục không tính là truy cập file." },
+
+      // ---- Bảo mật
+      { t: "sec", f: "Những lớp kiểm soát truy cập EFS?", b: "<b>Security group</b> (TCP 2049) + <b>IAM</b> (identity policy + file system policy) + <b>quyền POSIX</b> ở cấp file." },
+      { t: "sec", f: "3 action IAM cho NFS client của EFS?", b: "<code>elasticfilesystem:ClientMount</code> / <code>ClientWrite</code> / <code>ClientRootAccess</code>." },
+      { t: "sec", f: "EFS Access Point làm gì?", b: "Điểm vào theo ứng dụng: ép <b>POSIX user/group cố định</b> và <b>root directory riêng</b>, bất kể client tự xưng là ai.", x: "Tối đa 10.000 access point/file system. Lambda, ECS/EKS hay mount qua access point." },
+      { t: "sec", f: "Bật encryption at rest cho EFS lúc nào?", b: "<b>Chỉ khi tạo file system</b> (mã hóa dữ liệu + metadata bằng KMS).", x: "File system cũ chưa mã hóa ⇒ tạo file system mới có mã hóa rồi chép bằng DataSync." },
+      { t: "sec", f: "Mã hóa in transit EFS bằng cách nào?", b: "Mount bằng <b>EFS mount helper</b> với tùy chọn <b>TLS</b>." },
+      { t: "sec", f: "EFS Replication cung cấp gì?", b: "Tự động, liên tục sao chép dữ liệu + metadata sang file system ở <b>Region khác</b>; <b>RPO/RTO tính bằng phút</b>." },
+      { t: "sec", f: "File system policy của EFS giới hạn bao nhiêu ký tự?", b: "Resource-based policy, tối đa <b>20.000 ký tự</b>." },
+
+      // ---- FSx Windows
+      { t: "win", f: "FSx for Windows File Server dùng giao thức gì?", b: "<b>SMB 2.0–3.1.1</b>, file system Windows native; client Windows Server 2008/Windows 7 trở lên và Linux." },
+      { t: "win", f: "FSx for Windows có bắt buộc Active Directory không?", b: "<b>Có.</b> Phải join <b>AWS Managed Microsoft AD</b> hoặc <b>self-managed AD</b> on-premises khi tạo; quyền bằng Windows ACL." },
+      { t: "win", f: "Tính năng Windows native nào FSx for Windows hỗ trợ?", b: "<b>DFS Namespaces</b>, DFS Replication, <b>Shadow Copies</b>, <b>Data Deduplication</b>, user quotas, <b>CA shares</b> cho SQL Server, SMB Multichannel." },
+      { t: "win", f: "FSx for Windows Multi-AZ failover mất bao lâu?", b: "<b>&lt; 30 giây</b> sang standby ở AZ khác; DNS name không đổi.", x: "Single-AZ phục hồi lỗi/bảo trì ~30 phút downtime." },
+      { t: "win", f: "Multi-AZ của FSx for Windows sao chép dữ liệu đồng bộ hay bất đồng bộ?", b: "<b>Đồng bộ</b> trong mỗi AZ và giữa 2 AZ (preferred + standby).", x: "Cần chỉ định 2 subnet ở 2 AZ." },
+      { t: "win", f: "Client Linux có tự failover qua DNS với FSx for Windows Multi-AZ không?", b: "<b>Không.</b> Client Windows tự kết nối lại; Linux chỉ tiếp tục khi file system failback về preferred subnet." },
+      { t: "win", f: "SSD hay HDD cho FSx for Windows?", b: "<b>SSD</b>: database, media, analytics, mọi deployment type.<br><b>HDD</b>: rẻ cho home directory, share phòng ban; chỉ có ở <b>Single-AZ 2 và Multi-AZ</b>." },
+      { t: "win", f: "FSx for Windows có truy cập được từ Internet công cộng không?", b: "<b>Không.</b> Gắn Elastic IP vào ENI của file system thì FSx tự gỡ ra." },
+      { t: "win", f: "Hiệu năng tối đa của FSx for Windows?", b: "<b>12 GBps · 400.000 IOPS</b> (một số Region lớn); 2 GBps · 80.000 IOPS ở mọi Region; backup tự động hằng ngày (VSS)." },
+
+      // ---- Lustre
+      { t: "lustre", f: "FSx for Lustre dành cho workload nào?", b: "<b>HPC, machine learning</b>, xử lý video, mô hình tài chính, EDA: sub-ms, tới nhiều TBps, hàng triệu IOPS. POSIX, Linux." },
+      { t: "lustre", f: "Scratch khác Persistent (FSx for Lustre) thế nào?", b: "<b>Scratch</b>: tạm, <b>không replication</b>, server hỏng không được thay, 200 MBps/TiB burst 6×, rẻ.<br><b>Persistent</b>: nhân bản trong AZ, server hỏng được thay trong vài phút." },
+      { t: "lustre", f: "Data repository association (DRA) là gì?", b: "Liên kết thư mục FSx for Lustre với <b>S3 bucket/prefix</b>: import metadata, nạp nội dung khi truy cập lần đầu (<b>lazy loading</b>), export kết quả về S3." },
+      { t: "lustre", f: "Automatic import/export của Lustre hỗ trợ cross-Region không?", b: "<b>Import: chỉ cùng Region.</b> <b>Export: hỗ trợ cross-Region.</b> Cả hai hỗ trợ cross-account." },
+      { t: "lustre", f: "File system Lustre đã liên kết S3 có backup FSx được không?", b: "<b>Không.</b> S3 đóng vai trò kho dữ liệu bền. Đừng xóa bucket trước khi gỡ liên kết." },
+      { t: "lustre", f: "3 storage class của FSx for Lustre?", b: "<b>SSD</b> (sub-ms, file nhỏ ngẫu nhiên) · <b>Intelligent-Tiering</b> (đàn hồi, tự tiering) · <b>HDD</b> (tuần tự, file lớn)." },
+      { t: "lustre", f: "FSx for Lustre giúp SageMaker thế nào?", b: "Làm input data source: bỏ bước tải dữ liệu ban đầu từ S3, giảm chi phí request S3 khi train lặp lại trên cùng dataset." },
+
+      // ---- ONTAP & OpenZFS
+      { t: "zfs", f: "Điểm khác biệt lớn nhất của FSx for NetApp ONTAP?", b: "<b>Đa giao thức</b>: NFS, SMB, iSCSI, NVMe/TCP; client Linux, Windows, macOS; file + block trên cùng file system." },
+      { t: "zfs", f: "Hai storage tier của FSx for ONTAP?", b: "<b>SSD tier</b> (provision, dữ liệu nóng) và <b>capacity pool</b> (đàn hồi tới PB, rẻ, dữ liệu lạnh)." },
+      { t: "zfs", f: "4 tiering policy của ONTAP?", b: "<b>Auto</b> (mặc định console, cooling 31 ngày) · <b>Snapshot Only</b> (mặc định CLI/API, 2 ngày) · <b>All</b> · <b>None</b>." },
+      { t: "zfs", f: "Tính năng NetApp nổi bật trên FSx for ONTAP?", b: "<b>SnapMirror</b> (replication), <b>FlexClone</b> (clone tức thì), <b>SnapLock</b> (WORM), FlexCache, nén + dedup tiết kiệm <b>tới 65%</b>." },
+      { t: "zfs", f: "FSx for OpenZFS hỗ trợ giao thức gì?", b: "<b>NFS v3, v4.0, v4.1, v4.2</b>; client Linux, Windows, macOS." },
+      { t: "zfs", f: "Hiệu năng của FSx for OpenZFS?", b: "Tới <b>2 triệu IOPS</b>, độ trễ <b>vài trăm micro giây</b>, 21 GBps từ cache." },
+      { t: "zfs", f: "3 deployment type của FSx for OpenZFS?", b: "<b>Multi-AZ (HA)</b> · <b>Single-AZ (HA)</b> (failover 60 giây) · <b>Single-AZ (non-HA)</b> (tự phục hồi ~30 phút)." },
+      { t: "zfs", f: "FSx for OpenZFS thiếu gì so với FSx for Windows và ONTAP?", b: "Không có SMB / Windows ACL / AD như FSx for Windows; không có tiering đa giao thức như ONTAP." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>shared file system</i>”, “<i>Linux</i>”, “<i>multiple AZs</i>”, “<i>grows and shrinks automatically</i>” ⇒ ?", b: "<b>Amazon EFS</b> (Regional)." },
+      { t: "kw", f: "Đề có “<i>Lambda / Fargate need persistent shared storage</i>” ⇒ ?", b: "<b>Amazon EFS</b>.", x: "Lambda chỉ có /tmp tạm thời." },
+      { t: "kw", f: "Đề có “<i>cost-effective, data can be re-created, single AZ acceptable</i>” (file NFS) ⇒ ?", b: "<b>EFS One Zone</b> (+ lifecycle sang IA)." },
+      { t: "kw", f: "Đề có “<i>BurstCreditBalance drops to zero</i>”, nhu cầu ổn định ⇒ ?", b: "Chuyển sang <b>Provisioned throughput</b> (spiky thì <b>Elastic</b>)." },
+      { t: "kw", f: "Đề có “<i>Windows</i>”, “<i>SMB</i>”, “<i>NTFS ACLs</i>”, “<i>Active Directory</i>” ⇒ ?", b: "<b>FSx for Windows File Server</b> (Multi-AZ nếu cần chịu lỗi AZ)." },
+      { t: "kw", f: "Đề có “<i>users restore previous versions of their own files</i>” trên Windows share ⇒ ?", b: "Bật <b>Shadow Copies</b> (FSx for Windows)." },
+      { t: "kw", f: "Đề có “<i>on-premises users need low-latency access to FSx for Windows shares</i>” ⇒ ?", b: "<b>Amazon FSx File Gateway</b> (cache cục bộ, Bài 18)." },
+      { t: "kw", f: "Đề có “<i>HPC</i>”, “<i>ML training</i>”, “<i>data in S3</i>”, “<i>write results back to S3</i>” ⇒ ?", b: "<b>FSx for Lustre</b> liên kết S3 qua DRA; job ngắn hạn ⇒ <b>Scratch</b>." },
+      { t: "kw", f: "Đề có “<i>NetApp</i>”, “<i>SnapMirror</i>”, “<i>NFS + SMB + iSCSI</i>” ⇒ ?", b: "<b>FSx for NetApp ONTAP</b>." },
+      { t: "kw", f: "Đề có “<i>migrate ZFS</i>”, “<i>NFSv3</i>”, “<i>hundreds of microseconds latency</i>” ⇒ ?", b: "<b>FSx for OpenZFS</b>." },
+      { t: "kw", f: "Đề có “<i>each app only accesses its own directory as a specific POSIX user</i>” trên EFS ⇒ ?", b: "<b>EFS access points</b> + IAM authorization." },
+      { t: "kw", f: "Đề có “<i>DR to another Region with RPO of minutes</i>” cho file system EFS ⇒ ?", b: "<b>EFS Replication</b>. Backup tập trung theo lịch, retention ⇒ <b>AWS Backup</b>." }
+    ],
+
+    pairs: [
+      ["NFS", "Giao thức chia sẻ file của Linux/Unix; EFS dùng v4.0/4.1"],
+      ["SMB", "Giao thức chia sẻ file của Windows (2.0–3.1.1)"],
+      ["POSIX permissions", "Quyền owner/group/other theo UID/GID"],
+      ["Mount target", "ENI có IP trong subnet để mount EFS, 1 mỗi AZ"],
+      ["EFS One Zone", "Lưu dữ liệu trong 1 AZ, SLA 99,9%, rẻ hơn"],
+      ["General Purpose", "Performance mode độ trễ thấp nhất, mặc định"],
+      ["Max I/O", "Performance mode thế hệ trước, độ trễ cao hơn"],
+      ["Elastic throughput", "Tự co giãn, trả theo dữ liệu đọc/ghi"],
+      ["Provisioned throughput", "Chỉ định trước, độc lập dung lượng"],
+      ["Burst credits", "Tích khi dưới baseline, tiêu khi vượt baseline"],
+      ["EFS Infrequent Access", "Lớp rẻ cho file truy cập vài lần mỗi quý"],
+      ["EFS Archive", "Lớp cho file vài lần/năm, lưu tối thiểu 90 ngày"],
+      ["EFS Access Point", "Ép POSIX user/group và thư mục gốc theo ứng dụng"],
+      ["File system policy", "Resource-based IAM policy gắn vào EFS"],
+      ["EFS Replication", "Sao chép liên tục sang Region khác, RPO phút"],
+      ["DFS Namespaces", "Gom nhiều file share dưới một đường dẫn chung"],
+      ["Shadow Copies", "User tự khôi phục phiên bản trước của file"],
+      ["Data Deduplication", "Lưu một lần các khối dữ liệu trùng"],
+      ["CA share", "SMB share khả dụng liên tục cho SQL Server HA"],
+      ["Scratch file system", "Lustre tạm, không nhân bản dữ liệu"],
+      ["Data repository association", "Nối thư mục FSx for Lustre với S3 bucket"],
+      ["Lazy loading", "Nạp nội dung file từ S3 khi truy cập lần đầu"],
+      ["Capacity pool tier", "Tầng đàn hồi giá rẻ của ONTAP cho dữ liệu lạnh"],
+      ["SnapMirror", "Replication giữa các file system NetApp ONTAP"],
+      ["FlexClone", "Clone volume ONTAP tức thì, chỉ tốn phần thay đổi"],
+      ["Thin provisioning", "Chỉ tiêu dung lượng thật khi dữ liệu được ghi"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn dịch vụ file storage theo tình huống",
+        desc: "Đọc yêu cầu đề và chọn dịch vụ file storage phù hợp nhất.",
+        buckets: ["Amazon EFS", "FSx for Windows", "FSx for Lustre", "FSx for ONTAP", "FSx for OpenZFS"],
+        items: [
+          ["Auto Scaling group Linux trên 3 AZ dùng chung file upload", 0, "NFS dùng chung, tự co giãn, Regional"],
+          ["Lambda và Fargate cần file system bền dùng chung", 0, "EFS mount được từ Lambda/Fargate"],
+          ["Linux, dung lượng không biết trước, LEAST operational overhead", 0, "không provision dung lượng hay throughput"],
+          ["Ứng dụng .NET, Windows ACL, xác thực Active Directory", 1, "SMB native + AD bắt buộc"],
+          ["SQL Server HA trên EC2 cần shared storage", 1, "Multi-AZ + continuously available shares"],
+          ["Job ML đọc dữ liệu S3, cần hàng trăm GBps", 2, "file system song song liên kết S3"],
+          ["HPC ngắn hạn, dữ liệu tái tạo được từ S3", 2, "Scratch rẻ nhất cho xử lý tạm"],
+          ["Cùng dữ liệu cho Linux (NFS) và Windows (SMB) và iSCSI LUN", 3, "đa giao thức NFS/SMB/iSCSI/NVMe-TCP"],
+          ["Tiếp tục dùng SnapMirror từ NetApp on-premises", 3, "giữ tính năng NetApp"],
+          ["Migrate file server ZFS dùng NFSv3", 4, "OpenZFS hỗ trợ NFS v3–v4.2"],
+          ["NFS độ trễ vài trăm µs, snapshot/clone tức thì", 4, "tới 2 triệu IOPS"]
+        ]
+      },
+      {
+        title: "EFS throughput mode nào?",
+        desc: "Chọn throughput mode EFS phù hợp với mô tả.",
+        buckets: ["Elastic", "Provisioned", "Bursting"],
+        items: [
+          ["Workload spiky, khó dự đoán, trả theo những gì dùng", 0, "tự co giãn theo workload"],
+          ["Mode AWS khuyến nghị mặc định", 0, "General Purpose + Elastic"],
+          ["Bắt buộc nếu dùng lớp EFS Archive", 0, "Archive yêu cầu Elastic"],
+          ["Không tích hay tiêu burst credit, tính theo dữ liệu đọc/ghi", 0, "Elastic không dùng credit"],
+          ["Dữ liệu nhỏ nhưng cần throughput cao, nhu cầu ổn định", 1, "throughput độc lập dung lượng"],
+          ["Sau khi đổi, 24 giờ không được giảm mức", 1, "hạn chế 24 giờ của Provisioned"],
+          ["Throughput tỷ lệ dung lượng, 50 KiBps/GiB baseline", 2, "baseline theo dung lượng Standard"],
+          ["Chỉ trả phí lưu trữ, dùng credit để burst", 2, "Bursting không tính phí throughput riêng"],
+          ["Theo dõi metric BurstCreditBalance", 2, "credit chỉ có ở Bursting"]
+        ]
+      },
+      {
+        title: "Đặc điểm thuộc về FSx for Lustre Scratch hay Persistent?",
+        desc: "Phân loại đặc điểm theo deployment type của FSx for Lustre.",
+        buckets: ["Scratch", "Persistent"],
+        items: [
+          ["Không replication, server hỏng thì dữ liệu lỗi I/O", 0, "lưu trữ tạm"],
+          ["200 MBps/TiB baseline, burst tới 6 lần", 0, "thông số Scratch"],
+          ["Job HPC vài giờ–vài ngày, dữ liệu gốc ở S3", 0, "tối ưu chi phí cho xử lý ngắn hạn"],
+          ["Càng lớn càng nhiều server, xác suất lỗi càng cao", 0, "50,4 TiB chỉ ≈ 99,1%/ngày"],
+          ["Server hỏng được thay trong vài phút, client tự retry", 1, "có replication trong AZ"],
+          ["Workload chạy lâu dài, nhạy với gián đoạn", 1, "lưu trữ dài hạn"],
+          ["Hỗ trợ HDD với SSD read cache tùy chọn", 1, "Persistent 1: SSD hoặc HDD"],
+          ["Mã hóa in transit luôn bật khi truy cập từ EC2 hỗ trợ", 1, "Scratch chỉ ở một số Region"]
+        ]
+      },
+      {
+        title: "Tính năng này thuộc dịch vụ nào?",
+        desc: "Mỗi tính năng/khái niệm thuộc dịch vụ file storage nào?",
+        buckets: ["EFS", "FSx for Windows", "FSx for Lustre", "FSx for ONTAP"],
+        items: [
+          ["Mount target + TCP 2049", 0, "cửa vào NFS của EFS"],
+          ["Access point ép POSIX identity", 0, "EFS access point"],
+          ["Lifecycle Standard → IA → Archive", 0, "storage class của EFS"],
+          ["DFS Namespaces, Shadow Copies", 1, "tính năng Windows native"],
+          ["Preferred + standby file server", 1, "Multi-AZ của FSx for Windows"],
+          ["Data repository association với S3", 2, "lazy load từ S3"],
+          ["Scratch / Persistent", 2, "deployment type của Lustre"],
+          ["Tiering policy Auto / Snapshot Only / All / None", 3, "SSD tier ↔ capacity pool"],
+          ["SnapMirror, FlexClone, SnapLock", 3, "tính năng NetApp"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["EFS hỗ trợ NFSv3.", false, "EFS chỉ hỗ trợ NFSv4.0/4.1; cần NFSv3 thì dùng FSx for OpenZFS."],
+      ["EFS không hỗ trợ EC2 instance chạy Windows.", true, "Windows cần FSx for Windows File Server."],
+      ["Một file system EFS có thể có hai mount target trong cùng một AZ.", false, "Tối đa 1 mount target mỗi AZ."],
+      ["Security group của mount target EFS phải cho phép inbound TCP 2049.", true, "2049 là cổng NFS."],
+      ["Server Linux on-premises có thể mount EFS qua Direct Connect hoặc VPN.", true, "Nên mount bằng IP của mount target."],
+      ["EFS One Zone có SLA khả dụng 99,99%.", false, "One Zone là 99,9%; Regional mới là 99,99%."],
+      ["EFS Regional và One Zone đều có độ bền thiết kế 11 số 9.", true, "Nhưng One Zone có thể mất dữ liệu nếu AZ bị phá hủy."],
+      ["Lambda function có thể mount EFS để có storage bền dùng chung.", true, "Lambda chỉ có /tmp tạm thời."],
+      ["Max I/O dùng được với Elastic throughput và One Zone.", false, "Max I/O không hỗ trợ One Zone và Elastic."],
+      ["AWS khuyến nghị mặc định General Purpose + Elastic cho EFS.", true, "Đây là cấu hình khuyến nghị."],
+      ["Với Bursting, baseline throughput tỷ lệ với dung lượng ở lớp Standard.", true, "50 KiBps/GiB."],
+      ["Chép file rác cho to dung lượng là cách tốt nhất để tăng throughput EFS.", false, "Nên chuyển sang Elastic hoặc Provisioned."],
+      ["EFS tính phí IOPS riêng ngoài throughput.", false, "IOPS gộp vào throughput; mỗi request tính tối thiểu 4 KB."],
+      ["Sau khi chuyển sang Provisioned, có thể về Elastic ngay lập tức.", false, "Phải chờ 24 giờ."],
+      ["Dữ liệu mới luôn được ghi vào lớp EFS Standard.", true, "Lifecycle mới chuyển xuống IA/Archive sau."],
+      ["EFS lifecycle có hành động expiration để tự xóa file cũ.", false, "EFS lifecycle không có expiration, khác S3 Lifecycle."],
+      ["Lớp EFS Archive có ở cả Regional và One Zone.", false, "Archive chỉ có ở Regional, cần Elastic throughput."],
+      ["EFS IA tính phí tối thiểu 128 KiB mỗi file.", true, "Cả IA và Archive."],
+      ["Có thể bật encryption at rest cho file system EFS đã tạo.", false, "Chỉ bật được lúc tạo; phải tạo mới và chép dữ liệu."],
+      ["Mount EFS với tùy chọn TLS mã hóa dữ liệu at rest.", false, "TLS chỉ mã hóa in transit."],
+      ["EFS Replication cho RPO/RTO tính bằng phút.", true, "Sao chép liên tục sang Region khác."],
+      ["FSx for Windows File Server bắt buộc join Microsoft Active Directory.", true, "Managed Microsoft AD hoặc self-managed AD."],
+      ["FSx for Windows Multi-AZ sao chép dữ liệu bất đồng bộ sang standby.", false, "Sao chép đồng bộ giữa 2 AZ."],
+      ["FSx for Windows Multi-AZ failover thường dưới 30 giây.", true, "DNS name không đổi."],
+      ["Client Linux tự failover qua DNS với FSx for Windows Multi-AZ.", false, "Chỉ client Windows tự kết nối lại."],
+      ["HDD của FSx for Windows có ở Single-AZ 1.", false, "HDD chỉ có ở Single-AZ 2 và Multi-AZ."],
+      ["FSx for Lustre Scratch có replication dữ liệu.", false, "Scratch không replication; Persistent mới có."],
+      ["FSx for Lustre nạp nội dung file từ S3 khi truy cập lần đầu.", true, "Lazy loading qua data repository association."],
+      ["Automatic import của FSx for Lustre hỗ trợ cross-Region.", false, "Import chỉ cùng Region; export mới hỗ trợ cross-Region."],
+      ["File system Lustre liên kết S3 vẫn backup FSx được.", false, "Không hỗ trợ backup; S3 là kho bền."],
+      ["FSx for ONTAP hỗ trợ cả NFS, SMB và iSCSI.", true, "Đa giao thức, cả NVMe/TCP."],
+      ["Tiering policy mặc định khi tạo volume ONTAP bằng console là Auto.", true, "CLI/API mặc định Snapshot Only."],
+      ["FSx for OpenZFS hỗ trợ SMB và Active Directory.", false, "OpenZFS chỉ NFS, quyền Unix."],
+      ["FSx for OpenZFS đạt tới 2 triệu IOPS với độ trễ vài trăm micro giây.", true, "Thông số chính của OpenZFS."]
+    ],
+
+    map: {
+      t: "Bài 17 · EFS & Amazon FSx",
+      c: [
+        { t: "EFS kiến trúc", icon: "svc/Amazon-Elastic-File-System.svg", c: [
+          { t: "Giao thức", v: "NFSv4.0/4.1, chỉ Linux/macOS" },
+          { t: "Dung lượng", v: "serverless, tự co giãn tới PB" },
+          { t: "Mount target", v: "1/AZ, ENI + IP, SG mở TCP 2049" },
+          { t: "Client", v: "EC2, ECS, EKS, Lambda, Fargate, on-prem qua DX/VPN" },
+          { t: "Loại file system", c: [
+            { t: "Regional", v: "≥ 3 AZ, SLA 99,99%" },
+            { t: "One Zone", v: "1 AZ, 99,9%, rẻ, tự backup" }
+          ] },
+          { t: "Giới hạn", v: "47,9 TiB/file · 25.000 kết nối" }
+        ] },
+        { t: "EFS hiệu năng", icon: "res/Amazon-Elastic-File-System_File-System.svg", c: [
+          { t: "Mặc định", v: "General Purpose + Elastic" },
+          { t: "Max I/O", v: "thế hệ trước, độ trễ cao, không One Zone/Elastic" },
+          { t: "Elastic", v: "spiky, trả theo I/O" },
+          { t: "Provisioned", v: "ổn định, độc lập dung lượng, khóa 24 giờ" },
+          { t: "Bursting", v: "50 KiBps/GiB baseline, burst theo credit" },
+          { t: "Metric", v: "PercentIOLimit · BurstCreditBalance · MeteredIOBytes" }
+        ] },
+        { t: "EFS chi phí & bảo mật", icon: "res/Amazon-Elastic-File-System_Standard-Infrequent-Access.svg", c: [
+          { t: "Lifecycle", v: "Standard → IA (30 ngày) → Archive (90 ngày)" },
+          { t: "IA / Archive", v: "tối thiểu 128 KiB/file; Archive ≥ 90 ngày, cần Elastic" },
+          { t: "On first access", v: "đưa file về Standard khi đọc lại" },
+          { t: "Kiểm soát truy cập", v: "SG + IAM + file system policy + POSIX" },
+          { t: "Access point", v: "ép POSIX user và root directory" },
+          { t: "Encryption", v: "at rest chỉ lúc tạo · in transit TLS khi mount" },
+          { t: "DR", v: "EFS Replication (RPO phút) · AWS Backup" }
+        ] },
+        { t: "FSx for Windows", icon: "svc/Amazon-FSx-for-Windows-File-Server.svg", c: [
+          { t: "Giao thức", v: "SMB 2.0–3.1.1, Windows ACL" },
+          { t: "Xác thực", v: "bắt buộc join Active Directory" },
+          { t: "Tính năng", v: "DFS, Shadow Copies, Dedup, CA share" },
+          { t: "Multi-AZ", v: "preferred + standby, đồng bộ, failover &lt; 30 s" },
+          { t: "Single-AZ", v: "~30 phút downtime khi lỗi/bảo trì" },
+          { t: "Storage", v: "SSD hiệu năng · HDD rẻ (Single-AZ 2, Multi-AZ)" }
+        ] },
+        { t: "FSx for Lustre", icon: "svc/Amazon-FSx-for-Lustre.svg", c: [
+          { t: "Use case", v: "HPC, ML, video, tài chính · sub-ms, TBps" },
+          { t: "Scratch", v: "tạm, không replication, burst 6×" },
+          { t: "Persistent", v: "nhân bản trong AZ, thay server vài phút" },
+          { t: "Liên kết S3", v: "DRA, lazy load, auto import/export" },
+          { t: "Lưu ý", v: "liên kết S3 thì không backup FSx" }
+        ] },
+        { t: "ONTAP & OpenZFS", icon: "svc/Amazon-FSx.svg", c: [
+          { t: "ONTAP giao thức", v: "NFS, SMB, iSCSI, NVMe/TCP" },
+          { t: "ONTAP tier", v: "SSD + capacity pool, policy Auto/Snapshot Only/All/None" },
+          { t: "ONTAP tính năng", v: "SnapMirror, FlexClone, SnapLock, tiết kiệm tới 65%" },
+          { t: "OpenZFS giao thức", v: "NFS v3–v4.2" },
+          { t: "OpenZFS hiệu năng", v: "2 triệu IOPS, vài trăm µs" },
+          { t: "OpenZFS use case", v: "migrate ZFS/Linux file server, snapshot/clone" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 18 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Storage-Gateway.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="18" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-18-hybrid-storage-transfer.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "ov", name: "Tổng quan & ước lượng băng thông" },
+      { id: "sgw", name: "Storage Gateway & S3 File Gateway" },
+      { id: "vol", name: "Volume Gateway & Tape Gateway" },
+      { id: "ds", name: "AWS DataSync" },
+      { id: "snow", name: "Snowball Edge" },
+      { id: "tf", name: "AWS Transfer Family" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Tổng quan
+      { t: "ov", f: "Câu hỏi đầu tiên để chọn giữa Storage Gateway và dịch vụ truyền dữ liệu?", b: "Sau khi lên AWS, <b>on-premises còn truy cập dữ liệu đó không?</b><br>Có ⇒ <b>Storage Gateway</b> (theo giao thức). Không ⇒ <b>DataSync / Snow</b> (theo băng thông)." },
+      { t: "ov", f: "Đường truyền 1 Gbps dùng hết 100% chuyển được khoảng bao nhiêu dữ liệu mỗi ngày?", b: "Khoảng <b>10,8 TB/ngày</b> (1 Gbit/s × 86.400 s ÷ 8).", x: "100 Mbps ≈ 1 TB/ngày · 10 Gbps ≈ 108 TB/ngày." },
+      { t: "ov", f: "100 TB qua đường 100 Mbps mất bao lâu?", b: "Khoảng <b>100 ngày</b>; qua 1 Gbps ~9–10 ngày; qua 10 Gbps ~1 ngày." },
+      { t: "ov", f: "1 PB qua đường 1 Gbps mất bao lâu?", b: "Khoảng <b>3 tháng</b> (100 Mbps: ~3 năm; 10 Gbps: ~10 ngày)." },
+      { t: "ov", f: "Khi nào nghĩ tới chuyển dữ liệu offline?", b: "Thời gian tính ra <b>vượt thời hạn đề</b>, hoặc đề nói “<i>limited bandwidth</i>”, không muốn ảnh hưởng mạng production." },
+      { t: "ov", f: "Storage Gateway, DataSync, Snowball, Transfer Family khác nhau về bản chất?", b: "<b>Storage Gateway</b>: hybrid storage lâu dài.<br><b>DataSync</b>: migrate/sync online.<br><b>Snowball Edge</b>: migrate offline + edge.<br><b>Transfer Family</b>: endpoint trao đổi file B2B." },
+
+      // ---- Storage Gateway chung + S3 File Gateway
+      { t: "sgw", f: "AWS Storage Gateway là gì?", b: "Appliance đặt tại chỗ nói <b>NFS, SMB, iSCSI, VTL</b>, dữ liệu lưu ở <b>S3 / Glacier / EBS snapshot</b>, có <b>cache local</b> độ trễ thấp. Dùng lâu dài." },
+      { t: "sgw", f: "Có thể triển khai Storage Gateway ở đâu?", b: "<b>VM</b> (VMware ESXi, Hyper-V, Linux KVM, Nutanix AHV) · <b>hardware appliance</b> (qua đại lý) · <b>Amazon EC2</b> / VMware Cloud on AWS." },
+      { t: "sgw", f: "Khi nào chạy Storage Gateway trên EC2?", b: "Cho <b>disaster recovery</b>, data mirroring, hoặc cấp storage cho ứng dụng chạy trên EC2." },
+      { t: "sgw", f: "Cache storage và upload buffer khác nhau thế nào?", b: "<b>Cache storage</b>: giữ dữ liệu chờ upload + dữ liệu vừa truy cập để đọc nhanh.<br><b>Upload buffer</b>: vùng staging trước khi gửi lên AWS qua SSL/TLS.", x: "S3 File Gateway chỉ dùng cache." },
+      { t: "sgw", f: "Vì sao ứng dụng thấy Storage Gateway nhanh như storage local?", b: "Gateway <b>xác nhận ghi ngay khi dữ liệu nằm trên đĩa local</b>, rồi <b>upload bất đồng bộ</b> lên AWS." },
+      { t: "sgw", f: "S3 File Gateway hỗ trợ giao thức nào?", b: "<b>NFS v3 / v4.1</b> và <b>SMB v2 / v3</b>; SMB có thể join Microsoft AD." },
+      { t: "sgw", f: "S3 File Gateway lưu file thế nào trong S3?", b: "<b>1 file = 1 object</b>, đường dẫn file = <b>object key</b>; metadata file lưu thành metadata object; mã hóa mặc định <b>SSE-S3</b> (có thể KMS)." },
+      { t: "sgw", f: "Thao tác file nào trên S3 File Gateway sinh object mới?", b: "<b>Đổi tên file/thư mục, đổi quyền, đổi owner, append</b>.", x: "Đổi tên thư mục lớn = ghi lại hàng triệu object ⇒ tốn PUT, có thể phí xóa sớm nếu ở IA/Glacier." },
+      { t: "sgw", f: "Object ghi thẳng vào bucket không hiện trên share S3 File Gateway ⇒ làm gì?", b: "Chạy <b>RefreshCache</b> (theo lịch hoặc kích hoạt bằng S3 event).", x: "Không phải lỗi quyền, không phải do kích thước cache." },
+      { t: "sgw", f: "S3 File Gateway ghi được vào những storage class nào?", b: "S3 Standard, Standard-IA, One Zone-IA, Intelligent-Tiering. Muốn xuống Glacier ⇒ dùng <b>S3 Lifecycle</b>." },
+      { t: "sgw", f: "Với S3 Versioning, ghi một file mới qua S3 File Gateway tạo bao nhiêu phiên bản?", b: "Ít nhất <b>2 phiên bản</b>: upload dữ liệu trước, metadata sau. File lớn có thể nhiều hơn.", x: "Đặt lifecycle expiration cho noncurrent version." },
+      { t: "sgw", f: "Tình trạng hiện tại của Amazon FSx File Gateway?", b: "<b>Không còn cho khách hàng mới</b>; khách hàng hiện có dùng bình thường. Khách mới truy cập FSx for Windows trực tiếp qua DX/VPN." },
+
+      // ---- Volume & Tape
+      { t: "vol", f: "Volume Gateway cung cấp gì?", b: "Volume <b>iSCSI (block)</b>; snapshot gia tăng lưu trong S3 dưới dạng <b>EBS snapshot</b> ⇒ khôi phục về gateway hoặc tạo EBS volume cho EC2." },
+      { t: "vol", f: "Cached volumes là gì?", b: "<b>S3 là bản chính</b>, chỉ giữ dữ liệu hay truy cập ở cache local; giảm storage on-premises." },
+      { t: "vol", f: "Stored volumes là gì?", b: "<b>Toàn bộ dữ liệu ở local</b> (độ trễ thấp cho cả dataset), snapshot <b>bất đồng bộ</b> lên S3 làm backup off-site." },
+      { t: "vol", f: "Giới hạn kích thước của cached và stored volume?", b: "<b>Cached</b>: 1 GiB–32 TiB/volume, 32 volume, tổng <b>1 PiB</b>/gateway.<br><b>Stored</b>: 1 GiB–16 TiB/volume, 32 volume, tổng <b>512 TiB</b>/gateway." },
+      { t: "vol", f: "Dữ liệu Volume Gateway trong S3 có đọc bằng S3 API được không?", b: "<b>Không.</b> Không truy cập được bằng S3 API/console.", x: "Cần Athena/Lambda đọc file ⇒ S3 File Gateway." },
+      { t: "vol", f: "Cache khuyến nghị của Volume Gateway cached?", b: "<b>≥ 20%</b> kích thước file store hiện có và lớn hơn upload buffer." },
+      { t: "vol", f: "Tape Gateway gồm những thành phần nào?", b: "<b>Virtual tape</b>, <b>VTL</b> (lưu ở S3), <b>10 tape drive</b> + <b>1 media changer</b> (thiết bị iSCSI), <b>VTS/Archive</b> (Glacier)." },
+      { t: "vol", f: "Kích thước virtual tape và giới hạn mỗi Tape Gateway?", b: "Tape <b>100 GiB – 15 TiB</b>; tối đa <b>1.500 tape / 1 PiB</b> trên một gateway." },
+      { t: "vol", f: "Thời gian retrieve tape từ archive?", b: "Glacier Flexible Retrieval: <b>3–5 giờ</b>. Glacier Deep Archive: <b>~12 giờ</b>." },
+      { t: "vol", f: "Tape đã archive có đọc trực tiếp được không?", b: "<b>Không.</b> Phải <b>retrieve về VTL</b> của gateway trước." },
+      { t: "vol", f: "Khi phần mềm backup eject tape, chuyện gì xảy ra?", b: "Gateway chuyển tape vào <b>archive (VTS)</b>, cùng Region, lưu ở Glacier Flexible Retrieval hoặc Deep Archive." },
+
+      // ---- DataSync
+      { t: "ds", f: "AWS DataSync là gì?", b: "Dịch vụ truyền file/object <b>online</b> tốc độ cao, đa luồng, <b>mã hóa TLS</b>, <b>kiểm tra toàn vẹn</b>; một lần hoặc theo lịch." },
+      { t: "ds", f: "Nguồn on-premises nào DataSync hỗ trợ?", b: "<b>NFS, SMB, HDFS</b> (Hadoop), object storage tự quản lý (cần agent). Cũng hỗ trợ cloud khác (Google Cloud Storage, Azure Blob/Files…)." },
+      { t: "ds", f: "Đích AWS của DataSync?", b: "<b>S3</b> (chọn được storage class), <b>EFS</b>, <b>mọi loại FSx</b> (Windows, Lustre, OpenZFS, ONTAP)." },
+      { t: "ds", f: "4 khái niệm cốt lõi của DataSync?", b: "<b>Agent</b> (VM đọc/ghi storage) · <b>Location</b> (nguồn/đích) · <b>Task</b> (định nghĩa lần truyền) · <b>Task execution</b> (prepare → transfer → verify)." },
+      { t: "ds", f: "Khi nào DataSync KHÔNG cần agent?", b: "Giữa dịch vụ AWS <b>cùng account</b> (kể cả khác Region) · giữa <b>S3</b> và dịch vụ AWS khác account · giữa S3 và object storage cloud khác." },
+      { t: "ds", f: "Khi nào DataSync CẦN agent?", b: "Nguồn <b>on-premises</b> · EFS/FSx ↔ cloud khác · khác account mà <b>không bên nào là S3</b> · commercial ↔ GovCloud khi cả hai đầu là EFS/FSx." },
+      { t: "ds", f: "Gắn nhiều agent vào một location có tạo high availability không?", b: "<b>Không.</b> Tối đa 4 agent Basic + 4 Enhanced/location để tăng tốc, nhưng <b>mọi agent phải online</b> thì task mới chạy." },
+      { t: "ds", f: "Basic mode khác Enhanced mode thế nào?", b: "<b>Basic</b>: quét toàn bộ trước, truyền sau, verify cuối – tuần tự.<br><b>Enhanced</b>: chuẩn bị/truyền/kiểm tra từng object – song song, gần như không giới hạn số object." },
+      { t: "ds", f: "DataSync xử lý object S3 ở lớp Glacier chưa restore thế nào?", b: "<b>Bỏ qua</b> – phải restore trước." },
+      { t: "ds", f: "Làm sao DataSync không “ăn” hết băng thông production?", b: "Đặt <b>bandwidth limit</b> và/hoặc <b>schedule</b>; chỉ truyền phần thay đổi kể từ lần trước." },
+      { t: "ds", f: "Truyền DataSync riêng tư qua Direct Connect bằng cách nào?", b: "Dùng <b>VPC service endpoint</b> (AWS PrivateLink)." },
+
+      // ---- Snowball
+      { t: "snow", f: "Tình trạng hiện tại của AWS Snowball Edge?", b: "<b>Không còn cho khách hàng mới.</b> Khách mới dùng DataSync, <b>Data Transfer Terminal</b>, đối tác; edge computing dùng <b>Outposts</b>.", x: "Snowcone và Snowmobile cũng đã ngừng; đề vẫn có thể dùng Snow làm đáp án." },
+      { t: "snow", f: "Snowball Edge Storage Optimized chứa bao nhiêu?", b: "<b>210 TB</b> NVMe usable (object &amp; NFS); 104 vCPU, 416 GB RAM." },
+      { t: "snow", f: "Snowball Edge Compute Optimized dùng cho gì?", b: "<b>Edge computing</b>: ML inference, xử lý video, phân tích tại chỗ; 104 vCPU / 416 GB RAM usable / <b>28 TB</b> NVMe." },
+      { t: "snow", f: "Snowball Edge nạp dữ liệu vào đâu?", b: "<b>Amazon S3</b>. Muốn vào Glacier ⇒ import vào S3 rồi dùng <b>S3 Lifecycle</b>." },
+      { t: "snow", f: "Snowball Edge nạp dữ liệu bằng giao thức gì?", b: "<b>NFSv3/v4/v4.1</b> và <b>S3 API</b> (S3 adapter)." },
+      { t: "snow", f: "Các bước một job import Snowball Edge?", b: "Tạo job (bucket + KMS key) → nhận thiết bị, unlock (manifest + unlock code) → copy dữ liệu → tắt máy, nhãn E Ink tự đổi, gửi về → AWS nạp vào S3, xóa thiết bị theo chuẩn NIST." },
+      { t: "snow", f: "Snowball Edge cluster gồm bao nhiêu thiết bị?", b: "<b>3–16 thiết bị</b> cho local storage &amp; compute bền." },
+
+      // ---- Transfer Family
+      { t: "tf", f: "AWS Transfer Family hỗ trợ giao thức nào và đích nào?", b: "<b>SFTP, FTPS, FTP, AS2</b> và web apps ⇒ đọc/ghi thẳng vào <b>S3 hoặc EFS</b>." },
+      { t: "tf", f: "3 kiểu endpoint của Transfer Family?", b: "<b>Public</b> (IP AWS quản lý, không SG) · <b>VPC internal</b> (chỉ trong VPC/mạng nối, hỗ trợ FTP) · <b>VPC internet-facing</b> (Elastic IP + SG, chỉ SFTP/FTPS)." },
+      { t: "tf", f: "Đối tác cần IP tĩnh để mở firewall ⇒ endpoint nào?", b: "<b>VPC internet-facing</b> + <b>Elastic IP</b> mỗi subnet; lọc IP nguồn bằng <b>security group</b>.", x: "Public endpoint: IP có thể thay đổi, không gắn SG." },
+      { t: "tf", f: "FTP (không mã hóa) dùng được với endpoint nào?", b: "Chỉ <b>VPC internal</b>. Internet-facing chỉ cho SFTP và FTPS." },
+      { t: "tf", f: "3 loại identity provider của Transfer Family?", b: "<b>Service managed</b> (user + SSH key trong dịch vụ) · <b>AWS Directory Service</b> (Managed AD / AD Connector) · <b>Custom</b> (Lambda hoặc API Gateway)." },
+      { t: "tf", f: "Managed workflows của Transfer Family làm gì?", b: "Xử lý file <b>serverless</b> sau upload: copy, gắn tag, quét, lọc, nén/giải nén, mã hóa/giải mã; theo dõi end-to-end." },
+      { t: "tf", f: "Cổng của SFTP và FTPS trên Transfer Family?", b: "<b>SFTP</b>: 22 (thêm 2222, 22000).<br><b>FTPS</b>: control 21, data 8192–8200." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>replace NAS, store files as objects in S3, keep NFS/SMB access</i>” ⇒ ?", b: "<b>S3 File Gateway</b>." },
+      { t: "kw", f: "Đề có “<i>iSCSI</i>” + “<i>minimize on-premises storage, low latency for frequently accessed data</i>” ⇒ ?", b: "<b>Volume Gateway – cached volumes</b>." },
+      { t: "kw", f: "Đề có “<i>iSCSI</i>” + “<i>low-latency access to the ENTIRE dataset</i>” + “<i>offsite backup</i>” ⇒ ?", b: "<b>Volume Gateway – stored volumes</b>." },
+      { t: "kw", f: "Đề có “<i>replace physical tape library, keep existing backup application</i>” ⇒ ?", b: "<b>Tape Gateway</b>; retention rẻ nhất, chấp nhận 12 giờ ⇒ <b>Glacier Deep Archive</b>." },
+      { t: "kw", f: "Đề có “<i>no virtualization infrastructure at the branch office</i>” ⇒ ?", b: "<b>Storage Gateway hardware appliance</b>." },
+      { t: "kw", f: "Đề có “<i>migrate TB from NFS/SMB NAS, verify integrity, LEAST operational overhead</i>” ⇒ ?", b: "<b>AWS DataSync</b>." },
+      { t: "kw", f: "Đề có “<i>Hadoop HDFS migration to S3</i>” ⇒ ?", b: "<b>AWS DataSync</b> (HDFS location)." },
+      { t: "kw", f: "Đề có “<i>hundreds of TB / PB</i>” + “<i>limited bandwidth</i>” + “<i>within weeks</i>” ⇒ ?", b: "<b>Snowball Edge Storage Optimized</b> (nhiều thiết bị song song)." },
+      { t: "kw", f: "Đề có “<i>process data at a remote site with no connectivity</i>” ⇒ ?", b: "<b>Snowball Edge Compute Optimized</b> (kết nối ổn định, lâu dài ⇒ Outposts)." },
+      { t: "kw", f: "Đề có “<i>partners upload via SFTP, store in S3, no servers to manage</i>” ⇒ ?", b: "<b>AWS Transfer Family</b>." },
+      { t: "kw", f: "Đề có “<i>EDI / B2B, AS2 protocol</i>” ⇒ ?", b: "<b>Transfer Family AS2</b>." },
+      { t: "kw", f: "Đề có “<i>authenticate SFTP users against corporate AD</i>” ⇒ ?", b: "Identity provider <b>AWS Directory Service</b>; IdP bên thứ ba ⇒ <b>custom IdP</b> (Lambda/API Gateway)." }
+    ],
+
+    pairs: [
+      ["Hybrid storage", "On-premises dùng storage, dữ liệu nằm trên AWS"],
+      ["Storage Gateway", "Appliance tại chỗ nói NFS/SMB/iSCSI/VTL"],
+      ["Hardware appliance", "Gateway phần cứng cho nơi không có ảo hóa"],
+      ["Cache storage", "Giữ dữ liệu vừa truy cập và chờ upload"],
+      ["Upload buffer", "Vùng staging trước khi gửi lên AWS"],
+      ["S3 File Gateway", "Share NFS/SMB, 1 file = 1 object S3"],
+      ["RefreshCache", "Cập nhật danh sách file khi object ghi thẳng vào bucket"],
+      ["Cached volume", "Volume iSCSI, S3 là bản chính"],
+      ["Stored volume", "Volume iSCSI, toàn bộ dữ liệu ở on-premises"],
+      ["Tape Gateway", "Thư viện băng từ ảo cho phần mềm backup"],
+      ["VTL", "Thư viện băng từ ảo, tape lưu trong S3"],
+      ["Virtual tape shelf", "Nơi lưu tape đã eject, trên Glacier"],
+      ["DataSync agent", "VM đọc/ghi storage tự quản lý khi truyền"],
+      ["Task execution", "Một lần chạy task: prepare → transfer → verify"],
+      ["Enhanced mode", "DataSync chuẩn bị, truyền, kiểm tra song song"],
+      ["HDFS", "Hệ thống tệp phân tán Hadoop"],
+      ["Snowball Edge", "Thiết bị vật lý chuyển dữ liệu + compute"],
+      ["AWS OpsHub", "Ứng dụng GUI để unlock và quản lý thiết bị Snow"],
+      ["Data Transfer Terminal", "Mang thiết bị lưu trữ tới địa điểm AWS để upload"],
+      ["AWS Transfer Family", "SFTP/FTPS/FTP/AS2 managed vào S3 hoặc EFS"],
+      ["AS2", "Giao thức B2B có ký và mã hóa sẵn"],
+      ["IP allow list", "Chỉ chấp nhận kết nối từ IP đã khai báo"],
+      ["Custom identity provider", "Xác thực qua Lambda hoặc API Gateway"],
+      ["Managed workflows", "Xử lý file tự động sau khi upload"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn dịch vụ theo tình huống",
+        desc: "Đọc tình huống đề và chọn dịch vụ hybrid/transfer phù hợp nhất.",
+        buckets: ["S3 File Gateway", "Volume Gateway", "Tape Gateway", "DataSync", "Snowball Edge", "Transfer Family"],
+        items: [
+          ["NAS hết dung lượng, lưu vào S3 cho Athena, server vẫn dùng NFS/SMB", 0, "1 file = 1 object, có cache local"],
+          ["Backup DB on-premises ghi vào SMB share rồi xuống Glacier", 0, "File Gateway + S3 Lifecycle"],
+          ["Ứng dụng iSCSI cần DR sang EC2", 1, "EBS snapshot ⇒ EBS volume"],
+          ["Bỏ thư viện băng từ, giữ nguyên phần mềm backup", 2, "VTL qua iSCSI"],
+          ["Migrate 60 TB NFS lên EFS trong 3 tuần qua Direct Connect 1 Gbps", 3, "~6–7 ngày, tự động, verify"],
+          ["Archive 500 TB dữ liệu lạnh thẳng vào Glacier Deep Archive qua 10 Gbps", 3, "DataSync ghi thẳng storage class"],
+          ["900 TB ở vùng xa, đường 100 Mbps, phải xong trong 1 tháng", 4, "100 Mbps mất ~2,5 năm"],
+          ["Xử lý video tại tàu biển không có kết nối", 4, "Compute Optimized ở biên"],
+          ["Đối tác gửi file SFTP vào S3, cần IP tĩnh", 5, "VPC internet-facing + Elastic IP"],
+          ["Trao đổi EDI qua AS2", 5, "Transfer Family hỗ trợ AS2"]
+        ]
+      },
+      {
+        title: "DataSync có cần agent không?",
+        desc: "Xếp mỗi kiểu truyền vào nhóm cần hoặc không cần DataSync agent.",
+        buckets: ["Cần agent", "Không cần agent"],
+        items: [
+          ["SMB file server on-premises → S3", 0, "nguồn on-premises luôn cần agent"],
+          ["Cụm HDFS on-premises → S3", 0, "nguồn ngoài AWS"],
+          ["EFS → FSx for Lustre ở account khác", 0, "khác account, không bên nào là S3"],
+          ["EFS → Azure Files", 0, "EFS/FSx ↔ cloud khác cần agent"],
+          ["EFS → FSx for Windows ở Region khác, cùng account", 1, "dịch vụ AWS cùng account"],
+          ["S3 → EFS ở account khác", 1, "S3 ↔ dịch vụ AWS khác account"],
+          ["S3 → Google Cloud Storage", 1, "S3 ↔ object storage cloud khác"],
+          ["S3 Region thương mại → GovCloud (US)", 1, "một đầu là S3"]
+        ]
+      },
+      {
+        title: "Cached hay stored volume?",
+        desc: "Phân loại đặc điểm theo kiểu volume của Volume Gateway.",
+        buckets: ["Cached volumes", "Stored volumes"],
+        items: [
+          ["S3 là primary storage", 0, "chỉ giữ dữ liệu nóng tại chỗ"],
+          ["Tối đa 32 TiB mỗi volume, 1 PiB mỗi gateway", 0, "giới hạn cached"],
+          ["Giảm nhu cầu mở rộng storage on-premises", 0, "phần lớn dữ liệu nằm ở S3"],
+          ["Cache ≥ 20% file store hiện có", 0, "khuyến nghị cho cached"],
+          ["Độ trễ thấp cho toàn bộ dataset", 1, "toàn bộ dữ liệu ở local"],
+          ["Tối đa 16 TiB mỗi volume, 512 TiB mỗi gateway", 1, "giới hạn stored"],
+          ["Snapshot bất đồng bộ làm backup off-site", 1, "bản chính ở on-premises"],
+          ["Ánh xạ được vào đĩa đã có dữ liệu", 1, "stored dùng đĩa local"]
+        ]
+      },
+      {
+        title: "Loại endpoint Transfer Family",
+        desc: "Mỗi đặc điểm thuộc kiểu endpoint nào của Transfer Family?",
+        buckets: ["Public", "VPC internal", "VPC internet-facing"],
+        items: [
+          ["IP do AWS quản lý, có thể thay đổi", 0, "khó cho đối tác allow list"],
+          ["Không gắn security group", 0, "chỉ xác thực người dùng"],
+          ["Hỗ trợ cả FTP không mã hóa", 1, "chỉ mạng nội bộ"],
+          ["Chỉ client trong VPC hoặc qua Direct Connect/VPN", 1, "không qua Internet công cộng"],
+          ["Gắn Elastic IP mỗi subnet", 2, "IP tĩnh cho đối tác"],
+          ["Security group làm IP allow list cho client Internet", 2, "lọc IP nguồn"],
+          ["Subnet phải public, chỉ SFTP và FTPS", 2, "điều kiện internet-facing"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["1 Gbps dùng hết băng thông chuyển được khoảng 10,8 TB mỗi ngày.", true, "1 Gbit/s × 86.400 s ÷ 8."],
+      ["100 TB qua đường 100 Mbps mất khoảng 10 ngày.", false, "Khoảng 100 ngày; 10 ngày là với 1 Gbps."],
+      ["Storage Gateway dành cho trường hợp on-premises tiếp tục truy cập dữ liệu.", true, "Migrate một lần rồi tắt hệ thống cũ thì dùng DataSync."],
+      ["Storage Gateway chỉ chạy được dưới dạng VM VMware.", false, "Còn Hyper-V, KVM, Nutanix, hardware appliance, EC2."],
+      ["S3 File Gateway lưu mỗi file thành một object S3.", true, "Đường dẫn file = object key."],
+      ["Đổi tên một thư mục lớn trên S3 File Gateway là thao tác rẻ.", false, "Ghi lại object của mọi file con, tốn PUT và có thể phí xóa sớm."],
+      ["Object ghi thẳng vào bucket sẽ hiện ngay trên share S3 File Gateway.", false, "Cần RefreshCache."],
+      ["S3 File Gateway có thể ghi thẳng vào S3 Glacier Deep Archive.", false, "Ghi vào Standard/IA/One Zone-IA/Intelligent-Tiering; xuống Glacier bằng S3 Lifecycle."],
+      ["Amazon FSx File Gateway không còn cho khách hàng mới.", true, "Khách hàng hiện có vẫn dùng bình thường."],
+      ["Dữ liệu Volume Gateway cached đọc được bằng S3 API.", false, "Không truy cập được bằng S3 API/console."],
+      ["Snapshot của Volume Gateway được lưu dạng EBS snapshot.", true, "Tạo được EBS volume gắn vào EC2."],
+      ["Stored volume tối đa 32 TiB mỗi volume.", false, "Stored 16 TiB; cached mới 32 TiB."],
+      ["Cached volumes giữ toàn bộ dataset tại chỗ.", false, "Cached chỉ giữ dữ liệu nóng; stored mới giữ toàn bộ."],
+      ["Mỗi VTL của Tape Gateway có 10 tape drive và 1 media changer.", true, "Xuất hiện như thiết bị iSCSI."],
+      ["Retrieve tape từ Glacier Deep Archive mất khoảng 12 giờ.", true, "Glacier Flexible Retrieval: 3–5 giờ."],
+      ["Tape đã archive có thể đọc trực tiếp mà không cần retrieve.", false, "Phải retrieve về VTL trước."],
+      ["DataSync mã hóa dữ liệu in transit bằng TLS.", true, "Và kiểm tra toàn vẹn khi truyền."],
+      ["Truyền DataSync giữa hai EFS cùng account cần agent.", false, "Dịch vụ AWS cùng account không cần agent."],
+      ["Gắn 4 agent vào một location giúp task DataSync highly available.", false, "Mọi agent phải online; nhiều agent chỉ để tăng tốc."],
+      ["DataSync có thể ghi thẳng vào lớp S3 Glacier Deep Archive.", true, "Chọn storage class ở S3 location."],
+      ["DataSync tự restore object Glacier trước khi truyền.", false, "Object chưa restore bị bỏ qua."],
+      ["DataSync hỗ trợ nguồn HDFS.", true, "Migrate Hadoop lên S3."],
+      ["DataSync là nơi ứng dụng on-premises mount để đọc/ghi hằng ngày.", false, "DataSync là công cụ di chuyển; truy cập liên tục dùng Storage Gateway."],
+      ["Snowball Edge Storage Optimized chứa 210 TB usable.", true, "NVMe, object và NFS."],
+      ["Snowball Edge nạp dữ liệu trực tiếp vào Amazon EFS.", false, "Snowball nạp vào S3."],
+      ["Snowball Edge vẫn mở cho khách hàng mới.", false, "Không còn cho khách hàng mới."],
+      ["S3 Transfer Acceleration tăng băng thông đường truyền của site.", false, "Chỉ tối ưu đường đi tới edge, không tăng băng thông site."],
+      ["Transfer Family đọc/ghi thẳng vào S3 hoặc EFS.", true, "Không phải chạy server SFTP."],
+      ["Public endpoint của Transfer Family gắn được security group.", false, "Chỉ endpoint VPC dùng security group."],
+      ["FTP không mã hóa chỉ dùng được với endpoint VPC internal.", true, "Internet-facing chỉ cho SFTP và FTPS."],
+      ["Custom identity provider của Transfer Family dùng Lambda hoặc API Gateway.", true, "Tích hợp IdP bên thứ ba."],
+      ["Dựng EC2 chạy SFTP là đáp án LEAST operational overhead.", false, "Transfer Family fully managed mới là đáp án."]
+    ],
+
+    map: {
+      t: "Bài 18 · Hybrid storage & truyền dữ liệu",
+      c: [
+        { t: "Tổng quan", icon: "cat/Migration-Transfer.svg", c: [
+          { t: "Câu hỏi đầu", v: "on-premises còn truy cập? Có ⇒ Gateway, Không ⇒ transfer" },
+          { t: "Băng thông", v: "100 Mbps ≈ 1 TB/ngày · 1 Gbps ≈ 10,8 TB · 10 Gbps ≈ 108 TB" },
+          { t: "Offline khi", v: "vượt thời hạn, limited bandwidth" },
+          { t: "Đường mạng", v: "Direct Connect / Site-to-Site VPN" }
+        ] },
+        { t: "Storage Gateway", icon: "svc/AWS-Storage-Gateway.svg", c: [
+          { t: "Triển khai", v: "VM (ESXi/Hyper-V/KVM/Nutanix), hardware, EC2" },
+          { t: "Đĩa local", v: "cache storage + upload buffer, upload bất đồng bộ" },
+          { t: "S3 File Gateway", c: [
+            { t: "Giao thức", v: "NFS v3/4.1, SMB 2/3" },
+            { t: "Lưu trữ", v: "1 file = 1 object, SSE-S3" },
+            { t: "Lưu ý", v: "đổi tên/quyền/append tạo object mới; RefreshCache" }
+          ] },
+          { t: "FSx File Gateway", v: "không còn cho khách hàng mới" }
+        ] },
+        { t: "Volume & Tape", icon: "res/AWS-Storage-Gateway_Volume-Gateway.svg", c: [
+          { t: "Cached", v: "S3 bản chính, 32 TiB/volume, 1 PiB/gateway" },
+          { t: "Stored", v: "toàn bộ local, 16 TiB/volume, 512 TiB/gateway" },
+          { t: "Snapshot", v: "EBS snapshot ⇒ EBS volume cho EC2" },
+          { t: "Tape Gateway", v: "VTL: 10 tape drive + 1 media changer" },
+          { t: "Tape", v: "100 GiB–15 TiB, 1.500 tape / 1 PiB" },
+          { t: "Retrieve", v: "Flexible 3–5 h · Deep Archive ~12 h" }
+        ] },
+        { t: "AWS DataSync", icon: "svc/AWS-DataSync.svg", c: [
+          { t: "Nguồn", v: "NFS, SMB, HDFS, object, cloud khác" },
+          { t: "Đích", v: "S3 (chọn storage class), EFS, mọi FSx" },
+          { t: "Thành phần", v: "agent · location · task · task execution" },
+          { t: "Không cần agent", v: "AWS cùng account · S3 ↔ khác account" },
+          { t: "Tính năng", v: "TLS, verify, schedule, bandwidth limit, filter" },
+          { t: "Lưu ý", v: "4 agent/location ≠ HA; Glacier chưa restore bị bỏ qua" }
+        ] },
+        { t: "Snowball Edge", icon: "svc/AWS-Snowball-Edge.svg", c: [
+          { t: "Storage Optimized", v: "210 TB NVMe" },
+          { t: "Compute Optimized", v: "104 vCPU, 416 GB, 28 TB" },
+          { t: "Đích", v: "S3 → Lifecycle xuống Glacier" },
+          { t: "Bảo mật", v: "mã hóa bắt buộc, chống can thiệp, xóa chuẩn NIST" },
+          { t: "Tình trạng", v: "không còn cho khách mới → Data Transfer Terminal, Outposts" }
+        ] },
+        { t: "Transfer Family", icon: "svc/AWS-Transfer-Family.svg", c: [
+          { t: "Giao thức", v: "SFTP, FTPS, FTP, AS2, web apps ⇒ S3/EFS" },
+          { t: "Endpoint", v: "Public · VPC internal · VPC internet-facing" },
+          { t: "IP tĩnh", v: "VPC internet-facing + Elastic IP + SG" },
+          { t: "Identity", v: "service managed · Directory Service · custom (Lambda/API GW)" },
+          { t: "Managed workflows", v: "copy, tag, quét, giải mã sau upload" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

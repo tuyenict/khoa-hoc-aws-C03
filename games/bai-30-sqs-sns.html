@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 30 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Simple-Queue-Service.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="30" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-30-sqs-sns.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "dec", name: "Decoupling · SQS/SNS/MQ" },
+      { id: "sqs", name: "SQS: vòng đời & giới hạn" },
+      { id: "type", name: "Standard vs FIFO" },
+      { id: "vis", name: "Visibility · Polling · Delay" },
+      { id: "dlq", name: "Dead-letter queue" },
+      { id: "sns", name: "Amazon SNS" },
+      { id: "fan", name: "Fan-out & filtering" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Decoupling
+      { t: "dec", f: "<i>Decouple</i> một ứng dụng nghĩa là gì?", b: "Đặt một <b>lớp trung gian bất đồng bộ</b> (queue hoặc topic) giữa các thành phần: A chỉ “gửi và quên”, B xử lý theo <b>tốc độ riêng</b>.", x: "Tightly coupled: B chậm/sập thì A lỗi theo, hai bên phải scale cùng nhịp." },
+      { t: "dec", f: "SQS khác SNS ở mô hình nhận message thế nào?", b: "<b>SQS</b>: consumer chủ động <b>kéo (pull/poll)</b>, thường mỗi message một consumer.<br><b>SNS</b>: <b>đẩy (push)</b> bản sao tới <b>nhiều subscriber</b> (pub/sub)." },
+      { t: "dec", f: "Khi nào chọn Amazon MQ thay vì SQS/SNS?", b: "Khi <b>migrate ứng dụng đang dùng broker</b> (ActiveMQ / RabbitMQ) với protocol <b>JMS, AMQP, MQTT, OpenWire, STOMP</b>, ít sửa code.", x: "Ứng dụng mới ⇒ AWS khuyên SQS/SNS." },
+      { t: "dec", f: "Trong 3 dịch vụ SQS, SNS, MQ, dịch vụ nào hỗ trợ cả giao tiếp đồng bộ?", b: "Chỉ <b>Amazon MQ</b>. SQS và SNS chỉ bất đồng bộ." },
+      { t: "dec", f: "Đặt SQS giữa web tier và encoding tier mang lại lợi ích gì?", b: "Web tier <b>trả lời ngay</b>; job được <b>lưu bền</b> trong queue nếu worker sập; worker ASG <b>scale theo backlog</b>, mỗi tier scale độc lập." },
+
+      // ---- SQS kiến trúc & giới hạn
+      { t: "sqs", f: "Vòng đời của một message SQS?", b: "<b>Send</b> → <b>Receive</b> (message vẫn trong queue nhưng ẩn trong visibility timeout) → <b>Delete</b>.", x: "Không Delete ⇒ hết timeout message hiện lại và bị xử lý lặp." },
+      { t: "sqs", f: "Kích thước message SQS tối đa? Lớn hơn thì làm sao?", b: "<b>1 MiB</b> (1.048.576 byte). Lớn hơn ⇒ <b>SQS Extended Client Library</b> lưu payload trên <b>S3</b>, message chỉ chứa con trỏ, tới <b>2 GB</b>.", x: "Không tăng được 1 MiB qua Service Quotas." },
+      { t: "sqs", f: "Message retention period của SQS?", b: "Mặc định <b>4 ngày</b>, đặt được từ <b>60 giây – 14 ngày</b>." },
+      { t: "sqs", f: "Một batch SQS (Send/Receive) tối đa bao nhiêu message?", b: "<b>10 message</b> / request. Mỗi message tối đa <b>10 message attributes</b>.", x: "Batch giảm số API call ⇒ tăng throughput, giảm chi phí." },
+      { t: "sqs", f: "Số in-flight message tối đa của standard queue?", b: "Khoảng <b>120.000</b> (đã nhận chưa xóa). Vượt ⇒ short polling trả lỗi <b>OverLimit</b>." },
+      { t: "sqs", f: "Cách duy nhất cấp quyền cho account khác hoặc dịch vụ AWS (SNS, S3) gửi vào queue?", b: "<b>SQS access policy</b> (resource-based policy của queue)." },
+      { t: "sqs", f: "Hai lựa chọn mã hóa at rest của SQS?", b: "<b>SSE-SQS</b> (khóa do SQS quản lý, mặc định) hoặc <b>SSE-KMS</b> (khóa KMS, có thể customer managed để audit qua CloudTrail)." },
+      { t: "sqs", f: "Truy cập SQS riêng tư từ VPC dùng loại endpoint nào?", b: "<b>Interface VPC endpoint</b> (PrivateLink).", x: "SQS <b>không có gateway endpoint</b>." },
+      { t: "sqs", f: "Đề cần giữ message 30 ngày hoặc replay dữ liệu cũ nhiều lần ⇒ SQS có đáp ứng không?", b: "<b>Không</b> (retention tối đa 14 ngày, message xóa sau khi xử lý). Nghĩ tới <b>Kinesis Data Streams</b> hoặc lưu S3." },
+
+      // ---- Standard vs FIFO
+      { t: "type", f: "3 đặc điểm của SQS Standard queue?", b: "<b>Throughput gần như không giới hạn</b> · <b>at-least-once</b> delivery · <b>best-effort ordering</b>.", x: "Có thể giao trùng ⇒ consumer phải idempotent." },
+      { t: "type", f: "3 đặc điểm của SQS FIFO queue?", b: "<b>Đúng thứ tự trong mỗi message group</b> · <b>exactly-once processing</b> (dedup 5 phút) · throughput giới hạn." },
+      { t: "type", f: "Throughput mặc định của FIFO queue?", b: "<b>300 API call/giây</b> mỗi action (không batch) ⇒ <b>3.000 message/giây</b> với batch 10." },
+      { t: "type", f: "FIFO high throughput mode đạt tới bao nhiêu?", b: "Tới <b>70.000 TPS</b> không batch / <b>700.000 msg/s</b> có batch ở us-east-1, us-west-2, eu-west-1 (Region khác thấp hơn)." },
+      { t: "type", f: "Tên FIFO queue bắt buộc có gì?", b: "Kết thúc bằng hậu tố <b><code>.fifo</code></b>." },
+      { t: "type", f: "Có đổi standard queue thành FIFO tại chỗ được không?", b: "<b>Không.</b> Phải <b>tạo FIFO queue mới</b> (tên .fifo) rồi đổi producer/consumer sang." },
+      { t: "type", f: "<code>MessageGroupId</code> dùng để làm gì?", b: "Message <b>cùng group</b> xử lý <b>tuần tự</b>; <b>khác group</b> xử lý <b>song song</b>. <b>Bắt buộc</b> với FIFO.", x: "Muốn song song hơn ⇒ nhiều group ID (vd theo customerId)." },
+      { t: "type", f: "<code>MessageDeduplicationId</code> hoạt động thế nào?", b: "Gửi lại cùng ID trong <b>5 phút</b> ⇒ SQS nhận nhưng <b>không đưa bản trùng</b> vào queue." },
+      { t: "type", f: "Content-based deduplication tạo ID từ đâu?", b: "Băm <b>SHA-256</b> phần <b>body</b> (không tính message attributes)." },
+      { t: "type", f: "Standard queue bị xử lý một message 2 lần ⇒ có phải lỗi không?", b: "<b>Không</b>, đó là hành vi at-least-once. Giải pháp: <b>xử lý idempotent</b> hoặc chuyển FIFO; nếu do xử lý quá lâu ⇒ <b>tăng visibility timeout</b>." },
+
+      // ---- Visibility / polling / delay
+      { t: "vis", f: "Visibility timeout là gì?", b: "Khoảng thời gian message <b>tạm vô hình</b> với consumer khác <b>sau khi được nhận</b>; hết hạn mà chưa xóa ⇒ message hiện lại." },
+      { t: "vis", f: "Giá trị mặc định và tối đa của visibility timeout?", b: "Mặc định <b>30 giây</b>, từ <b>0 giây – 12 giờ</b>." },
+      { t: "vis", f: "Xử lý lâu hơn visibility timeout dự kiến thì làm gì?", b: "Gọi <b><code>ChangeMessageVisibility</code></b> định kỳ (heartbeat).", x: "Giới hạn 12 giờ tính từ lần nhận đầu, không reset khi gia hạn. Dài hơn ⇒ Step Functions." },
+      { t: "vis", f: "Đặt visibility timeout quá ngắn / quá dài gây gì?", b: "Quá ngắn ⇒ <b>xử lý trùng</b>. Quá dài ⇒ message lỗi <b>lâu mới được retry</b>." },
+      { t: "vis", f: "Short polling khác long polling thế nào?", b: "<b>Short</b> (mặc định): hỏi tập con server, trả lời ngay kể cả rỗng.<br><b>Long</b>: hỏi <b>tất cả server</b>, chờ tới khi có message (tối đa <b>20 giây</b>)." },
+      { t: "vis", f: "Bật long polling bằng thuộc tính nào?", b: "<code>ReceiveMessageWaitTimeSeconds</code> (cấp queue, không cần sửa code) hoặc <code>WaitTimeSeconds</code> (từng request), giá trị &gt; 0, tối đa 20 giây." },
+      { t: "vis", f: "Delay queue / message timer tối đa bao lâu?", b: "<b>0 – 15 phút</b>. Ẩn message <b>ngay khi vào queue</b>.", x: "Cần hẹn giờ xa hơn ⇒ EventBridge Scheduler." },
+      { t: "vis", f: "Phân biệt delay và visibility timeout về thời điểm ẩn message.", b: "<b>Delay</b>: ẩn ngay khi message <b>vào queue</b>.<br><b>Visibility timeout</b>: ẩn <b>sau khi message được nhận</b>." },
+      { t: "vis", f: "Đổi delay của queue có ảnh hưởng message đã có trong queue không?", b: "<b>Standard</b>: không hồi tố. <b>FIFO</b>: có hồi tố." },
+
+      // ---- DLQ
+      { t: "dlq", f: "Dead-letter queue (DLQ) dùng để làm gì?", b: "Chứa các <b>message xử lý lỗi nhiều lần</b> (poison message) để cô lập, debug, không quay vòng mãi trong queue chính." },
+      { t: "dlq", f: "Redrive policy gồm những gì? Đặt ở đâu?", b: "Đặt trên <b>source queue</b>: ARN của DLQ + <b><code>maxReceiveCount</code></b> (số lần nhận mà chưa xóa trước khi chuyển sang DLQ)." },
+      { t: "dlq", f: "Ràng buộc vị trí và loại queue của DLQ?", b: "<b>Cùng account + cùng Region</b> với source queue; FIFO dùng DLQ FIFO, standard dùng DLQ standard.", x: "“DLQ ở Region khác để DR” là sai." },
+      { t: "dlq", f: "DLQ redrive là gì?", b: "Sau khi sửa lỗi, <b>chuyển message từ DLQ về source queue</b> (hoặc queue khác) để xử lý lại." },
+      { t: "dlq", f: "Retention của DLQ với standard queue cần lưu ý gì?", b: "Standard <b>giữ nguyên enqueue timestamp gốc</b> ⇒ đặt <b>retention DLQ dài hơn source queue</b>.", x: "FIFO thì reset timestamp khi vào DLQ." },
+      { t: "dlq", f: "Đặt CloudWatch alarm trên metric nào của DLQ?", b: "<b><code>ApproximateNumberOfMessagesVisible</code></b>.", x: "Không dùng NumberOfMessagesSent: metric này không đếm message bị chuyển vào do lỗi." },
+      { t: "dlq", f: "Redrive allow policy là gì?", b: "Đặt trên <b>DLQ</b>, quy định source queue nào được dùng nó: <b>allowAll</b> (mặc định), <b>byQueue</b> (tối đa 10 ARN), <b>denyAll</b>." },
+
+      // ---- SNS
+      { t: "sns", f: "Các loại endpoint subscription của SNS?", b: "A2A: <b>SQS, Lambda, HTTP/S, Data Firehose</b>.<br>A2P: <b>Email/Email-JSON, SMS, mobile push</b>." },
+      { t: "sns", f: "Kích thước message SNS?", b: "Mặc định <b>256 KiB</b>, nâng tới <b>1 MiB</b>; lớn hơn ⇒ Extended Client (tới 2 GB)." },
+      { t: "sns", f: "SNS FIFO topic giao được tới loại subscriber nào?", b: "<b>Chỉ SQS queue</b> (FIFO hoặc standard).", x: "Không email, SMS, mobile, HTTP(S). Muốn tới Lambda: SNS FIFO → SQS → Lambda." },
+      { t: "sns", f: "Throughput của SNS FIFO topic?", b: "Mặc định <b>3.000 msg/s</b> (hoặc 20 MB/s) mỗi topic; <b>300 msg/s</b> mỗi message group." },
+      { t: "sns", f: "Tính năng nào chỉ SNS FIFO có, standard topic không có?", b: "<b>Message archiving &amp; replay</b> (ArchivePolicy, ReplayPolicy)." },
+      { t: "sns", f: "SNS retry tới SQS/Lambda bao nhiêu lần?", b: "<b>100.015 lần</b> trong <b>23 ngày</b>." },
+      { t: "sns", f: "SNS retry tới email/SMS/mobile push bao nhiêu lần?", b: "<b>50 lần</b> trong <b>6 giờ</b>." },
+      { t: "sns", f: "Protocol nào duy nhất cho tùy chỉnh delivery policy?", b: "<b>HTTP/HTTPS</b>." },
+      { t: "sns", f: "DLQ của SNS gắn vào đâu?", b: "Vào <b>subscription</b> (không phải topic), là một <b>SQS queue</b> cùng account + Region.", x: "Gắn ở subscription để biết message vốn định tới endpoint nào." },
+      { t: "sns", f: "Giới hạn số subscription và topic của SNS?", b: "Standard: <b>12,5 triệu</b> subscription/topic, 100.000 topic/account.<br>FIFO: <b>100</b> subscription/topic, 1.000 topic/account." },
+
+      // ---- Fan-out
+      { t: "fan", f: "Mẫu fan-out SNS + SQS là gì?", b: "Publish <b>một lần</b> vào SNS topic; mỗi SQS queue subscribe nhận <b>bản sao riêng</b>, lưu bền để xử lý song song theo tốc độ riêng." },
+      { t: "fan", f: "Muốn SNS ghi được vào SQS queue cần cấu hình gì?", b: "<b>SQS access policy</b> cho principal <code>sns.amazonaws.com</code> quyền <code>sqs:SendMessage</code>, điều kiện <code>aws:SourceArn</code> = ARN topic.", x: "Quên policy ⇒ subscription có nhưng message không vào queue." },
+      { t: "fan", f: "Fan-out tới queue mã hóa SSE-KMS cần gì thêm?", b: "<b>Customer managed key</b> có key policy cho <code>sns.amazonaws.com</code> dùng <code>kms:GenerateDataKey</code> + <code>kms:Decrypt</code>.", x: "Key policy của AWS managed key aws/sqs không sửa được." },
+      { t: "fan", f: "Raw message delivery làm gì?", b: "Bỏ JSON metadata bọc ngoài của SNS, gửi <b>nguyên nội dung</b>. Áp dụng cho SQS, HTTP/S, Firehose." },
+      { t: "fan", f: "Logic so khớp của subscription filter policy?", b: "Giữa các <b>thuộc tính: AND</b>; giữa các <b>giá trị</b> trong danh sách của một thuộc tính: <b>OR</b>." },
+      { t: "fan", f: "Filter policy scope có những lựa chọn nào?", b: "<b>MessageAttributes</b> hoặc <b>MessageBody</b> (body phải là JSON hợp lệ)." },
+      { t: "fan", f: "Sửa filter policy bao lâu thì có hiệu lực?", b: "Tới <b>15 phút</b> (eventual consistency). Quota: <b>200</b> filter policy/topic." },
+      { t: "fan", f: "Nhiều service cùng poll một SQS queue để service nào cũng nhận đủ message ⇒ đúng không?", b: "<b>Sai.</b> Mỗi message chỉ một consumer xử lý rồi xóa. Mỗi service cần <b>queue riêng</b> ⇒ fan-out." },
+      { t: "fan", f: "Một S3 event notification cần nhiều hệ thống cùng xử lý ⇒ làm sao?", b: "Đẩy event vào <b>SNS topic</b> rồi fan-out tới nhiều SQS queue (hoặc gửi sang EventBridge)." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>decouple</i>”, “<i>buffer requests</i>”, “<i>absorb spikes</i>”, “<i>do not lose orders if the processing tier fails</i>” ⇒ ?", b: "<b>Amazon SQS</b>." },
+      { t: "kw", f: "Đề có “<i>notify multiple subscribers</i>”, “<i>send email / SMS alerts</i>” ⇒ ?", b: "<b>Amazon SNS</b> (thường + SQS ⇒ fan-out)." },
+      { t: "kw", f: "Đề có “<i>migrate on-premises app using JMS / AMQP / MQTT with minimal code changes</i>” ⇒ ?", b: "<b>Amazon MQ</b>." },
+      { t: "kw", f: "Đề có “<i>order must be preserved</i>”, “<i>exactly-once</i>”, “<i>no duplicates</i>” ⇒ ?", b: "<b>SQS FIFO</b> (SNS FIFO nếu cần fan-out)." },
+      { t: "kw", f: "Đề có “<i>messages processed more than once</i>” + “<i>processing takes longer than…</i>” ⇒ ?", b: "<b>Tăng visibility timeout</b> (≥ thời gian xử lý) hoặc <code>ChangeMessageVisibility</code>." },
+      { t: "kw", f: "Đề có “<i>many empty ReceiveMessage responses</i>”, “<i>reduce cost of polling</i>” ⇒ ?", b: "<b>Long polling</b> (ReceiveMessageWaitTimeSeconds tới 20 giây)." },
+      { t: "kw", f: "Đề có “<i>isolate messages that can't be processed</i>”, “<i>reprocess after fixing the bug</i>” ⇒ ?", b: "<b>DLQ + maxReceiveCount</b>, rồi <b>DLQ redrive</b>." },
+      { t: "kw", f: "Đề có “<i>each subscriber should receive only a subset of messages</i>”, “<i>without changing the publisher</i>” ⇒ ?", b: "<b>SNS subscription filter policy</b>." },
+      { t: "kw", f: "Đề có “<i>serverless processing of queue messages with least operational overhead</i>” ⇒ ?", b: "<b>SQS + Lambda event source mapping</b> thay vì EC2 tự poll." },
+      { t: "kw", f: "Đề có “<i>scale EC2 workers based on messages waiting in the queue</i>” ⇒ ?", b: "Target tracking với <b>backlog per instance</b> = ApproximateNumberOfMessagesVisible ÷ số instance InService." }
+    ],
+
+    pairs: [
+      ["Decouple", "Tách rời qua lớp trung gian bất đồng bộ"],
+      ["Amazon SQS", "Hàng đợi được quản lý, consumer poll"],
+      ["Amazon SNS", "Pub/sub, đẩy message tới nhiều subscriber"],
+      ["Amazon MQ", "Broker ActiveMQ/RabbitMQ cho ứng dụng cũ"],
+      ["Standard queue", "Không giới hạn throughput, at-least-once"],
+      ["FIFO queue", "Đúng thứ tự theo message group, khử trùng"],
+      ["Best-effort ordering", "Cố giữ thứ tự nhưng không bảo đảm"],
+      ["Idempotent", "Xử lý lặp không làm đổi kết quả"],
+      ["MessageGroupId", "Cùng group xử lý tuần tự; bắt buộc với FIFO"],
+      ["Content-based deduplication", "Dedup ID = SHA-256 của body"],
+      ["Visibility timeout", "Ẩn message sau khi nhận; 30 s, tối đa 12 giờ"],
+      ["In-flight message", "Đã nhận nhưng chưa xóa"],
+      ["Long polling", "Chờ tới 20 s cho tới khi có message"],
+      ["Delay queue", "Ẩn message mới vào queue, tối đa 15 phút"],
+      ["Retention period", "Giữ message 60 s – 14 ngày, mặc định 4 ngày"],
+      ["Dead-letter queue", "Chứa message xử lý/giao không thành công"],
+      ["maxReceiveCount", "Số lần nhận tối đa trước khi chuyển DLQ"],
+      ["DLQ redrive", "Đẩy message từ DLQ về queue nguồn"],
+      ["Poison message", "Message luôn làm consumer xử lý lỗi"],
+      ["Extended Client Library", "Payload lớn trên S3, message chứa con trỏ"],
+      ["Raw message delivery", "Bỏ JSON metadata của SNS"],
+      ["Filter policy", "JSON lọc message cho từng subscription"],
+      ["Fan-out", "Một sự kiện tới nhiều consumer: SNS ⇒ SQS"],
+      ["Confused deputy", "Chống bằng aws:SourceArn / aws:SourceAccount"],
+      ["A2P", "Ứng dụng tới con người: email, SMS, push"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn dịch vụ tích hợp",
+        desc: "Đọc yêu cầu đề thi và chọn dịch vụ phù hợp nhất.",
+        buckets: ["SQS Standard", "SQS FIFO", "SNS", "SNS + SQS (fan-out)", "Amazon MQ", "Khác (EventBridge / Kinesis / Step Functions)"],
+        items: [
+          ["Đệm công việc giữa hai tier, scale worker theo tồn đọng", 0, "pull, lưu bền tới 14 ngày, throughput gần như không giới hạn"],
+          ["Hàng triệu message, thứ tự không quan trọng", 0, "Standard rẻ hơn, consumer idempotent"],
+          ["Giao dịch cùng tài khoản phải đúng thứ tự, không trùng", 1, "message group + dedup 5 phút"],
+          ["Gửi email cảnh báo khi CloudWatch alarm kích hoạt", 2, "SNS hỗ trợ A2P email/SMS"],
+          ["Push notification tới app di động", 2, "mobile push là endpoint của SNS"],
+          ["Một đơn hàng → fulfillment, analytics, fraud, không mất message", 3, "mỗi hệ thống một queue riêng nhận bản sao"],
+          ["Thêm consumer mới mà không sửa producer", 3, "chỉ cần thêm queue + subscription"],
+          ["Migrate ứng dụng dùng JMS/AMQP, ít sửa code", 4, "Amazon MQ tương thích protocol"],
+          ["Ứng dụng on-premises đang chạy RabbitMQ", 4, "broker được quản lý"],
+          ["Nhiều consumer đọc lại (replay) dữ liệu streaming", 5, "Kinesis Data Streams"],
+          ["Điều phối nhiều bước, xử lý hơn 12 giờ", 5, "Step Functions"],
+          ["Hẹn giờ xử lý sau vài ngày", 5, "EventBridge Scheduler (delay SQS tối đa 15 phút)"]
+        ]
+      },
+      {
+        title: "Triệu chứng ⇒ chỉnh tham số nào?",
+        desc: "Mỗi triệu chứng/yêu cầu nên giải quyết bằng tham số SQS nào?",
+        buckets: ["Visibility timeout", "Long polling", "Delay queue", "Retention period", "DLQ + maxReceiveCount"],
+        items: [
+          ["Message bị xử lý 2 lần vì xử lý mất 2 phút", 0, "mặc định 30 s < thời gian xử lý"],
+          ["Job thỉnh thoảng chạy lâu hơn dự kiến", 0, "ChangeMessageVisibility làm heartbeat"],
+          ["Phần lớn ReceiveMessage trả về rỗng", 1, "chờ tới 20 s, hỏi mọi server"],
+          ["Giảm chi phí polling, không sửa code", 1, "đặt ReceiveMessageWaitTimeSeconds ở cấp queue"],
+          ["Hoãn xử lý message mới 5 phút chờ thanh toán xác nhận", 2, "delay ≤ 15 phút"],
+          ["Consumer cần thời gian chuẩn bị trước khi thấy message mới", 2, "delay ẩn message ngay khi vào queue"],
+          ["Consumer có thể ngừng hoạt động 10 ngày", 3, "tăng retention (tối đa 14 ngày)"],
+          ["Message sai định dạng cứ lỗi và quay lại queue", 4, "cô lập poison message"],
+          ["Cô lập message lỗi để phân tích sau", 4, "redrive policy trên source queue"]
+        ]
+      },
+      {
+        title: "Standard hay FIFO?",
+        desc: "Đặc điểm/giới hạn sau thuộc SQS Standard queue hay FIFO queue?",
+        buckets: ["Standard", "FIFO"],
+        items: [
+          ["Throughput gần như không giới hạn", 0, "không có trần API call"],
+          ["At-least-once delivery", 0, "có thể giao trùng"],
+          ["Best-effort ordering", 0, "không bảo đảm thứ tự"],
+          ["Khoảng 120.000 in-flight message", 0, "quota in-flight của standard"],
+          ["Enqueue timestamp giữ nguyên khi vào DLQ", 0, "nên retention DLQ dài hơn"],
+          ["Tên phải kết thúc bằng .fifo", 1, "hậu tố bắt buộc"],
+          ["300 API call/giây, 3.000 msg/s có batch", 1, "trần throughput mặc định"],
+          ["Exactly-once processing trong 5 phút", 1, "deduplication"],
+          ["Bắt buộc MessageGroupId", 1, "thứ tự theo group"],
+          ["Đổi delay của queue có hồi tố", 1, "standard thì không hồi tố"]
+        ]
+      },
+      {
+        title: "SNS Standard topic hay FIFO topic?",
+        desc: "Đặc điểm sau thuộc SNS standard topic hay FIFO topic?",
+        buckets: ["Standard topic", "FIFO topic"],
+        items: [
+          ["Subscribe được email, SMS, HTTP(S)", 0, "FIFO topic chỉ giao tới SQS"],
+          ["12,5 triệu subscription mỗi topic", 0, "FIFO chỉ 100"],
+          ["100.000 topic mỗi account", 0, "FIFO chỉ 1.000"],
+          ["Subscribe trực tiếp AWS Lambda", 0, "FIFO phải đi qua SQS → Lambda"],
+          ["Chỉ subscriber là SQS queue", 1, "FIFO hoặc standard queue"],
+          ["Message archiving & replay", 1, "ArchivePolicy, ReplayPolicy"],
+          ["300 msg/s mỗi message group", 1, "3.000 msg/s mỗi topic"],
+          ["Thứ tự nghiêm ngặt và khử trùng lặp", 1, "theo message group"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["SQS consumer chủ động kéo (poll) message, còn SNS đẩy (push) tới subscriber.", true, "SQS pull, SNS push."],
+      ["SQS tự xóa message ngay khi consumer nhận.", false, "Consumer phải gọi DeleteMessage, nếu không message hiện lại."],
+      ["Retention mặc định của SQS là 4 ngày, tối đa 14 ngày.", true, "Đặt được 60 giây – 14 ngày."],
+      ["Có thể tăng kích thước message SQS lên 50 MB qua Service Quotas.", false, "Tối đa 1 MiB; lớn hơn dùng Extended Client + S3."],
+      ["SQS Extended Client Library cho phép payload tới 2 GB.", true, "Payload lưu trên S3, message chứa con trỏ."],
+      ["SQS có gateway VPC endpoint giống S3.", false, "SQS chỉ có interface VPC endpoint."],
+      ["Standard queue có thể giao một message nhiều hơn một lần.", true, "At-least-once ⇒ consumer cần idempotent."],
+      ["FIFO queue mặc định hỗ trợ 3.000 message/giây khi dùng batch 10.", true, "300 API call/giây × 10."],
+      ["Có thể chuyển standard queue thành FIFO queue tại chỗ.", false, "Phải tạo queue .fifo mới."],
+      ["Dùng cùng một MessageGroupId cho mọi message vẫn giữ được xử lý song song.", false, "Một group ⇒ tuần tự hoàn toàn; dùng group theo customerId."],
+      ["Content-based deduplication băm cả body và message attributes.", false, "Chỉ băm body bằng SHA-256."],
+      ["Visibility timeout mặc định là 30 giây, tối đa 12 giờ.", true, "Đặt được 0 giây – 12 giờ."],
+      ["Gia hạn bằng ChangeMessageVisibility sẽ reset giới hạn 12 giờ.", false, "12 giờ tính từ lần nhận đầu, không reset."],
+      ["Long polling chờ tối đa 20 giây.", true, "ReceiveMessageWaitTimeSeconds ≤ 20."],
+      ["Long polling giúp ngăn message bị xử lý trùng.", false, "Long polling giảm empty response; trùng do visibility timeout."],
+      ["Delay queue tối đa 15 phút.", true, "Lâu hơn ⇒ EventBridge Scheduler."],
+      ["Delay queue ẩn message sau khi consumer nhận.", false, "Delay ẩn ngay khi vào queue; visibility timeout mới ẩn sau khi nhận."],
+      ["DLQ của SQS có thể đặt ở Region khác để phục vụ DR.", false, "DLQ phải cùng account và Region."],
+      ["DLQ của FIFO queue phải là FIFO queue.", true, "Loại DLQ phải khớp loại source queue."],
+      ["DLQ tự động sửa lỗi và retry message.", false, "DLQ chỉ giữ message; phải alarm + redrive."],
+      ["Với standard queue, retention của DLQ nên dài hơn retention của source queue.", true, "Standard giữ enqueue timestamp gốc."],
+      ["Nên đặt alarm trên NumberOfMessagesSent của DLQ.", false, "Dùng ApproximateNumberOfMessagesVisible."],
+      ["SNS FIFO topic có thể subscribe địa chỉ email.", false, "FIFO topic chỉ giao tới SQS queue."],
+      ["SNS FIFO topic hỗ trợ archive và replay message.", true, "Standard topic không có."],
+      ["Message SNS mặc định tối đa 256 KiB.", true, "Nâng tới 1 MiB qua MaximumMessageSize."],
+      ["DLQ của SNS được gắn vào topic.", false, "Gắn vào subscription."],
+      ["SNS retry tới SQS/Lambda tới 100.015 lần trong 23 ngày.", true, "Endpoint do AWS quản lý."],
+      ["Chỉ protocol HTTP/S cho phép tùy chỉnh delivery policy của SNS.", true, "Các protocol khác dùng policy mặc định."],
+      ["Nhiều service cùng poll một SQS queue thì service nào cũng nhận đủ mọi message.", false, "Mỗi message chỉ một consumer xử lý; cần fan-out."],
+      ["Filter policy: các thuộc tính kết hợp AND, các giá trị của một thuộc tính kết hợp OR.", true, "Đúng logic so khớp của SNS."],
+      ["Thay đổi filter policy có hiệu lực ngay lập tức.", false, "Cần tới 15 phút (eventual consistency)."],
+      ["Raw message delivery bỏ JSON metadata bọc ngoài của SNS.", true, "Consumer không phải parse lớp bọc."],
+      ["Có thể sửa key policy của AWS managed key aws/sqs để cho SNS dùng.", false, "Không sửa được; phải dùng customer managed key."],
+      ["Amazon MQ hỗ trợ cả giao tiếp đồng bộ.", true, "SQS và SNS chỉ bất đồng bộ."]
+    ],
+
+    map: {
+      t: "Bài 30 · Amazon SQS & SNS",
+      c: [
+        { t: "Decoupling", icon: "cat/Application-Integration.svg", c: [
+          { t: "Ý tưởng", v: "lớp bất đồng bộ giữa các tier, scale độc lập" },
+          { t: "SQS", v: "queue, pull, mỗi message một consumer" },
+          { t: "SNS", v: "pub/sub, push tới nhiều subscriber" },
+          { t: "Amazon MQ", v: "migrate broker JMS/AMQP/MQTT, có đồng bộ" }
+        ] },
+        { t: "SQS cơ bản", icon: "svc/Amazon-Simple-Queue-Service.svg", c: [
+          { t: "Vòng đời", v: "Send → Receive (ẩn) → Delete" },
+          { t: "Message", v: "≤ 1 MiB · lớn hơn ⇒ S3 + Extended Client (2 GB)" },
+          { t: "Retention", v: "mặc định 4 ngày · 60 s – 14 ngày" },
+          { t: "Batch", v: "10 message · 10 attributes/message" },
+          { t: "Bảo mật", v: "access policy · SSE-SQS/SSE-KMS · interface endpoint" }
+        ] },
+        { t: "Standard vs FIFO", icon: "res/Amazon-Simple-Queue-Service_Queue.svg", c: [
+          { t: "Standard", v: "không giới hạn · at-least-once · best-effort" },
+          { t: "FIFO", c: [
+            { t: "Thứ tự", v: "theo MessageGroupId (bắt buộc)" },
+            { t: "Exactly-once", v: "dedup 5 phút · content-based = SHA-256 body" },
+            { t: "Throughput", v: "300 TPS · 3.000 msg/s có batch" },
+            { t: "Tên", v: "hậu tố .fifo, không đổi loại tại chỗ" }
+          ] }
+        ] },
+        { t: "Thời gian ẩn/chờ", icon: "res/Amazon-Simple-Queue-Service_Message.svg", c: [
+          { t: "Visibility timeout", v: "30 s mặc định · tối đa 12 giờ · ẩn sau khi nhận" },
+          { t: "Long polling", v: "tối đa 20 s · giảm empty response" },
+          { t: "Delay queue", v: "0 – 15 phút · ẩn ngay khi vào queue" },
+          { t: "Heartbeat", v: "ChangeMessageVisibility" }
+        ] },
+        { t: "Dead-letter queue", icon: "res/Amazon-Simple-Queue-Service_Queue.svg", c: [
+          { t: "Redrive policy", v: "ARN DLQ + maxReceiveCount trên source queue" },
+          { t: "Ràng buộc", v: "cùng account, Region, loại queue" },
+          { t: "Retention", v: "standard giữ timestamp gốc ⇒ DLQ dài hơn" },
+          { t: "Alarm", v: "ApproximateNumberOfMessagesVisible" },
+          { t: "DLQ redrive", v: "đưa message về source sau khi sửa lỗi" }
+        ] },
+        { t: "Amazon SNS", icon: "svc/Amazon-Simple-Notification-Service.svg", c: [
+          { t: "Endpoint", v: "SQS, Lambda, HTTP/S, Firehose, email, SMS, push" },
+          { t: "Message", v: "256 KiB mặc định, tới 1 MiB" },
+          { t: "Retry", v: "SQS/Lambda 100.015 lần/23 ngày · email/SMS 50 lần/6 giờ" },
+          { t: "DLQ", v: "SQS queue gắn vào subscription" },
+          { t: "FIFO topic", v: "chỉ SQS · 3.000 msg/s · archive & replay" }
+        ] },
+        { t: "Fan-out & filtering", icon: "res/Amazon-Simple-Notification-Service_Topic.svg", c: [
+          { t: "Fan-out", v: "SNS topic → nhiều SQS queue, mỗi queue một bản sao" },
+          { t: "Quyền", v: "queue policy cho sns.amazonaws.com + aws:SourceArn" },
+          { t: "KMS", v: "customer managed key cho SNS" },
+          { t: "Raw delivery", v: "bỏ JSON bọc ngoài" },
+          { t: "Filter policy", v: "AND giữa thuộc tính, OR giữa giá trị, ≤ 15 phút hiệu lực" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

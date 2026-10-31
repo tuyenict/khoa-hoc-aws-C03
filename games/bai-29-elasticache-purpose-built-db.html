@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 29 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-ElastiCache.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="29" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-29-elasticache-purpose-built-db.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "pb", name: "Purpose-built databases" },
+      { id: "ec", name: "ElastiCache tổng quan" },
+      { id: "eng", name: "Valkey/Redis OSS vs Memcached" },
+      { id: "strat", name: "Chiến lược cache & use case" },
+      { id: "doc", name: "DocumentDB & Neptune" },
+      { id: "other", name: "Keyspaces · Timestream · MemoryDB · QLDB" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- Purpose-built
+      { t: "pb", f: "Purpose-built database là gì?", b: "CSDL <b>tối ưu cho một mô hình dữ liệu và kiểu truy cập</b> cụ thể, thay vì nhồi mọi thứ vào một CSDL quan hệ." },
+      { t: "pb", f: "Polyglot persistence là gì?", b: "Một ứng dụng dùng <b>nhiều loại CSDL</b>, mỗi phần dùng loại phù hợp nhất.", x: "Ví dụ e-commerce: DocumentDB cho catalog, DynamoDB cho duyệt catalog độ trễ thấp, Aurora cho đơn hàng/tồn kho." },
+      { t: "pb", f: "Decision guide chia CSDL cho OLTP thành mấy nhóm?", b: "<b>Relational</b> (Aurora, RDS) và <b>Non-relational</b> (key-value, document, caching, in-memory, graph, time series, wide-column)." },
+      { t: "pb", f: "Nhu cầu OLAP / data warehouse trên petabyte ⇒ dịch vụ nào?", b: "<b>Amazon Redshift</b> (Module 7)." },
+      { t: "pb", f: "Mô hình dữ liệu của DocumentDB, Neptune, Keyspaces, Timestream?", b: "DocumentDB: <b>document</b> · Neptune: <b>graph</b> · Keyspaces: <b>wide-column</b> · Timestream: <b>time series</b>." },
+      { t: "pb", f: "ElastiCache khác MemoryDB về vai trò?", b: "<b>ElastiCache</b>: cache <b>ephemeral</b> trước CSDL.<br><b>MemoryDB</b>: <b>primary database</b> in-memory bền, Multi-AZ durability." },
+
+      // ---- ElastiCache tổng quan
+      { t: "ec", f: "Amazon ElastiCache là gì?", b: "Kho <b>key-value in-memory</b> được quản lý, đặt giữa ứng dụng và CSDL; đọc <b>micro-giây</b>, ghi <b>sub-millisecond</b>." },
+      { t: "ec", f: "ElastiCache có những engine nào?", b: "<b>Valkey, Memcached, Redis OSS</b>.", x: "Valkey là nhánh mã nguồn mở tương thích Redis OSS." },
+      { t: "ec", f: "Đặc điểm ElastiCache Serverless?", b: "Tạo cache HA trong <b>&lt; 1 phút</b>, không chọn node, không capacity planning, <b>tự scale</b>, một endpoint." },
+      { t: "ec", f: "Khi nào chọn node-based cluster?", b: "Khi cần <b>kiểm soát chi tiết</b>: node type, số node, AZ, cluster mode, thời điểm patch." },
+      { t: "ec", f: "Engine version của ElastiCache có hạ cấp được không?", b: "<b>Không</b>, chỉ upgrade. Muốn version cũ ⇒ xóa và tạo lại." },
+      { t: "ec", f: "Dùng ElastiCache có phải sửa code ứng dụng không?", b: "<b>Có</b>: app gọi cache trước rồi mới tới DB.", x: "Khác DAX (API tương thích DynamoDB), nhưng DAX chỉ dành cho DynamoDB." },
+      { t: "ec", f: "Nên cache dữ liệu loại nào?", b: "Dữ liệu <b>tương đối tĩnh, truy cập thường xuyên</b>, truy vấn JOIN đắt.<br>Không nên: dữ liệu đổi liên tục, hiếm đọc, kết quả tìm kiếm." },
+      { t: "ec", f: "Public endpoint của ElastiCache Serverless yêu cầu gì?", b: "Bắt buộc <b>IAM authentication + TLS 1.3</b>; chỉ có với Valkey 9.0+." },
+      { t: "ec", f: "Bảo mật node-based ElastiCache?", b: "Chạy trong <b>VPC, private subnet</b>, SG chỉ cho SG tầng app vào port cache; TLS + KMS; AUTH token / RBAC / IAM." },
+      { t: "ec", f: "Durability của ElastiCache Valkey là gì?", b: "Ghi vào <b>transactional log Multi-AZ</b>, dữ liệu an toàn kể cả khi mọi node hỏng (Valkey 9.0)." },
+
+      // ---- Engines
+      { t: "eng", f: "Khi nào chọn Memcached?", b: "Cần mô hình <b>đơn giản nhất</b>, <b>multi-threaded</b>, scale out/in bằng thêm/bớt node, cache object đơn giản." },
+      { t: "eng", f: "Khi nào chọn Valkey / Redis OSS?", b: "Cần <b>kiểu dữ liệu phức tạp</b>, <b>replication + Multi-AZ failover</b>, backup, pub/sub, geospatial, Global Datastore." },
+      { t: "eng", f: "Engine nào là multi-threaded duy nhất?", b: "<b>Memcached</b>." },
+      { t: "eng", f: "Memcached node-based có replication / failover / backup không?", b: "<b>Không</b>. Backup chỉ với serverless cache; node hỏng là mất phần dữ liệu trên node đó." },
+      { t: "eng", f: "Cluster mode disabled vs enabled (Valkey/Redis OSS)?", b: "<b>Disabled</b>: 1 shard, scale dọc + thêm replica, failover tùy chọn.<br><b>Enabled</b>: nhiều shard, scale ngang đọc+ghi, online resharding, failover <b>bắt buộc</b>." },
+      { t: "eng", f: "Multi-AZ primary hỏng thì sao?", b: "Tự <b>promote replica ở AZ khác</b>; endpoint không đổi, app không sửa cấu hình." },
+      { t: "eng", f: "Global Datastore là gì?", b: "Sao chép cluster Valkey/Redis OSS <b>xuyên Region</b>, bất đồng bộ: primary ghi, secondary <b>chỉ đọc</b>, promote được khi DR.", x: "Chỉ cho node-based, không cho serverless." },
+      { t: "eng", f: "Data tiering là gì?", b: "Dữ liệu tràn từ <b>RAM xuống SSD</b> (node r6gd, Redis OSS 6.2+) để giảm chi phí." },
+      { t: "eng", f: "Kiểu dữ liệu Valkey/Redis OSS hỗ trợ?", b: "String, set, <b>sorted set</b>, list, hash, bitmap, hyperloglog, <b>geospatial index</b>." },
+
+      // ---- Strategies
+      { t: "strat", f: "Lazy loading (cache-aside) hoạt động thế nào?", b: "App hỏi cache trước; <b>miss</b> ⇒ query DB ⇒ <b>app ghi vào cache</b>. Chỉ dữ liệu được đọc mới vào cache." },
+      { t: "strat", f: "Nhược điểm của lazy loading?", b: "<b>Cache miss penalty</b> (3 lượt: đọc cache, query DB, ghi cache) và <b>stale data</b>." },
+      { t: "strat", f: "Ưu điểm của lazy loading khi node hỏng?", b: "Không chết ứng dụng: node mới rỗng chỉ <b>tăng độ trễ</b>, cache tự đầy dần." },
+      { t: "strat", f: "Write-through hoạt động thế nào?", b: "Mỗi lần <b>ghi DB thì ghi luôn vào cache</b> ⇒ cache không bao giờ cũ." },
+      { t: "strat", f: "Nhược điểm của write-through?", b: "<b>Missing data</b> với node mới, <b>cache churn</b> (dữ liệu ghi vào không ai đọc), write penalty 2 lượt." },
+      { t: "strat", f: "TTL trong cache giúp gì?", b: "Giới hạn <b>độ cũ tối đa</b>, buộc làm mới từ DB; kết hợp ưu điểm lazy loading + write-through.", x: "TTL không đảm bảo dữ liệu không bao giờ cũ." },
+      { t: "strat", f: "Cache đầy thì sao?", b: "Engine áp dụng <b>eviction policy</b> (vd LRU). Eviction tăng cao ⇒ scale up/out." },
+      { t: "strat", f: "Vì sao cần session store tập trung?", b: "Để tầng web <b>stateless</b>: instance bị scale in không làm mất phiên; không cần sticky sessions." },
+      { t: "strat", f: "Leaderboard thời gian thực dùng cấu trúc gì?", b: "<b>Sorted set</b> của Valkey/Redis OSS (ZADD, ZREVRANGEBYSCORE, ZREVRANK)." },
+      { t: "strat", f: "Semantic caching là gì?", b: "Trả lại câu trả lời LLM đã cache khi prompt <b>tương tự về ngữ nghĩa</b> ⇒ giảm chi phí và độ trễ inference." },
+
+      // ---- DocumentDB & Neptune
+      { t: "doc", f: "Amazon DocumentDB là gì?", b: "CSDL document <b>tương thích MongoDB</b>, fully managed; dùng cùng code, driver, tool MongoDB." },
+      { t: "doc", f: "Kiến trúc DocumentDB giống dịch vụ nào?", b: "Giống <b>Aurora</b>: tách compute/storage, <b>6 bản sao / 3 AZ</b>, tới <b>15 replica</b> dùng chung storage." },
+      { t: "doc", f: "Storage tối đa và backup của DocumentDB?", b: "Tự tăng bước 10 GB, tối đa <b>256 TiB</b> (engine 8.0+). PITR, retention tối đa <b>35 ngày</b>." },
+      { t: "doc", f: "DocumentDB elastic clusters dùng khi nào?", b: "Workload <b>hàng triệu read/write mỗi giây</b>, storage cỡ petabyte." },
+      { t: "doc", f: "DocumentDB khác DynamoDB?", b: "<b>DocumentDB</b>: JSON, <b>truy vấn phong phú trên các field</b>.<br><b>DynamoDB</b>: key-value, tối ưu truy cập theo khóa, serverless." },
+      { t: "doc", f: "Amazon Neptune là gì?", b: "Graph database cho dữ liệu <b>highly connected</b>: hàng tỉ quan hệ, truy vấn <b>mili-giây</b>." },
+      { t: "doc", f: "Hai mô hình đồ thị và ngôn ngữ truy vấn của Neptune?", b: "<b>Property Graph</b>: Gremlin, openCypher.<br><b>RDF</b>: SPARQL." },
+      { t: "doc", f: "HA của Neptune?", b: "1 primary + tối đa <b>15 replica</b> ở nhiều AZ, tự failover; thiết kế availability <b>&gt; 99,99%</b>." },
+      { t: "doc", f: "Use case của Neptune?", b: "<b>Recommendation, fraud detection, knowledge graph</b>, drug discovery, network security." },
+
+      // ---- Others
+      { t: "other", f: "Amazon Keyspaces là gì?", b: "CSDL <b>tương thích Apache Cassandra</b>, <b>serverless</b>, dùng <b>CQL</b> và driver Cassandra sẵn có." },
+      { t: "other", f: "Ứng dụng Cassandra chuyển sang Keyspaces cần đổi gì?", b: "Chỉ đổi <b>endpoint</b> (port 9142) và thêm cấu hình <b>TLS</b>." },
+      { t: "other", f: "Keyspaces lưu bao nhiêu bản sao? Capacity mode?", b: "<b>3 bản sao</b> trên nhiều AZ. On-demand hoặc provisioned (đổi 1 lần/ngày)." },
+      { t: "other", f: "CQL có JOIN không?", b: "<b>Không</b>; thiết kế bảng theo query, chấp nhận denormalize." },
+      { t: "other", f: "Amazon Timestream là gì?", b: "CSDL <b>time series serverless</b>, lưu và phân tích <b>trillions</b> điểm dữ liệu mỗi ngày." },
+      { t: "other", f: "Data lifecycle của Timestream?", b: "<b>Memory store</b> cho dữ liệu gần đây → tự chuyển sang <b>magnetic store</b> cho dữ liệu lịch sử; một câu SQL truy vấn cả hai." },
+      { t: "other", f: "Timestream nạp dữ liệu từ đâu?", b: "<b>AWS IoT Core, Amazon Kinesis, Amazon MSK</b>, Telegraf; trực quan hóa bằng Grafana." },
+      { t: "other", f: "Amazon MemoryDB là gì?", b: "CSDL <b>in-memory bền</b> tương thích Valkey/Redis OSS: đọc micro-giây, ghi <b>single-digit ms</b>, <b>Multi-AZ durability</b>." },
+      { t: "other", f: "Amazon QLDB là gì? Trạng thái hiện tại?", b: "Ledger: journal <b>append-only, bất biến, kiểm chứng mật mã</b>, sở hữu tập trung. <b>End of support 31/07/2025</b> ⇒ AWS khuyên Aurora PostgreSQL." },
+      { t: "other", f: "Đề nói “<i>decentralized, nhiều bên không có cơ quan trung tâm</i>” ⇒ ?", b: "<b>Blockchain</b> (Amazon Managed Blockchain), không phải QLDB." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>MongoDB-compatible, JSON documents, minimal code changes</i>” ⇒ ?", b: "<b>Amazon DocumentDB</b> (migrate bằng AWS DMS)." },
+      { t: "kw", f: "Đề có “<i>social network, friends of friends, fraud rings, Gremlin/SPARQL</i>” ⇒ ?", b: "<b>Amazon Neptune</b>." },
+      { t: "kw", f: "Đề có “<i>Apache Cassandra, CQL, no servers to manage</i>” ⇒ ?", b: "<b>Amazon Keyspaces</b>." },
+      { t: "kw", f: "Đề có “<i>IoT sensor data, time series, trillions of events per day</i>” ⇒ ?", b: "<b>Amazon Timestream</b>." },
+      { t: "kw", f: "Đề có “<i>microsecond latency, cache query results, reduce load on database, session state</i>” ⇒ ?", b: "<b>Amazon ElastiCache</b>." },
+      { t: "kw", f: "Đề có “<i>RDS read replicas overloaded by the same repeated queries</i>” ⇒ ?", b: "Thêm <b>ElastiCache</b> trước RDS/Aurora." },
+      { t: "kw", f: "Đề có “<i>least operational overhead, no capacity planning</i>” cho cache ⇒ ?", b: "<b>ElastiCache Serverless</b>." },
+      { t: "kw", f: "Đề có “<i>multi-threaded, simplest caching, data loss acceptable</i>” ⇒ ?", b: "<b>Memcached</b>." },
+      { t: "kw", f: "Đề có “<i>cache must survive an AZ failure, snapshot, sorted sets, pub/sub</i>” ⇒ ?", b: "<b>Valkey / Redis OSS</b> với replica + Multi-AZ failover." },
+      { t: "kw", f: "Đề có “<i>cache must always contain the latest data</i>” ⇒ ?", b: "<b>Write-through</b> (+ lazy loading, TTL)." },
+      { t: "kw", f: "Đề có “<i>in-memory but primary database, no data loss</i>” ⇒ ?", b: "<b>Amazon MemoryDB</b>." },
+      { t: "kw", f: "Đề có “<i>immutable, cryptographically verifiable ledger, centrally owned</i>” ⇒ ?", b: "(Đề cũ) <b>Amazon QLDB</b>." }
+    ],
+
+    pairs: [
+      ["Purpose-built database", "CSDL tối ưu cho một mô hình dữ liệu cụ thể"],
+      ["Polyglot persistence", "Một ứng dụng dùng nhiều loại CSDL"],
+      ["ElastiCache Serverless", "Cache tự scale, một endpoint, tạo &lt; 1 phút"],
+      ["Node-based cluster", "Tự chọn node type, số node, AZ"],
+      ["Memcached", "Engine đơn giản, multi-threaded, không replica"],
+      ["Valkey", "Nhánh mã nguồn mở tương thích Redis OSS"],
+      ["Cluster mode enabled", "Nhiều shard, scale ngang, online resharding"],
+      ["Shard", "1 primary + 0..n replica giữ một phần keyspace"],
+      ["Global Datastore", "Sao chép cache Valkey/Redis OSS xuyên Region"],
+      ["Data tiering", "Dữ liệu tràn từ RAM xuống SSD (r6gd)"],
+      ["Lazy loading", "Chỉ nạp vào cache khi cache miss"],
+      ["Write-through", "Ghi DB đồng thời cập nhật cache"],
+      ["Cache miss penalty", "3 lượt: đọc cache, query DB, ghi cache"],
+      ["Stale data", "Dữ liệu cache không còn khớp DB"],
+      ["Cache churn", "Ghi vào cache dữ liệu không ai đọc"],
+      ["Eviction", "Xóa key khi cache đầy (vd LRU)"],
+      ["Sorted set", "Cấu trúc Valkey/Redis OSS cho leaderboard"],
+      ["Amazon MemoryDB", "CSDL in-memory bền, Multi-AZ durability"],
+      ["Amazon DocumentDB", "CSDL document tương thích MongoDB"],
+      ["Amazon Neptune", "CSDL đồ thị, hàng tỉ quan hệ"],
+      ["SPARQL", "Ngôn ngữ truy vấn RDF của Neptune"],
+      ["Gremlin / openCypher", "Truy vấn property graph của Neptune"],
+      ["Amazon Keyspaces", "CSDL wide-column tương thích Cassandra"],
+      ["Clustering column", "Sắp xếp dữ liệu trong partition Cassandra"],
+      ["Amazon Timestream", "CSDL time series serverless"],
+      ["Memory / Magnetic store", "Tầng dữ liệu gần đây / lịch sử của Timestream"],
+      ["QLDB", "Ledger bất biến, đã end of support"]
+    ],
+
+    sorts: [
+      {
+        title: "Tình huống ⇒ CSDL chuyên dụng",
+        desc: "Chọn dịch vụ CSDL phù hợp với mô hình dữ liệu trong đề.",
+        buckets: ["ElastiCache", "MemoryDB", "DocumentDB", "Neptune", "Keyspaces", "Timestream", "QLDB (đề cũ)"],
+        items: [
+          ["Cache kết quả query JOIN đắt trước RDS", 0, "cache ephemeral, đọc micro-giây"],
+          ["Session store sub-ms cho web stateless", 0, "Valkey/Redis OSS + Multi-AZ"],
+          ["Primary DB in-memory cho microservices, không được mất dữ liệu", 1, "Multi-AZ durability"],
+          ["Migrate MongoDB với ít thay đổi code", 2, "dùng lại driver MongoDB"],
+          ["Product catalog JSON nhiều thuộc tính lồng nhau", 2, "truy vấn phong phú trên field"],
+          ["Phát hiện vòng gian lận qua nhiều cấp quan hệ", 3, "graph traversal mili-giây"],
+          ["Gợi ý “người mua X cũng mua Y”", 3, "recommendation engine"],
+          ["Chuyển cluster Cassandra on-prem, không quản lý server", 4, "serverless, CQL"],
+          ["200.000 cảm biến gửi số đo mỗi giây", 5, "memory store → magnetic store"],
+          ["Metrics DevOps gắn timestamp", 5, "time series"],
+          ["Journal bất biến kiểm chứng mật mã, sở hữu tập trung", 6, "đã end of support, thay bằng Aurora PostgreSQL"]
+        ]
+      },
+      {
+        title: "Memcached hay Valkey / Redis OSS?",
+        desc: "Tính năng / yêu cầu sau ứng với engine nào (node-based)?",
+        buckets: ["Memcached", "Valkey / Redis OSS"],
+        items: [
+          ["Kiến trúc multi-threaded dùng nhiều core", 0, "engine multi-threaded duy nhất"],
+          ["Mô hình cache đơn giản nhất, chấp nhận mất dữ liệu", 0, "không replication"],
+          ["Scale out/in bằng thêm/bớt node", 0, "data partitioning"],
+          ["Replication + automatic failover Multi-AZ", 1, "Memcached không có"],
+          ["Backup & restore (snapshot) node-based", 1, "Memcached chỉ backup với serverless"],
+          ["Sorted set cho leaderboard", 1, "kiểu dữ liệu phức tạp"],
+          ["Pub/Sub messaging", 1, "SUBSCRIBE channel"],
+          ["Global Datastore xuyên Region", 1, "chỉ Valkey/Redis OSS node-based"],
+          ["Geospatial indexing", 1, "Memcached không có"]
+        ]
+      },
+      {
+        title: "Lazy loading hay Write-through?",
+        desc: "Ưu / nhược điểm hoặc tình huống sau thuộc chiến lược cache nào?",
+        buckets: ["Lazy loading", "Write-through"],
+        items: [
+          ["Chỉ cache dữ liệu thực sự được đọc", 0, "không lấp đầy cache thừa"],
+          ["Cache miss penalty 3 lượt", 0, "đọc cache, query DB, ghi cache"],
+          ["Có thể trả stale data", 0, "DB đổi nhưng cache không cập nhật"],
+          ["Node mới rỗng chỉ làm tăng độ trễ", 0, "cache tự đầy dần"],
+          ["Cache không bao giờ cũ", 1, "cập nhật mỗi lần ghi DB"],
+          ["Cache churn: dữ liệu ghi vào không ai đọc", 1, "lãng phí tài nguyên"],
+          ["Missing data khi thêm node mới", 1, "chờ dữ liệu được ghi lại"],
+          ["Mỗi lần ghi tốn 2 lượt (DB + cache)", 1, "write penalty"]
+        ]
+      },
+      {
+        title: "ElastiCache, MemoryDB hay DAX?",
+        desc: "Đặc điểm sau thuộc dịch vụ in-memory nào?",
+        buckets: ["ElastiCache", "MemoryDB", "DAX"],
+        items: [
+          ["Cache ephemeral trước một CSDL bất kỳ", 0, "RDS, Aurora, kết quả API…"],
+          ["Có engine Memcached", 0, "MemoryDB chỉ Valkey/Redis OSS"],
+          ["Ứng dụng phải tự viết logic cache", 0, "cache-aside"],
+          ["Primary database in-memory bền vững", 1, "Multi-AZ durability"],
+          ["Ghi single-digit ms vì ghi bền Multi-AZ", 1, "đọc micro-giây"],
+          ["Cache chỉ cho DynamoDB", 2, "Bài 28"],
+          ["Tương thích DynamoDB API, gần như không đổi code", 2, "write-through tự động"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["AWS cung cấp hơn 15 lựa chọn CSDL với nhiều mô hình dữ liệu.", true, "Theo decision guide."],
+      ["ElastiCache là system of record mặc định thay thế CSDL chính.", false, "Decision guide gọi ElastiCache là ephemeral cache; DB chính in-memory ⇒ MemoryDB."],
+      ["ElastiCache đọc micro-giây, ghi sub-millisecond.", true, "Theo decision guide."],
+      ["ElastiCache Serverless yêu cầu chọn node type và số node.", false, "Serverless không cấp phát node, tự scale."],
+      ["Có thể hạ cấp engine version của ElastiCache.", false, "Chỉ upgrade; muốn version cũ phải tạo lại."],
+      ["DAX có thể đặt trước RDS for MySQL.", false, "DAX chỉ dùng cho DynamoDB; RDS dùng ElastiCache."],
+      ["Memcached là engine multi-threaded.", true, "Engine multi-threaded duy nhất."],
+      ["Memcached node-based hỗ trợ replication và automatic failover.", false, "Memcached không có replication/failover."],
+      ["Valkey/Redis OSS hỗ trợ sorted set, pub/sub và geospatial.", true, "Kiểu dữ liệu phức tạp."],
+      ["Cluster mode enabled hỗ trợ online resharding.", true, "Cluster mode disabled thì không."],
+      ["Với cluster mode enabled, automatic failover là tùy chọn.", false, "Bắt buộc với cluster mode enabled; tùy chọn với disabled."],
+      ["Global Datastore có cho ElastiCache Serverless.", false, "Hiện chỉ cho node-based cluster."],
+      ["Secondary cluster của Global Datastore nhận cả ghi.", false, "Secondary chỉ đọc; promote khi DR."],
+      ["Multi-AZ failover của ElastiCache giữ nguyên endpoint.", true, "Ứng dụng không cần sửa cấu hình."],
+      ["Lazy loading chỉ nạp dữ liệu vào cache khi cache miss.", true, "Cache-aside."],
+      ["Write-through có thể trả dữ liệu cũ sau mỗi lần ghi DB.", false, "Write-through cập nhật cache mỗi lần ghi; lazy loading mới bị stale."],
+      ["Lazy loading có cache miss penalty 3 lượt.", true, "Đọc cache, query DB, ghi cache."],
+      ["Write-through gặp vấn đề missing data khi thêm node mới.", true, "Node mới thiếu dữ liệu tới khi được ghi lại."],
+      ["TTL đảm bảo dữ liệu cache không bao giờ cũ.", false, "TTL chỉ giới hạn độ cũ tối đa."],
+      ["Tăng TTL giúp giảm dữ liệu cũ.", false, "TTL dài hơn khiến dữ liệu cũ lâu hơn."],
+      ["Sticky sessions giải quyết hoàn toàn việc mất session khi scale in.", false, "Vẫn mất session khi instance biến mất; dùng session store tập trung."],
+      ["Kết quả tìm kiếm là ứng viên tốt để cache.", false, "Mỗi truy vấn gần như duy nhất."],
+      ["DocumentDB tương thích MongoDB.", true, "Dùng cùng code, driver, tool."],
+      ["DocumentDB lưu 6 bản sao dữ liệu trên 3 AZ.", true, "Kiến trúc giống Aurora."],
+      ["DocumentDB tối đa 5 replica mỗi cluster.", false, "Tối đa 15 replica."],
+      ["Neptune truy vấn property graph bằng SPARQL.", false, "Property graph dùng Gremlin/openCypher; SPARQL cho RDF."],
+      ["Neptune phù hợp cho fraud detection và recommendation engine.", true, "Use case nêu trong tài liệu."],
+      ["Mạng xã hội chỉ lưu profile theo user ID ở quy mô lớn thì nên chọn Neptune.", false, "Truy cập theo khóa ⇒ DynamoDB; Neptune khi cần truy vấn quan hệ nhiều bước."],
+      ["Keyspaces yêu cầu chọn instance type và số node.", false, "Keyspaces serverless."],
+      ["CQL hỗ trợ JOIN giữa các bảng.", false, "CQL không có JOIN."],
+      ["Keyspaces lưu 3 bản sao trên nhiều AZ.", true, "Mã hóa at-rest bật sẵn, kết nối bắt buộc TLS."],
+      ["Timestream tự chuyển dữ liệu cũ từ memory store sang magnetic store.", true, "Theo chính sách người dùng cấu hình."],
+      ["MemoryDB ghi nhanh hơn ElastiCache vì là in-memory.", false, "MemoryDB ghi single-digit ms do ghi bền Multi-AZ."],
+      ["Amazon QLDB đã end of support.", true, "Ngày 31/07/2025; AWS khuyên Aurora PostgreSQL."],
+      ["Ứng dụng nhiều bên không tin cậy cơ quan trung tâm nên dùng QLDB.", false, "QLDB sở hữu tập trung; phi tập trung ⇒ blockchain."]
+    ],
+
+    map: {
+      t: "Bài 29 · ElastiCache & CSDL chuyên dụng",
+      c: [
+        { t: "Purpose-built", icon: "cat/Database.svg", c: [
+          { t: "Nguyên tắc", v: "đúng CSDL cho đúng mô hình dữ liệu" },
+          { t: "Polyglot persistence", v: "một app dùng nhiều CSDL" },
+          { t: "Relational", v: "Aurora, RDS" },
+          { t: "OLAP", v: "Redshift" }
+        ] },
+        { t: "ElastiCache", icon: "svc/Amazon-ElastiCache.svg", c: [
+          { t: "Vai trò", v: "cache in-memory ephemeral, đọc µs, ghi sub-ms" },
+          { t: "Serverless", v: "&lt; 1 phút, tự scale, không capacity planning" },
+          { t: "Node-based", v: "tự chọn node type, số node, AZ" },
+          { t: "Memcached", v: "đơn giản, multi-threaded, không replica" },
+          { t: "Valkey / Redis OSS", c: [
+            { t: "HA", v: "replica + Multi-AZ auto failover" },
+            { t: "Tính năng", v: "backup, pub/sub, sorted set, geospatial" },
+            { t: "Global Datastore", v: "xuyên Region, secondary chỉ đọc" }
+          ] },
+          { t: "Cluster mode", v: "disabled: 1 shard · enabled: nhiều shard, resharding" }
+        ] },
+        { t: "Chiến lược cache", icon: "res/Amazon-ElastiCache_Cache-Node.svg", c: [
+          { t: "Lazy loading", v: "nạp khi miss · stale data, miss penalty 3 lượt" },
+          { t: "Write-through", v: "luôn mới · missing data, cache churn" },
+          { t: "TTL", v: "giới hạn độ cũ, kết hợp cả hai" },
+          { t: "Eviction", v: "LRU khi đầy ⇒ scale" },
+          { t: "Use case", v: "session store, leaderboard (sorted set), pub/sub" }
+        ] },
+        { t: "DocumentDB", icon: "svc/Amazon-DocumentDB.svg", c: [
+          { t: "Tương thích", v: "MongoDB, JSON document" },
+          { t: "Kiến trúc", v: "giống Aurora, 6 bản / 3 AZ, 15 replica" },
+          { t: "Storage", v: "≤ 256 TiB, tự tăng 10 GB" },
+          { t: "Backup", v: "PITR, retention ≤ 35 ngày" }
+        ] },
+        { t: "Neptune", icon: "svc/Amazon-Neptune.svg", c: [
+          { t: "Mô hình", v: "graph, hàng tỉ quan hệ, ms" },
+          { t: "Property graph", v: "Gremlin, openCypher" },
+          { t: "RDF", v: "SPARQL" },
+          { t: "Use case", v: "fraud, recommendation, knowledge graph" }
+        ] },
+        { t: "Keyspaces & Timestream", icon: "svc/Amazon-Keyspaces.svg", c: [
+          { t: "Keyspaces", v: "Cassandra serverless, CQL, 3 bản sao, port 9142 + TLS" },
+          { t: "Timestream", v: "time series serverless, trillions điểm/ngày" },
+          { t: "Lifecycle", v: "memory store → magnetic store" }
+        ] },
+        { t: "MemoryDB & QLDB", icon: "svc/Amazon-Quantum-Ledger-Database.svg", c: [
+          { t: "MemoryDB", v: "in-memory bền, primary DB, ghi single-digit ms" },
+          { t: "QLDB", v: "ledger bất biến, đã end of support" },
+          { t: "Thay QLDB", v: "Aurora PostgreSQL" },
+          { t: "Phi tập trung", v: "blockchain, không phải QLDB" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

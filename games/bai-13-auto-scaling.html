@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 13 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-EC2-Auto-Scaling.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="13" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-13-auto-scaling.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "asg", name: "ASG & launch template" },
+      { id: "hc", name: "Health check & vòng đời" },
+      { id: "dyn", name: "Dynamic scaling & SQS" },
+      { id: "warm", name: "Cooldown · warmup · grace" },
+      { id: "sched", name: "Scheduled & predictive" },
+      { id: "hook", name: "Lifecycle hook & warm pool" },
+      { id: "ops", name: "Termination · refresh" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- ASG & launch template
+      { t: "asg", f: "Ba con số của một Auto Scaling group?", b: "<b>Minimum</b> (sàn) · <b>Desired</b> (số đang cố duy trì) · <b>Maximum</b> (trần, chặn chi phí).", x: "Mọi kiểu scaling thực chất là đổi desired capacity trong [min, max]." },
+      { t: "asg", f: "Policy “thêm 3” khi max 3 và đang có 2 ⇒ thêm bao nhiêu?", b: "Chỉ thêm <b>1</b>: Auto Scaling cắt về trong khoảng [min, max]." },
+      { t: "asg", f: "Muốn ứng dụng luôn highly available trên 2 AZ ⇒ min tối thiểu?", b: "<b>min ≥ 2</b>, ASG trải ≥ 2 AZ (thường kèm ALB)." },
+      { t: "asg", f: "Auto Scaling có thu phí không?", b: "<b>Không ($0)</b>. Chỉ trả EC2, EBS, CloudWatch alarm… đang dùng." },
+      { t: "asg", f: "ASG có trải qua nhiều Region được không?", b: "<b>Không.</b> ASG là tài nguyên <b>regional</b>, trải nhiều AZ trong một Region." },
+      { t: "asg", f: "Điểm khác biệt quyết định giữa launch template và launch configuration?", b: "Launch template có <b>nhiều version</b>; launch configuration <b>bất biến</b>, không sửa được sau khi tạo." },
+      { t: "asg", f: "Tính năng nào bắt buộc phải dùng launch template?", b: "<b>Mixed instances</b>: nhiều instance type, trộn <b>On-Demand + Spot</b>; tính năng EC2 mới (SSM parameter cho AMI, io2, T2 Unlimited, Capacity Reservations…)." },
+      { t: "asg", f: "Mốc thời gian loại bỏ launch configuration?", b: "Từ <b>01/01/2023</b> không hỗ trợ instance type mới; account tạo từ 01/06/2023 không tạo được bằng console; từ <b>01/10/2024</b> không tạo được bằng bất kỳ cách nào." },
+      { t: "asg", f: "ASG trỏ tới version <code>$Latest</code> rồi tạo version mới có AMI mới – instance đang chạy có đổi không?", b: "<b>Không.</b> Chỉ instance launch sau đó mới dùng AMI mới. Muốn thay hàng loạt ⇒ <b>instance refresh</b>." },
+      { t: "asg", f: "Thay AMI ID cứng trong launch template bằng gì để tự cập nhật?", b: "<b>AWS Systems Manager parameter</b>: cập nhật parameter là template tự dùng AMI mới." },
+      { t: "asg", f: "Lỗi “not authorized to use the launch template” thường do đâu?", b: "Thiếu quyền tài nguyên trong template, vd <code>ec2:RunInstances</code>, <code>iam:PassRole</code> cho instance profile." },
+
+      // ---- Health check & vòng đời
+      { t: "hc", f: "Health check nào luôn bật cho ASG? Loại nào phải bật?", b: "<b>EC2 status checks</b> luôn bật. <b>ELB</b>, VPC Lattice, EBS phải bật; custom qua API <code>SetInstanceHealth</code>." },
+      { t: "hc", f: "Mặc định ASG có dùng kết quả ELB health check không?", b: "<b>Không</b> – bỏ qua cho tới khi bạn bật ELB health check cho ASG." },
+      { t: "hc", f: "Health check grace period là gì? Mặc định?", b: "Thời gian tối thiểu giữ instance mới trước khi terminate vì unhealthy. <b>300 s</b> (console) / <b>0 s</b> (CLI/SDK)." },
+      { t: "hc", f: "Instance bị stop trong lúc grace period thì sao?", b: "Vẫn bị đánh dấu <b>unhealthy</b> và thay ngay." },
+      { t: "hc", f: "ASG thay instance hỏng theo đợt thế nào để tránh downtime?", b: "Khi nhóm đạt &gt; 90% desired, thay <b>tối đa 10% desired capacity</b> mỗi lần, chờ instance mới qua health check + warmup rồi mới thay tiếp.", x: "Chỉnh được bằng instance maintenance policy." },
+      { t: "hc", f: "Instance bị terminate thì Elastic IP và EBS ra sao?", b: "EIP bị gỡ, EBS bị detach/xóa (theo DeleteOnTermination) – <b>không tự gắn sang instance mới</b>; muốn tự động ⇒ lifecycle hook." },
+      { t: "hc", f: "Trạng thái <b>Standby</b> dùng để làm gì?", b: "Tạm rút instance InService ra khỏi service để troubleshoot/cập nhật; vẫn thuộc ASG nhưng <b>không bị health check</b>, không nhận traffic." },
+      { t: "hc", f: "Không muốn ASG thay instance trong lúc điều tra sự cố?", b: "<b>Suspend</b> process ReplaceUnhealthy và HealthCheck (hoặc đưa vào Standby)." },
+      { t: "hc", f: "Luồng trạng thái khi scale out có launch hook?", b: "Pending ⇒ <b>Pending:Wait</b> ⇒ Pending:Proceed ⇒ đăng ký vào LB ⇒ <b>InService</b>.", x: "Bị tính tiền ngay khi instance launch, kể cả lúc chưa InService." },
+
+      // ---- Dynamic scaling & SQS
+      { t: "dyn", f: "Target tracking scaling hoạt động thế nào?", b: "Như <b>bộ điều nhiệt</b>: chọn metric + target value, Auto Scaling <b>tự tạo và quản lý CloudWatch alarm</b>, thêm/bớt instance để giữ metric quanh mục tiêu." },
+      { t: "dyn", f: "4 predefined metric của target tracking?", b: "<b>ASGAverageCPUUtilization</b>, ASGAverageNetworkIn, ASGAverageNetworkOut, <b>ALBRequestCountPerTarget</b>." },
+      { t: "dyn", f: "Metric thế nào mới dùng được cho target tracking?", b: "Metric <b>utilization</b>, thay đổi <b>tỉ lệ nghịch</b> với capacity (gấp đôi instance ⇒ metric giảm ~50%).", x: "Không dùng: RequestCount tổng, Latency của LB, ApproximateNumberOfMessagesVisible của SQS." },
+      { t: "dyn", f: "Nhiều target tracking policy cùng lúc thì scale out/in thế nào?", b: "Scale out nếu <b>bất kỳ</b> policy nào muốn; scale in chỉ khi <b>tất cả</b> policy đồng ý – ưu tiên availability." },
+      { t: "dyn", f: "Step scaling khác simple scaling thế nào?", b: "<b>Step</b>: nhiều step adjustment, vi phạm càng lớn thêm càng nhiều, không chờ cooldown.<br><b>Simple</b>: một adjustment, chờ cooldown mới phản ứng tiếp.", x: "AWS khuyến nghị không dùng simple scaling." },
+      { t: "dyn", f: "3 scaling adjustment type?", b: "<b>ChangeInCapacity</b> (3 + 5 ⇒ 8) · <b>ExactCapacity</b> (3, đặt 5 ⇒ 5) · <b>PercentChangeInCapacity</b> (10 + 10% ⇒ 11)." },
+      { t: "dyn", f: "Nhiều dynamic policy cùng kích hoạt ⇒ Auto Scaling chọn gì?", b: "Policy cho <b>capacity lớn nhất</b> – cả khi scale out lẫn scale in.", x: "Nhóm 8: bớt 3 vs bớt 25% (=2) ⇒ chỉ bớt 2." },
+      { t: "dyn", f: "Công thức <b>backlog per instance</b>?", b: "<b>ApproximateNumberOfMessages ÷ số instance InService</b>." },
+      { t: "dyn", f: "Target value cho backlog per instance tính thế nào?", b: "<b>Độ trễ chấp nhận được ÷ thời gian xử lý trung bình một message</b>.", x: "Ví dụ: 10 s ÷ 0,1 s = 100." },
+      { t: "dyn", f: "<i>Flapping</i> là gì? Cách tránh?", b: "Vòng lặp scale out ⇒ scale in ⇒ scale out. Đặt <b>khoảng cách đủ xa</b> giữa ngưỡng scale out và scale in, hoặc dùng target tracking." },
+      { t: "dyn", f: "Muốn scale theo memory của EC2?", b: "EC2 không có metric memory sẵn ⇒ cài <b>CloudWatch agent</b> publish custom metric rồi target tracking trên metric đó." },
+
+      // ---- Cooldown, warmup, grace
+      { t: "warm", f: "Scaling cooldown áp dụng cho kiểu policy nào? Mặc định?", b: "Chỉ <b>simple scaling</b>; default cooldown <b>300 giây</b>." },
+      { t: "warm", f: "Default instance warmup là gì?", b: "Thời gian sau khi instance InService mà nó <b>chưa đóng góp vào metric tổng hợp</b>; instance đang warmup vẫn tính vào desired capacity.", x: "Không bật mặc định; AWS strongly recommend bật, bắt đầu 300 giây." },
+      { t: "warm", f: "Phân biệt cooldown, warmup, grace period.", b: "<b>Cooldown</b>: chặn simple policy chạy liên tiếp.<br><b>Warmup</b>: instance mới chưa tính vào metric.<br><b>Grace period</b>: chưa terminate instance mới vì health check fail." },
+      { t: "warm", f: "Chưa đặt default instance warmup thì target tracking/step dùng gì?", b: "Dùng <b>default cooldown</b> làm warmup; instance refresh dùng <b>health check grace period</b>; predictive không có warmup." },
+      { t: "warm", f: "Hoạt động nào không chờ cooldown?", b: "<b>Scheduled action</b>, thay instance unhealthy, manual scaling (mặc định)." },
+
+      // ---- Scheduled & predictive
+      { t: "sched", f: "Scheduled action có giới hạn gì?", b: "Tối đa <b>125 action mỗi ASG</b>; tên duy nhất; hai action không trùng thời điểm; có thể trễ tới <b>2 phút</b>." },
+      { t: "sched", f: "Time zone mặc định của scheduled action?", b: "<b>UTC</b>; đặt được tên IANA (vd Asia/Ho_Chi_Minh) – zone theo địa danh tự điều chỉnh DST." },
+      { t: "sched", f: "Predictive scaling cần bao nhiêu dữ liệu?", b: "Tối thiểu <b>24 giờ</b>, phân tích tối đa <b>14 ngày</b>; forecast theo giờ cho <b>48 giờ</b> tới, cập nhật <b>mỗi 6 giờ</b>." },
+      { t: "sched", f: "Hai mode của predictive scaling?", b: "<b>Forecast only</b> (mặc định khi mới bật) và <b>forecast and scale</b>." },
+      { t: "sched", f: "Predictive scaling có scale in không?", b: "<b>Không.</b> Cần dynamic policy (target tracking) để bớt capacity." },
+      { t: "sched", f: "Predictive + target tracking tính ra desired khác nhau ⇒ dùng số nào?", b: "<b>Giá trị lớn nhất</b> (vd 10 vs 8 ⇒ 10)." },
+      { t: "sched", f: "Muốn predictive launch instance sớm hơn đầu giờ?", b: "<b>SchedulingBufferTime</b> (console: Pre-launch instances)." },
+
+      // ---- Lifecycle hook & warm pool
+      { t: "hook", f: "Hai loại lifecycle hook?", b: "<b>EC2_INSTANCE_LAUNCHING</b> (Pending:Wait) và <b>EC2_INSTANCE_TERMINATING</b> (Terminating:Wait)." },
+      { t: "hook", f: "Heartbeat timeout mặc định và global timeout của hook?", b: "Heartbeat <b>1 giờ</b>; global timeout = <b>48 giờ</b> hoặc 100 × heartbeat, lấy giá trị nhỏ hơn." },
+      { t: "hook", f: "CONTINUE và ABANDON với launch hook khác nhau thế nào?", b: "<b>CONTINUE</b> ⇒ instance vào service.<br><b>ABANDON</b> ⇒ instance bị terminate và thay thế.", x: "Với terminate hook cả hai đều cho terminate." },
+      { t: "hook", f: "Lifecycle hook gửi thông báo qua đâu?", b: "<b>Amazon EventBridge</b> (⇒ Lambda, SNS, SQS…); qua CLI/SDK còn chỉ định trực tiếp SNS topic hoặc SQS queue." },
+      { t: "hook", f: "Hook có áp dụng khi attach/detach hoặc vào/ra Standby không?", b: "<b>Không.</b> Cũng không áp dụng khi force delete group." },
+      { t: "hook", f: "Warm pool là gì?", b: "Tập instance <b>đã khởi tạo sẵn</b> cạnh ASG; scale out lấy instance từ pool (warm start) ⇒ giảm độ trễ cho ứng dụng boot lâu." },
+      { t: "hook", f: "3 trạng thái của warm pool và chi phí?", b: "<b>Stopped</b> (rẻ nhất, trả EBS + EIP) · <b>Hibernated</b> (giữ RAM vào EBS root) · <b>Running</b> (rất không khuyến khích)." },
+      { t: "hook", f: "Kích thước mặc định của warm pool?", b: "<b>max − desired</b> (vd desired 6, max 10 ⇒ pool 4)." },
+      { t: "hook", f: "Giới hạn của warm pool?", b: "Root phải là <b>EBS</b>; không hỗ trợ Spot trong mixed instances group và nhóm có instance weighting; pool cạn ⇒ cold start." },
+
+      // ---- Termination, refresh
+      { t: "ops", f: "Thứ tự chọn instance của default termination policy?", b: "<b>AZ nhiều instance nhất</b> ⇒ (mixed) khớp allocation strategy ⇒ <b>cấu hình cũ nhất</b> ⇒ gần giờ tính tiền ⇒ ngẫu nhiên." },
+      { t: "ops", f: "Instance unhealthy có đi qua termination policy không?", b: "<b>Không</b> – bị thay trực tiếp." },
+      { t: "ops", f: "Termination policy <b>NewestInstance</b> dùng khi nào?", b: "Đang <b>thử cấu hình mới</b>, muốn loại instance thử nghiệm trước khi scale in." },
+      { t: "ops", f: "Instance scale-in protection làm gì?", b: "Instance <b>không bị chọn khi scale in</b> (vẫn bị thay nếu unhealthy). Mẫu SQS: bật khi nhận job dài, tắt khi xong." },
+      { t: "ops", f: "Maximum instance lifetime dùng để làm gì?", b: "Tự thay instance đã chạy quá thời gian quy định (tối thiểu <b>1 ngày – 86.400 giây</b>), vd luôn chạy AMI vá gần đây." },
+      { t: "ops", f: "Minimum / maximum healthy percentage mặc định của instance refresh?", b: "<b>90%</b> / <b>100%</b> (đặt &gt; 100% để launch trước, terminate sau)." },
+      { t: "ops", f: "Instance refresh hỗ trợ những cơ chế an toàn nào?", b: "<b>Checkpoint</b> (kiểu canary, delay mặc định 1 giờ), <b>skip matching</b>, bake time, CloudWatch alarm + <b>auto rollback</b>." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>automatically replace unhealthy instances</i>”, “<i>maintain a fixed number of instances</i>” ⇒ ?", b: "<b>Auto Scaling group</b> (kể cả min = max = desired = 1)." },
+      { t: "kw", f: "Đề có “<i>keep average CPU at 50%</i>”, “<i>least operational overhead</i>” ⇒ ?", b: "<b>Target tracking</b> với ASGAverageCPUUtilization." },
+      { t: "kw", f: "Đề có “<i>add 2 instances when CPU &gt; 70% and 4 when CPU &gt; 90%</i>” ⇒ ?", b: "<b>Step scaling</b>." },
+      { t: "kw", f: "Đề có “<i>scale workers based on messages in an SQS queue</i>” ⇒ ?", b: "Target tracking trên <b>backlog per instance</b> (custom metric / metric math), không dùng tổng số message." },
+      { t: "kw", f: "Đề có “<i>instances return HTTP 500 but ASG does not replace them</i>” ⇒ ?", b: "<b>Bật ELB health check</b> cho ASG." },
+      { t: "kw", f: "Đề có “<i>new instances are terminated in a loop before the app finishes starting</i>” ⇒ ?", b: "<b>Tăng health check grace period</b> (hoặc launch lifecycle hook)." },
+      { t: "kw", f: "Đề có “<i>launches too many instances because new instances report high CPU while booting</i>” ⇒ ?", b: "Cấu hình <b>default instance warmup</b>." },
+      { t: "kw", f: "Đề có “<i>marketing event on a known date</i>”, “<i>every weekday at 8 AM</i>” ⇒ ?", b: "<b>Scheduled scaling</b>." },
+      { t: "kw", f: "Đề có “<i>daily/weekly cyclical pattern</i>”, “<i>instances take 10 minutes to boot</i>” ⇒ ?", b: "<b>Predictive scaling</b> + target tracking." },
+      { t: "kw", f: "Đề có “<i>retrieve log files before instances are terminated by scale-in</i>” ⇒ ?", b: "<b>Termination lifecycle hook</b> + EventBridge + Lambda / SSM Run Command." },
+      { t: "kw", f: "Đề có “<i>boot time is several minutes; reduce scale-out latency cost-effectively</i>” ⇒ ?", b: "<b>Warm pool</b> ở trạng thái Stopped (hoặc Hibernated nếu cần giữ RAM)." },
+      { t: "kw", f: "Đề có “<i>roll out a new AMI with minimal downtime and least effort</i>” ⇒ ?", b: "Launch template version mới + <b>instance refresh</b> (min healthy 90%, auto rollback)." },
+      { t: "kw", f: "Đề có “<i>prevent an instance running a long job from being terminated during scale in</i>” ⇒ ?", b: "<b>Instance scale-in protection</b>." }
+    ],
+
+    pairs: [
+      ["Auto Scaling group", "Tập instance quản lý như một đơn vị logic"],
+      ["Desired capacity", "Số instance ASG đang cố duy trì"],
+      ["Launch template", "Cấu hình instance, có nhiều version"],
+      ["Launch configuration", "Thế hệ cũ, bất biến, đang bị loại bỏ"],
+      ["Target tracking scaling", "Giữ metric quanh mục tiêu như bộ điều nhiệt"],
+      ["Step scaling", "Điều chỉnh theo mức vượt ngưỡng alarm"],
+      ["Simple scaling", "Một điều chỉnh rồi chờ cooldown"],
+      ["Scheduled action", "Đổi capacity theo cron + time zone"],
+      ["Predictive scaling", "Dự báo 48 giờ từ lịch sử metric"],
+      ["Scaling cooldown", "Chờ 300 s giữa hai lần simple scaling"],
+      ["Default instance warmup", "Instance mới chưa tính vào metric"],
+      ["Health check grace period", "Chưa terminate instance mới: 300 s / 0"],
+      ["Backlog per instance", "Messages ÷ số instance InService"],
+      ["Flapping", "Scale out/in lặp vô hạn"],
+      ["Lifecycle hook", "Giữ instance ở Pending:Wait / Terminating:Wait"],
+      ["Warm pool", "Instance khởi tạo sẵn: Stopped/Hibernated"],
+      ["Standby", "Rút instance khỏi service, không health check"],
+      ["Scale-in protection", "Instance không bị chọn khi scale in"],
+      ["Instance refresh", "Rolling update theo launch template mới"],
+      ["Minimum healthy percentage", "Mặc định 90% khi instance refresh"],
+      ["Maximum instance lifetime", "Tự thay instance quá hạn (≥ 1 ngày)"],
+      ["Mixed instances group", "Nhiều instance type, On-Demand + Spot"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn kiểu scaling theo tình huống",
+        desc: "Đọc tình huống đề thi và chọn kiểu scaling phù hợp nhất.",
+        buckets: ["Target tracking", "Step scaling", "Scheduled", "Predictive", "Manual"],
+        items: [
+          ["Giữ CPU trung bình ~50%, ít công vận hành nhất", 0, "Auto Scaling tự tạo alarm"],
+          ["Giữ khoảng 1.000 request mỗi target sau ALB", 0, "ALBRequestCountPerTarget"],
+          ["Worker theo backlog SQS mỗi instance", 0, "target tracking trên custom metric"],
+          ["Thêm 2 instance khi CPU &gt; 70%, thêm 4 khi CPU &gt; 90%", 1, "nhiều step adjustment theo mức vi phạm"],
+          ["Cần phản ứng khác nhau theo mức độ vượt ngưỡng", 1, "step scaling"],
+          ["Sự kiện marketing vào một ngày đã biết", 2, "scheduled action một lần"],
+          ["Mỗi sáng thứ Hai 9 giờ tải tăng, giờ cố định", 2, "cron lặp lại"],
+          ["Traffic theo chu kỳ ngày/tuần, instance boot 15 phút, không muốn tự phân tích", 3, "ML dự báo, scale trước khi tải đến"],
+          ["Workload batch bật–tắt định kỳ, khởi tạo lâu", 3, "predictive scaling"],
+          ["Đổi desired capacity một lần bằng set-desired-capacity", 4, "thay đổi một lần, không lặp lại"]
+        ]
+      },
+      {
+        title: "Cooldown, warmup, grace period hay lifecycle hook?",
+        desc: "Cơ chế nào giải quyết đúng tình huống?",
+        buckets: ["Scaling cooldown", "Default instance warmup", "Health check grace period", "Lifecycle hook"],
+        items: [
+          ["Simple policy chạy liên tiếp quá nhanh", 0, "cooldown chỉ cho simple scaling"],
+          ["Simple scaling bị flapping", 0, "tăng cooldown"],
+          ["Target tracking launch quá tay vì instance mới báo CPU cao khi boot", 1, "instance mới chưa tính vào metric"],
+          ["Muốn nhiều lần vi phạm liên tiếp chỉ gây một lần scale (target tracking/step)", 1, "instance warmup tính vào desired"],
+          ["Instance mới bị terminate lặp lại trước khi app khởi động xong", 2, "hoãn health check cho instance mới"],
+          ["ELB health check fail trong mấy phút đầu sau khi đăng ký", 2, "grace period tránh “giết oan”"],
+          ["Instance phải tải gói cấu hình và validation trước khi nhận traffic", 3, "launch hook giữ Pending:Wait"],
+          ["Chép log ra S3 trước khi instance bị terminate", 3, "termination hook giữ Terminating:Wait"],
+          ["Gắn lại Elastic IP cho instance mới launch", 3, "launch hook gọi Lambda"]
+        ]
+      },
+      {
+        title: "Launch template hay launch configuration?",
+        desc: "Đặc điểm sau thuộc launch template (khuyến nghị) hay launch configuration (cũ)?",
+        buckets: ["Launch template", "Launch configuration"],
+        items: [
+          ["Có nhiều version, kế thừa từ version base", 0, "điểm khác biệt quyết định"],
+          ["Trộn On-Demand + Spot trong một ASG", 0, "mixed instances bắt buộc launch template"],
+          ["Dùng SSM parameter thay AMI ID", 0, "tính năng EC2 mới"],
+          ["Dùng được cho EC2 thủ công, EC2 Fleet và Auto Scaling", 0, "launch template"],
+          ["Không sửa được sau khi tạo", 1, "bất biến"],
+          ["Không hỗ trợ instance type mới từ 01/01/2023", 1, "đang bị loại bỏ"],
+          ["Account mới không tạo được từ 01/10/2024", 1, "đã ngừng"],
+          ["Bị default termination policy ưu tiên terminate trước", 1, "cấu hình lỗi thời"]
+        ]
+      },
+      {
+        title: "Termination policy nào?",
+        desc: "Chọn predefined termination policy phù hợp với mục tiêu.",
+        buckets: ["Default", "NewestInstance", "OldestInstance", "OldestLaunchTemplate", "AllocationStrategy"],
+        items: [
+          ["Phần lớn trường hợp, cân bằng AZ rồi cấu hình cũ", 0, "chính sách mặc định"],
+          ["Đang thử launch template mới, muốn bỏ instance thử nghiệm trước", 1, "terminate instance mới nhất"],
+          ["Nâng cấp dần sang instance type mới", 2, "terminate instance cũ nhất"],
+          ["Loại dần instance dùng template không còn hiện hành", 3, "rồi tới version cũ nhất"],
+          ["Đổi instance type ưu tiên, tái cân bằng Spot pool", 4, "khớp lại allocation strategy"],
+          ["AZ-a 3 instance, AZ-b 4 instance: chọn ở AZ-b trước", 0, "cân bằng AZ luôn ưu tiên"],
+          ["Ưu tiên instance từ launch configuration, rồi template cũ, rồi version cũ nhất", 0, "bước “cấu hình lỗi thời” của default"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Mọi kiểu scaling cuối cùng đều thay đổi desired capacity.", true, "Trong khoảng [min, max]."],
+      ["Amazon EC2 Auto Scaling thu phí theo số instance quản lý.", false, "Auto Scaling miễn phí; chỉ trả tài nguyên."],
+      ["Auto Scaling group có thể trải qua nhiều Region.", false, "ASG là regional, trải nhiều AZ."],
+      ["Launch configuration có thể sửa sau khi tạo.", false, "Launch configuration bất biến."],
+      ["Trộn Spot và On-Demand trong một ASG bắt buộc dùng launch template.", true, "Mixed instances policy chỉ có với launch template."],
+      ["Tạo launch template version mới làm instance đang chạy đổi AMI ngay.", false, "Chỉ instance mới launch dùng AMI mới; dùng instance refresh."],
+      ["EC2 status check của ASG luôn bật và không tắt được.", true, "ELB health check mới phải bật."],
+      ["Mặc định ASG thay instance khi ALB báo target unhealthy.", false, "Phải bật ELB health check cho ASG."],
+      ["Health check grace period mặc định là 300 giây khi tạo ASG bằng console.", true, "Bằng CLI/SDK mặc định là 0."],
+      ["Instance bị stop trong grace period vẫn được giữ lại tới hết grace period.", false, "Không còn running ⇒ unhealthy và thay ngay."],
+      ["Elastic IP tự chuyển sang instance mới khi ASG thay instance.", false, "EIP bị gỡ; dùng lifecycle hook để gắn lại."],
+      ["Instance ở trạng thái Standby không bị health check.", true, "Dùng để troubleshoot mà không bị thay."],
+      ["Target tracking tự tạo và quản lý CloudWatch alarm.", true, "Không nên sửa/xóa alarm này."],
+      ["ApproximateNumberOfMessagesVisible dùng trực tiếp tốt cho target tracking.", false, "Phải chia cho số instance (backlog per instance)."],
+      ["Với nhiều target tracking policy, ASG scale in khi bất kỳ policy nào muốn scale in.", false, "Scale in chỉ khi tất cả policy đồng ý."],
+      ["Khi nhiều dynamic policy cùng kích hoạt, Auto Scaling chọn policy cho capacity lớn nhất.", true, "Áp dụng cả scale out lẫn scale in."],
+      ["Scaling cooldown áp dụng cho target tracking và step scaling.", false, "Cooldown chỉ cho simple scaling."],
+      ["Default instance warmup được bật mặc định.", false, "Không bật mặc định; AWS khuyến nghị bật."],
+      ["Instance đang warmup được tính vào desired capacity.", true, "Nên nhiều lần vi phạm chỉ gây một lần scale."],
+      ["Scheduled action phải chờ cooldown.", false, "Scheduled action không chờ cooldown."],
+      ["Mỗi ASG có tối đa 125 scheduled action.", true, "Giới hạn theo tài liệu."],
+      ["Predictive scaling cần tối thiểu 24 giờ dữ liệu metric.", true, "Phân tích tối đa 14 ngày."],
+      ["Predictive scaling tự scale in khi dự báo tải giảm.", false, "Predictive không scale in; cần dynamic policy."],
+      ["Mode mặc định khi mới bật predictive scaling là forecast only.", true, "Để bạn đánh giá dự báo trước."],
+      ["Heartbeat timeout mặc định của lifecycle hook là 1 giờ.", true, "Global timeout 48 giờ hoặc 100×."],
+      ["ABANDON với launch hook đưa instance vào service.", false, "ABANDON ⇒ instance bị terminate và thay thế."],
+      ["Lifecycle hook được kích hoạt khi đưa instance vào Standby.", false, "Hook không áp dụng cho attach/detach/standby."],
+      ["Warm pool ở trạng thái Running là lựa chọn rẻ nhất.", false, "Stopped rẻ nhất; Running rất không khuyến khích."],
+      ["Instance có root là instance store không dùng được warm pool.", true, "Root phải là EBS để stop/hibernate."],
+      ["Default termination policy cân bằng AZ trước khi xét cấu hình cũ.", true, "AZ nhiều instance nhất bị chọn trước."],
+      ["Instance unhealthy đi qua termination policy trước khi bị thay.", false, "Bị thay trực tiếp."],
+      ["Instance có scale-in protection vẫn bị thay nếu unhealthy.", true, "Protection chỉ chặn chọn khi scale in."],
+      ["Minimum healthy percentage mặc định của instance refresh là 90%.", true, "Maximum mặc định 100%."],
+      ["Maximum instance lifetime có thể đặt tối thiểu 1 giờ.", false, "Tối thiểu 1 ngày (86.400 giây)."],
+      ["EC2 có sẵn metric memory để target tracking.", false, "Phải dùng CloudWatch agent publish custom metric."],
+      ["Simple scaling được AWS khuyến nghị cho hệ thống mới.", false, "AWS khuyến nghị không dùng simple scaling và cooldown."]
+    ],
+
+    map: {
+      t: "Bài 13 · Amazon EC2 Auto Scaling",
+      c: [
+        { t: "Auto Scaling group", icon: "svc/Amazon-EC2-Auto-Scaling.svg", c: [
+          { t: "Ba con số", v: "min (sàn) · desired · max (trần)" },
+          { t: "Phạm vi", v: "regional, trải nhiều AZ, cân bằng AZ" },
+          { t: "Chi phí", v: "$0, chỉ trả tài nguyên" },
+          { t: "Launch template", v: "có version, bắt buộc cho Spot + On-Demand" },
+          { t: "Launch configuration", v: "bất biến, ngừng từ 01/10/2024" }
+        ] },
+        { t: "Health check & vòng đời", icon: "res/Amazon-EC2_Auto-Scaling.svg", c: [
+          { t: "EC2 status", v: "luôn bật" },
+          { t: "ELB health check", v: "phải bật thì mới thay khi app chết" },
+          { t: "Grace period", v: "300 s console / 0 CLI" },
+          { t: "Thay thế", v: "tối đa 10% desired mỗi đợt" },
+          { t: "Standby", v: "rút khỏi service, không health check" }
+        ] },
+        { t: "Dynamic scaling", icon: "res/Amazon-CloudWatch_Alarm.svg", c: [
+          { t: "Target tracking", v: "bộ điều nhiệt, tự tạo alarm (khuyến nghị)" },
+          { t: "Step", v: "nhiều bậc theo mức vi phạm" },
+          { t: "Simple", v: "một bậc + cooldown, không khuyến nghị" },
+          { t: "Nhiều policy", v: "chọn capacity lớn nhất" },
+          { t: "SQS", c: [
+            { t: "Backlog", v: "messages ÷ InService" },
+            { t: "Target", v: "độ trễ chấp nhận ÷ thời gian xử lý" }
+          ] }
+        ] },
+        { t: "Cooldown & warmup", icon: "res/Amazon-CloudWatch_Event-Time-Based.svg", c: [
+          { t: "Cooldown", v: "300 s, chỉ simple scaling" },
+          { t: "Instance warmup", v: "chưa tính vào metric, nên bật (300 s)" },
+          { t: "Grace period", v: "chưa terminate vì health check fail" }
+        ] },
+        { t: "Scheduled & predictive", icon: "res/Amazon-EventBridge_Rule.svg", c: [
+          { t: "Scheduled", v: "cron + time zone (UTC mặc định), 125/ASG" },
+          { t: "Predictive dữ liệu", v: "≥ 24 giờ, tối đa 14 ngày" },
+          { t: "Forecast", v: "48 giờ, cập nhật mỗi 6 giờ" },
+          { t: "Mode", v: "forecast only ⇒ forecast and scale" },
+          { t: "Lưu ý", v: "không scale in, kèm target tracking" }
+        ] },
+        { t: "Lifecycle hook & warm pool", icon: "res/AWS-Lambda_Lambda-Function.svg", c: [
+          { t: "Hook", v: "Pending:Wait / Terminating:Wait" },
+          { t: "Timeout", v: "1 giờ (global 48 giờ / 100×)" },
+          { t: "Kết quả", v: "CONTINUE / ABANDON" },
+          { t: "Thông báo", v: "EventBridge ⇒ Lambda" },
+          { t: "Warm pool", v: "Stopped · Hibernated · Running, mặc định max − desired" }
+        ] },
+        { t: "Termination & refresh", icon: "res/Amazon-EC2_Instances.svg", c: [
+          { t: "Default termination", v: "AZ nhiều nhất ⇒ cấu hình cũ ⇒ giờ tính tiền ⇒ ngẫu nhiên" },
+          { t: "Scale-in protection", v: "không bị chọn khi scale in" },
+          { t: "Max instance lifetime", v: "≥ 1 ngày" },
+          { t: "Instance refresh", v: "min healthy 90%, checkpoint, auto rollback" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

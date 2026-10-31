@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 34 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/Amazon-Elastic-Container-Service.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="34" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-34-containers.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "ecs", name: "ECS: cluster, task, service" },
+      { id: "cap", name: "Fargate & capacity provider" },
+      { id: "iam", name: "IAM role cho container" },
+      { id: "scale", name: "Service / Cluster Auto Scaling" },
+      { id: "eks", name: "Amazon EKS" },
+      { id: "ecr", name: "ECR & App Runner" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- ECS
+      { t: "ecs", f: "Bài toán container trên AWS chia thành 3 câu hỏi nào?", b: "1. Lưu image ở đâu? ⇒ <b>ECR</b><br>2. Ai điều phối? ⇒ <b>ECS</b> hoặc <b>EKS</b><br>3. Chạy trên hạ tầng nào? ⇒ <b>EC2, Fargate, Managed Instances / EKS Auto Mode, on-prem</b>" },
+      { t: "ecs", f: "Ba “lớp” của Amazon ECS theo tài liệu?", b: "<b>Capacity</b>: hạ tầng chạy container.<br><b>Controller</b>: ECS scheduler.<br><b>Provisioning</b>: Console, CLI, SDK, CDK, Copilot, Terraform…" },
+      { t: "ecs", f: "Task definition là gì?", b: "<b>“Blueprint” của ứng dụng</b>: file JSON mô tả 1+ container (image, CPU/memory, network mode, logging, volume, IAM role…). Mỗi lần sửa tạo <b>revision</b> mới (web:1, web:2)." },
+      { t: "ecs", f: "Phân biệt <b>task</b> và <b>service</b> trong ECS.", b: "<b>Task</b>: bản chạy của task definition, chạy xong thì dừng (batch, RunTask).<br><b>Service</b>: ứng dụng chạy dài hạn, <b>duy trì desired count</b>, thay task lỗi, đặt sau load balancer." },
+      { t: "ecs", f: "ECS cluster là gì?", b: "Nhóm logic chứa task/service và capacity (EC2, Fargate, Managed Instances, máy on-prem). Một cluster <b>trộn được nhiều loại capacity provider</b>." },
+      { t: "ecs", f: "Container agent làm gì?", b: "Chạy trên mỗi container instance (EC2/on-prem), <b>báo trạng thái về ECS</b> và nhận lệnh start/stop task. Với Fargate, agent do AWS quản lý." },
+      { t: "ecs", f: "Network mode <code>awsvpc</code> có đặc điểm gì?", b: "Mỗi task có <b>ENI riêng, IP private riêng, security group riêng</b>. Fargate <b>luôn</b> dùng awsvpc.", x: "Target group của ALB/NLB phải là target type <b>ip</b>, không phải instance." },
+      { t: "ecs", f: "Network mode <code>bridge</code> và <code>host</code> khác nhau thế nào?", b: "<b>bridge</b> (EC2): mạng ảo Docker, dùng dynamic host port mapping để nhiều task cùng service chạy trên một instance.<br><b>host</b> (EC2): dùng thẳng mạng instance, mỗi port chỉ một task/instance." },
+      { t: "ecs", f: "Truyền mật khẩu database vào container an toàn bằng cách nào?", b: "Mục <b>secrets</b> trong task definition tham chiếu <b>Secrets Manager</b> hoặc <b>SSM Parameter Store</b>; giá trị inject thành biến môi trường lúc task khởi động.", x: "Không ghi cứng trong image hay biến môi trường plain text." },
+      { t: "ecs", f: "Container cần lưu trữ <b>bền vững, chia sẻ giữa nhiều task, nhiều AZ</b> ⇒ volume gì?", b: "<b>Amazon EFS</b> volume trong task definition (Fargate cũng hỗ trợ)." },
+      { t: "ecs", f: "Hai scheduling strategy của ECS service?", b: "<b>REPLICA</b>: duy trì desired count, trải đều theo AZ (mặc định).<br><b>DAEMON</b>: đúng 1 task trên mỗi container instance (agent log/monitoring) – <b>không dùng được trên Fargate</b>." },
+      { t: "ecs", f: "ALB, NLB, GWLB dùng cho ECS service khi nào?", b: "<b>ALB</b>: HTTP/HTTPS, path-based routing, dynamic port mapping.<br><b>NLB</b>: TCP/UDP (UDP trên Fargate cần platform 1.4+).<br><b>GWLB</b>: qua virtual appliance (firewall, IDS/IPS)." },
+      { t: "ecs", f: "Kết nối service-to-service trong ECS mà không cần load balancer?", b: "<b>Service Connect</b> (tên ngắn + port), <b>service discovery</b> (Route 53 / Cloud Map), <b>Amazon VPC Lattice</b> (xuyên account/VPC, có phí)." },
+      { t: "ecs", f: "Các cách triển khai phiên bản mới cho ECS service?", b: "<b>Rolling update</b> (mặc định, minimumHealthyPercent/maximumPercent thường 100%/200%), <b>blue/green</b> (native hoặc CodeDeploy), <b>deployment circuit breaker</b> tự rollback." },
+
+      // ---- Capacity
+      { t: "cap", f: "Cách cấu hình capacity nào được AWS khuyến nghị cho ECS?", b: "<b>Capacity provider</b>. Launch type chỉ nên dùng để khai báo tương thích (<code>requiresCompatibilities</code>)." },
+      { t: "cap", f: "Fargate giúp bạn bỏ được những việc gì?", b: "Không chọn loại server, không quyết định khi nào scale cluster, không tối ưu cluster packing. Bạn chỉ khai báo <b>CPU & memory cấp task, networking, IAM</b>." },
+      { t: "cap", f: "Mức cô lập của task Fargate?", b: "Mỗi task có <b>ranh giới cô lập riêng</b>, không chia sẻ kernel, CPU, memory hay ENI với task khác.", x: "Workload cần cô lập nghiêm ngặt ⇒ Fargate." },
+      { t: "cap", f: "Dải CPU và memory tối đa của một task Fargate?", b: "<b>0,25 – 32 vCPU</b>; memory tối đa <b>244 GB</b> (ở 32 vCPU). 8/16/32 vCPU cần Linux platform 1.4.0+." },
+      { t: "cap", f: "Ephemeral storage của Fargate?", b: "Mặc định <b>20 GiB</b>, mở rộng tới <b>200 GiB</b>." },
+      { t: "cap", f: "Fargate KHÔNG hỗ trợ những gì (hay ra đề)?", b: "<b>GPU</b>, <b>privileged container</b>, <b>DAEMON service</b>, placementConstraints…", x: "Đề đòi GPU/privileged mà chọn Fargate là sai." },
+      { t: "cap", f: "Fargate Spot là gì?", b: "Chạy task chịu được gián đoạn với <b>giá giảm</b> trên capacity dư; bị thu hồi với <b>cảnh báo 2 phút</b>.", x: "Chỉ ECS; EKS không hỗ trợ Fargate Spot." },
+      { t: "cap", f: "Khi nào chọn EC2 (ASG capacity provider) thay vì Fargate?", b: "Cần <b>GPU</b>, instance đặc thù, <b>privileged</b>, DAEMON, kiểm soát AMI/host, tối ưu chi phí bằng <b>RI / Savings Plans / Spot</b> với mật độ task cao." },
+      { t: "cap", f: "ECS Managed Instances là gì?", b: "Chạy trên nhiều loại EC2 (GPU, mạng hiệu năng cao…) nhưng <b>AWS lo provisioning, patching, scaling</b>. “Sự đơn giản của Fargate + sự linh hoạt của EC2”. Chỉ dùng qua capacity provider strategy." },
+      { t: "cap", f: "ECS Anywhere dùng để làm gì?", b: "Đăng ký máy chủ/VM <b>on-premises</b> làm external instance của cluster ECS – cùng control plane ECS cho hybrid." },
+      { t: "cap", f: "<b>base</b> và <b>weight</b> trong capacity provider strategy?", b: "<b>base</b>: số task tối thiểu chạy trên một provider.<br><b>weight</b>: tỉ lệ phân bổ phần còn lại.<br>Vd FARGATE base=2, weight=1 + FARGATE_SPOT weight=3 ⇒ 2 task nền, phần còn lại 75% Spot." },
+      { t: "cap", f: "Một capacity provider strategy có trộn được Fargate với Auto Scaling group không?", b: "<b>Không.</b> Cluster chứa được mọi loại, nhưng một strategy không trộn các loại khác nhau." },
+      { t: "cap", f: "Task Fargate trong private subnet không có NAT muốn kéo image ECR cần gì?", b: "Interface endpoint <b>ecr.api</b> + <b>ecr.dkr</b> và <b>S3 gateway endpoint</b> (layer image nằm trên S3); thêm <b>logs</b>, <b>secretsmanager/ssm</b> nếu cần." },
+      { t: "cap", f: "Task Fargate ở <b>public subnet</b> muốn kéo image cần gì?", b: "Gán public IP cho ENI (<code>assignPublicIp: ENABLED</code>) và có route ra <b>Internet Gateway</b>." },
+
+      // ---- IAM
+      { t: "iam", f: "Task IAM role cấp quyền cho ai?", b: "Cho <b>code ứng dụng trong container</b> gọi dịch vụ AWS (đọc S3, ghi DynamoDB, gửi SQS…). Trust principal <code>ecs-tasks.amazonaws.com</code>." },
+      { t: "iam", f: "Task execution role cấp quyền cho ai, để làm gì?", b: "Cho <b>ECS agent / Fargate agent</b>: kéo image ECR private, gửi log CloudWatch (awslogs), lấy secret Secrets Manager/SSM, xác thực private registry.", x: "Container không dùng trực tiếp được quyền này." },
+      { t: "iam", f: "Managed policy chuẩn cho task execution role?", b: "<b>AmazonECSTaskExecutionRolePolicy</b> (role thường tên <code>ecsTaskExecutionRole</code>)." },
+      { t: "iam", f: "Container instance role dùng khi nào?", b: "Chỉ <b>EC2 launch type</b>: EC2 + ECS agent đăng ký vào cluster. Policy <b>AmazonEC2ContainerServiceforEC2Role</b>, giữ ở mức tối thiểu." },
+      { t: "iam", f: "Lỗi “task cannot pull image from ECR” / “cannot send logs” ⇒ sửa role nào?", b: "<b>Task execution role</b>, không phải task role." },
+      { t: "iam", f: "Container lấy credential của task role bằng cách nào?", b: "SDK/CLI tự lấy credential tạm thời qua <b>container credential provider</b> (endpoint 169.254.170.2) – không cần access key." },
+      { t: "iam", f: "3 lợi ích của task IAM role theo tài liệu?", b: "<b>Separation of concerns</b>, <b>Auditability</b> (CloudTrail biết taskArn), <b>Uniform credentials delivery</b> trên EC2, Fargate, Managed Instances, Anywhere." },
+      { t: "iam", f: "“Containers are not a security boundary” nghĩa là gì?", b: "Trên EC2/Managed Instances/Anywhere, container có thể đọc credential của task khác và instance role qua IMDS ⇒ <b>chặn IMDS</b> (<code>ECS_AWSVPC_BLOCK_IMDS=true</code>)." },
+      { t: "iam", f: "Tương đương task IAM role trên EKS là gì?", b: "<b>IAM roles for service accounts (IRSA)</b> / <b>EKS Pod Identity</b>." },
+
+      // ---- Scaling
+      { t: "scale", f: "Phân biệt Service Auto Scaling và Cluster Auto Scaling.", b: "<b>Service Auto Scaling</b>: đổi <b>số task</b> (desired count).<br><b>Cluster Auto Scaling</b>: đổi <b>số EC2</b> để có chỗ đặt task (ASG capacity provider + managed scaling).", x: "Fargate chỉ cần tầng 1." },
+      { t: "scale", f: "ECS Service Auto Scaling dùng dịch vụ nào?", b: "<b>Application Auto Scaling</b>; ECS gửi metric CPU/memory trung bình lên CloudWatch chu kỳ <b>1 phút</b>." },
+      { t: "scale", f: "5 kiểu scaling ECS service hỗ trợ?", b: "<b>Target tracking</b>, <b>Step</b>, <b>Scheduled</b>, <b>Predictive</b>, theo <b>SQS backlog per task</b>." },
+      { t: "scale", f: "<i>Backlog per task</i> tính thế nào?", b: "<b>Số message trong queue / số task đang chạy</b> – custom metric kết hợp target tracking cho worker SQS." },
+      { t: "scale", f: "Muốn ECS service scale về 0 khi không có việc?", b: "Đặt <b>minimum capacity = 0</b>." },
+      { t: "scale", f: "Trong lúc deployment, Application Auto Scaling xử lý scale-in thế nào?", b: "<b>Tắt scale-in</b> nhưng vẫn scale-out (trừ khi suspend)." },
+      { t: "scale", f: "Vì sao Service Auto Scaling tính theo số task đang chạy chứ không phải desired count?", b: "Để tránh <b>runaway scaling</b> khi cluster không đủ tài nguyên đặt task." },
+      { t: "scale", f: "Managed termination protection dùng để làm gì?", b: "Không cho ASG tắt instance <b>còn task đang chạy</b>." },
+
+      // ---- EKS
+      { t: "eks", f: "Control plane EKS gồm những gì, đặt ở đâu?", b: "≥ <b>2 API server</b> + <b>3 etcd</b> trải trên <b>3 AZ</b>; do AWS quản lý, riêng cho mỗi cluster, có SLA." },
+      { t: "eks", f: "EKS tính phí thế nào?", b: "<b>Phí theo cluster</b> (standard/extended support) + tiền EC2, EBS, Fargate cho worker node; Auto Mode có phí riêng. Savings Plans áp dụng được." },
+      { t: "eks", f: "Managed node groups có đặc điểm gì?", b: "Node thuộc <b>ASG do EKS quản lý</b>, trải nhiều AZ; tạo/cập nhật/terminate một thao tác, <b>tự drain node</b>; On-Demand hoặc Spot; <b>không thêm phí</b>." },
+      { t: "eks", f: "EKS Auto Mode là gì?", b: "AWS quản lý <b>cả node</b>: provision, chọn instance, scale, patch OS, tích hợp LB, EBS, GPU – giảm vận hành tối đa." },
+      { t: "eks", f: "Karpenter là gì?", b: "<b>Cluster autoscaler mã nguồn mở</b>, launch đúng cỡ compute <b>just-in-time</b> theo nhu cầu Pod." },
+      { t: "eks", f: "Fargate trên EKS KHÔNG hỗ trợ những gì?", b: "<b>DaemonSet, GPU, Windows, privileged, EBS cho Pod, Pod ở public subnet, Fargate Spot</b>.", x: "Cần những thứ này ⇒ managed node groups." },
+      { t: "eks", f: "Fargate profile là gì?", b: "Định nghĩa Pod nào chạy trên Fargate theo <b>namespace và label</b>. Pod không khớp có thể kẹt <b>Pending</b>." },
+      { t: "eks", f: "EKS Hybrid Nodes khác EKS Anywhere thế nào?", b: "<b>Hybrid Nodes</b>: máy on-prem làm node, <b>control plane vẫn do AWS quản lý</b> (phí theo vCPU).<br><b>EKS Anywhere</b>: Kubernetes <b>hoàn toàn on-prem</b>, AWS hỗ trợ." },
+      { t: "eks", f: "Spot hay On-Demand cho workload nào trên EKS?", b: "<b>Spot</b>: stateless, chịu lỗi (batch, ML training, Spark ETL, queue).<br><b>On-Demand</b>: StatefulSet, database, giám sát.", x: "Dùng nhiều instance type cùng vCPU/memory + Capacity Rebalancing." },
+      { t: "eks", f: "Ứng dụng stateful dùng EBS trên nhiều AZ với Cluster Autoscaler ⇒ tổ chức node group thế nào?", b: "<b>Mỗi AZ một node group</b> (EBS gắn theo AZ)." },
+
+      // ---- ECR / App Runner
+      { t: "ecr", f: "ECR authorization token có hiệu lực bao lâu?", b: "<b>12 giờ</b>; dùng <code>aws ecr get-login-password | docker login</code> hoặc credential helper." },
+      { t: "ecr", f: "ECR lifecycle policy có những loại rule nào?", b: "<b>imageCountMoreThan</b>, <b>sinceImagePushed</b>, <b>sinceImagePulled</b>; lọc theo tagStatus, tag prefix. Image bị xử lý <b>trong 24 giờ</b>; priority số nhỏ ưu tiên." },
+      { t: "ecr", f: "Basic scanning khác enhanced scanning thế nào?", b: "<b>Basic</b>: CVE, chỉ OS, manual hoặc scan on push.<br><b>Enhanced</b>: <b>Amazon Inspector</b>, OS + <b>package ngôn ngữ</b>, scan on push + <b>continuous</b>, báo EventBridge." },
+      { t: "ecr", f: "Giới hạn của ECR replication?", b: "Tối đa <b>25 đích</b>, <b>25 rule</b>, mỗi rule ≤ 100 filter; phần lớn image sao chép <b>dưới 30 phút</b>." },
+      { t: "ecr", f: "ECR replication KHÔNG sao chép những gì?", b: "<b>Image push trước khi bật</b> (cần backfill), <b>lệnh xóa</b>, <b>repository policy</b>, <b>lifecycle policy</b> (dùng repository creation template)." },
+      { t: "ecr", f: "Cross-account replication: policy đặt ở đâu?", b: "<b>Registry permissions policy ở account đích</b> cho phép <code>ecr:ReplicateImage</code> (+ CreateRepository)." },
+      { t: "ecr", f: "Pull through cache dùng để làm gì?", b: "Cache image từ registry upstream (<b>Docker Hub</b>, ECR Public, Quay…) vào private registry – né rate limit Docker Hub, kéo nhanh hơn trong VPC." },
+      { t: "ecr", f: "Tag immutability là gì?", b: "<b>Chặn ghi đè tag</b> (vd v1.2.0) – image đã deploy không bị thay ngầm." },
+      { t: "ecr", f: "AWS App Runner là gì? Lưu ý gì hiện nay?", b: "Đưa thẳng <b>source code hoặc image</b> thành web app có LB, TLS, auto scaling, tự deploy.<br><b>Không còn nhận khách hàng mới</b> – AWS khuyên <b>ECS Express Mode</b>." },
+      { t: "ecr", f: "Thứ tự “ít vận hành nhất” của các lựa chọn container?", b: "<b>App Runner</b> &lt; <b>ECS Fargate</b> &lt; EKS Fargate / Auto Mode &lt; ECS/EKS trên EC2 &lt; tự cài Docker/Kubernetes trên EC2." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>containerize an existing application</i>” + “<i>do not want to manage servers</i>” ⇒ ?", b: "<b>ECS on Fargate</b>." },
+      { t: "kw", f: "Đề có “<i>already uses Kubernetes</i>”, “<i>Helm, kubectl</i>”, “<i>minimal changes</i>” ⇒ ?", b: "<b>Amazon EKS</b> (thêm Fargate nếu không muốn quản lý node)." },
+      { t: "kw", f: "Đề có tác vụ chạy <b>quá 15 phút</b> mà muốn serverless ⇒ ?", b: "<b>ECS task trên Fargate</b>, kích hoạt bằng EventBridge / Step Functions (không phải Lambda)." },
+      { t: "kw", f: "Đề có “<i>multiple microservices behind a single ALB, routed by URL path</i>” ⇒ ?", b: "<b>ALB path-based routing</b> tới nhiều target group / service." },
+      { t: "kw", f: "Đề có “<i>each task needs its own security group / IP address</i>” ⇒ ?", b: "Network mode <b>awsvpc</b>." },
+      { t: "kw", f: "Đề có “<i>fault-tolerant batch containers at lowest cost, serverless</i>” ⇒ ?", b: "<b>Fargate Spot</b> (kết hợp base trên FARGATE)." },
+      { t: "kw", f: "Đề có “<i>tasks stuck in PROVISIONING / not enough EC2 capacity</i>” ⇒ ?", b: "<b>ASG capacity provider + managed scaling</b> (Cluster Auto Scaling) hoặc chuyển sang Fargate." },
+      { t: "kw", f: "Đề có “<i>Docker Hub rate limits</i>”, “<i>cache public images privately</i>” ⇒ ?", b: "<b>ECR pull through cache</b>." },
+      { t: "kw", f: "Đề có “<i>Pods need AWS permissions</i>” ⇒ ?", b: "<b>IRSA / EKS Pod Identity</b> – không gán quyền vào node role." }
+    ],
+
+    pairs: [
+      ["Task definition", "Blueprint JSON của ứng dụng, có revision"],
+      ["Task", "Bản chạy của task definition, chạy xong thì dừng"],
+      ["Service (ECS)", "Duy trì desired count, thay task lỗi"],
+      ["Cluster (ECS)", "Nhóm logic chứa task/service và capacity"],
+      ["Container agent", "Phần mềm trên instance nhận lệnh từ ECS"],
+      ["awsvpc", "Mỗi task một ENI + security group riêng"],
+      ["Capacity provider strategy", "Chia task giữa các provider bằng base + weight"],
+      ["AWS Fargate", "Compute serverless, mỗi task/Pod cô lập riêng"],
+      ["Fargate Spot", "Fargate giá rẻ, cảnh báo thu hồi 2 phút"],
+      ["ECS Managed Instances", "EC2 linh hoạt nhưng AWS lo patch/scale"],
+      ["ECS Anywhere", "Máy on-prem làm external instance của ECS"],
+      ["Task IAM role", "Quyền cho code ứng dụng gọi dịch vụ AWS"],
+      ["Task execution role", "Quyền cho agent kéo ECR, ghi log, lấy secret"],
+      ["Container instance role", "Quyền cho EC2 đăng ký vào cluster"],
+      ["Backlog per task", "Số message tồn / số task – scale worker SQS"],
+      ["Managed scaling", "ECS tự tăng/giảm số EC2 trong ASG"],
+      ["Managed node group", "ASG do EKS quản lý, tự drain node"],
+      ["Fargate profile", "Chọn Pod chạy Fargate theo namespace/label"],
+      ["EKS Auto Mode", "AWS quản lý cả node của cluster EKS"],
+      ["Karpenter", "Autoscaler mở, launch node just-in-time"],
+      ["IRSA / Pod Identity", "Gán IAM role cho Pod qua service account"],
+      ["DaemonSet", "Một Pod trên mỗi node; không chạy trên Fargate"],
+      ["Pull through cache", "Cache image từ registry upstream"],
+      ["Tag immutability", "Không cho ghi đè tag image"],
+      ["Enhanced scanning", "Inspector quét OS + package ngôn ngữ, liên tục"],
+      ["AWS App Runner", "Chạy web app thẳng từ code/image"]
+    ],
+
+    sorts: [
+      {
+        title: "Quyền này thuộc role nào?",
+        desc: "Xếp mỗi quyền/nhu cầu vào đúng IAM role của ECS.",
+        buckets: ["Task IAM role", "Task execution role", "Container instance role"],
+        items: [
+          ["Code ứng dụng đọc object từ S3", 0, "code trong container dùng task role"],
+          ["Ứng dụng ghi item vào DynamoDB", 0, "quyền lúc ứng dụng chạy"],
+          ["Ứng dụng gửi message vào SQS", 0, "quyền lúc ứng dụng chạy"],
+          ["ECS Exec cần ssmmessages:*", 0, "ví dụ quyền của task role trong bài"],
+          ["Kéo image từ ECR private", 1, "agent kéo image trước khi task chạy"],
+          ["Gửi log tới CloudWatch Logs bằng awslogs", 1, "agent ghi log thay mặt task"],
+          ["Lấy secret được tham chiếu trong task definition", 1, "agent inject secret lúc khởi động"],
+          ["Xác thực private registry (Docker Hub) bằng repositoryCredentials", 1, "credential lưu trong Secrets Manager, agent lấy"],
+          ["EC2 đăng ký vào cluster ECS", 2, "chỉ EC2 launch type"],
+          ["Policy AmazonEC2ContainerServiceforEC2Role", 2, "instance profile của container instance"]
+        ]
+      },
+      {
+        title: "Fargate hay EC2?",
+        desc: "Yêu cầu nào làm được trên Fargate, yêu cầu nào bắt buộc phải dùng EC2 (ASG / managed node group)?",
+        buckets: ["Fargate được", "Phải dùng EC2"],
+        items: [
+          ["Không muốn quản lý / patch EC2", 0, "Fargate là serverless"],
+          ["Cô lập nghiêm ngặt giữa các task", 0, "mỗi task Fargate không chia kernel"],
+          ["Security group riêng cho từng task/Pod", 0, "awsvpc trên Fargate"],
+          ["Lưu trữ chia sẻ bằng EFS", 0, "Fargate hỗ trợ EFS"],
+          ["Batch rẻ, chịu gián đoạn trên ECS", 0, "Fargate Spot"],
+          ["Workload cần GPU", 1, "Fargate không hỗ trợ GPU"],
+          ["Privileged container", 1, "không hỗ trợ trên Fargate"],
+          ["ECS DAEMON service / EKS DaemonSet", 1, "không chạy trên Fargate"],
+          ["Pod EKS cần EBS volume", 1, "Fargate EKS dùng EFS, không EBS"],
+          ["Windows container trên EKS", 1, "Fargate EKS không hỗ trợ Windows"]
+        ]
+      },
+      {
+        title: "Chọn dịch vụ compute cho container",
+        desc: "Đọc yêu cầu đề thi và chọn lựa chọn phù hợp nhất (theo bảng chọn nhanh của bài).",
+        buckets: ["App Runner", "ECS on Fargate", "ECS on EC2", "Amazon EKS", "Lambda", "ECS Anywhere / EKS Hybrid"],
+        items: [
+          ["Web API từ image, không có chuyên môn hạ tầng, tự deploy", 0, "LB, TLS, scaling có sẵn"],
+          ["Container không quản lý server, cần SG theo task và ALB", 1, "Fargate + awsvpc"],
+          ["Job container chạy lâu theo lịch EventBridge", 1, "task Fargate, không giới hạn 15 phút"],
+          ["Container cần GPU, tối ưu bằng Reserved Instances", 2, "ASG capacity provider"],
+          ["Đã có Helm chart, kubectl, muốn chuẩn mở", 3, "EKS là Kubernetes conformant"],
+          ["Hàm event-driven ngắn, scale về 0", 4, "≤ 15 phút"],
+          ["Container phải chạy trong data center công ty", 5, "hybrid, dữ liệu ở lại on-prem"]
+        ]
+      },
+      {
+        title: "Tính năng ECR nào?",
+        desc: "Xếp yêu cầu vào đúng tính năng của Amazon ECR.",
+        buckets: ["Lifecycle policy", "Image scanning", "Replication", "Pull through cache", "Tag immutability"],
+        items: [
+          ["Xóa image untagged cũ để giảm chi phí", 0, "sinceImagePushed + tagStatus untagged"],
+          ["Chỉ giữ 10 image mới nhất", 0, "imageCountMoreThan"],
+          ["Quét lỗ hổng khi push", 1, "scan on push"],
+          ["Quét package npm/pip liên tục khi có CVE mới", 1, "enhanced scanning (Inspector)"],
+          ["Image phải có ở Region DR sau mỗi lần push", 2, "cross-Region replication"],
+          ["Chia image cho account prod tự động", 2, "cross-account replication"],
+          ["Né giới hạn kéo image của Docker Hub", 3, "cache upstream vào private registry"],
+          ["Không cho ghi đè tag v1.2.0", 4, "tag immutability"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["Fargate luôn dùng network mode awsvpc.", true, "Mỗi task Fargate có ENI riêng."],
+      ["Service Fargate sau ALB nên dùng target group kiểu instance.", false, "Task awsvpc gắn với ENI nên phải là target type ip."],
+      ["Một ECS service duy trì desired count và thay task lỗi.", true, "Service scheduler khởi task thay thế."],
+      ["ECS tính phí riêng cho control plane theo cluster.", false, "ECS không tính phí riêng; EKS mới tính phí theo cluster."],
+      ["Mỗi lần sửa task definition tạo một revision mới.", true, "Vd web:1, web:2."],
+      ["DAEMON scheduling strategy dùng được trên Fargate.", false, "DAEMON không dùng được trên Fargate."],
+      ["Fargate hỗ trợ GPU trên cả ECS và EKS.", false, "Fargate không hỗ trợ GPU."],
+      ["Fargate Spot gửi cảnh báo 2 phút trước khi thu hồi task.", true, "Phù hợp tác vụ chịu gián đoạn."],
+      ["EKS hỗ trợ Fargate Spot.", false, "Fargate Spot chỉ có trên ECS."],
+      ["Task Fargate có thể dùng tới 32 vCPU và 244 GB memory.", true, "Cần Linux platform 1.4.0+."],
+      ["AWS khuyến nghị dùng capacity provider thay vì launch type.", true, "Launch type chỉ nên dùng để khai báo tương thích."],
+      ["Một capacity provider strategy có thể trộn FARGATE với Auto Scaling group.", false, "Cluster trộn được, strategy thì không."],
+      ["FARGATE và FARGATE_SPOT capacity provider có sẵn trên mọi cluster.", true, "ECS tạo sẵn."],
+      ["Task trong private subnet không NAT kéo được image ECR chỉ với endpoint ecr.api.", false, "Cần cả ecr.dkr và S3 gateway endpoint (layer nằm trên S3)."],
+      ["Quyền đọc S3 cho code ứng dụng nên đặt vào task execution role.", false, "Code ứng dụng dùng task IAM role."],
+      ["Task execution role cần quyền secretsmanager:GetSecretValue để inject secret lúc khởi động.", true, "Agent lấy secret thay mặt task."],
+      ["Gắn quyền S3 vào instance profile EC2 là cách tuân thủ least privilege cho từng service.", false, "Mọi task trên instance đều nhận quyền đó."],
+      ["Trên Fargate, task IAM role là cách duy nhất cấp quyền AWS cho container.", true, "Fargate không có instance profile cho container."],
+      ["Container luôn là ranh giới bảo mật trên EC2 launch type.", false, "Tài liệu: containers are not a security boundary."],
+      ["Service Auto Scaling thay đổi số EC2 instance của cluster.", false, "Nó thay đổi số task; Cluster Auto Scaling mới đổi số EC2."],
+      ["ECS gửi metric CPU/memory của service lên CloudWatch chu kỳ 1 phút.", true, "Dùng cho Application Auto Scaling."],
+      ["Đặt minimum capacity = 0 cho phép ECS service scale về 0.", true, "Hữu ích cho worker SQS ban đêm."],
+      ["Trong lúc deployment, Application Auto Scaling vẫn scale-in bình thường.", false, "Scale-in bị tắt, scale-out vẫn chạy."],
+      ["Control plane EKS có ít nhất 2 API server và 3 etcd trên 3 AZ.", true, "AWS quản lý, có SLA."],
+      ["Managed node groups tính thêm phí ngoài tiền EC2.", false, "Không thêm phí."],
+      ["Pod EKS trên Fargate có thể chạy ở public subnet.", false, "Chỉ private subnet."],
+      ["Managed node groups hỗ trợ DaemonSet và GPU.", true, "Fargate EKS thì không."],
+      ["EKS Hybrid Nodes giữ control plane do AWS quản lý.", true, "Node on-prem, control plane trên AWS."],
+      ["ECR authorization token có hiệu lực 24 giờ.", false, "12 giờ; 24 giờ là thời gian thực thi lifecycle policy."],
+      ["Bật ECR replication sẽ tự sao chép cả image đã push trước đó.", false, "Chỉ image push sau khi bật (cũ cần backfill)."],
+      ["Basic scanning quét cả package ngôn ngữ như npm, pip.", false, "Chỉ OS; cần enhanced scanning."],
+      ["Cross-account replication cần policy ở registry đích.", true, "Cho phép ecr:ReplicateImage."],
+      ["App Runner hiện không nhận khách hàng mới.", true, "AWS khuyên ECS Express Mode."],
+      ["Lambda chạy tối đa 15 phút mỗi lần gọi, còn container ECS không giới hạn.", true, "Job dài ⇒ ECS task Fargate."]
+    ],
+
+    map: {
+      t: "Bài 34 · Containers trên AWS",
+      c: [
+        { t: "Bức tranh tổng thể", icon: "cat/Containers.svg", c: [
+          { t: "Lưu image", v: "Amazon ECR" },
+          { t: "Điều phối", v: "ECS (đơn giản) · EKS (Kubernetes)" },
+          { t: "Hạ tầng", v: "EC2 · Fargate · Managed Instances / Auto Mode · on-prem" },
+          { t: "So với Lambda", v: "container không giới hạn thời gian; Lambda ≤ 15 phút" }
+        ] },
+        { t: "Amazon ECS", icon: "svc/Amazon-Elastic-Container-Service.svg", c: [
+          { t: "Ba lớp", v: "capacity – controller – provisioning" },
+          { t: "Task definition", v: "blueprint JSON, có revision" },
+          { t: "Task / Service", v: "batch rồi dừng / duy trì desired count" },
+          { t: "Network mode", c: [
+            { t: "awsvpc", v: "ENI + SG riêng · target type ip" },
+            { t: "bridge / host", v: "EC2: dynamic port / mạng instance" }
+          ] },
+          { t: "Strategy", v: "REPLICA (mặc định) · DAEMON (không Fargate)" },
+          { t: "Secrets & EFS", v: "secrets từ Secrets Manager/SSM · EFS chia sẻ đa AZ" }
+        ] },
+        { t: "Fargate & capacity", icon: "svc/AWS-Fargate.svg", c: [
+          { t: "Fargate", v: "serverless, cô lập mỗi task, 0,25–32 vCPU, ≤ 244 GB" },
+          { t: "Không hỗ trợ", v: "GPU, privileged, DAEMON" },
+          { t: "Fargate Spot", v: "rẻ, cảnh báo 2 phút, chỉ ECS" },
+          { t: "Capacity provider", v: "cách khuyến nghị · base + weight" },
+          { t: "Managed Instances", v: "EC2 linh hoạt, AWS vận hành" },
+          { t: "Private subnet", v: "ecr.api + ecr.dkr + S3 gateway endpoint" }
+        ] },
+        { t: "IAM cho container", icon: "svc/AWS-Identity-and-Access-Management.svg", c: [
+          { t: "Task IAM role", v: "code ứng dụng gọi S3, DynamoDB…" },
+          { t: "Task execution role", v: "agent kéo ECR, ghi log, lấy secret" },
+          { t: "Container instance role", v: "EC2 đăng ký cluster" },
+          { t: "Bảo mật", v: "container không phải ranh giới bảo mật · chặn IMDS" },
+          { t: "EKS", v: "IRSA / Pod Identity" }
+        ] },
+        { t: "Auto Scaling", icon: "svc/AWS-Application-Auto-Scaling.svg", c: [
+          { t: "Tầng 1 – Service", v: "số task qua Application Auto Scaling" },
+          { t: "Tầng 2 – Cluster", v: "số EC2 qua ASG capacity provider (managed scaling)" },
+          { t: "Kiểu policy", v: "target tracking, step, scheduled, predictive" },
+          { t: "Worker SQS", v: "backlog per task · min = 0" },
+          { t: "Deploy", v: "tắt scale-in, vẫn scale-out" }
+        ] },
+        { t: "Amazon EKS", icon: "svc/Amazon-Elastic-Kubernetes-Service.svg", c: [
+          { t: "Control plane", v: "≥ 2 API server + 3 etcd, 3 AZ, phí theo cluster" },
+          { t: "Managed node groups", v: "ASG do EKS quản lý, tự drain, On-Demand/Spot" },
+          { t: "Fargate EKS", v: "profile; không DaemonSet/GPU/EBS/public subnet" },
+          { t: "Auto Mode · Karpenter", v: "AWS quản lý node · autoscaler just-in-time" },
+          { t: "Hybrid / Anywhere", v: "node on-prem · Kubernetes on-prem" }
+        ] },
+        { t: "ECR & App Runner", icon: "svc/Amazon-Elastic-Container-Registry.svg", c: [
+          { t: "Token", v: "12 giờ" },
+          { t: "Lifecycle policy", v: "dọn image cũ, thực thi trong 24 giờ" },
+          { t: "Scanning", v: "basic (OS) · enhanced (Inspector, continuous)" },
+          { t: "Replication", v: "≤ 25 đích, &lt; 30 phút, chỉ image mới" },
+          { t: "Pull through cache · tag immutability", v: "né rate limit · chống ghi đè tag" },
+          { t: "App Runner", v: "code/image → web app; khách mới dùng ECS Express Mode" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>

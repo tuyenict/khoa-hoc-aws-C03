@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trò chơi ghi nhớ – Bài 22 | AWS SAA-C03</title>
+  <link rel="icon" href="../assets/icons/svc/AWS-Transit-Gateway.svg">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/games.css">
+  <script src="../assets/syllabus.js"></script>
+  <script src="../assets/app.js" defer></script>
+  <script src="../assets/games.js" defer></script>
+</head>
+<body data-page="games" data-lesson="22" data-root="..">
+  <header id="hero"></header>
+  <main class="wrap games">
+    <nav class="g-tabs" id="gTabs"></nav>
+    <section class="g-pane" id="gPane"></section>
+  </main>
+
+  <!-- Dữ liệu trò chơi, rút từ lessons/bai-22-vpc-connectivity.html (định dạng: xem assets/games.js) -->
+  <script>
+  window.DECK = {
+    topics: [
+      { id: "peer", name: "VPC peering" },
+      { id: "gw", name: "Gateway endpoint" },
+      { id: "if", name: "Interface endpoint" },
+      { id: "svc", name: "PrivateLink endpoint service" },
+      { id: "tgw", name: "Transit Gateway" },
+      { id: "ram", name: "AWS RAM & VPC sharing" },
+      { id: "kw", name: "Từ khóa đề ⇒ đáp án" }
+    ],
+
+    cards: [
+      // ---- VPC peering
+      { t: "peer", f: "VPC peering connection là gì?", b: "Kết nối mạng <b>1–1 giữa hai VPC</b>, định tuyến bằng IPv4 private hoặc IPv6, instance hai bên nói chuyện <b>như cùng một mạng</b>. ID dạng <code>pcx-…</code>.", x: "Peer được cùng/khác account, cùng/khác Region (inter-Region peering)." },
+      { t: "peer", f: "Vì sao VPC peering không có điểm lỗi đơn hay nút thắt băng thông?", b: "Peering dùng chính hạ tầng sẵn có của VPC: <b>không phải gateway, không phải VPN</b>, không dựa vào phần cứng riêng." },
+      { t: "peer", f: "5 bước thiết lập VPC peering?", b: "1. <b>Request</b> (requester)<br>2. <b>Accept</b> (accepter)<br>3. <b>Route</b> ở <b>cả hai</b> VPC, target <code>pcx-…</code><br>4. Cập nhật <b>security group</b><br>5. (Tùy chọn) bật <b>DNS resolution</b>" },
+      { t: "peer", f: "Peering đã <code>active</code> nhưng không ping được – nguyên nhân hay gặp?", b: "Thiếu <b>route</b> ở một phía, hoặc <b>security group / NACL</b> chưa cho phép CIDR của VPC peer.", x: "Thiếu route một phía ⇒ chiều đi được, chiều về rơi mất." },
+      { t: "peer", f: "Yêu cầu peering ở trạng thái <code>pending-acceptance</code> hết hạn sau bao lâu?", b: "<b>7 ngày</b> (168 giờ)." },
+      { t: "peer", f: "Quota VPC peering cần nhớ?", b: "<b>50</b> active peering mỗi VPC (tối đa <b>125</b>) · <b>25</b> yêu cầu đang chờ · <b>1</b> peering giữa cùng một cặp VPC." },
+      { t: "peer", f: "MTU qua VPC peering?", b: "<b>9001 byte</b> (jumbo frames) cùng Region · <b>8500 byte</b> inter-Region." },
+      { t: "peer", f: "“Không bắc cầu” (non-transitive) nghĩa là gì?", b: "A peer với B và C; B, C không peer ⇒ <b>B không thể đi qua A để tới C</b>. Phải tạo <b>peering riêng B–C</b>.", x: "n VPC full mesh cần n(n−1)/2 peering: 10 VPC ⇒ 45 peering." },
+      { t: "peer", f: "<i>Edge-to-edge routing</i> qua VPC peer – những gì KHÔNG được dùng nhờ?", b: "IGW, <b>NAT device</b>, <b>VPN</b>, <b>Direct Connect</b> và <b>gateway endpoint</b> (S3) của VPC peer.", x: "Muốn dùng chung NAT/egress ⇒ Transit Gateway + egress VPC." },
+      { t: "peer", f: "Hai VPC có CIDR chồng lấn có peer được không?", b: "<b>Không</b> – kể cả khi VPC có nhiều CIDR và bạn chỉ định dùng phần không chồng lấn." },
+      { t: "peer", f: "Khi nào tham chiếu được security group của VPC peer?", b: "Chỉ khi hai VPC <b>cùng Region</b>. Inter-Region peering <b>không</b> tham chiếu được SG." },
+      { t: "peer", f: "Bật DNS resolution cho peering để làm gì?", b: "Để public DNS hostname của instance bên kia phân giải ra <b>IP private</b> (mặc định ra IP public)." },
+      { t: "peer", f: "Chi phí VPC peering?", b: "<b>Tạo miễn phí</b>, không phí giờ, không phí xử lý dữ liệu. Data transfer <b>trong cùng AZ miễn phí</b>; qua AZ khác/Region khác thì tính phí." },
+      { t: "peer", f: "Traffic inter-Region peering có đi qua internet không?", b: "<b>Không.</b> Được <b>mã hóa</b>, luôn đi trên <b>AWS global backbone</b>." },
+      { t: "peer", f: "Trong Shared VPC, ai được tạo/accept/xóa peering?", b: "Chỉ <b>chủ VPC</b> (owner); participant không thao tác được." },
+
+      // ---- Gateway endpoint
+      { t: "gw", f: "Gateway endpoint hỗ trợ những dịch vụ nào?", b: "Chỉ <b>Amazon S3</b> và <b>DynamoDB</b>.", x: "SQS, KMS, Secrets Manager… không có gateway endpoint." },
+      { t: "gw", f: "Gateway endpoint có tính phí và có dùng PrivateLink không?", b: "<b>Miễn phí</b>, <b>không</b> dùng PrivateLink." },
+      { t: "gw", f: "Gateway endpoint đưa traffic vào bằng cơ chế gì?", b: "Route trong <b>route table</b>: đích = <b>AWS-managed prefix list</b> của dịch vụ (vd <code>pl-63a5400a</code>), target = <code>vpce-…</code>. AWS tự thêm, không sửa/xóa tay." },
+      { t: "gw", f: "Có route <code>0.0.0.0/0 → IGW</code>, traffic S3 cùng Region đi đâu?", b: "Vẫn đi <b>gateway endpoint</b> nhờ <b>longest prefix match</b>." },
+      { t: "gw", f: "Gateway endpoint KHÔNG phục vụ được những nguồn nào?", b: "<b>On-premises</b> (VPN/DX), <b>VPC peer</b>, VPC qua <b>Transit Gateway</b>, và S3 ở <b>Region khác</b>.", x: "Prefix list theo Region; gateway endpoint chỉ “phục vụ người trong nhà”." },
+      { t: "gw", f: "Đã tạo gateway endpoint mà instance vẫn đi qua NAT – vì sao?", b: "Quên <b>gắn route table</b> của subnet đó vào endpoint." },
+      { t: "gw", f: "Security group và NACL khác nhau thế nào khi dùng gateway endpoint?", b: "<b>SG</b> outbound tham chiếu được <b>prefix list ID</b> (TCP 443 → <code>pl-…</code>).<br><b>NACL không</b> tham chiếu được prefix list ⇒ phải liệt kê CIDR." },
+      { t: "gw", f: "VPC endpoint policy là gì? Mặc định ra sao?", b: "IAM <b>resource policy</b> gắn vào endpoint, quyết định ai làm gì trên tài nguyên nào qua endpoint. Mặc định <b>cho phép tất cả</b>.", x: "Dùng để chỉ cho truy cập bucket của công ty, chống rò rỉ dữ liệu." },
+      { t: "gw", f: "Làm sao buộc bucket S3 chỉ truy cập được qua endpoint của bạn?", b: "Bucket policy <b>Deny</b> nếu <code>aws:SourceVpce</code> ≠ endpoint của bạn.", x: "Cẩn thận: console access cũng bị chặn." },
+
+      // ---- Interface endpoint
+      { t: "if", f: "Interface endpoint là gì?", b: "<b>ENI có IP private</b> (requester-managed) trong mỗi subnet bạn chọn, dùng <b>AWS PrivateLink</b>, truy cập qua <b>DNS</b>." },
+      { t: "if", f: "Private DNS của interface endpoint làm gì? Cần điều kiện gì?", b: "Private hosted zone ẩn ánh xạ <b>tên public mặc định</b> của dịch vụ về IP private của ENI ⇒ <b>không sửa code</b>.<br>Cần VPC bật <code>enableDnsHostnames</code> + <code>enableDnsSupport</code>." },
+      { t: "if", f: "Interface endpoint chọn subnet thế nào để highly available?", b: "Tối đa <b>một subnet mỗi AZ</b>; production bật <b>≥ 2 AZ</b>, gọi bằng tên Regional.", x: "Chỉ 1 AZ: AZ đó sự cố ⇒ mọi AZ mất truy cập." },
+      { t: "if", f: "Interface endpoint tạo xong nhưng request bị timeout – kiểm tra gì?", b: "<b>Security group</b> của ENI endpoint: inbound <b>HTTPS 443</b> từ client." },
+      { t: "if", f: "Chi phí interface endpoint?", b: "Phí <b>theo giờ × mỗi AZ</b> + phí <b>mỗi GB</b> dữ liệu xử lý." },
+      { t: "if", f: "Băng thông và MTU của VPC endpoint?", b: "<b>10 Gbps</b> mỗi AZ, tự scale tới <b>100 Gbps</b> · MTU tối đa <b>8500 byte</b> (lớn hơn bị drop)." },
+      { t: "if", f: "Quota endpoint mỗi VPC / mỗi Region?", b: "<b>50</b> interface + GWLB endpoint mỗi VPC · <b>20</b> gateway endpoint mỗi Region (tối đa 255/VPC)." },
+      { t: "if", f: "Gateway vs interface endpoint cho S3: khác biệt chính?", b: "<b>Gateway</b>: IP public S3, miễn phí, route table, không từ on-prem/Region khác.<br><b>Interface</b>: IP private, tính phí, DNS → ENI, có SG, dùng được từ on-prem và Region khác." },
+      { t: "if", f: "Mô hình tối ưu chi phí S3 khi có cả VPC và on-premises?", b: "Giữ <b>gateway endpoint</b> cho traffic trong VPC, thêm <b>interface endpoint</b> chỉ cho on-premises (tùy chọn <i>Enable private DNS only for inbound endpoints</i>).", x: "Tùy chọn này yêu cầu VPC có sẵn gateway endpoint S3." },
+      { t: "if", f: "Instance private kéo image từ ECR không qua internet cần những endpoint nào?", b: "Interface endpoint <code>ecr.api</code> + <code>ecr.dkr</code> <b>và gateway endpoint S3</b> (layer image nằm trên S3)." },
+      { t: "if", f: "Dịch vụ AWS có thể khởi tạo kết nối ngược vào tài nguyên của bạn qua interface endpoint không?", b: "<b>Không.</b> Chỉ <b>client khởi tạo</b>; dịch vụ tự accept." },
+
+      // ---- Endpoint service
+      { t: "svc", f: "Endpoint service (PrivateLink) cần “mặt tiền” là gì?", b: "<b>Network Load Balancer</b> (hoặc GWLB cho appliance).", x: "Đáp án dùng ALB làm front end trực tiếp cho endpoint service là sai." },
+      { t: "svc", f: "Provider phải làm gì để consumer dùng được endpoint service?", b: "Thêm <b>permission</b> cho principal cụ thể (mặc định không ai dùng được), chọn duyệt tay/tự động, chia sẻ <b>service name</b>." },
+      { t: "svc", f: "Consumer làm gì để dùng endpoint service?", b: "Tạo <b>interface endpoint</b> với service name, chọn subnet (mỗi AZ một) + security group. Trạng thái <code>PendingAcceptance</code> → <code>Available</code>." },
+      { t: "svc", f: "Vì sao PrivateLink chấp nhận CIDR chồng lấn?", b: "Không ghép hai mạng: consumer chỉ thấy <b>một ENI</b> trong VPC mình; kết nối <b>một chiều</b> (consumer → provider)." },
+      { t: "svc", f: "Peering hay PrivateLink – khác về phạm vi truy cập?", b: "<b>Peering</b>: cả mạng, hai chiều.<br><b>PrivateLink</b>: <b>một dịch vụ cụ thể</b> sau NLB, một chiều." },
+      { t: "svc", f: "Endpoint service sẵn sàng ở những AZ nào?", b: "Chỉ các AZ mà <b>NLB của provider được bật</b>; nên bật ≥ 2 AZ, có target ở mỗi AZ." },
+      { t: "svc", f: "PrivateLink có lo failover giữa Region không?", b: "<b>Không</b> – chỉ failover giữa AZ. Cross-Region access có, nhưng AWS khuyến nghị kết nối cùng Region." },
+
+      // ---- Transit Gateway
+      { t: "tgw", f: "AWS Transit Gateway là gì?", b: "<b>Router ảo cấp Region</b> mô hình <b>hub-and-spoke</b>, định tuyến layer 3, hỗ trợ <b>định tuyến bắc cầu</b> giữa VPC, VPN, DX gateway." },
+      { t: "tgw", f: "Các loại attachment của Transit Gateway?", b: "VPC · Site-to-Site VPN · Direct Connect gateway · peering TGW · Connect (SD-WAN, GRE + BGP) · VPN Concentrator · Client VPN · network function." },
+      { t: "tgw", f: "Phân biệt <i>association</i> và <i>propagation</i>.", b: "<b>Association</b>: mỗi attachment gắn <b>đúng 1</b> route table để tra next hop cho traffic đi vào.<br><b>Propagation</b>: attachment quảng bá route của mình vào <b>1+</b> route table." },
+      { t: "tgw", f: "Attach VPC vào TGW xong nhưng không thông – vì sao?", b: "Quên thêm route trong route table <b>của subnet VPC</b> trỏ tới <code>tgw-…</code>, hoặc subnet ở AZ chưa bật trong attachment.", x: "TGW không tự sửa route table của VPC." },
+      { t: "tgw", f: "Peering giữa hai transit gateway dùng loại route nào?", b: "Chỉ <b>static route</b> – peering attachment không propagate." },
+      { t: "tgw", f: "Appliance mode dùng để làm gì?", b: "Giữ <b>cả hai chiều</b> của một flow qua <b>cùng AZ/ENI</b> trong VPC có firewall stateful ⇒ định tuyến đối xứng." },
+      { t: "tgw", f: "Phân đoạn mạng (segmentation) với TGW làm thế nào?", b: "Tạo <b>nhiều route table</b> và chọn association/propagation hợp lý (giống <b>VRF</b>); có thể dùng <b>blackhole route</b>." },
+      { t: "tgw", f: "Quota Transit Gateway cần nhớ?", b: "<b>5.000</b> attachment/TGW · <b>5</b> TGW/account/Region · <b>20</b> route table · <b>10.000</b> route · <b>50</b> peering attachment · <b>100 Gbps</b> mỗi VPC attachment mỗi AZ." },
+      { t: "tgw", f: "MTU qua Transit Gateway?", b: "<b>8500 byte</b> giữa VPC, DX, Connect, peering · <b>1500 byte</b> qua VPN." },
+      { t: "tgw", f: "Chi phí Transit Gateway?", b: "Phí <b>theo giờ mỗi attachment</b> + phí <b>mỗi GB</b> xử lý (mặc định account sở hữu attachment nguồn trả).", x: "2–3 VPC trao đổi nhiều dữ liệu ⇒ peering thường rẻ hơn." },
+      { t: "tgw", f: "Attach VPC: chọn subnet thế nào?", b: "Mỗi AZ bật chỉ định <b>đúng một subnet</b> (TGW đặt ENI ở đó); chỉ AZ có attachment mới tới được TGW. Thực hành: subnet nhỏ <b>/28</b> riêng." },
+      { t: "tgw", f: "TGW có attach được VPC ở Region khác không?", b: "<b>Không</b> – TGW là dịch vụ cấp Region; liên Region phải dùng <b>TGW peering</b>." },
+
+      // ---- RAM
+      { t: "ram", f: "AWS RAM dùng để làm gì? Có tính phí không?", b: "Chia sẻ tài nguyên (TGW, subnet, prefix list, Resolver rule…) giữa account/OU/organization. <b>Miễn phí</b>." },
+      { t: "ram", f: "Chia sẻ qua RAM trong và ngoài organization khác nhau thế nào?", b: "Trong org (đã bật sharing với Organizations): <b>nhận ngay, không cần invitation</b>.<br>Ngoài org: RAM gửi <b>invitation</b>, phải accept." },
+      { t: "ram", f: "VPC sharing là gì?", b: "Owner chia sẻ <b>subnet</b> cho participant trong <b>cùng organization</b>; participant tạo tài nguyên vào subnet đó, dùng routing nội bộ VPC, không cần peering/TGW." },
+      { t: "ram", f: "Participant trong VPC sharing được và không được làm gì?", b: "Được tạo EC2, RDS, Lambda… của mình.<br><b>Không</b> sửa subnet, route table, NACL, gateway; không xem/sửa tài nguyên của người khác." },
+      { t: "ram", f: "Chia sẻ Transit Gateway qua RAM hoạt động thế nào?", b: "Network account tạo TGW và chia sẻ; account được chia sẻ <b>tự attach VPC</b>; chủ TGW accept (hoặc bật auto accept shared attachments)." },
+
+      // ---- Từ khóa
+      { t: "kw", f: "Đề có “<i>EC2 in a private subnet must access S3 / DynamoDB</i>”, “<i>reduce NAT gateway data processing charges</i>” ⇒ ?", b: "<b>Gateway endpoint</b>." },
+      { t: "kw", f: "Đề có “<i>access SQS / KMS / Secrets Manager / ECR from a private subnet with no internet access</i>” ⇒ ?", b: "<b>Interface endpoint</b> (+ private DNS)." },
+      { t: "kw", f: "Đề có “<i>access S3 privately from on-premises over Direct Connect / VPN</i>” ⇒ ?", b: "<b>S3 interface endpoint</b>." },
+      { t: "kw", f: "Đề có “<i>SaaS provider</i>”, “<i>hundreds of customer VPCs</i>”, “<i>overlapping CIDR</i>” ⇒ ?", b: "<b>NLB + VPC endpoint service</b> (PrivateLink); khách hàng tạo interface endpoint." },
+      { t: "kw", f: "Đề có “<i>hundreds of VPCs</i>”, “<i>transitive routing</i>”, “<i>one VPN/Direct Connect for all VPCs</i>” ⇒ ?", b: "<b>Transit Gateway</b> (+ RAM nếu nhiều account)." },
+      { t: "kw", f: "Đề có “<i>dev VPCs must not communicate with prod VPCs</i>” + shared services ⇒ ?", b: "<b>Nhiều transit gateway route table</b> (association/propagation riêng)." },
+      { t: "kw", f: "Đề có “<i>centralize internet egress / NAT gateways for multiple VPCs</i>” ⇒ ?", b: "<b>TGW + egress VPC</b>." },
+      { t: "kw", f: "Đề có “<i>connect two VPCs</i>”, “<i>lowest cost</i>”, “<i>no bandwidth bottleneck</i>” ⇒ ?", b: "<b>VPC peering</b>." },
+      { t: "kw", f: "Đề có “<i>multiple teams in separate accounts deploy into a centrally managed VPC</i>” ⇒ ?", b: "<b>VPC sharing</b> qua AWS RAM." },
+      { t: "kw", f: "Đề có “<i>request and response of the same flow processed by firewalls in different AZs</i>” ⇒ ?", b: "Bật <b>appliance mode</b> trên TGW VPC attachment của inspection VPC." }
+    ],
+
+    pairs: [
+      ["VPC peering", "Kết nối 1–1 hai VPC bằng IP private, ID pcx-…"],
+      ["Requester / Accepter VPC", "Bên gửi yêu cầu peering / bên phải accept"],
+      ["Inter-Region peering", "Peering giữa 2 Region, MTU 8500, không tham chiếu SG"],
+      ["Transitive peering", "Đi qua VPC trung gian tới VPC thứ ba – không hỗ trợ"],
+      ["Edge-to-edge routing", "Dùng nhờ IGW/NAT/VPN/DX của VPC peer – không hỗ trợ"],
+      ["VPC endpoint", "Kết nối private tới dịch vụ, không cần IGW/NAT"],
+      ["Gateway endpoint", "S3/DynamoDB, target trong route table, miễn phí"],
+      ["Interface endpoint", "ENI IP private, dùng PrivateLink, tính phí"],
+      ["AWS-managed prefix list", "Tập CIDR của dịch vụ trong Region, đích route"],
+      ["Private DNS", "Hosted zone ẩn: tên public → IP private của ENI"],
+      ["VPC endpoint policy", "Resource policy trên endpoint, mặc định cho phép hết"],
+      ["AWS PrivateLink", "Kết nối private tới dịch vụ như nằm trong VPC"],
+      ["Endpoint service", "Dịch vụ tự host sau NLB/GWLB, chia sẻ qua PrivateLink"],
+      ["Acceptance required", "Provider phải duyệt từng kết nối của consumer"],
+      ["Resource gateway", "Truy cập một tài nguyên chia sẻ, không cần load balancer"],
+      ["Transit Gateway", "Router ảo cấp Region, hub-and-spoke, bắc cầu"],
+      ["Association", "Attachment dùng đúng 1 route table để tra next hop"],
+      ["Propagation", "Attachment quảng bá route của mình vào route table"],
+      ["Blackhole route", "Route drop traffic khớp đích"],
+      ["Appliance mode", "Giữ 2 chiều flow qua cùng AZ/ENI cho firewall stateful"],
+      ["Transit gateway peering", "Nối 2 TGW cùng/khác Region, chỉ static route"],
+      ["Network segmentation", "Tách nhóm VPC bằng nhiều route table (như VRF)"],
+      ["AWS RAM", "Chia sẻ TGW, subnet, prefix list giữa account; miễn phí"],
+      ["VPC sharing", "Owner chia sẻ subnet cho participant cùng organization"]
+    ],
+
+    sorts: [
+      {
+        title: "Chọn giải pháp kết nối",
+        desc: "Đọc yêu cầu trong đề và chọn công cụ phù hợp nhất (theo bảng quyết định của bài).",
+        buckets: ["Gateway endpoint", "Interface endpoint", "VPC peering", "PrivateLink endpoint service", "Transit Gateway", "VPC sharing (RAM)"],
+        items: [
+          ["EC2 private đọc S3 cùng Region, rẻ nhất, giảm phí NAT", 0, "gateway endpoint miễn phí"],
+          ["Lambda trong VPC ghi DynamoDB không qua internet, chi phí thấp nhất", 0, "DynamoDB có gateway endpoint"],
+          ["Private subnet gọi SQS và Secrets Manager, không sửa code", 1, "các dịch vụ này chỉ có interface endpoint + private DNS"],
+          ["On-premises upload lên S3 qua Direct Connect bằng IP private", 1, "gateway endpoint không phục vụ on-premises"],
+          ["Nối 2 VPC tin cậy nhau, chi phí và độ trễ thấp nhất", 2, "peering không phí giờ, không thêm hop"],
+          ["VPC B cần nói chuyện với VPC C, đều đang peer với A, LEAST cost", 2, "tạo peering B–C, miễn phí"],
+          ["SaaS mở API cho hàng trăm VPC khách hàng, CIDR trùng", 3, "chỉ lộ một dịch vụ sau NLB, CIDR trùng không sao"],
+          ["Chia sẻ dịch vụ nội bộ cho team khác mà không lộ phần còn lại của VPC", 3, "PrivateLink một chiều, một dịch vụ"],
+          ["60 VPC, 15 account, cùng dùng một VPN tới on-premises", 4, "hub-and-spoke, bắc cầu, một VPN attachment"],
+          ["Cô lập dev và prod nhưng cùng dùng shared services", 4, "nhiều TGW route table"],
+          ["Dùng chung NAT gateway cho nhiều VPC", 4, "TGW + egress VPC; peering không edge-to-edge"],
+          ["Nhiều team (account) triển khai vào một VPC do team mạng quản lý", 5, "RAM chia sẻ subnet, participant không sửa được mạng"]
+        ]
+      },
+      {
+        title: "Gateway hay interface endpoint?",
+        desc: "Đặc điểm sau thuộc gateway endpoint hay interface endpoint?",
+        buckets: ["Gateway endpoint", "Interface endpoint"],
+        items: [
+          ["Không tính phí", 0, "gateway endpoint miễn phí"],
+          ["Là target trong route table, đích là prefix list", 0, "AWS tự thêm route pl-… → vpce-…"],
+          ["Dùng IP public của S3", 0, "instance vẫn gọi public endpoint của S3"],
+          ["Chỉ hỗ trợ S3 và DynamoDB", 0, "các dịch vụ khác dùng interface endpoint"],
+          ["Không dùng PrivateLink", 0, "khác mọi loại endpoint còn lại"],
+          ["ENI có IP private trong subnet", 1, "mỗi AZ một ENI"],
+          ["Có security group riêng", 1, "inbound phải cho phép 443"],
+          ["Truy cập được từ on-premises qua VPN/DX", 1, "vì có IP private trong VPC"],
+          ["Phí theo giờ × AZ + mỗi GB", 1, "interface endpoint tính phí"],
+          ["Cần enableDnsHostnames + enableDnsSupport cho private DNS", 1, "private hosted zone ẩn"]
+        ]
+      },
+      {
+        title: "VPC peering hay Transit Gateway?",
+        desc: "Đặc điểm sau là của VPC peering hay Transit Gateway?",
+        buckets: ["VPC peering", "Transit Gateway"],
+        items: [
+          ["Không có phí theo giờ", 0, "chỉ trả data transfer cross-AZ/Region"],
+          ["MTU 9001 trong cùng Region", 0, "TGW là 8500"],
+          ["Không định tuyến bắc cầu", 0, "phải full mesh khi nhiều VPC"],
+          ["Không thêm hop, độ trễ thấp nhất", 0, "đường đi trực tiếp"],
+          ["Tối đa 125 kết nối mỗi VPC", 0, "mặc định 50"],
+          ["Hub-and-spoke, định tuyến bắc cầu", 1, "router ảo cấp Region"],
+          ["Một VPN/DX dùng chung cho mọi VPC", 1, "peering không hỗ trợ edge-to-edge"],
+          ["5.000 attachment", 1, "quota mặc định mỗi TGW"],
+          ["Nhiều route table, blackhole, appliance mode", 1, "phân đoạn và kiểm soát tập trung"],
+          ["Phí mỗi attachment-giờ + mỗi GB xử lý", 1, "đắt hơn khi chỉ 2–3 VPC"]
+        ]
+      },
+      {
+        title: "Được hay không được?",
+        desc: "Hành động sau có được hỗ trợ không?",
+        buckets: ["Được hỗ trợ", "Không được hỗ trợ"],
+        items: [
+          ["Peer VPC của hai account khác nhau", 0, "peering cùng/khác account"],
+          ["Peer hai VPC ở hai Region khác nhau", 0, "inter-Region VPC peering"],
+          ["Tham chiếu SG của VPC peer cùng Region", 0, "chỉ hỗ trợ cùng Region"],
+          ["On-premises dùng S3 interface endpoint qua DX", 0, "interface endpoint có IP private"],
+          ["Account trong OU tự attach VPC vào TGW được chia sẻ qua RAM", 0, "mô hình network account phổ biến"],
+          ["VPC B dùng NAT gateway của VPC A đang peer", 1, "edge-to-edge routing"],
+          ["Dùng gateway endpoint S3 của VPC peer", 1, "gateway endpoint chỉ phục vụ trong VPC"],
+          ["Peer hai VPC có CIDR chồng lấn", 1, "không peer được"],
+          ["Tham chiếu SG của VPC peer ở Region khác", 1, "inter-Region không hỗ trợ"],
+          ["Endpoint service dùng ALB trực tiếp làm front end", 1, "phải là NLB hoặc GWLB"],
+          ["Attach VPC ở Region khác vào TGW", 1, "TGW cấp Region, dùng TGW peering"]
+        ]
+      }
+    ],
+
+    tf: [
+      ["VPC peering có thể nối hai VPC thuộc hai account khác nhau.", true, "Peering hỗ trợ cùng/khác account, cùng/khác Region."],
+      ["VPC peering là một loại VPN nên có điểm lỗi đơn.", false, "Peering không phải gateway hay VPN, không có SPOF."],
+      ["Sau khi accept peering, AWS tự thêm route vào route table cả hai VPC.", false, "Chủ mỗi VPC phải tự thêm route tới CIDR VPC peer."],
+      ["A peer với B và C thì B có thể đi qua A để tới C.", false, "Peering không bắc cầu; cần peering B–C."],
+      ["VPC B có thể dùng NAT gateway của VPC A nếu hai VPC đã peer.", false, "Edge-to-edge routing không được hỗ trợ."],
+      ["Yêu cầu peering không được accept sẽ hết hạn sau 7 ngày.", true, "168 giờ."],
+      ["Mỗi VPC có tối đa 125 active peering connection.", true, "Mặc định 50, tối đa 125."],
+      ["Inter-Region peering cho phép tham chiếu security group của VPC peer.", false, "Chỉ hỗ trợ tham chiếu SG khi cùng Region."],
+      ["Data transfer qua peering trong cùng một AZ là miễn phí.", true, "Kể cả khác account; khác AZ/Region mới tính phí."],
+      ["Traffic inter-Region peering được mã hóa và không đi qua internet công cộng.", true, "Đi trên AWS global backbone."],
+      ["Gateway endpoint hỗ trợ S3, DynamoDB và SQS.", false, "Chỉ S3 và DynamoDB."],
+      ["Gateway endpoint không tính phí.", true, "Không có phí bổ sung."],
+      ["On-premises truy cập được S3 qua gateway endpoint bằng Direct Connect.", false, "Phải dùng S3 interface endpoint."],
+      ["Network ACL có thể tham chiếu prefix list của S3.", false, "Chỉ security group tham chiếu được prefix list."],
+      ["Endpoint policy mặc định cho phép mọi hành động, mọi principal, mọi tài nguyên.", true, "Cần tự thu hẹp nếu muốn chống rò rỉ dữ liệu."],
+      ["Gateway endpoint không phục vụ traffic tới S3 ở Region khác.", true, "Prefix list là theo Region."],
+      ["Interface endpoint tạo một ENI có IP private trong mỗi subnet được chọn.", true, "Mỗi AZ tối đa một subnet."],
+      ["Private DNS của interface endpoint yêu cầu VPC bật enableDnsHostnames và enableDnsSupport.", true, "Điều kiện bắt buộc."],
+      ["Interface endpoint dùng route 0.0.0.0/0 làm target để đưa traffic vào.", false, "Interface endpoint hoạt động qua DNS → ENI."],
+      ["Interface endpoint tính phí theo giờ mỗi AZ cộng phí mỗi GB.", true, "Vì vậy S3 trong VPC nên ưu tiên gateway endpoint."],
+      ["Interface endpoint chỉ bật ở 1 AZ vẫn highly available.", false, "AZ đó sự cố thì mọi AZ mất truy cập."],
+      ["Endpoint service của PrivateLink có thể dùng Network Load Balancer làm front end.", true, "NLB (hoặc GWLB) là bắt buộc."],
+      ["PrivateLink không dùng được khi VPC của consumer và provider có CIDR chồng lấn.", false, "PrivateLink không ghép mạng, CIDR trùng không sao."],
+      ["Kết nối PrivateLink là hai chiều như peering.", false, "Một chiều: consumer khởi tạo."],
+      ["Transit Gateway hỗ trợ định tuyến bắc cầu giữa các attachment.", true, "Mô hình hub-and-spoke."],
+      ["Transit Gateway tự động thêm route vào route table của subnet trong VPC.", false, "Bạn phải thêm route tới tgw-… trong VPC."],
+      ["Mỗi attachment chỉ associate với đúng một TGW route table.", true, "Nhưng có thể propagate vào nhiều route table."],
+      ["Peering attachment giữa hai TGW hỗ trợ route propagation.", false, "Chỉ static route."],
+      ["Appliance mode giúp firewall stateful thấy cả hai chiều của một flow.", true, "Dùng cùng AZ/ENI cho cả hai chiều."],
+      ["MTU qua VPN attachment của Transit Gateway là 8500 byte.", false, "VPN là 1500; 8500 cho VPC, DX, Connect, peering."],
+      ["Một transit gateway mặc định có tối đa 5.000 attachment.", true, "Quota mặc định."],
+      ["Với chỉ 2–3 VPC trao đổi nhiều dữ liệu, Transit Gateway thường rẻ hơn peering.", false, "Peering không phí giờ, thường rẻ hơn."],
+      ["AWS RAM tính phí theo số tài nguyên được chia sẻ.", false, "RAM miễn phí."],
+      ["Participant trong VPC sharing có thể sửa route table của subnet được chia sẻ.", false, "Chỉ owner quản lý route table, NACL, gateway."],
+      ["Trong organization đã bật sharing với AWS Organizations, account nhận tài nguyên RAM không cần invitation.", true, "Ngoài org mới cần invitation."]
+    ],
+
+    map: {
+      t: "Bài 22 · Kết nối VPC",
+      c: [
+        { t: "VPC peering", icon: "res/Amazon-VPC_Peering-Connection.svg", c: [
+          { t: "Bản chất", v: "1–1, IP private, không SPOF, không nút thắt" },
+          { t: "Thiết lập", v: "request → accept → route 2 phía → SG → DNS" },
+          { t: "Không hỗ trợ", c: [
+            { t: "Bắc cầu", v: "B ↔ C qua A ✘" },
+            { t: "Edge-to-edge", v: "IGW, NAT, VPN, DX, gateway endpoint của peer" },
+            { t: "CIDR chồng lấn", v: "không peer được" }
+          ] },
+          { t: "Quota", v: "50 → 125 peering/VPC · hết hạn 7 ngày" },
+          { t: "MTU", v: "9001 cùng Region · 8500 inter-Region" },
+          { t: "Chi phí", v: "tạo miễn phí · cùng AZ miễn phí" }
+        ] },
+        { t: "Gateway endpoint", icon: "res/Amazon-VPC_Endpoints.svg", c: [
+          { t: "Dịch vụ", v: "chỉ S3 + DynamoDB" },
+          { t: "Cơ chế", v: "route table: prefix list → vpce-…" },
+          { t: "Giá", v: "miễn phí, không PrivateLink" },
+          { t: "Giới hạn", v: "không on-prem, peer, TGW, Region khác" },
+          { t: "Bảo mật", v: "endpoint policy + aws:SourceVpce; NACL không dùng prefix list" }
+        ] },
+        { t: "Interface endpoint", icon: "svc/AWS-PrivateLink.svg", c: [
+          { t: "Bản chất", v: "ENI IP private mỗi AZ, có SG" },
+          { t: "Private DNS", v: "không sửa code · cần DnsHostnames + DnsSupport" },
+          { t: "HA", v: "≥ 2 AZ" },
+          { t: "Giá", v: "giờ × AZ + GB" },
+          { t: "Hiệu năng", v: "10 → 100 Gbps/AZ · MTU 8500" },
+          { t: "S3 tối ưu", v: "gateway cho VPC + interface cho on-prem" }
+        ] },
+        { t: "Endpoint service", icon: "svc/AWS-PrivateLink.svg", c: [
+          { t: "Provider", v: "NLB/GWLB → endpoint service, cấp quyền principal" },
+          { t: "Consumer", v: "tạo interface endpoint theo service name" },
+          { t: "Đặc điểm", v: "một chiều, một dịch vụ, CIDR trùng vẫn được" },
+          { t: "Dùng khi", v: "SaaS cho hàng trăm VPC khách hàng" }
+        ] },
+        { t: "Transit Gateway", icon: "svc/AWS-Transit-Gateway.svg", c: [
+          { t: "Bản chất", v: "router ảo cấp Region, hub-and-spoke, bắc cầu" },
+          { t: "Định tuyến", c: [
+            { t: "Association", v: "1 attachment ↔ 1 route table" },
+            { t: "Propagation", v: "quảng bá vào 1+ route table" },
+            { t: "Peering TGW", v: "chỉ static route" }
+          ] },
+          { t: "Mẫu kiến trúc", v: "segmentation, egress VPC, inspection VPC" },
+          { t: "Appliance mode", v: "định tuyến đối xứng cho firewall stateful" },
+          { t: "Quota", v: "5.000 attachment · 20 route table · 100 Gbps/AZ" },
+          { t: "Chi phí", v: "attachment-giờ + GB" }
+        ] },
+        { t: "AWS RAM", icon: "svc/AWS-Resource-Access-Manager.svg", c: [
+          { t: "Chia sẻ", v: "TGW, subnet, prefix list, Resolver rule · miễn phí" },
+          { t: "Trong org", v: "không cần invitation" },
+          { t: "VPC sharing", v: "participant tạo tài nguyên, không sửa mạng" }
+        ] },
+        { t: "Chọn giải pháp", icon: "res/Amazon-VPC_Router.svg", c: [
+          { t: "Ít VPC, rẻ", v: "VPC peering" },
+          { t: "Nhiều VPC + on-prem", v: "Transit Gateway (+ RAM)" },
+          { t: "Một dịch vụ, CIDR trùng", v: "PrivateLink endpoint service" },
+          { t: "Một VPC cho nhiều account", v: "VPC sharing" }
+        ] }
+      ]
+    }
+  };
+  </script>
+</body>
+</html>
